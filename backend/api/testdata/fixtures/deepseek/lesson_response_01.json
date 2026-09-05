@@ -1,0 +1,10 @@
+{
+  "choices": [
+    {
+      "message": {
+        "role": "assistant",
+        "content": "{\"markdown\":{\"elements\":[{\"type\":\"heading\",\"level\":1,\"text\":\"Aula Teste - Modo VCR\"},{\"type\":\"paragraph\",\"text\":\"Nesta aula, vamos explorar os **fundamentos da programação**, incluindo variáveis, estruturas de controle e funções.\"},{\"type\":\"heading\",\"level\":2,\"text\":\"Variáveis e Tipos de Dados\"},{\"type\":\"paragraph\",\"text\":\"Variáveis armazenam valores na memória. Os principais tipos de dados são: **número** (int, float), **string** (texto) e **boolean** (true/false).\"},{\"type\":\"bulletedList\",\"items\":[\"int: números inteiros como 1, 42, -5\",\"float: números decimais como 3.14, 2.5\",\"string: textos delimitados por aspas\",\"boolean: true ou false\"]},{\"type\":\"heading\",\"level\":2,\"text\":\"Estruturas de Controle\"},{\"type\":\"paragraph\",\"text\":\"Estruturas de controle como **if/else** e **loops** permitem controlar o fluxo de execução do programa.\"},{\"type\":\"diagram\",\"diagramIndex\":0},{\"type\":\"heading\",\"level\":2,\"text\":\"Questões para Revisão\"},{\"type\":\"orderedList\",\"items\":[\"O que é uma variável e para que serve?\",\"Cite três tipos de dados primitivos.\",\"Qual a diferença entre if simples e if/else?\",\"Como declarar uma função em JavaScript?\"]}],\"diagrams\":[{\"type\":\"flowchart\",\"hint\":\"{\\\"direction\\\":\\\"TD\\\",\\\"nodes\\\":[{\\\"id\\\":\\\"A\\\",\\\"text\\\":\\\"Inicio\\\",\\\"shape\\\":\\\"rounded\\\"},{\\\"id\\\":\\\"B\\\",\\\"text\\\":\\\"Condicao\\\"},{\\\"id\\\":\\\"C\\\",\\\"text\\\":\\\"Acao Verdadeira\\\"},{\\\"id\\\":\\\"D\\\",\\\"text\\\":\\\"Acao Falsa\\\"},{\\\"id\\\":\\\"E\\\",\\\"text\\\":\\\"Fim\\\",\\\"shape\\\":\\\"rounded\\\"}],\\\"links\\\":[{\\\"from\\\":\\\"A\\\",\\\"to\\\":\\\"B\\\"},{\\\"from\\\":\\\"B\\\",\\\"to\\\":\\\"C\\\",\\\"text\\\":\\\"sim\\\"},{\\\"from\\\":\\\"B\\\",\\\"to\\\":\\\"D\\\",\\\"text\\\":\\\"nao\\\"},{\\\"from\\\":\\\"C\\\",\\\"to\\\":\\\"E\\\"},{\\\"from\\\":\\\"D\\\",\\\"to\\\":\\\"E\\\"}]}\"}]}}"
+      }
+    }
+  ]
+}

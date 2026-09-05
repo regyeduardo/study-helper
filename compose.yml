@@ -1,0 +1,66 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: ./Docker/Api.Dockerfile
+    container_name: study-helper-api
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./volume:/data
+      - ./.md:/app/.md
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    networks:
+      - study-helper-net
+
+  web:
+    build:
+      context: .
+      dockerfile: ./Docker/Web.Dockerfile
+    container_name: study-helper-web
+    restart: unless-stopped
+    ports:
+      - "8081:80"
+    depends_on:
+      api:
+        condition: service_healthy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - study-helper-net
+
+  web-dev:
+    build:
+      context: .
+      dockerfile: ./Docker/Web.Dockerfile.dev
+    container_name: study-helper-web-dev
+    restart: unless-stopped
+    ports:
+      - "8081:5173"
+    env_file:
+      - .env
+    environment:
+      VITE_API_TARGET: "http://api:8000"
+    volumes:
+      - ./frontend/web:/app
+      - /app/node_modules
+    depends_on:
+      api:
+        condition: service_healthy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - study-helper-net
+
+networks:
+  study-helper-net:
+    name: study-helper-net
+    driver: bridge

@@ -1,0 +1,10 @@
+{
+  "choices": [
+    {
+      "message": {
+        "role": "assistant",
+        "content": "{\"direction\":\"TD\",\"nodes\":[{\"id\":\"A\",\"text\":\"Node A\",\"shape\":\"rounded\"},{\"id\":\"B\",\"text\":\"Node B\"}],\"links\":[{\"from\":\"A\",\"to\":\"B\",\"text\":\"next\"}]}"
+      }
+    }
+  ]
+}
