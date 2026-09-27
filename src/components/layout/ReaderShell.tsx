@@ -71,7 +71,7 @@ export function ReaderShell({ children, docActions }: { children: ReactNode; doc
           <UsageLine />
         </div>
       </aside>
-      <main>
+      <main onClickCapture={() => ui.drawer && ui.set({ drawer: false })}>
         <header className="top">
           {!ui.leftOpen && (
             <button className="ibtn" onClick={() => ui.set({ leftOpen: true })} aria-label="Mostrar a lateral">
@@ -84,19 +84,19 @@ export function ReaderShell({ children, docActions }: { children: ReactNode; doc
           <button className="ibtn" onClick={() => navigate(-1)} aria-label="Voltar">
             <Icon name="back" />
           </button>
-          <button className="ibtn" onClick={() => navigate(1)} aria-label="Avançar">
+          <button className="ibtn hide-narrow" onClick={() => navigate(1)} aria-label="Avançar">
             <Icon name="fwd" />
           </button>
           {view === 'doc' && doc ? <Crumbs folderId={doc.folderId} tail={doc.name} /> : view === 'folder' ? <Crumbs folderId={folderId} /> : <div className="crumbs"><span className="cur">{VIEW_NAME[view]}</span></div>}
           <div className="spacer" />
           {docActions}
-          <button className="btn" onClick={() => ui.open({ kind: 'record' })}>
+          <button className={`btn ${view === 'doc' ? 'hide-narrow-doc' : ''}`} onClick={() => ui.open({ kind: 'record' })}>
             <Icon name="rec" />
-            Gravar
+            <span className="lbl">Gravar</span>
           </button>
           <button className="btn primary" onClick={() => ui.open({ kind: 'new', folderId: view === 'folder' ? folderId : doc?.folderId })}>
             <Icon name="plus" />
-            Novo
+            <span className="lbl">Novo</span>
           </button>
           <AvatarButton />
         </header>

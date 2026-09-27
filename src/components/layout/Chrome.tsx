@@ -44,7 +44,7 @@ export function SyncPill() {
     return (
       <button className="sync" onClick={() => open({ kind: 'account' })} title="Perfil local: nada vai para a nuvem">
         <Icon name="cloud" />
-        Local · sem nuvem
+        <span className="lbl">Local · sem nuvem</span>
       </button>
     )
   }
@@ -61,12 +61,8 @@ export function SyncPill() {
           <Icon name="sync" />
           Sincronizando…
         </>
-      ) : conflict ? (
-        `${conflicts.length} conflito${conflicts.length > 1 ? 's' : ''} · resolver`
-      ) : error ? (
-        'Falhou · tentar de novo'
       ) : (
-        `Atualizado ${agoText(lastSyncAt)}`
+        <span className="lbl">{conflict ? `${conflicts.length} conflito${conflicts.length > 1 ? 's' : ''} · resolver` : error ? 'Falhou · tentar de novo' : `Atualizado ${agoText(lastSyncAt)}`}</span>
       )}
     </button>
   )

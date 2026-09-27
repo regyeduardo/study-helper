@@ -107,8 +107,7 @@ function Library({ route }: { route: ViewRoute }) {
         <div className="crumbs" style={{ fontSize: 14 }}>
           <UpButton folderId={route.folderId} />
           <Crumbs folderId={route.folderId} />
-          <span style={{ flex: 1 }} />
-          <button className="btn quiet" onClick={() => ui.open({ kind: 'new-folder', parentId: route.folderId })}>
+          <button className="btn quiet" style={{ marginLeft: 'auto', flex: 'none' }} onClick={() => ui.open({ kind: 'new-folder', parentId: route.folderId })}>
             <Icon name="folder" />
             Nova pasta
           </button>

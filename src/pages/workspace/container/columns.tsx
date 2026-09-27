@@ -48,6 +48,9 @@ function ListColumn({ view, folderId, currentId }: { view: View; folderId: strin
           <button className="ibtn" onClick={() => ui.open({ kind: 'palette' })} aria-label="Buscar ou fazer algo" title="Ctrl K">
             <Icon name="dots" />
           </button>
+          <button className="ibtn mob-only" onClick={() => ui.open({ kind: 'new', folderId })} aria-label="Novo conteúdo">
+            <Icon name="plus" />
+          </button>
         </div>
         {view !== 'trash' && (
           <>
@@ -149,7 +152,7 @@ function DocColumn({ fileId }: { fileId: string | null }) {
         <div className="spacer" />
         <button className="btn quiet" onClick={() => ui.open({ kind: 'exam', fileId })}>
           <Icon name="exam" />
-          Prova
+          <span className="lbl">Prova</span>
         </button>
         <button className="ibtn" aria-pressed={ui.columnsSheet && ui.inspectorTab === 'toc'} onClick={() => sheet('toc')} aria-label="Índice">
           <Icon name="list" />
@@ -172,6 +175,9 @@ function DocColumn({ fileId }: { fileId: string | null }) {
           aria-label="Mais opções do documento"
         >
           <Icon name="dots" />
+        </button>
+        <button className="ibtn mob-only" onClick={() => ui.open({ kind: 'new', folderId: meta.folderId })} aria-label="Novo conteúdo">
+          <Icon name="plus" />
         </button>
         <button className="ibtn" onClick={close} aria-label="Fechar o documento">
           <Icon name="x" />

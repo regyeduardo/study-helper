@@ -86,7 +86,7 @@ function FilterBar() {
   return (
     <div className="fbar">
       {chips}
-      <input className="input" style={{ width: 200, height: 26, padding: '2px 8px' }} aria-label="Buscar" placeholder="Filtrar por texto" value={ui.query} onChange={event => ui.setQuery(event.target.value)} />
+      <input className="input fbar-search" style={{ height: 26, padding: '2px 8px' }} aria-label="Buscar" placeholder="Filtrar por texto" value={ui.query} onChange={event => ui.setQuery(event.target.value)} />
       <button className="btn quiet" onClick={anchor('filter')}>
         <Icon name="filter" />
         Filtro
@@ -264,10 +264,10 @@ function Peek({ fileId }: { fileId: string }) {
         <span className="spacer" />
         <button className="btn quiet" onClick={() => ui.open({ kind: 'exam', fileId })}>
           <Icon name="exam" />
-          Prova
+          <span className="lbl">Prova</span>
         </button>
         <button className="btn" onClick={() => openFile(meta)}>
-          Abrir inteiro <Icon name="fwd" />
+          <span className="lbl">Abrir inteiro</span> <Icon name="fwd" />
         </button>
       </div>
       <div className="pscroll">

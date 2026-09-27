@@ -316,7 +316,7 @@ export function NewContentDialog({ folderId: initialFolder }: { folderId?: strin
             </div>
           </div>
         )}
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+        <div className="two-col">
           <div className="field">
             <label htmlFor="nc-name">Nome (opcional)</label>
             <input className="input" id="nc-name" value={name} onChange={event => setName(event.target.value)} placeholder="Vem da fonte se ficar vazio" />

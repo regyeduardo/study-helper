@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom'
 import type { FileMeta, HighlightColor } from '@/types/domain'
 import { Icon } from '@/components/ui/Icon'
 import { MasteryMeter, TypeDot } from '@/components/library/Badges'
+import { DocumentNav } from '@/components/reader/DocumentNav'
 import GithubMarkdownView, { type PaintedQuote, type ReaderSelection } from '@/components/reader/GithubMarkdownView'
 import { useDocument } from '@/hooks/use-document'
 import { courseOf } from '@/lib/generation/course-lesson'
@@ -160,6 +161,7 @@ export function DocumentBody({ fileId, compact = false }: { fileId: string; comp
         !job && meta.status === 'ready' && !opened && <div className="muted">Abrindo…</div>
       )}
       {selection && <SelectionPopover fileId={fileId} selection={selection} onDone={() => setSelection(null)} />}
+      {!compact && <DocumentNav meta={meta} />}
     </article>
   )
 }

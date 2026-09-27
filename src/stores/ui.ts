@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 
 import type { FileType } from '@/types/domain'
+import { isNarrowScreen } from '@/hooks/use-is-narrow'
 
 export type Overlay =
   | { kind: 'palette' }
@@ -91,7 +92,7 @@ export const useUiStore = create<UiState>((set, get) => ({
   sort: 'recent',
   group: 'none',
   leftOpen: true,
-  rightOpen: true,
+  rightOpen: !isNarrowScreen(),
   drawer: false,
   inspectorTab: 'toc',
   peekId: null,

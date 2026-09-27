@@ -1,3 +1,5 @@
+import { useEffect } from 'react'
+
 import { Icon } from '@/components/ui/Icon'
 import { ReaderShell } from '@/components/layout/ReaderShell'
 import { EmptyList } from '@/components/library/EmptyList'
@@ -11,6 +13,7 @@ import { DocumentBody } from '@/components/reader/DocumentArticle'
 import { Inspector } from '@/components/reader/Inspector'
 import { useLibraryView } from '@/hooks/use-library-view'
 import type { ViewRoute } from '@/hooks/use-view-route'
+import { isNarrowScreen } from '@/hooks/use-is-narrow'
 import { useLibraryStore } from '@/stores/library'
 import { useUiStore } from '@/stores/ui'
 import { ContinueCard, greeting, QuickActions, reviewSentence, todayText, useHomeData, useScrollerRef, WelcomeEmpty } from '@/pages/workspace/container/shared'
@@ -82,7 +85,7 @@ export function Library({ route }: { route: ViewRoute }) {
         {data.isCourse && <span className="crs">curso</span>}
         <span style={{ marginLeft: 'auto', display: 'flex', gap: 6, flexWrap: 'wrap' }}>
           {route.view !== 'trash' && (
-            <input className="input" style={{ width: 220, height: 30 }} placeholder="Buscar no título e no texto" aria-label="Buscar" value={ui.query} onChange={event => ui.setQuery(event.target.value)} />
+            <input className="input lib-search" style={{ height: 30 }} placeholder="Buscar no título e no texto" aria-label="Buscar" value={ui.query} onChange={event => ui.setQuery(event.target.value)} />
           )}
           {data.browsing && (
             <button className="btn" onClick={() => ui.open({ kind: 'new-folder', parentId: route.folderId })}>
@@ -142,7 +145,7 @@ export function Library({ route }: { route: ViewRoute }) {
             </section>
           )}
           {data.browsing && (
-            <p className="faint" style={{ margin: 0, padding: '0 2px', fontSize: 12.5 }}>
+            <p className="faint drag-hint" style={{ margin: 0, padding: '0 2px', fontSize: 12.5 }}>
               Para mover, arraste um arquivo até uma pasta ou até o caminho no topo.
             </p>
           )}
@@ -158,7 +161,7 @@ function DocActions({ fileId }: { fileId: string }) {
     <>
       <button className="btn quiet" onClick={() => ui.open({ kind: 'exam', fileId })}>
         <Icon name="exam" />
-        Prova
+        <span className="lbl">Prova</span>
       </button>
       <button
         className="ibtn"
@@ -179,7 +182,11 @@ function DocActions({ fileId }: { fileId: string }) {
 
 export function ReaderWorkspace({ route }: { route: ViewRoute }) {
   const rightOpen = useUiStore(state => state.rightOpen)
+  const setUi = useUiStore(state => state.set)
   const scroller = useScrollerRef()
+  useEffect(() => {
+    if (isNarrowScreen()) setUi({ rightOpen: false, drawer: false })
+  }, [route.fileId, route.folderId, route.view])
   if (route.view === 'doc' && route.fileId) {
     return (
       <ReaderShell docActions={<DocActions fileId={route.fileId} />}>

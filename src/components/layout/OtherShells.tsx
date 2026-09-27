@@ -77,7 +77,7 @@ export function CommandsShell({ children }: { children: ReactNode }) {
       <header className="top">
         <button className="ws" onClick={() => ui.open({ kind: 'account' })}>
           <Avatar />
-          {account.name}
+          <span className="lbl">{account.name}</span>
           <Icon name="chev" />
         </button>
         <button className="ibtn" onClick={() => navigate(-1)} aria-label="Voltar">
@@ -96,7 +96,7 @@ export function CommandsShell({ children }: { children: ReactNode }) {
         </button>
         <button className="btn primary" onClick={() => ui.open({ kind: 'new', folderId: view === 'folder' ? folderId : doc?.folderId })}>
           <Icon name="plus" />
-          Novo
+          <span className="lbl">Novo</span>
         </button>
       </header>
       {children}

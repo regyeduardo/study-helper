@@ -11,6 +11,7 @@ import { newId, nowIso } from '@/lib/ids'
 import { paths } from '@/lib/paths'
 import { downloadStoredSource, removeStoredSource, sourceExpired } from '@/lib/storage/source-storage'
 import { ENGINES } from '@/lib/transcription'
+import { isNarrowScreen } from '@/hooks/use-is-narrow'
 import { useDocumentStore } from '@/stores/document'
 import { useLibraryStore } from '@/stores/library'
 import { type InspectorTab, useUiStore } from '@/stores/ui'
@@ -412,7 +413,7 @@ function TagEditor({ meta }: { meta: FileMeta }) {
   )
 }
 
-export function InspectorTabs({ tab, onTab }: { tab: InspectorTab; onTab(tab: InspectorTab): void }) {
+export function InspectorTabs({ tab, onTab, onClose }: { tab: InspectorTab; onTab(tab: InspectorTab): void; onClose?: () => void }) {
   return (
     <div className="insp-tabs" role="tablist">
       {(
@@ -426,6 +427,11 @@ export function InspectorTabs({ tab, onTab }: { tab: InspectorTab; onTab(tab: In
           {label}
         </button>
       ))}
+      {onClose && (
+        <button className="ibtn insp-close" onClick={onClose} aria-label="Fechar o painel">
+          <Icon name="x" />
+        </button>
+      )}
     </div>
   )
 }
@@ -441,9 +447,9 @@ export function Inspector({ fileId }: { fileId: string }) {
   const set = useUiStore(state => state.set)
   return (
     <>
-      <InspectorTabs tab={tab} onTab={next => set({ inspectorTab: next })} />
+      <InspectorTabs tab={tab} onTab={next => set({ inspectorTab: next })} onClose={() => set({ rightOpen: false })} />
       <div className="insp-body">
-        <InspectorBody fileId={fileId} tab={tab} />
+        <InspectorBody fileId={fileId} tab={tab} onPick={() => isNarrowScreen() && set({ rightOpen: false })} />
       </div>
     </>
   )
