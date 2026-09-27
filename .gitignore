@@ -18,3 +18,10 @@ CLAUDE.md
 skills-lock.json
 .agents/**
 docs/*
+/backend/
+/e2e/
+/scripts/
+/compose.test.yml
+/Docker/Api.Dockerfile
+/Docker/Browser.Dockerfile
+/.env keep

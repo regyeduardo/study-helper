@@ -1,7 +1,0 @@
-services:
-  api:
-    environment:
-      TEST_MODE: "true"
-      DATABASE_URL: "sqlite:////data/study-helper-test.db"
-    ports:
-      - "8000:8000"

@@ -1,7 +1,0 @@
-A fotossíntese é o processo pelo qual plantas, algas e algumas bactérias convertem energia luminosa em energia química. Esse fenômeno ocorre principalmente nos cloroplastos das células vegetais, onde a clorofila absorve a luz solar. O processo divide-se em duas etapas principais: a fase clara (fotoquímica) e a fase escura (ciclo de Calvin).
-
-Na fase clara, a luz solar é capturada pela clorofila e outros pigmentos fotossintéticos, gerando ATP e NADPH, além de liberar oxigênio como subproduto a partir da quebra de moléculas de água. Essa etapa ocorre nas membranas dos tilacoides dentro dos cloroplastos.
-
-Na fase escura, também conhecida como ciclo de Calvin, o dióxido de carbono atmosférico é fixado e convertido em glicose utilizando a energia armazenada no ATP e no NADPH produzidos na fase anterior. Esse ciclo ocorre no estroma dos cloroplastos e não depende diretamente da luz, embora utilize os produtos gerados na fase clara.
-
-A fotossíntese é fundamental para a vida na Terra, pois é a principal responsável pela produção de oxigênio atmosférico e pela base da cadeia alimentar. Compreender seus mecanismos é essencial para áreas como agricultura, biotecnologia e estudos ambientais, especialmente no contexto das mudanças climáticas e da busca por fontes sustentáveis de energia.

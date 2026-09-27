@@ -3,12 +3,12 @@ FROM node:20-alpine
 WORKDIR /app
 
 # Copia apenas os arquivos de dependência para cache eficiente
-COPY frontend/web/package.json frontend/web/package-lock.json ./
+COPY package.json package-lock.json ./
 RUN npm ci
 
 # Cópia do restante dos arquivos (source, config, etc.)
-COPY frontend/web/ .
+COPY . .
 
-EXPOSE 5173
+EXPOSE 5180
 
 CMD ["npx", "vite", "--host", "0.0.0.0"]

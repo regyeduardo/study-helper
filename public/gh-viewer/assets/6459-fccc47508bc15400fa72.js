@@ -1,0 +1,2 @@
+"use strict";(self.webpackChunk=self.webpackChunk||[]).push([[6459],{6459(e,t,n){n.d(t,{diagram:()=>a});var r=n(6506),s=(n(4918),n(6755),n(1672),n(841),n(9417),n(338),n(8771),n(6853),n(717),n(9515),n(4505),n(9793),n(3287),n(2505),n(6535),n(1293),(0,n(6827).K)(e=>`${(0,r.tM)(e)}\n  .swimlane.cluster rect {\n    stroke: ${e.clusterBorder} !important;\n  }\n  [data-look="neo"].cluster rect {\n    filter: none;\n  }\n`,"getStyles")),a=(0,r.ur)({defaultLayout:"swimlane",styles:s})}}]);
+//# sourceMappingURL=6459-fccc47508bc15400fa72.js.map
