@@ -26,6 +26,33 @@ interface GithubMarkdownViewProps {
   onSelection?: (selection: ReaderSelection | null) => void
   onQuoteClick?: (targetId: string) => void
   onHeadings?: (headings: { id: string; level: number; text: string }[]) => void
+  onHeading?: (heading: ReaderSelection | null) => void
+}
+
+const HEADINGS = 'h1, h2, h3, h4, h5, h6'
+const TOUCH_SELECTION_DELAY_MS = 350
+
+function blockOf(node: Element): Element {
+  return node.closest('.markdown-heading') ?? node
+}
+
+function headingLevel(block: Element): number | null {
+  const heading = block.matches(HEADINGS) ? block : block.querySelector(HEADINGS)
+  return heading ? Number(heading.tagName[1]) : null
+}
+
+function sectionText(heading: Element): string {
+  const level = Number(heading.tagName[1])
+  const parts = [heading.textContent?.trim() ?? '']
+  let node = blockOf(heading).nextElementSibling
+  while (node) {
+    const other = headingLevel(node)
+    if (other !== null && other <= level) break
+    const text = node.textContent?.trim()
+    if (text) parts.push(text)
+    node = node.nextElementSibling
+  }
+  return parts.join('\n\n')
 }
 
 let sheetsPromise: Promise<string[]> | null = null
@@ -93,7 +120,7 @@ function markQuote(container: HTMLElement, quote: PaintedQuote): void {
   }
 }
 
-export default function GithubMarkdownView({ markdown, live = false, quotes = [], onSelection, onQuoteClick, onHeadings }: GithubMarkdownViewProps) {
+export default function GithubMarkdownView({ markdown, live = false, quotes = [], onSelection, onQuoteClick, onHeadings, onHeading }: GithubMarkdownViewProps) {
   const githubToken = useLibraryStore(state => state.index.settings.githubToken)
   const [html, setHtml] = useState('')
   const [error, setError] = useState('')
@@ -167,19 +194,39 @@ export default function GithubMarkdownView({ markdown, live = false, quotes = []
       }
       onSelection({ text, rect: selection.getRangeAt(0).getBoundingClientRect() })
     }
+    const headingAt = (event: Event) => {
+      const target = event.composedPath()[0] as Element | undefined
+      return target?.closest?.(HEADINGS) ?? null
+    }
+    const pointHeading = (event: Event) => {
+      const heading = headingAt(event)
+      if (heading) onHeading?.({ text: sectionText(heading), rect: heading.getBoundingClientRect() })
+    }
     const click = (event: Event) => {
       const mark = (event.target as HTMLElement).closest?.('mark[data-target]') as HTMLElement | null
       if (mark?.dataset.target) onQuoteClick?.(mark.dataset.target)
+      pointHeading(event)
     }
+    let pending = 0
+    const touchSelection = () => {
+      window.clearTimeout(pending)
+      pending = window.setTimeout(report, TOUCH_SELECTION_DELAY_MS)
+    }
+    const touch = window.matchMedia('(pointer: coarse)').matches
     root.addEventListener('mouseup', report)
     root.addEventListener('keyup', report)
     root.addEventListener('click', click)
+    root.addEventListener('pointerover', pointHeading)
+    if (touch) document.addEventListener('selectionchange', touchSelection)
     return () => {
+      window.clearTimeout(pending)
       root.removeEventListener('mouseup', report)
       root.removeEventListener('keyup', report)
       root.removeEventListener('click', click)
+      root.removeEventListener('pointerover', pointHeading)
+      document.removeEventListener('selectionchange', touchSelection)
     }
-  }, [onSelection, onQuoteClick, painted])
+  }, [onSelection, onQuoteClick, onHeading, painted])
 
   return (
     <>

@@ -190,6 +190,7 @@ export const useJobsStore = create<JobsState>((set, get) => {
         description: request.description.trim() || resolved.description,
         folderId: request.folderId,
         status: agent === 'reading' ? 'ready' : 'generating',
+        pendingExcerpt: agent === 'reading' ? null : resolved.content,
         origin: resolved.origin,
       },
       agent === 'reading' ? resolved.content.replace(/^# Conteúdo\n\n/, '') : '',

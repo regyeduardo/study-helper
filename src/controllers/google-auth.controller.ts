@@ -6,6 +6,7 @@ const SCOPES = `${DRIVE_SCOPE} openid email profile`
 export interface GoogleToken {
   accessToken: string
   expiresAt: number
+  refreshToken?: string
 }
 
 export interface GoogleProfile {
@@ -27,6 +28,26 @@ interface TokenClient {
   requestAccessToken(options?: { prompt?: string; login_hint?: string }): void
 }
 
+interface CodeResponse {
+  code?: string
+  scope?: string
+  error?: string
+  error_description?: string
+}
+
+interface CodeClient {
+  requestCode(): void
+}
+
+interface WorkerTokenResponse {
+  access_token?: string
+  expires_in?: number
+  refresh_token?: string
+  scope?: string
+  error?: string
+  error_description?: string
+}
+
 interface GoogleAccounts {
   oauth2: {
     initTokenClient(config: {
@@ -35,6 +56,15 @@ interface GoogleAccounts {
       callback: (response: TokenResponse) => void
       error_callback?: (error: { type?: string; message?: string }) => void
     }): TokenClient
+    initCodeClient(config: {
+      client_id: string
+      scope: string
+      ux_mode: 'popup'
+      select_account?: boolean
+      login_hint?: string
+      callback: (response: CodeResponse) => void
+      error_callback?: (error: { type?: string; message?: string }) => void
+    }): CodeClient
     revoke(token: string, done?: () => void): void
   }
 }
@@ -46,6 +76,8 @@ declare global {
 }
 
 export class GoogleAuthError extends Error {}
+
+export class GoogleReconnectError extends GoogleAuthError {}
 
 let scriptLoading: Promise<GoogleAccounts> | null = null
 
@@ -71,6 +103,74 @@ export function isGoogleLoginConfigured(): boolean {
   return Boolean(env.googleClientId)
 }
 
+export function isDurableLoginConfigured(): boolean {
+  return Boolean(env.authWorkerUrl)
+}
+
+function popupMessage(error: { type?: string; message?: string }): string {
+  if (error.type === 'popup_closed') return 'A janela do Google foi fechada.'
+  if (error.type === 'popup_failed_to_open') return 'O navegador bloqueou a janela do Google. Libere as janelas deste site e tente de novo.'
+  return error.message ?? 'O login do Google falhou.'
+}
+
+function checkDriveScope(scope: string | undefined): void {
+  if (scope && !scope.split(' ').includes(DRIVE_SCOPE)) {
+    throw new GoogleAuthError('Na tela do Google, marque a caixa que dá acesso ao Google Drive; sem ela o app não tem onde guardar.')
+  }
+}
+
+async function callAuthWorker(path: '/token' | '/refresh', payload: Record<string, string>): Promise<WorkerTokenResponse> {
+  let response: Response
+  try {
+    response = await fetch(`${env.authWorkerUrl}${path}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    })
+  } catch {
+    throw new GoogleAuthError('Não consegui falar com o serviço de login. Confira a internet.')
+  }
+  return (await response.json().catch(() => ({}))) as WorkerTokenResponse
+}
+
+function tokenFromWorker(body: WorkerTokenResponse): GoogleToken {
+  return {
+    accessToken: body.access_token!,
+    expiresAt: Date.now() + (body.expires_in ?? 3600) * 1000,
+    refreshToken: body.refresh_token,
+  }
+}
+
+export async function requestGoogleCodeController(options: { selectAccount: boolean; loginHint?: string }): Promise<GoogleToken> {
+  if (!env.googleClientId) throw new GoogleAuthError('O login do Google não está configurado neste app (falta VITE_GOOGLE_CLIENT_ID).')
+  const accounts = await loadAccounts()
+  const code = await new Promise<CodeResponse>((resolve, reject) => {
+    const client = accounts.oauth2.initCodeClient({
+      client_id: env.googleClientId,
+      scope: SCOPES,
+      ux_mode: 'popup',
+      select_account: options.selectAccount,
+      login_hint: options.loginHint,
+      callback: resolve,
+      error_callback: error => reject(new GoogleAuthError(popupMessage(error))),
+    })
+    client.requestCode()
+  })
+  if (code.error || !code.code) throw new GoogleAuthError(code.error_description || 'O Google não liberou o acesso.')
+  checkDriveScope(code.scope)
+  const body = await callAuthWorker('/token', { code: code.code })
+  if (!body.access_token) throw new GoogleAuthError(body.error_description || 'O Google recusou o login. Tente de novo.')
+  checkDriveScope(body.scope)
+  return tokenFromWorker(body)
+}
+
+export async function refreshGoogleTokenController(refreshToken: string): Promise<GoogleToken> {
+  const body = await callAuthWorker('/refresh', { refresh_token: refreshToken })
+  if (body.error === 'invalid_grant') throw new GoogleReconnectError('O Google pediu pra você entrar de novo.')
+  if (!body.access_token) throw new GoogleAuthError('Não consegui renovar o acesso ao Google. Tente de novo em instantes.')
+  return { ...tokenFromWorker(body), refreshToken: body.refresh_token ?? refreshToken }
+}
+
 export async function requestGoogleTokenController(options: { prompt: '' | 'consent' | 'select_account'; loginHint?: string }): Promise<GoogleToken> {
   if (!env.googleClientId) throw new GoogleAuthError('O login do Google não está configurado neste app (falta VITE_GOOGLE_CLIENT_ID).')
   const accounts = await loadAccounts()
@@ -89,7 +189,7 @@ export async function requestGoogleTokenController(options: { prompt: '' | 'cons
         }
         resolve({ accessToken: response.access_token, expiresAt: Date.now() + (response.expires_in ?? 3600) * 1000 })
       },
-      error_callback: error => reject(new GoogleAuthError(error.type === 'popup_closed' ? 'A janela do Google foi fechada.' : (error.message ?? 'O login do Google falhou.'))),
+      error_callback: error => reject(new GoogleAuthError(popupMessage(error))),
     })
     client.requestAccessToken({ prompt: options.prompt, login_hint: options.loginHint })
   })

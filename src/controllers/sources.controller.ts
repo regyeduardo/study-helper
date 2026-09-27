@@ -5,7 +5,20 @@ const YOUTUBE_TRANSCRIPT = 'https://youtube-transcript.ai/transcript/'
 const GEMINI_API = 'https://generativelanguage.googleapis.com/v1beta/models'
 const GEMINI_VIDEO_MODEL = 'gemini-flash-latest'
 
+const JINA_HEADERS = {
+  Accept: 'text/plain',
+  'X-Respond-With': 'markdown',
+  'X-Retain-Images': 'none',
+  'X-Remove-Selector': 'header, footer, nav, aside, [role=navigation], [role=banner], [role=contentinfo], .noprint',
+}
+
 export class SourceError extends Error {}
+
+interface CaptionTrack {
+  code: string
+  language: string
+  auto: boolean
+}
 
 export interface FetchedSource {
   title: string
@@ -37,7 +50,7 @@ export function cleanTranscript(raw: string): string {
 export async function fetchWebPageController(url: string, signal?: AbortSignal): Promise<FetchedSource> {
   let response: Response
   try {
-    response = await fetch(`${JINA_READER}${url.trim()}`, { headers: { Accept: 'text/plain' }, signal })
+    response = await fetch(`${JINA_READER}${url.trim()}`, { headers: JINA_HEADERS, signal })
   } catch {
     throw new SourceError('Não consegui ler o site agora (o leitor Jina não respondeu).')
   }
@@ -69,9 +82,51 @@ async function youtubeTitle(url: string, signal?: AbortSignal): Promise<string> 
   return 'Vídeo do YouTube'
 }
 
-export async function fetchYoutubeTranscriptController(url: string, language: string, signal?: AbortSignal): Promise<FetchedSource> {
-  const id = youtubeId(url)
-  if (!id) throw new SourceError('Esse link não parece ser de um vídeo do YouTube.')
+function baseLanguage(code: string): string {
+  return code.replace(/^a-/, '').split('-')[0].toLowerCase()
+}
+
+function captionTracks(body: string): { current: CaptionTrack | null; all: CaptionTrack[] } {
+  const header = /^Language:\s*([\w-]+)(\s*\(auto-generated\))?/m.exec(body)
+  const current = header ? { code: header[1], language: header[1], auto: Boolean(header[2]) } : null
+  const others = [...(/^Other available languages:\s*(.+)$/m.exec(body)?.[1] ?? '').matchAll(/([\w-]+)\s*\(([\w-]+)\)(\s*\[auto\])?/g)].map(match => ({
+    code: match[1],
+    language: match[2],
+    auto: Boolean(match[3]) || match[1].startsWith('a-'),
+  }))
+  return { current, all: current ? [current, ...others] : others }
+}
+
+function bestTrack(body: string, language: string): CaptionTrack | null {
+  const { current, all } = captionTracks(body)
+  const spoken = language ? baseLanguage(language) : baseLanguage(all.find(track => track.auto)?.language ?? current?.language ?? '')
+  const matching = all.filter(track => baseLanguage(track.language) === spoken)
+  return matching.find(track => !track.auto) ?? matching[0] ?? null
+}
+
+function transcriptBody(body: string): string {
+  const marker = body.indexOf('## Transcript')
+  return marker >= 0 ? body.slice(marker + '## Transcript'.length) : body
+}
+
+export function collapseRepeats(line: string): string {
+  const words = line.split(/\s+/).filter(Boolean)
+  const kept: string[] = []
+  for (const word of words) {
+    kept.push(word)
+    for (let size = Math.min(12, Math.floor(kept.length / 2)); size >= 3; size--) {
+      const tail = kept.slice(-size).join(' ').toLowerCase()
+      const before = kept.slice(-2 * size, -size).join(' ').toLowerCase()
+      if (tail === before) {
+        kept.splice(-size, size)
+        break
+      }
+    }
+  }
+  return kept.join(' ')
+}
+
+async function fetchCaption(id: string, language: string, signal?: AbortSignal): Promise<string> {
   const query = language ? `?lang=${encodeURIComponent(language)}` : ''
   let response: Response
   try {
@@ -82,7 +137,18 @@ export async function fetchYoutubeTranscriptController(url: string, language: st
   if (response.status === 404) throw new SourceError('Esse vídeo não tem legenda que dê pra ler pelo youtube-transcript.ai.')
   if (response.status === 429) throw new SourceError('O youtube-transcript.ai pediu pra esperar (uso justo). Tente em alguns minutos ou use o Gemini.')
   if (!response.ok) throw new SourceError(`O youtube-transcript.ai recusou (${response.status}).`)
-  const content = cleanTranscript(await response.text())
+  return response.text()
+}
+
+export async function fetchYoutubeTranscriptController(url: string, language: string, signal?: AbortSignal): Promise<FetchedSource> {
+  const id = youtubeId(url)
+  if (!id) throw new SourceError('Esse link não parece ser de um vídeo do YouTube.')
+  let body = await fetchCaption(id, language, signal)
+  const best = bestTrack(body, language)
+  const current = captionTracks(body).current
+  if (best && (best.code !== current?.code || best.auto !== current?.auto)) body = await fetchCaption(id, best.code, signal)
+  const auto = captionTracks(body).current?.auto ?? false
+  const content = cleanTranscript(auto ? transcriptBody(body).split('\n').map(collapseRepeats).join('\n') : transcriptBody(body))
   if (!content) throw new SourceError('A legenda veio vazia.')
   return { title: await youtubeTitle(url, signal), content }
 }

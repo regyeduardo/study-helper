@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { Certainty, Question, StoredQuestion, UserAnswer } from '@/types/domain'
 import { Dialog } from '@/components/ui/Dialog'
 import { Icon } from '@/components/ui/Icon'
-import { CERTAINTY_LABELS, isAnswered, LETTERS, LEVEL_LABELS, questionFromStored, questionType, shuffleExam, storedAnswer, summarizeExam } from '@/lib/exam'
+import { CERTAINTY_LABELS, isAnswered, LETTERS, LEVEL_LABELS, questionFromStored, questionType, shuffleExam, statementLines, storedAnswer, summarizeExam } from '@/lib/exam'
 import { useJobsStore } from '@/stores/jobs'
 import { useLibraryStore } from '@/stores/library'
 import { useUiStore } from '@/stores/ui'
@@ -20,6 +20,18 @@ const KIND_LABEL: Record<string, string> = {
 
 function Markdown({ text }: { text: string }) {
   return <span dangerouslySetInnerHTML={{ __html: marked.parseInline(text, { async: false }) as string }} />
+}
+
+function RichText({ text }: { text: string }) {
+  return <div className="rich" dangerouslySetInnerHTML={{ __html: marked.parse(statementLines(text), { async: false, gfm: true, breaks: true }) as string }} />
+}
+
+function RightAnswer({ text }: { text: string }) {
+  return (
+    <span className="right-answer">
+      certo: <Markdown text={text} />
+    </span>
+  )
 }
 
 function Diagram({ code }: { code: string }) {
@@ -106,6 +118,7 @@ function Answer({ question, answer, onAnswer, revealed }: { question: Question; 
             <span>
               <Markdown text={step} />
             </span>
+            {revealed && question.passos?.[index] !== step && <span className="right-answer">posição certa: {(question.passos?.indexOf(step) ?? -1) + 1}</span>}
             {!revealed && (
               <>
                 <button className="ibtn" style={{ width: 24, height: 24 }} onClick={() => move(index, index - 1)} aria-label={`Subir o passo ${index + 1}`} disabled={index === 0}>
@@ -133,7 +146,7 @@ function Answer({ question, answer, onAnswer, revealed }: { question: Question; 
     return (
       <div style={{ display: 'grid', gap: 6 }}>
         {pairs.map((pair, index) => (
-          <label key={pair.esquerda} className="match">
+          <label key={pair.esquerda} className={`match ${revealed ? (chosen[index] === pair.direita ? 'right' : 'wrong') : ''}`}>
             <span>
               <Markdown text={pair.esquerda} />
             </span>
@@ -145,6 +158,7 @@ function Answer({ question, answer, onAnswer, revealed }: { question: Question; 
                 </option>
               ))}
             </select>
+            {revealed && chosen[index] !== pair.direita && <RightAnswer text={pair.direita} />}
           </label>
         ))}
       </div>
@@ -161,14 +175,17 @@ function Answer({ question, answer, onAnswer, revealed }: { question: Question; 
         const gap = gaps[index]
         if (!gap) return null
         return (
-          <select key={position} aria-label={`Lacuna ${part}`} className="input" style={{ width: 'auto', display: 'inline-block', margin: '0 4px' }} disabled={revealed} value={chosen[index]} onChange={event => onAnswer(chosen.map((value, place) => (place === index ? event.target.value : value)))}>
-            <option value="">[{part}] escolha…</option>
-            {gap.opcoes.map(option => (
-              <option key={option} value={option}>
-                {option}
-              </option>
-            ))}
-          </select>
+          <span key={position} className="gap">
+            <select aria-label={`Lacuna ${part}`} className={`input ${revealed ? (chosen[index] === gap.correta ? 'right' : 'wrong') : ''}`} style={{ width: 'auto', display: 'inline-block', margin: '0 4px' }} disabled={revealed} value={chosen[index]} onChange={event => onAnswer(chosen.map((value, place) => (place === index ? event.target.value : value)))}>
+              <option value="">[{part}] escolha…</option>
+              {gap.opcoes.map(option => (
+                <option key={option} value={option}>
+                  {option}
+                </option>
+              ))}
+            </select>
+            {revealed && chosen[index] !== gap.correta && <RightAnswer text={gap.correta} />}
+          </span>
         )
       })}
     </div>
@@ -283,7 +300,7 @@ function ExamRun({ title, questions, sourceOf, onRetryWrong, onRegenerate }: Exa
             <div key={question.id} className="q">
               <div className="qh">
                 <b>{index + 1}</b>
-                <p>{questionType(question) === 'lacuna' ? 'Complete as lacunas.' : <Markdown text={question.enunciado} />}</p>
+                {questionType(question) === 'lacuna' ? <p>Complete as lacunas.</p> : <RichText text={question.enunciado} />}
               </div>
               <div className="qk">
                 {KIND_LABEL[questionType(question)]}
@@ -310,7 +327,7 @@ function ExamRun({ title, questions, sourceOf, onRetryWrong, onRegenerate }: Exa
                     </div>
                   )}
                   <div className={`expl ${score === 1 ? 'ok' : ''}`}>
-                    <Markdown text={question.explicacao} />
+                    <RichText text={question.explicacao} />
                   </div>
                 </>
               )}

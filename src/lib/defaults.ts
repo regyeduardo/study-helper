@@ -7,7 +7,7 @@ export const DEFAULT_STORAGE_LIMIT_BYTES = 1024 * 1024 * 1024
 export function defaultSettings(): Settings {
   return {
     ai: { provider: 'llm7', baseUrl: '', apiKey: '', model: '' },
-    transcription: { engine: 'whisper', groqApiKey: '', language: '', separateSpeakers: true },
+    transcription: { engine: 'whisper', groqApiKey: '', language: 'pt', separateSpeakers: true },
     youtube: { reader: 'youtube-transcript', geminiApiKey: '' },
     timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/Sao_Paulo',
     githubToken: '',

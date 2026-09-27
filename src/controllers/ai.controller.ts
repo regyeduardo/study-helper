@@ -1,5 +1,5 @@
 import type { AiSettings } from '@/types/domain'
-import { baseUrlOf, minIntervalOf, missingSetup, modelOf, providerOf } from '@/lib/ai/providers'
+import { baseUrlOf, missingSetup, modelOf, oneAtATimeOf, providerOf } from '@/lib/ai/providers'
 
 export const MAX_TOKENS = 16384
 export const LONG_REPLY_MAX_TOKENS = 32768
@@ -26,7 +26,7 @@ export class Cancelled extends Error {
   }
 }
 
-const nextSlot = new Map<string, number>()
+const inFlight = new Map<string, Promise<unknown>>()
 
 function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -39,14 +39,16 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   })
 }
 
-async function waitTurn(settings: AiSettings, signal?: AbortSignal): Promise<void> {
-  const interval = minIntervalOf(settings)
-  if (!interval) return
+async function oneAtATime<T>(settings: AiSettings, task: () => Promise<T>): Promise<T> {
+  if (!oneAtATimeOf(settings)) return task()
   const key = `${settings.provider}|${baseUrlOf(settings)}`
-  const now = Date.now()
-  const slot = Math.max(now, nextSlot.get(key) ?? now)
-  nextSlot.set(key, slot + interval)
-  if (slot > now) await sleep(slot - now, signal)
+  const current = (inFlight.get(key) ?? Promise.resolve()).catch(() => undefined).then(task)
+  inFlight.set(key, current)
+  try {
+    return await current
+  } finally {
+    if (inFlight.get(key) === current) inFlight.delete(key)
+  }
 }
 
 function retryDelay(response: Response, attempt: number): number {
@@ -200,9 +202,6 @@ async function openAiChat(settings: AiSettings, content: string, systemPrompt: s
     }
     if (!response.ok) {
       const detail = await errorText(response)
-      if (settings.provider === 'pollinations' && !settings.apiKey && /turnstile/i.test(detail)) {
-        throw new AiError('A Pollinations sem chave passou a pedir verificação anti-robô para pedidos do navegador. Use a LLM7 (também sem chave) ou ponha uma chave da Pollinations nas Configurações.')
-      }
       throw new AiError(`A IA (${providerOf(settings.provider).name}) recusou o pedido (${response.status}): ${detail}`)
     }
 
@@ -232,10 +231,11 @@ export async function chatController(
 ): Promise<ChatReply> {
   const problem = missingSetup(settings)
   if (problem) throw new AiError(problem)
-  await waitTurn(settings, signal)
-  return providerOf(settings.provider).format === 'anthropic'
-    ? anthropicChat(settings, content, systemPrompt, maxTokens, signal)
-    : openAiChat(settings, content, systemPrompt, maxTokens, signal)
+  return oneAtATime(settings, () =>
+    providerOf(settings.provider).format === 'anthropic'
+      ? anthropicChat(settings, content, systemPrompt, maxTokens, signal)
+      : openAiChat(settings, content, systemPrompt, maxTokens, signal),
+  )
 }
 
 export async function listModelsController(settings: AiSettings): Promise<string[]> {
@@ -243,13 +243,6 @@ export async function listModelsController(settings: AiSettings): Promise<string
   const base = baseUrlOf(settings)
   if (!base) throw new AiError('Informe a URL base.')
   if (provider.needsKey && !settings.apiKey) throw new AiError('Falta a chave.')
-
-  if (provider.id === 'pollinations' && !settings.apiKey) {
-    const response = await send(settings, 'https://text.pollinations.ai/models', {})
-    if (!response.ok) throw new AiError(`Pollinations não respondeu (${response.status}).`)
-    const body = (await response.json()) as ({ name?: string } | string)[]
-    return body.map(item => (typeof item === 'string' ? item : (item.name ?? ''))).filter(Boolean)
-  }
 
   const headers: Record<string, string> =
     provider.format === 'anthropic'

@@ -12,13 +12,13 @@ export interface ProviderInfo {
   needsKey: boolean
   free: boolean
   keylessModel?: string
-  keylessIntervalMs?: number
+  keylessOneAtATime?: boolean
   keyHelpUrl?: string
 }
 
 export const PROVIDERS: ProviderInfo[] = [
-  { id: 'pollinations', name: 'Pollinations', tag: 'sem chave', format: 'openai', baseUrl: 'https://text.pollinations.ai/openai', keyedBaseUrl: 'https://gen.pollinations.ai/v1', needsKey: false, free: true, keylessModel: 'openai-fast', keylessIntervalMs: 15000, keyHelpUrl: 'https://auth.pollinations.ai' },
-  { id: 'llm7', name: 'LLM7', tag: 'sem chave', format: 'openai', baseUrl: 'https://api.llm7.io/v1', needsKey: false, free: true, keylessModel: 'default', keyHelpUrl: 'https://token.llm7.io' },
+  { id: 'pollinations', name: 'Pollinations', tag: 'chave grátis', format: 'openai', baseUrl: 'https://gen.pollinations.ai/v1', needsKey: true, free: true, keyHelpUrl: 'https://auth.pollinations.ai' },
+  { id: 'llm7', name: 'LLM7', tag: 'sem chave', format: 'openai', baseUrl: 'https://api.llm7.io/v1', needsKey: false, free: true, keylessModel: 'default', keylessOneAtATime: true, keyHelpUrl: 'https://token.llm7.io' },
   { id: 'anthropic', name: 'Anthropic', tag: 'chave paga', format: 'anthropic', baseUrl: 'https://api.anthropic.com', needsKey: true, free: false, keyHelpUrl: 'https://console.anthropic.com/settings/keys' },
   { id: 'openai', name: 'OpenAI', tag: 'chave paga', format: 'openai', baseUrl: 'https://api.openai.com/v1', needsKey: true, free: false, keyHelpUrl: 'https://platform.openai.com/api-keys' },
   { id: 'gemini', name: 'Google Gemini', tag: 'chave grátis', format: 'openai', baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai', needsKey: true, free: true, keyHelpUrl: 'https://aistudio.google.com/apikey' },
@@ -45,9 +45,8 @@ export function modelOf(settings: AiSettings): string {
   return settings.model.trim() || (!settings.apiKey ? (providerOf(settings.provider).keylessModel ?? '') : '')
 }
 
-export function minIntervalOf(settings: AiSettings): number {
-  const provider = providerOf(settings.provider)
-  return !settings.apiKey ? (provider.keylessIntervalMs ?? 0) : 0
+export function oneAtATimeOf(settings: AiSettings): boolean {
+  return !settings.apiKey && Boolean(providerOf(settings.provider).keylessOneAtATime)
 }
 
 export function isFreeChoice(settings: AiSettings): boolean {

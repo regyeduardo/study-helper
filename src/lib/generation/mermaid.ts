@@ -16,7 +16,7 @@ const FLOWCHART_SHAPES: Record<string, [string, string]> = {
 
 const LINK_STYLES: Record<string, string> = { dotted: '-.->', thick: '==>', invisible: '~~~' }
 
-const SEQUENCE_ARROWS: Record<string, string> = { solid: '->>', dashed: '-->>', dotted: '-x', async: '->)' }
+const SEQUENCE_ARROWS: Record<string, string> = { solid: '->>', dashed: '-->>', dotted: '-x', async: '-)' }
 
 const CLASS_RELATIONS: Record<string, string> = {
   inheritance: '--|>',

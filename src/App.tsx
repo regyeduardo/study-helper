@@ -43,21 +43,41 @@ export default function App() {
   const tokenFor = useAccountStore(state => state.tokenFor)
   const { ready, loadError, connect } = useLibraryStore()
   const reauthorize = useAccountStore(state => state.reauthorize)
+  const reconnectId = useAccountStore(state => state.reconnectId)
+  const reconnectMessage = useAccountStore(state => state.reconnectMessage)
   const [reauthError, setReauthError] = useState<string | null>(null)
+  const [reconnecting, setReconnecting] = useState(false)
   const startSync = useSyncStore(state => state.start)
   const stopSync = useSyncStore(state => state.stop)
   useShortcuts()
 
+  const tokenProvider = account.kind === 'google' ? (options?: { force?: boolean }) => tokenFor(account.id, options) : undefined
+  const needsReconnect = account.kind === 'google' && reconnectId === account.id
+
   useEffect(() => {
     let current = true
     stopSync()
-    void connect(account.id, account.kind === 'google' ? () => tokenFor(account.id) : undefined).then(() => {
+    void connect(account.id, tokenProvider).then(() => {
       if (current) startSync()
     })
     return () => {
       current = false
     }
   }, [account.id])
+
+  const reconnect = async () => {
+    setReauthError(null)
+    setReconnecting(true)
+    try {
+      await reauthorize(account.id)
+      if (useLibraryStore.getState().loadError) await connect(account.id, tokenProvider)
+      startSync()
+    } catch (error) {
+      setReauthError(error instanceof Error ? error.message : 'O login falhou.')
+    } finally {
+      setReconnecting(false)
+    }
+  }
 
   return (
     <div className="app-root">
@@ -67,23 +87,17 @@ export default function App() {
             <h1>Não consegui abrir a biblioteca</h1>
             <p className="muted">{loadError}</p>
             {reauthError && <p style={{ color: 'var(--bad)' }}>{reauthError}</p>}
-            <button className="btn primary" onClick={() => void connect(account.id, account.kind === 'google' ? () => tokenFor(account.id) : undefined).then(startSync)}>
-              Tentar de novo
-            </button>
-            {account.kind === 'google' && (
-              <button
-                className="btn"
-                onClick={async () => {
-                  setReauthError(null)
-                  try {
-                    await reauthorize(account.id)
-                    await connect(account.id, () => tokenFor(account.id))
-                    startSync()
-                  } catch (error) {
-                    setReauthError(error instanceof Error ? error.message : 'O login falhou.')
-                  }
-                }}
-              >
+            {needsReconnect ? (
+              <button className="btn primary" disabled={reconnecting} onClick={() => void reconnect()}>
+                Reconectar
+              </button>
+            ) : (
+              <button className="btn primary" onClick={() => void connect(account.id, tokenProvider).then(startSync)}>
+                Tentar de novo
+              </button>
+            )}
+            {account.kind === 'google' && !needsReconnect && (
+              <button className="btn" disabled={reconnecting} onClick={() => void reconnect()}>
                 Entrar de novo no Google
               </button>
             )}
@@ -92,7 +106,17 @@ export default function App() {
             </button>
           </div>
         ) : (
-          <Outlet />
+          <>
+            {needsReconnect && (
+              <div className="reconnect-bar" role="alert">
+                <span>{reauthError ?? reconnectMessage}</span>
+                <button className="btn primary" disabled={reconnecting} onClick={() => void reconnect()}>
+                  Reconectar
+                </button>
+              </div>
+            )}
+            <Outlet />
+          </>
         )
       ) : (
         <div className="welcome" role="status">

@@ -515,8 +515,9 @@ textarea.input{resize:vertical;min-height:62px}
   .c3 .peek{position:absolute;inset:0;width:100%;z-index:12}
   .c3 .cmdk{min-width:0;flex:1}
   .c3 .cmdk span.t{display:none}
-  .set-grid{grid-template-columns:1fr}
+  .set-grid{grid-template-columns:1fr;grid-template-rows:auto minmax(0,1fr)}
   .set-nav{border-right:0;border-bottom:1px solid var(--border-muted);display:flex;overflow-x:auto}
+  .set-nav button{flex:none;white-space:nowrap}
   .diff .side{grid-template-columns:1fr}
   .diff .side>div+div{border-left:0;border-top:1px solid var(--border-muted)}
   .c4 .top{gap:8px;padding:0 12px}
@@ -608,3 +609,27 @@ textarea.input{resize:vertical;min-height:62px}
   .c4 .dock{bottom:10px}
   .c4 .dock button{padding:7px 9px}
 }
+.reconnect-bar{position:fixed;top:10px;left:16px;right:16px;margin:0 auto;width:fit-content;z-index:80;display:flex;align-items:center;gap:10px;padding:8px 8px 8px 14px;border-radius:10px;background:var(--warn-soft);border:1px solid var(--border);box-shadow:var(--shadow);font-size:13px;color:var(--fg)}
+.reconnect-bar span{flex:1;min-width:0}
+.reconnect-bar .btn{flex:none}
+.q .qh .rich{font-size:14.5px;font-weight:500;line-height:1.45;min-width:0;flex:1}
+.q .rich p{margin:0 0 6px}
+.q .rich p:last-child{margin-bottom:0}
+.q .rich ol,.q .rich ul{margin:4px 0;padding-left:20px}
+.q .rich table{border-collapse:collapse;margin:6px 0;font-size:13px;font-weight:400;display:block;overflow-x:auto;max-width:100%}
+.q .rich th,.q .rich td{border:1px solid var(--border);padding:4px 8px;text-align:left}
+.q .rich th{background:var(--bg-subtle);font-weight:600}
+.q .rich code{font-size:12.5px;background:var(--bg-subtle);padding:1px 4px;border-radius:4px}
+.q .expl .rich{font-size:13px;font-weight:400}
+.order div.right{border-color:var(--ok);background:var(--ok-soft)}
+.order div.wrong{border-color:var(--bad);background:var(--bad-soft)}
+.match.right select{border-color:var(--ok);background:var(--ok-soft)}
+.match.wrong select{border-color:var(--bad);background:var(--bad-soft)}
+.gap select.right{border-color:var(--ok);background:var(--ok-soft)}
+.gap select.wrong{border-color:var(--bad);background:var(--bad-soft)}
+.right-answer{font-size:12px;color:var(--ok);white-space:nowrap}
+.match .right-answer{grid-column:2}
+.heading-explain{position:fixed;z-index:59;width:30px;height:30px;display:grid;place-items:center;border-radius:8px;background:var(--bg);color:var(--accent);border:1px solid var(--border);box-shadow:var(--shadow)}
+.heading-explain:hover{background:var(--accent-soft)}
+.order div > span:first-child{flex:none;min-width:14px}
+.order div > .right-answer{flex:none}

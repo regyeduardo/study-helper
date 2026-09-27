@@ -2,7 +2,7 @@ import { env } from '@/lib/env'
 
 export const FOLDER_MIME = 'application/vnd.google-apps.folder'
 
-export type TokenProvider = () => Promise<string>
+export type TokenProvider = (options?: { force?: boolean }) => Promise<string>
 
 export interface DriveFile {
   id: string
@@ -31,11 +31,16 @@ export class DriveError extends Error {
   }
 }
 
-async function call(token: TokenProvider, path: string, init: RequestInit = {}): Promise<Response> {
-  const response = await fetch(`${env.googleApiBase}${path}`, {
+async function send(accessToken: string, path: string, init: RequestInit): Promise<Response> {
+  return fetch(`${env.googleApiBase}${path}`, {
     ...init,
-    headers: { Authorization: `Bearer ${await token()}`, ...(init.headers ?? {}) },
+    headers: { Authorization: `Bearer ${accessToken}`, ...(init.headers ?? {}) },
   })
+}
+
+async function call(token: TokenProvider, path: string, init: RequestInit = {}): Promise<Response> {
+  let response = await send(await token(), path, init)
+  if (response.status === 401) response = await send(await token({ force: true }), path, init)
   if (!response.ok) {
     const text = await response.text().catch(() => '')
     throw new DriveError(response.status, driveMessage(response.status, text))

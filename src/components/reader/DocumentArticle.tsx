@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 
 import type { FileMeta, HighlightColor } from '@/types/domain'
@@ -106,6 +106,29 @@ function SelectionPopover({ fileId, selection, onDone }: SelectionPopoverProps) 
   )
 }
 
+function HeadingExplain({ fileId, heading, onDone }: { fileId: string; heading: ReaderSelection; onDone(): void }) {
+  const open = useUiStore(state => state.open)
+  useEffect(() => {
+    window.addEventListener('scroll', onDone, { capture: true, once: true })
+    return () => window.removeEventListener('scroll', onDone, { capture: true })
+  }, [heading, onDone])
+  return (
+    <button
+      className="heading-explain"
+      title="Explicar esta seção"
+      aria-label="Explicar esta seção"
+      style={{ top: heading.rect.top + heading.rect.height / 2 - 15, left: heading.rect.left >= 40 ? heading.rect.left - 36 : Math.min(window.innerWidth - 34, heading.rect.right - 30) }}
+      onMouseDown={event => event.preventDefault()}
+      onClick={() => {
+        open({ kind: 'explain', fileId, excerpt: heading.text })
+        onDone()
+      }}
+    >
+      <Icon name="bulb" />
+    </button>
+  )
+}
+
 export function DocumentBody({ fileId, compact = false }: { fileId: string; compact?: boolean }) {
   const { meta, opened, error } = useDocument(fileId)
   const live = useJobsStore(state => state.live[fileId])
@@ -118,6 +141,7 @@ export function DocumentBody({ fileId, compact = false }: { fileId: string; comp
   const ui = useUiStore()
   const navigate = useNavigate()
   const [selection, setSelection] = useState<ReaderSelection | null>(null)
+  const [heading, setHeading] = useState<ReaderSelection | null>(null)
 
   const quotes = useMemo<PaintedQuote[]>(() => {
     const painted: PaintedQuote[] = (opened?.sidecar.highlights ?? []).map(item => ({ quote: item.quote, color: item.color ?? 'yellow' }))
@@ -135,7 +159,7 @@ export function DocumentBody({ fileId, compact = false }: { fileId: string; comp
     <article className="article" style={compact ? { padding: 0 } : undefined}>
       <DocumentHead meta={meta} onInfo={showInfo} />
       {error && <div className="banner">{error}</div>}
-      {meta.status === 'pending' && !job && (
+      {meta.status !== 'ready' && !job && (
         <div className="empty" style={{ margin: '24px auto' }}>
           <Icon name="file" />
           <div>{courseOf(folders, meta.folderId) ? 'Esta aula ainda não foi escrita. O recorte do material já está guardado.' : 'A geração não terminou. O material ficou guardado para tentar de novo.'}</div>
@@ -156,11 +180,12 @@ export function DocumentBody({ fileId, compact = false }: { fileId: string; comp
       {live ? (
         <GithubMarkdownView markdown={live} live />
       ) : opened && opened.content ? (
-        <GithubMarkdownView markdown={opened.content} quotes={quotes} onSelection={setSelection} onQuoteClick={onQuoteClick} onHeadings={onHeadings} />
+        <GithubMarkdownView markdown={opened.content} quotes={quotes} onSelection={setSelection} onQuoteClick={onQuoteClick} onHeadings={onHeadings} onHeading={setHeading} />
       ) : (
         !job && meta.status === 'ready' && !opened && <div className="muted">Abrindo…</div>
       )}
       {selection && <SelectionPopover fileId={fileId} selection={selection} onDone={() => setSelection(null)} />}
+      {heading && !selection && <HeadingExplain fileId={fileId} heading={heading} onDone={() => setHeading(null)} />}
       {!compact && <DocumentNav meta={meta} />}
     </article>
   )

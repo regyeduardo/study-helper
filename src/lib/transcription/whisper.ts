@@ -15,7 +15,7 @@ async function model(progress: Progress): Promise<AutomaticSpeechRecognitionPipe
       const webgpu = await hasWebGpu()
       return (await pipeline('automatic-speech-recognition', WHISPER_MODEL, {
         device: webgpu ? 'webgpu' : 'wasm',
-        dtype: webgpu ? { encoder_model: 'fp32', decoder_model_merged: 'q4' } : 'q8',
+        dtype: webgpu ? { encoder_model: 'fp32', decoder_model_merged: 'q4' } : { encoder_model: 'fp32', decoder_model_merged: 'q8' },
         progress_callback: (event: { status?: string; progress?: number; file?: string }) => {
           if (event.status === 'progress' && event.progress !== undefined) progress(`Baixando o Whisper (${event.file ?? 'modelo'})`, event.progress / 100)
         },

@@ -5,6 +5,7 @@ services:
       dockerfile: ./Docker/Web.Dockerfile
       args:
         VITE_GOOGLE_CLIENT_ID: ${VITE_GOOGLE_CLIENT_ID:-}
+        VITE_AUTH_WORKER_URL: ${VITE_AUTH_WORKER_URL:-}
     container_name: study-helper-web
     restart: unless-stopped
     ports:

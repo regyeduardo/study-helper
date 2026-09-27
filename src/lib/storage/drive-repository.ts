@@ -156,7 +156,7 @@ export class DriveRepository implements Repository {
     }
 
     if (content !== undefined) {
-      const merged = await this.mergedContent(fileId, sidecar, entry.md, content)
+      const merged = await this.mergedContent(fileId, sidecar, entry, content)
       entry.md = await updateDriveFileController(this.token, entry.md.id, { ...place, media: new Blob([merged], { type: MD_TYPE }) })
       await this.remember('md', fileId, entry.md.md5Checksum ?? '', merged)
     } else if (moved || renamed) {
@@ -217,10 +217,11 @@ export class DriveRepository implements Repository {
   }
 
   async saveIndex(index: LibraryIndex): Promise<void> {
+    const merged = this.indexFile ? await this.mergedIndex(index, this.indexFile) : index
     this.indexFile = this.indexFile
-      ? await updateDriveFileController(this.token, this.indexFile.id, { media: jsonBlob(index) })
-      : await createDriveFileController(this.token, INDEX_NAME, this.rootId, jsonBlob(index), { shKind: 'index', shId: 'index' })
-    await this.db.put('cache', 'index', { md5: this.indexFile.md5Checksum ?? '', value: index })
+      ? await updateDriveFileController(this.token, this.indexFile.id, { media: jsonBlob(merged) })
+      : await createDriveFileController(this.token, INDEX_NAME, this.rootId, jsonBlob(merged), { shKind: 'index', shId: 'index' })
+    await this.db.put('cache', 'index', { md5: this.indexFile.md5Checksum ?? '', value: merged })
   }
 
   async putSource(fileId: string, blob: Blob, name: string): Promise<StoredSource> {
@@ -426,7 +427,36 @@ export class DriveRepository implements Repository {
     return this.folders.get(folderId)?.folder.id ?? this.rootId
   }
 
-  private async mergedContent(fileId: string, sidecar: FileSidecar, md: DriveFile, mine: string): Promise<string> {
+  private async mergedIndex(mine: LibraryIndex, file: DriveFile): Promise<LibraryIndex> {
+    const base = await this.db.get<Cached<LibraryIndex>>('cache', 'index')
+    const remote = await getDriveFileController(this.token, file.id)
+    if (!base || remote.md5Checksum === base.md5) return mine
+    const theirs = JSON.parse(await downloadDriveTextController(this.token, file.id)) as Partial<LibraryIndex>
+    const byId = new Map(mine.activities.map(activity => [activity.id, activity]))
+    for (const activity of theirs.activities ?? []) {
+      const own = byId.get(activity.id)
+      if (!own || (!own.finishedAt && activity.finishedAt)) byId.set(activity.id, activity)
+    }
+    const removedTags = new Set(base.value.tags.filter(tag => !mine.tags.includes(tag)))
+    return {
+      ...mine,
+      tags: [...new Set([...mine.tags, ...(theirs.tags ?? []).filter(tag => !removedTags.has(tag))])],
+      activities: [...byId.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
+    }
+  }
+
+  private async theirsStampOf(fileId: string, sidecarFile: DriveFile | undefined, remoteMd: DriveFile): Promise<{ at: string; deviceName: string }> {
+    const fallback = { at: remoteMd.modifiedTime, deviceName: 'Google Drive' }
+    if (!sidecarFile) return fallback
+    const base = await this.db.get<Cached<FileSidecar>>('cache', `sidecar:${fileId}`)
+    const remote = await getDriveFileController(this.token, sidecarFile.id)
+    if (base && remote.md5Checksum === base.md5) return fallback
+    const theirs = JSON.parse(await downloadDriveTextController(this.token, sidecarFile.id)) as FileSidecar
+    return { ...fallback, deviceName: theirs.meta.updated.deviceName }
+  }
+
+  private async mergedContent(fileId: string, sidecar: FileSidecar, entry: FileEntry, mine: string): Promise<string> {
+    const md = entry.md!
     const base = await this.db.get<Cached<string>>('cache', `md:${fileId}`)
     const remote = await getDriveFileController(this.token, md.id)
     if (!base || remote.md5Checksum === base.md5) return mine
@@ -442,7 +472,7 @@ export class DriveRepository implements Repository {
       mine,
       theirs,
       mineStamp: { at: sidecar.meta.updated.at, deviceName: sidecar.meta.updated.deviceName },
-      theirsStamp: { at: remote.modifiedTime, deviceName: 'Google Drive' },
+      theirsStamp: await this.theirsStampOf(fileId, entry.sidecar, remote),
     })
     return resolved.kind === 'text' ? (resolved.resolved ?? mine) : mine
   }
@@ -468,7 +498,14 @@ export class DriveRepository implements Repository {
   }
 
   private appBytes(): number {
-    return this.listing.filter(file => this.insideRoot(file) || file.id === this.rootId).reduce((sum, file) => sum + Number(file.size ?? 0), 0)
+    const tracked = [
+      this.indexFile,
+      ...[...this.files.values()].flatMap(entry => [entry.md, entry.sidecar]),
+      ...[...this.folders.values()].flatMap(entry => [entry.folder, entry.meta]),
+      ...this.devices.values(),
+      ...this.sources.values(),
+    ]
+    return tracked.reduce((sum, file) => sum + Number(file?.size ?? 0), 0)
   }
 
   private async growthOf(fileId: string, sidecar: FileSidecar, content?: string): Promise<number> {

@@ -4,6 +4,7 @@ export interface RecordingResult {
   file: File
   mime: string
   durationSeconds: number
+  storedName: string
 }
 
 export interface RecorderCallbacks {
@@ -69,6 +70,15 @@ export class MeetingRecorder {
   }
 
   async start(mode: CaptureMode): Promise<void> {
+    try {
+      await this.begin(mode)
+    } catch (error) {
+      await this.releaseDevices()
+      throw error
+    }
+  }
+
+  private async begin(mode: CaptureMode): Promise<void> {
     const tracks: MediaStreamTrack[] = []
     this.audioContext = new AudioContext()
     const mix = this.audioContext.createMediaStreamDestination()
@@ -159,14 +169,18 @@ export class MeetingRecorder {
     if (timer) timer.innerHTML = `<span style="color:#ef4444">●</span> ${clock(this.seconds)}`
   }
 
+  private async releaseDevices(): Promise<void> {
+    this.streams.forEach(stream => stream.getTracks().forEach(track => track.stop()))
+    this.streams = []
+    await this.audioContext?.close().catch(() => undefined)
+  }
+
   private async close(): Promise<void> {
     window.clearInterval(this.timer)
     document.title = this.originalTitle
     this.pip?.close()
     this.pip = null
-    this.streams.forEach(stream => stream.getTracks().forEach(track => track.stop()))
-    this.streams = []
-    await this.audioContext?.close().catch(() => undefined)
+    await this.releaseDevices()
     try {
       await this.writing
       await this.writable?.close()
@@ -179,7 +193,7 @@ export class MeetingRecorder {
       }
       const stored = await handle.getFile()
       const name = `Reunião ${new Date().toLocaleString('pt-BR').replace(/[/:]/g, '-')}.${extensionOf(this.mime)}`
-      this.callbacks.onFinished({ file: new File([stored], name, { type: this.mime || stored.type }), mime: this.mime, durationSeconds: this.seconds })
+      this.callbacks.onFinished({ file: new File([stored], name, { type: this.mime || stored.type }), mime: this.mime, durationSeconds: this.seconds, storedName: handle.name })
     } catch (error) {
       this.callbacks.onError(error instanceof Error ? error.message : 'A gravação não pôde ser salva.')
     } finally {

@@ -176,3 +176,20 @@ export function questionFromStored(stored: StoredQuestion, index: number): Quest
 export function masteryOf(correct: number, total: number): number | null {
   return total ? Math.round((correct / total) * 100) : null
 }
+
+const ROMAN_MARKER = /(^|\s)((?:IV|V|I{1,3})[.)\-–]\s)/g
+const NUMBER_MARKER = /(^|\s)([1-9][.)]\s)/g
+
+function splitMarkers(text: string, marker: RegExp): string {
+  const found = [...text.matchAll(marker)]
+  if (found.length < 2) return text
+  return text.replace(marker, (whole, space: string, label: string, offset: number) => (offset === 0 ? whole : `\n${label}`))
+}
+
+export function statementLines(text: string): string {
+  return text
+    .split(/\n{2,}/)
+    .map(block => (/^\s*\|/.test(block) ? block : splitMarkers(splitMarkers(block, ROMAN_MARKER), NUMBER_MARKER)))
+    .join('\n\n')
+}
+

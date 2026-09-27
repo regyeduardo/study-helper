@@ -18,8 +18,8 @@ export interface EngineInfo {
 }
 
 export const ENGINES: EngineInfo[] = [
-  { id: 'whisper', name: 'Whisper (no navegador)', where: 'roda neste navegador', limits: 'baixa ~250 MB na primeira vez; lento sem placa de vídeo (WebGPU); nada sai do seu computador' },
-  { id: 'parakeet', name: 'Parakeet (no navegador)', where: 'roda neste navegador', limits: 'baixa ~650 MB na primeira vez (pt-BR ~700 MB); mais rápido e preciso em português; precisa de memória' },
+  { id: 'whisper', name: 'Whisper (no navegador)', where: 'roda neste navegador', limits: 'baixa ~510 MB na primeira vez; lento sem placa de vídeo (WebGPU); nada sai do seu computador' },
+  { id: 'parakeet', name: 'Parakeet (no navegador)', where: 'roda neste navegador', limits: 'baixa ~670 MB na primeira vez (pt-BR ~930 MB; com placa de vídeo até ~2,5 GB); mais rápido e preciso em português; precisa de memória' },
   { id: 'groq', name: 'Groq Whisper', where: 'serviço grátis com chave', limits: 'chave grátis; 20 pedidos/min, 2.000/dia, 8 h de áudio/dia; o áudio vai para a Groq' },
   { id: 'puter', name: 'Puter', where: 'serviço com conta Puter', limits: 'você entra numa conta Puter, que paga ou limita o uso; o áudio vai para o Puter' },
 ]

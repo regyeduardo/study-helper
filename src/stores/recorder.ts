@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 
-import { type CaptureMode, MeetingRecorder, type RecordingResult } from '@/lib/recording/recorder'
+import { type CaptureMode, discardRecording, MeetingRecorder, type RecordingResult } from '@/lib/recording/recorder'
 import { useUiStore } from '@/stores/ui'
 
 interface RecorderState {
@@ -17,7 +17,7 @@ interface RecorderState {
 
 let recorder: MeetingRecorder | null = null
 
-export const useRecorderStore = create<RecorderState>(set => ({
+export const useRecorderStore = create<RecorderState>((set, get) => ({
   active: false,
   seconds: 0,
   mode: null,
@@ -45,5 +45,9 @@ export const useRecorderStore = create<RecorderState>(set => ({
   },
   finish: () => recorder?.finish(),
   cancel: () => recorder?.cancel(),
-  clearResult: () => set({ result: null }),
+  clearResult: () => {
+    const storedName = get().result?.storedName
+    set({ result: null })
+    if (storedName) void discardRecording(storedName)
+  },
 }))

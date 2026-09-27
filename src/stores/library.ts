@@ -13,6 +13,7 @@ import type {
   Snapshot,
   StoredQuestion,
 } from '@/types/domain'
+import type { TokenProvider } from '@/controllers/drive.controller'
 import { defaultIndex, newFileMeta, newFolderMeta, newSidecar } from '@/lib/defaults'
 import { currentDevice, stamp } from '@/lib/device'
 import { masteryOf } from '@/lib/exam'
@@ -40,7 +41,7 @@ interface LibraryState {
   index: LibraryIndex
   opened: Record<string, OpenedFile>
   openedAt: Record<string, number>
-  connect(accountId: string, tokenProvider?: () => Promise<string>): Promise<void>
+  connect(accountId: string, tokenProvider?: TokenProvider): Promise<void>
   applySnapshot(snapshot: Snapshot, changedFileIds?: string[]): void
   openFile(id: string): Promise<OpenedFile>
   createFile(fields: Partial<FileMeta> & { name: string; type: FileType }, content: string): Promise<FileMeta>

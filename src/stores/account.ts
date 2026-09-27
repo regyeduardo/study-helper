@@ -2,7 +2,11 @@ import { create } from 'zustand'
 
 import {
   getGoogleProfileController,
+  GoogleReconnectError,
   type GoogleToken,
+  isDurableLoginConfigured,
+  refreshGoogleTokenController,
+  requestGoogleCodeController,
   requestGoogleTokenController,
   revokeGoogleTokenController,
 } from '@/controllers/google-auth.controller'
@@ -60,32 +64,78 @@ export function initialsOf(account: Account): string {
 interface AccountState {
   accounts: Account[]
   activeId: string
+  reconnectId: string | null
+  reconnectMessage: string
   active(): Account
   addGoogleAccount(): Promise<Account>
   switchTo(id: string): void
   forgetAccount(id: string): Promise<void>
-  tokenFor(id: string): Promise<string>
+  tokenFor(id: string, options?: { force?: boolean }): Promise<string>
   reauthorize(id: string): Promise<void>
 }
+
+const RECONNECT_MESSAGE = 'O Google pediu pra você entrar de novo.'
+const CONFIRM_OFFLINE_MESSAGE = 'Falta um toque: o Google precisa confirmar o acesso contínuo ao Drive.'
 
 const renewals = new Map<string, Promise<GoogleToken>>()
 
 export const useAccountStore = create<AccountState>((set, get) => {
   const accounts = readSaved()
+
+  const saveToken = (id: string, token: GoogleToken) => {
+    const next = get().accounts.map(item => (item.id === id ? { ...item, token } : item))
+    set({ accounts: next })
+    persist(next, get().activeId)
+  }
+
+  const askReconnect = (id: string, message: string): never => {
+    set({ reconnectId: id, reconnectMessage: message })
+    throw new GoogleReconnectError(message)
+  }
+
+  const keepRefreshToken = (token: GoogleToken, previous?: GoogleToken): GoogleToken => ({
+    ...token,
+    refreshToken: token.refreshToken ?? previous?.refreshToken,
+  })
+
+  const renew = async (account: Account): Promise<GoogleToken> => {
+    if (!isDurableLoginConfigured()) {
+      return requestGoogleTokenController({ prompt: '', loginHint: account.email }).catch(() =>
+        requestGoogleTokenController({ prompt: 'select_account', loginHint: account.email }),
+      )
+    }
+    const refreshToken = account.token?.refreshToken
+    if (!refreshToken) return askReconnect(account.id, RECONNECT_MESSAGE)
+    try {
+      return await refreshGoogleTokenController(refreshToken)
+    } catch (error) {
+      if (!(error instanceof GoogleReconnectError)) throw error
+      if (account.token) saveToken(account.id, { ...account.token, refreshToken: undefined })
+      return askReconnect(account.id, RECONNECT_MESSAGE)
+    }
+  }
+
   return {
     accounts,
     activeId: readActive(accounts),
+    reconnectId: null,
+    reconnectMessage: '',
 
     active: () => get().accounts.find(account => account.id === get().activeId) ?? LOCAL_ACCOUNT,
 
     addGoogleAccount: async () => {
-      const token = await requestGoogleTokenController({ prompt: 'select_account' })
-      const profile = await getGoogleProfileController(token.accessToken)
+      const durable = isDurableLoginConfigured()
+      const granted = durable ? await requestGoogleCodeController({ selectAccount: true }) : await requestGoogleTokenController({ prompt: 'select_account' })
+      const profile = await getGoogleProfileController(granted.accessToken)
+      const previous = get().accounts.find(item => item.id === profile.sub)
+      const token = keepRefreshToken(granted, previous?.token)
       const account: Account = { id: profile.sub, kind: 'google', name: profile.name, email: profile.email, picture: profile.picture, token }
       const others = get().accounts.filter(item => item.id !== account.id)
       const next = [...others, account]
-      set({ accounts: next, activeId: account.id })
+      const missingOffline = durable && !token.refreshToken
+      set({ accounts: next, activeId: account.id, ...(missingOffline ? { reconnectId: account.id, reconnectMessage: CONFIRM_OFFLINE_MESSAGE } : {}) })
       persist(next, account.id)
+      if (missingOffline) await revokeGoogleTokenController(granted.accessToken)
       return account
     },
 
@@ -97,38 +147,43 @@ export const useAccountStore = create<AccountState>((set, get) => {
     forgetAccount: async id => {
       const account = get().accounts.find(item => item.id === id)
       if (!account || account.kind === 'local') return
-      if (account.token) await revokeGoogleTokenController(account.token.accessToken)
+      if (account.token) await revokeGoogleTokenController(account.token.refreshToken ?? account.token.accessToken)
       const next = get().accounts.filter(item => item.id !== id)
       const activeId = get().activeId === id ? LOCAL_ACCOUNT_ID : get().activeId
-      set({ accounts: next, activeId })
+      set({ accounts: next, activeId, ...(get().reconnectId === id ? { reconnectId: null } : {}) })
       persist(next, activeId)
     },
 
-    tokenFor: async id => {
+    tokenFor: async (id, options = {}) => {
       const account = get().accounts.find(item => item.id === id)
       if (!account || account.kind !== 'google') throw new Error('Conta sem login do Google.')
-      if (account.token && account.token.expiresAt - RENEW_MARGIN_MS > Date.now()) return account.token.accessToken
+      if (get().reconnectId === id) throw new GoogleReconnectError(get().reconnectMessage || RECONNECT_MESSAGE)
+      if (!options.force && account.token && account.token.expiresAt - RENEW_MARGIN_MS > Date.now()) return account.token.accessToken
       if (!renewals.has(id)) {
-        const renewal = requestGoogleTokenController({ prompt: '', loginHint: account.email }).catch(() =>
-          requestGoogleTokenController({ prompt: 'select_account', loginHint: account.email }),
-        )
+        const renewal = renew(account)
         renewals.set(id, renewal)
         renewal.finally(() => renewals.delete(id)).catch(() => undefined)
       }
-      const token = await renewals.get(id)!
-      const next = get().accounts.map(item => (item.id === id ? { ...item, token } : item))
-      set({ accounts: next })
-      persist(next, get().activeId)
+      const token = keepRefreshToken(await renewals.get(id)!, account.token)
+      saveToken(id, token)
       return token.accessToken
     },
 
     reauthorize: async id => {
       const account = get().accounts.find(item => item.id === id)
       if (!account || account.kind !== 'google') return
-      const token = await requestGoogleTokenController({ prompt: 'consent', loginHint: account.email })
-      const next = get().accounts.map(item => (item.id === id ? { ...item, token } : item))
-      set({ accounts: next })
-      persist(next, get().activeId)
+      if (!isDurableLoginConfigured()) {
+        saveToken(id, await requestGoogleTokenController({ prompt: 'consent', loginHint: account.email }))
+        set({ reconnectId: null })
+        return
+      }
+      const token = keepRefreshToken(await requestGoogleCodeController({ selectAccount: false, loginHint: account.email }), account.token)
+      saveToken(id, token)
+      if (!token.refreshToken) {
+        await revokeGoogleTokenController(token.accessToken)
+        askReconnect(id, CONFIRM_OFFLINE_MESSAGE)
+      }
+      set({ reconnectId: null, reconnectMessage: '' })
     },
   }
 })
