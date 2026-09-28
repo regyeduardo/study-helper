@@ -193,3 +193,60 @@ export function statementLines(text: string): string {
     .join('\n\n')
 }
 
+export interface ExamStats {
+  done: number
+  right: number
+  partial: number
+  wrong: number
+  blank: number
+  percent: number
+}
+
+export function examStats(questions: Question[], answers: Record<number, UserAnswer>, scores: Record<number, number>): ExamStats {
+  const done = questions.filter(question => isAnswered(answers[question.id]))
+  const points = done.reduce((sum, question) => sum + scores[question.id], 0)
+  return {
+    done: done.length,
+    right: done.filter(question => scores[question.id] === 1).length,
+    partial: done.filter(question => scores[question.id] > 0 && scores[question.id] < 1).length,
+    wrong: done.filter(question => scores[question.id] === 0).length,
+    blank: questions.length - done.length,
+    percent: done.length ? Math.round((points / done.length) * 100) : 0,
+  }
+}
+
+export function rightAnswerText(question: Question): string {
+  switch (questionType(question)) {
+    case 'unica':
+      return `${question.correta}) ${question.alternativas[question.correta ?? ''] ?? ''}`
+    case 'multipla':
+      return (question.corretas ?? []).map(letter => `${letter}) ${question.alternativas[letter] ?? ''}`).join('; ')
+    case 'certo_errado':
+      return question.certo ? 'Certo' : 'Errado'
+    case 'ordenar':
+      return (question.passos ?? []).map((step, index) => `${index + 1}. ${step}`).join('; ')
+    case 'associar':
+      return (question.pares ?? []).map(pair => `${pair.esquerda} → ${pair.direita}`).join('; ')
+    case 'lacuna':
+      return (question.lacunas ?? []).map((gap, index) => `[${index + 1}] ${gap.correta}`).join('; ')
+  }
+}
+
+export function givenAnswerText(question: Question, answer: UserAnswer | undefined): string {
+  if (!isAnswered(answer)) return 'sem resposta'
+  switch (questionType(question)) {
+    case 'unica':
+      return `${answer}) ${question.alternativas[answer as string] ?? ''}`
+    case 'multipla':
+      return (answer as string[]).map(letter => `${letter}) ${question.alternativas[letter] ?? ''}`).join('; ')
+    case 'certo_errado':
+      return answer === 'certo' ? 'Certo' : 'Errado'
+    case 'ordenar':
+      return (answer as string[]).map((step, index) => `${index + 1}. ${step}`).join('; ')
+    case 'associar':
+      return (question.pares ?? []).map((pair, index) => `${pair.esquerda} → ${(answer as string[])[index] || '(vazio)'}`).join('; ')
+    case 'lacuna':
+      return (answer as string[]).map((value, index) => `[${index + 1}] ${value || '(vazio)'}`).join('; ')
+  }
+}
+

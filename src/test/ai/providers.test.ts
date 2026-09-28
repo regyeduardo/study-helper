@@ -1,16 +1,16 @@
 import { describe, expect, it } from 'vitest'
-import { baseUrlOf, isFreeChoice, missingSetup, modelOf, PROVIDERS, providerOf } from '@/lib/ai/providers'
+import { baseUrlOf, intervalOf, isFreeChoice, isKnownProvider, missingSetup, modelOf, PROVIDERS, providerOf } from '@/lib/ai/providers'
 import { defaultSettings } from '@/lib/defaults'
 import type { AiSettings } from '@/types/domain'
 
 function settings(overrides: Partial<AiSettings>): AiSettings {
-  return { provider: 'llm7', baseUrl: '', apiKey: '', model: '', ...overrides }
+  return { provider: 'ovh', baseUrl: '', apiKey: '', model: '', ...overrides }
 }
 
 describe('provider catalog', () => {
   it('lists exactly the supported providers', () => {
     expect(PROVIDERS.map(provider => provider.id).sort()).toEqual(
-      ['anthropic', 'custom', 'gemini', 'groq', 'llm7', 'mistral', 'ollama', 'openai', 'openrouter', 'pollinations', 'xai'].sort(),
+      ['anthropic', 'custom', 'gemini', 'llm7', 'openai', 'ovh', 'pollinations', 'xai'].sort(),
     )
   })
 
@@ -19,11 +19,8 @@ describe('provider catalog', () => {
     expect(names.anthropic).toBe('Anthropic')
     expect(names.openai).toBe('OpenAI')
     expect(names.gemini).toMatch(/Gemini/)
-    expect(names.mistral).toBe('Mistral')
-    expect(names.groq).toBe('Groq')
-    expect(names.openrouter).toBe('OpenRouter')
     expect(names.xai).toBe('xAI')
-    expect(names.ollama).toBe('Ollama')
+    expect(names.ovh).toBe('OVHcloud')
     expect(names.pollinations).toBe('Pollinations')
     expect(names.llm7).toBe('LLM7')
     expect(names.custom).toBe('Personalizado')
@@ -42,16 +39,34 @@ describe('provider catalog', () => {
     expect(PROVIDERS.filter(provider => provider.format === 'anthropic').map(provider => provider.id)).toEqual(['anthropic'])
   })
 
-  it('LLM7 works without a key; Pollinations and the others require one', () => {
-    expect(providerOf('llm7').needsKey).toBe(false)
-    expect(providerOf('ollama').needsKey).toBe(false)
-    for (const id of ['pollinations', 'anthropic', 'openai', 'gemini', 'mistral', 'groq', 'openrouter', 'xai'] as const) expect(providerOf(id).needsKey).toBe(true)
+  it('OVHcloud works without a key; LLM7, Pollinations and the others require one', () => {
+    expect(providerOf('ovh').needsKey).toBe(false)
+    for (const id of ['llm7', 'pollinations', 'anthropic', 'openai', 'gemini', 'xai'] as const) expect(providerOf(id).needsKey).toBe(true)
+  })
+
+  it('free providers offer only the model tested for them', () => {
+    expect(providerOf('ovh').models).toEqual(['Meta-Llama-3_3-70B-Instruct'])
+    expect(providerOf('gemini').models).toEqual(['gemini-3.5-flash-lite'])
+    expect(providerOf('pollinations').models).toEqual(['openai'])
+    expect(providerOf('llm7').models).toEqual(['default'])
+    for (const id of ['anthropic', 'openai', 'xai', 'custom'] as const) expect(providerOf(id).models).toBeUndefined()
+  })
+
+  it('OVHcloud without key goes one request at a time, 31 s apart; with key there is no line', () => {
+    expect(intervalOf(settings({ provider: 'ovh' }))).toBe(31000)
+    expect(intervalOf(settings({ provider: 'ovh', apiKey: 'k' }))).toBe(0)
+    expect(intervalOf(settings({ provider: 'llm7', apiKey: 'k' }))).toBe(0)
+  })
+
+  it('knows which saved provider ids still exist', () => {
+    expect(isKnownProvider('ovh')).toBe(true)
+    for (const id of ['groq', 'mistral', 'openrouter', 'ollama']) expect(isKnownProvider(id)).toBe(false)
   })
 })
 
 describe('default provider', () => {
-  it('is LLM7 without key or model', () => {
-    expect(defaultSettings().ai).toEqual({ provider: 'llm7', baseUrl: '', apiKey: '', model: '' })
+  it('is OVHcloud without key or model', () => {
+    expect(defaultSettings().ai).toEqual({ provider: 'ovh', baseUrl: '', apiKey: '', model: '' })
   })
 
   it('default settings are ready to generate without any setup', () => {
@@ -68,10 +83,14 @@ describe('endpoint and model resolution', () => {
     expect(baseUrlOf(settings({ provider: 'pollinations', apiKey: 'sk' }))).toBe('https://gen.pollinations.ai/v1')
   })
 
-  it('LLM7 without key uses api.llm7.io and the default model', () => {
-    const keyless = settings({ provider: 'llm7' })
-    expect(baseUrlOf(keyless)).toBe('https://api.llm7.io/v1')
-    expect(modelOf(keyless)).toBe('default')
+  it('OVHcloud without key uses its endpoint and Llama 3.3 70B', () => {
+    const keyless = settings({ provider: 'ovh' })
+    expect(baseUrlOf(keyless)).toBe('https://oai.endpoints.kepler.ai.cloud.ovh.net/v1')
+    expect(modelOf(keyless)).toBe('Meta-Llama-3_3-70B-Instruct')
+  })
+
+  it('LLM7 without key asks for the key', () => {
+    expect(missingSetup(settings({ provider: 'llm7', model: 'default' }))).toBe('Falta a chave de LLM7 nas Configurações.')
   })
 
   it('explicit base URL wins and loses trailing slashes', () => {
@@ -79,7 +98,7 @@ describe('endpoint and model resolution', () => {
   })
 
   it('explicit model wins over keyless model', () => {
-    expect(modelOf(settings({ provider: 'llm7', model: 'gpt-4o-mini' }))).toBe('gpt-4o-mini')
+    expect(modelOf(settings({ provider: 'ovh', model: 'gpt-oss-120b' }))).toBe('gpt-oss-120b')
   })
 
   it('custom provider without URL asks for a base URL', () => {
@@ -87,7 +106,7 @@ describe('endpoint and model resolution', () => {
   })
 
   it('keyed provider without key asks for it by name', () => {
-    expect(missingSetup(settings({ provider: 'groq', model: 'llama' }))).toBe('Falta a chave de Groq nas Configurações.')
+    expect(missingSetup(settings({ provider: 'gemini', model: 'gemini-3.5-flash-lite' }))).toBe('Falta a chave de Google Gemini nas Configurações.')
   })
 
   it('keyed provider without model asks to choose one', () => {
@@ -97,7 +116,7 @@ describe('endpoint and model resolution', () => {
 
 describe('free model warning flag', () => {
   it('is on for free providers', () => {
-    for (const id of ['pollinations', 'llm7', 'gemini', 'mistral', 'groq', 'openrouter', 'ollama'] as const) expect(isFreeChoice(settings({ provider: id }))).toBe(true)
+    for (const id of ['ovh', 'pollinations', 'llm7', 'gemini'] as const) expect(isFreeChoice(settings({ provider: id }))).toBe(true)
   })
 
   it('is off for paid providers with a paid model', () => {

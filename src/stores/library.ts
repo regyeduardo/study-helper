@@ -14,6 +14,7 @@ import type {
   StoredQuestion,
 } from '@/types/domain'
 import type { TokenProvider } from '@/controllers/drive.controller'
+import { isKnownProvider, providerOf } from '@/lib/ai/providers'
 import { defaultIndex, newFileMeta, newFolderMeta, newSidecar } from '@/lib/defaults'
 import { currentDevice, stamp } from '@/lib/device'
 import { masteryOf } from '@/lib/exam'
@@ -93,6 +94,12 @@ function readOpened(accountId: string): Record<string, number> {
   }
 }
 
+function withUsableAi(settings: Settings): Settings {
+  const { ai } = settings
+  const usable = isKnownProvider(ai.provider) && !(providerOf(ai.provider).needsKey && !ai.apiKey.trim())
+  return usable ? settings : { ...settings, ai: defaultIndex().settings.ai }
+}
+
 export const useLibraryStore = create<LibraryState>((set, get) => {
   const repository = (): Repository => {
     const repo = get().repo
@@ -148,7 +155,7 @@ export const useLibraryStore = create<LibraryState>((set, get) => {
       set(state => {
         const opened = { ...state.opened }
         for (const id of changedFileIds) delete opened[id]
-        return { folders: snapshot.folders, files: snapshot.files, index: { ...defaultIndex(), ...snapshot.index, settings: { ...defaultIndex().settings, ...snapshot.index.settings } }, opened }
+        return { folders: snapshot.folders, files: snapshot.files, index: { ...defaultIndex(), ...snapshot.index, settings: withUsableAi({ ...defaultIndex().settings, ...snapshot.index.settings }) }, opened }
       })
     },
 

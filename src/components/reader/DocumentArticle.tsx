@@ -149,6 +149,14 @@ export function DocumentBody({ fileId, compact = false }: { fileId: string; comp
     return painted
   }, [opened?.sidecar.highlights, files, fileId])
 
+  const handoff = ui.handoffFileId === fileId
+  const showing = Boolean(job || opened)
+  useEffect(() => {
+    if (!handoff || !showing) return
+    ui.set({ handoffFileId: null })
+    ui.close()
+  }, [handoff, showing])
+
   const onHeadings = useCallback((headings: { id: string; level: number; text: string }[]) => setHeadings(fileId, headings), [fileId, setHeadings])
   const onQuoteClick = useCallback((targetId: string) => navigate(paths.file(targetId)), [navigate])
 

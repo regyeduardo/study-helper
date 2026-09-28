@@ -1,5 +1,5 @@
 import type { AiSettings } from '@/types/domain'
-import { baseUrlOf, missingSetup, modelOf, oneAtATimeOf, providerOf } from '@/lib/ai/providers'
+import { baseUrlOf, intervalOf, missingSetup, modelOf, oneAtATimeOf, providerOf } from '@/lib/ai/providers'
 
 export const MAX_TOKENS = 16384
 export const LONG_REPLY_MAX_TOKENS = 32768
@@ -27,6 +27,7 @@ export class Cancelled extends Error {
 }
 
 const inFlight = new Map<string, Promise<unknown>>()
+const lastStart = new Map<string, number>()
 
 function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -39,10 +40,16 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   })
 }
 
-async function oneAtATime<T>(settings: AiSettings, task: () => Promise<T>): Promise<T> {
+async function oneAtATime<T>(settings: AiSettings, task: () => Promise<T>, signal?: AbortSignal): Promise<T> {
   if (!oneAtATimeOf(settings)) return task()
   const key = `${settings.provider}|${baseUrlOf(settings)}`
-  const current = (inFlight.get(key) ?? Promise.resolve()).catch(() => undefined).then(task)
+  const paced = async () => {
+    const wait = (lastStart.get(key) ?? 0) + intervalOf(settings) - Date.now()
+    if (wait > 0) await sleep(wait, signal)
+    lastStart.set(key, Date.now())
+    return task()
+  }
+  const current = (inFlight.get(key) ?? Promise.resolve()).catch(() => undefined).then(paced)
   inFlight.set(key, current)
   try {
     return await current
@@ -235,6 +242,7 @@ export async function chatController(
     providerOf(settings.provider).format === 'anthropic'
       ? anthropicChat(settings, content, systemPrompt, maxTokens, signal)
       : openAiChat(settings, content, systemPrompt, maxTokens, signal),
+    signal,
   )
 }
 

@@ -109,21 +109,38 @@ function transcriptBody(body: string): string {
   return marker >= 0 ? body.slice(marker + '## Transcript'.length) : body
 }
 
+function repeatsLastRun(keys: string[], size: number): boolean {
+  const end = keys.length
+  for (let offset = 1; offset <= size; offset++) if (keys[end - offset] !== keys[end - size - offset]) return false
+  return true
+}
+
 export function collapseRepeats(line: string): string {
-  const words = line.split(/\s+/).filter(Boolean)
   const kept: string[] = []
-  for (const word of words) {
+  const keys: string[] = []
+  for (const word of line.split(/\s+/)) {
+    if (!word) continue
     kept.push(word)
-    for (let size = Math.min(12, Math.floor(kept.length / 2)); size >= 3; size--) {
-      const tail = kept.slice(-size).join(' ').toLowerCase()
-      const before = kept.slice(-2 * size, -size).join(' ').toLowerCase()
-      if (tail === before) {
-        kept.splice(-size, size)
-        break
-      }
+    keys.push(word.toLowerCase())
+    for (let size = Math.min(12, Math.floor(keys.length / 2)); size >= 3; size--) {
+      if (!repeatsLastRun(keys, size)) continue
+      kept.length -= size
+      keys.length -= size
+      break
     }
   }
   return kept.join(' ')
+}
+
+const LINES_PER_PAUSE = 200
+
+async function collapseLines(lines: string[]): Promise<string> {
+  const collapsed: string[] = []
+  for (const [index, line] of lines.entries()) {
+    if (index && index % LINES_PER_PAUSE === 0) await new Promise(resolve => setTimeout(resolve, 0))
+    collapsed.push(collapseRepeats(line))
+  }
+  return collapsed.join('\n')
 }
 
 async function fetchCaption(id: string, language: string, signal?: AbortSignal): Promise<string> {
@@ -148,7 +165,7 @@ export async function fetchYoutubeTranscriptController(url: string, language: st
   const current = captionTracks(body).current
   if (best && (best.code !== current?.code || best.auto !== current?.auto)) body = await fetchCaption(id, best.code, signal)
   const auto = captionTracks(body).current?.auto ?? false
-  const content = cleanTranscript(auto ? transcriptBody(body).split('\n').map(collapseRepeats).join('\n') : transcriptBody(body))
+  const content = cleanTranscript(auto ? await collapseLines(transcriptBody(body).split('\n')) : transcriptBody(body))
   if (!content) throw new SourceError('A legenda veio vazia.')
   return { title: await youtubeTitle(url, signal), content }
 }

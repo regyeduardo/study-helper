@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from 'react'
 import type { AiProviderId, AiSettings, LayoutId, TranscriptionEngine } from '@/types/domain'
 import { Icon } from '@/components/ui/Icon'
 import { listModelsController } from '@/controllers/ai.controller'
-import { isFreeChoice, PROVIDERS, providerOf } from '@/lib/ai/providers'
+import { isFreeChoice, PROVIDERS, type ProviderInfo, providerOf } from '@/lib/ai/providers'
 import { DEFAULT_STORAGE_LIMIT_BYTES } from '@/lib/defaults'
 import { currentDevice } from '@/lib/device'
 import { applyTheme, savedTheme, type ThemeChoice } from '@/lib/theme'
@@ -74,6 +74,12 @@ function AppearanceTab() {
   )
 }
 
+const PROVIDER_GROUPS: { label: string; includes: (provider: ProviderInfo) => boolean }[] = [
+  { label: 'Grátis na nuvem · sem chave', includes: provider => provider.free && !provider.needsKey },
+  { label: 'Grátis na nuvem · chave grátis', includes: provider => provider.free && provider.needsKey },
+  { label: 'Pagas e personalizado', includes: provider => !provider.free },
+]
+
 function AiTab() {
   const saved = useLibraryStore(state => state.index.settings.ai)
   const updateSettings = useLibraryStore(state => state.updateSettings)
@@ -93,10 +99,11 @@ function AiTab() {
   const runTest = async (): Promise<boolean> => {
     setTest({ state: 'busy' })
     try {
-      const found = await listModelsController(draft)
+      const found = provider.models ?? (await listModelsController(draft))
+      if (provider.models) await listModelsController(draft)
       setModels(found)
       if (!draft.model && found.length) setDraft(current => ({ ...current, model: provider.keylessModel && !current.apiKey && found.includes(provider.keylessModel) ? provider.keylessModel : found[0] }))
-      setTest({ state: 'ok', message: `Conectado · ${found.length} modelos disponíveis` })
+      setTest({ state: 'ok', message: `Conectado · ${found.length} ${found.length === 1 ? 'modelo disponível' : 'modelos disponíveis'}` })
       return true
     } catch (error) {
       setTest({ state: 'fail', message: error instanceof Error ? error.message : 'Não respondeu.' })
@@ -112,18 +119,20 @@ function AiTab() {
 
   return (
     <>
-      <div className="field">
-        <span className="lab">Provedor</span>
-        <div className="prov">
-          {PROVIDERS.map(item => (
-            <button key={item.id} aria-pressed={draft.provider === item.id} onClick={() => pick(item.id)}>
-              <b>{item.name}</b>
-              <small className={item.free ? 'free' : ''}>{item.tag}</small>
-            </button>
-          ))}
+      {PROVIDER_GROUPS.map(group => (
+        <div className="field" key={group.label}>
+          <span className="lab">{group.label}</span>
+          <div className="prov">
+            {PROVIDERS.filter(group.includes).map(item => (
+              <button key={item.id} aria-pressed={draft.provider === item.id} onClick={() => pick(item.id)}>
+                <b>{item.name}</b>
+                <small className={item.free ? 'free' : ''}>{item.tag}</small>
+              </button>
+            ))}
+          </div>
         </div>
-      </div>
-      {(draft.provider === 'custom' || draft.provider === 'ollama') && (
+      ))}
+      {draft.provider === 'custom' && (
         <div className="field">
           <label htmlFor="ai-url">URL base (formato OpenAI)</label>
           <input className="input" id="ai-url" placeholder={provider.baseUrl || 'https://minha-ia.exemplo.com/v1'} value={draft.baseUrl} onChange={event => setDraft({ ...draft, baseUrl: event.target.value })} />
@@ -157,12 +166,6 @@ function AiTab() {
           )}
         </span>
       </div>
-      {draft.provider === 'ollama' && (
-        <div className="banner info">
-          <Icon name="info" />
-          <span>Roda no seu PC: o Ollama precisa estar aberto e aceitar este site (OLLAMA_ORIGINS).</span>
-        </div>
-      )}
       <div className="field">
         <label htmlFor="ai-model">Modelo</label>
         {models.length ? (
@@ -397,6 +400,13 @@ function GeneralTab() {
               {zone}
             </option>
           ))}
+        </select>
+      </div>
+      <div className="field">
+        <label htmlFor="exam-mode">Prova</label>
+        <select className="input" id="exam-mode" value={settings.examOneAtATime ? 'one' : 'all'} onChange={event => void updateSettings({ examOneAtATime: event.target.value === 'one' })}>
+          <option value="all">Todas as questões de uma vez</option>
+          <option value="one">Uma questão por vez</option>
         </select>
       </div>
       <div className="field">

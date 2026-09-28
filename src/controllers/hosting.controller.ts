@@ -1,4 +1,5 @@
 import type { SourceStorage } from '@/types/domain'
+import { newId } from '@/lib/ids'
 
 export type HostId = Exclude<SourceStorage, 'none' | 'drive'>
 
@@ -73,7 +74,7 @@ export async function uploadToLitterboxController(file: File, time: LitterboxTim
 }
 
 export async function uploadToFilebinController(file: File): Promise<HostedFile> {
-  const bin = `study-helper-${crypto.randomUUID().slice(0, 12)}`
+  const bin = `study-helper-${newId().slice(0, 12)}`
   const url = `https://filebin.net/${bin}/${encodeURIComponent(file.name)}`
   await post(url, { method: 'POST', body: file, headers: { 'Content-Type': file.type || 'application/octet-stream' } }, 'filebin')
   return { url, expiresAt: hoursFromNow(24 * 7) }

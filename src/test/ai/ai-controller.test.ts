@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { installFetch, jsonResponse, llm7Settings, openAiStream, sseResponse, systemPromptOf, userContentOf } from '@/test/ai/fake-provider'
+import { installFetch, jsonResponse, llm7Settings, openAiStream, ovhSettings, sseResponse, systemPromptOf, userContentOf } from '@/test/ai/fake-provider'
 import type { AiSettings } from '@/types/domain'
 
 async function controller() {
@@ -37,18 +37,18 @@ describe('listModelsController (connection test)', () => {
     expect(calls[0].headers['anthropic-dangerous-direct-browser-access']).toBe('true')
   })
 
-  it('LLM7 without key lists models without an authorization header', async () => {
+  it('OVHcloud without key lists models without an authorization header', async () => {
     const { listModelsController } = await controller()
-    const { calls } = installFetch(() => jsonResponse({ data: [{ id: 'default' }, { id: 'fast' }] }))
-    expect(await listModelsController(llm7Settings())).toEqual(['default', 'fast'])
-    expect(calls[0].url).toBe('https://api.llm7.io/v1/models')
+    const { calls } = installFetch(() => jsonResponse({ data: [{ id: 'gpt-oss-120b' }, { id: 'Meta-Llama-3_3-70B-Instruct' }] }))
+    expect(await listModelsController(ovhSettings())).toEqual(['Meta-Llama-3_3-70B-Instruct', 'gpt-oss-120b'])
+    expect(calls[0].url).toBe('https://oai.endpoints.kepler.ai.cloud.ovh.net/v1/models')
     expect(calls[0].headers.authorization).toBeUndefined()
   })
 
   it('accepts a models[] body shape with names', async () => {
     const { listModelsController } = await controller()
     installFetch(() => jsonResponse({ models: [{ name: 'llama3' }, { id: 'qwen' }] }))
-    expect(await listModelsController({ provider: 'ollama', baseUrl: '', apiKey: '', model: '' })).toEqual(['llama3', 'qwen'])
+    expect(await listModelsController({ provider: 'custom', baseUrl: 'http://localhost:11434/v1', apiKey: '', model: '' })).toEqual(['llama3', 'qwen'])
   })
 
   it('Pollinations without key refuses the test and makes no request', async () => {
@@ -65,12 +65,9 @@ describe('listModelsController (connection test)', () => {
       { provider: 'anthropic', baseUrl: '', apiKey: 'k', model: '' },
       { provider: 'openai', baseUrl: '', apiKey: 'k', model: '' },
       { provider: 'gemini', baseUrl: '', apiKey: 'k', model: '' },
-      { provider: 'mistral', baseUrl: '', apiKey: 'k', model: '' },
-      { provider: 'groq', baseUrl: '', apiKey: 'k', model: '' },
-      { provider: 'openrouter', baseUrl: '', apiKey: 'k', model: '' },
       { provider: 'xai', baseUrl: '', apiKey: 'k', model: '' },
-      { provider: 'ollama', baseUrl: '', apiKey: '', model: '' },
-      { provider: 'llm7', baseUrl: '', apiKey: '', model: '' },
+      { provider: 'ovh', baseUrl: '', apiKey: '', model: '' },
+      { provider: 'llm7', baseUrl: '', apiKey: 'k', model: '' },
       { provider: 'pollinations', baseUrl: '', apiKey: 'k', model: '' },
       { provider: 'custom', baseUrl: 'https://my.example/v1', apiKey: '', model: '' },
     ]
@@ -93,13 +90,13 @@ describe('listModelsController (connection test)', () => {
   it('refuses to test a keyed provider without key and makes no request', async () => {
     const { listModelsController } = await controller()
     const { calls } = installFetch(() => jsonResponse({}))
-    await expect(listModelsController({ provider: 'groq', baseUrl: '', apiKey: '', model: '' })).rejects.toThrow('Falta a chave.')
+    await expect(listModelsController({ provider: 'llm7', baseUrl: '', apiKey: '', model: '' })).rejects.toThrow('Falta a chave.')
     expect(calls).toHaveLength(0)
   })
 })
 
 describe('chatController streaming', () => {
-  it('LLM7 streams from api.llm7.io/v1/chat/completions without key and joins the deltas', async () => {
+  it('LLM7 streams from api.llm7.io/v1/chat/completions with the key and joins the deltas', async () => {
     const { chatController } = await controller()
     const { calls } = installFetch(() => openAiStream('Olá, mundo! Tudo certo por aqui.', 5, { prompt_tokens: 11, completion_tokens: 7 }))
     const reply = await chatController(llm7Settings(), 'conteúdo', 'sistema')
@@ -243,12 +240,12 @@ describe('rate limit handling', () => {
     expect(calls).toHaveLength(6)
   })
 
-  it('cancels a request waiting in the LLM7 line when aborted', async () => {
+  it('cancels a request waiting in the OVHcloud line when aborted', async () => {
     const { chatController, Cancelled } = await controller()
     installFetch(() => openAiStream('ok'))
-    const first = chatController(llm7Settings(), 'a', 's')
+    const first = chatController(ovhSettings(), 'a', 's')
     const abort = new AbortController()
-    const queued = chatController(llm7Settings(), 'b', 's', undefined, abort.signal)
+    const queued = chatController(ovhSettings(), 'b', 's', undefined, abort.signal)
     const assertion = expect(queued).rejects.toBeInstanceOf(Cancelled)
     abort.abort()
     await first

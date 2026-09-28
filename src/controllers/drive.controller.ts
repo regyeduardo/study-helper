@@ -1,4 +1,5 @@
 import { env } from '@/lib/env'
+import { newId } from '@/lib/ids'
 
 export const FOLDER_MIME = 'application/vnd.google-apps.folder'
 
@@ -125,7 +126,7 @@ export async function createDriveFolderController(
 }
 
 function multipart(metadata: object, media: Blob): { body: Blob; boundary: string } {
-  const boundary = `study-helper-${crypto.randomUUID()}`
+  const boundary = `study-helper-${newId()}`
   const body = new Blob([
     `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n`,
     `--${boundary}\r\nContent-Type: ${media.type || 'application/octet-stream'}\r\n\r\n`,

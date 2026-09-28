@@ -72,5 +72,9 @@ export function userContentOf(request: CapturedRequest): string {
 }
 
 export function llm7Settings(overrides: Partial<AiSettings> = {}): AiSettings {
-  return { provider: 'llm7', baseUrl: '', apiKey: '', model: '', ...overrides }
+  return { provider: 'llm7', baseUrl: '', apiKey: 'chave-llm7', model: 'default', ...overrides }
+}
+
+export function ovhSettings(overrides: Partial<AiSettings> = {}): AiSettings {
+  return { provider: 'ovh', baseUrl: '', apiKey: '', model: '', ...overrides }
 }

@@ -633,3 +633,7 @@ textarea.input{resize:vertical;min-height:62px}
 .heading-explain:hover{background:var(--accent-soft)}
 .order div > span:first-child{flex:none;min-width:14px}
 .order div > .right-answer{flex:none}
+.pager{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.gaps{margin:0;padding-left:18px;display:grid;gap:8px;font-size:13.5px}
+.gaps li{display:grid;gap:2px}
+.gaps span{color:var(--fg-muted)}

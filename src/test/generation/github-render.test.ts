@@ -56,7 +56,7 @@ describe('GitHub chrome', () => {
 })
 
 describe('mountDiagrams', () => {
-  it('replaces each mermaid block with a viewer iframe and feeds it the code on hello', () => {
+  it('replaces each mermaid block with a viewer iframe and follows the viewer handshake', () => {
     document.documentElement.setAttribute('data-theme', 'dark')
     const root = document.createElement('article')
     root.innerHTML = '<p>a</p><div class="highlight highlight-source-mermaid"><pre>flowchart TD\nA--&gt;B</pre></div><div class="highlight highlight-source-mermaid"><pre>pie\n "x" : 1</pre></div>'
@@ -74,13 +74,20 @@ describe('mountDiagrams', () => {
     vi.spyOn(frames[0].contentWindow!, 'postMessage').mockImplementation((message: unknown) => {
       posted.push(JSON.parse(message as string))
     })
+    const wrapper = frames[0].parentElement!
+    const actions = wrapper.querySelector('.js-render-block-actions') as HTMLElement
+    expect(actions.style.getPropertyValue('display')).toBe('none')
+    expect(wrapper.textContent).toContain('Desenhando o diagrama…')
+
     window.dispatchEvent(new MessageEvent('message', { data: JSON.stringify({ type: 'render', body: 'hello', identity }) }))
-    expect(posted).toEqual([
-      { type: 'render:cmd', identity, body: { cmd: 'ack', ack: true } },
-      { type: 'render:cmd', identity, body: { cmd: 'code_rendering_service:data:ready', 'code_rendering_service:data:ready': { data: 'flowchart TD\nA-->B', width: 0 } } },
-    ])
+    expect(posted).toEqual([{ type: 'render:cmd', identity, body: { cmd: 'ack', ack: true } }])
+    window.dispatchEvent(new MessageEvent('message', { data: JSON.stringify({ type: 'render', body: 'code_rendering_service:markdown:get_data', identity }) }))
+    expect(posted[1]).toEqual({ type: 'render:cmd', identity, body: { cmd: 'code_rendering_service:data:ready', 'code_rendering_service:data:ready': { data: 'flowchart TD\nA-->B', width: 0 } } })
+    expect(posted).toHaveLength(2)
     window.dispatchEvent(new MessageEvent('message', { data: { type: 'render', body: 'ready', identity, payload: { height: 200 } } }))
     expect(frames[0].height).toBe('224')
+    expect(actions.style.getPropertyValue('display')).toBe('')
+    expect(wrapper.textContent).not.toContain('Desenhando o diagrama…')
     unmount()
   })
 

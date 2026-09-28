@@ -1,10 +1,13 @@
 import { marked } from 'marked'
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 
 import type { Certainty, Question, StoredQuestion, UserAnswer } from '@/types/domain'
 import { Dialog } from '@/components/ui/Dialog'
 import { Icon } from '@/components/ui/Icon'
-import { CERTAINTY_LABELS, isAnswered, LETTERS, LEVEL_LABELS, questionFromStored, questionType, shuffleExam, statementLines, storedAnswer, summarizeExam } from '@/lib/exam'
+import { CERTAINTY_LABELS, examStats, givenAnswerText, isAnswered, LETTERS, LEVEL_LABELS, questionFromStored, questionType, rightAnswerText, shuffleExam, statementLines, storedAnswer, summarizeExam } from '@/lib/exam'
+import { type Diagnosis, diagnoseMistakes, gapExcerpt, type MissedQuestion } from '@/lib/generation/diagnosis'
+import { paths } from '@/lib/paths'
 import { useJobsStore } from '@/stores/jobs'
 import { useLibraryStore } from '@/stores/library'
 import { useUiStore } from '@/stores/ui'
@@ -192,31 +195,154 @@ function Answer({ question, answer, onAnswer, revealed }: { question: Question; 
   )
 }
 
+interface DiagnosisTarget {
+  fileId: string | null
+  folderId: string | null
+}
+
 interface ExamRunProps {
   title: string
   questions: StoredQuestion[]
   sourceOf?: (storedId: string) => string | undefined
-  onRetryWrong?: (wrong: Question[]) => void
+  diagnosisTarget?: DiagnosisTarget
   onRegenerate?: () => void
 }
 
-function ExamRun({ title, questions, sourceOf, onRetryWrong, onRegenerate }: ExamRunProps) {
+function DiagnosisView({ title, missed, target, onBack }: { title: string; missed: MissedQuestion[]; target: DiagnosisTarget; onBack(): void }) {
+  const ui = useUiStore()
+  const navigate = useNavigate()
+  const ai = useLibraryStore(state => state.index.settings.ai)
+  const explainGaps = useJobsStore(state => state.explainGaps)
+  const [state, setState] = useState<{ kind: 'thinking' } | { kind: 'error'; message: string } | { kind: 'ready'; diagnosis: Diagnosis }>({ kind: 'thinking' })
+  const [single, setSingle] = useState(true)
+  const [busy, setBusy] = useState(false)
+  const controller = useRef<AbortController | null>(null)
+
+  const run = () => {
+    controller.current?.abort()
+    const current = new AbortController()
+    controller.current = current
+    setState({ kind: 'thinking' })
+    diagnoseMistakes(missed, ai, current.signal)
+      .then(diagnosis => {
+        setSingle(diagnosis.single)
+        setState({ kind: 'ready', diagnosis })
+      })
+      .catch(failure => !current.signal.aborted && setState({ kind: 'error', message: failure instanceof Error ? failure.message : 'O diagnóstico não saiu.' }))
+  }
+
+  useEffect(() => {
+    run()
+    return () => controller.current?.abort()
+  }, [])
+
+  const generate = async (diagnosis: Diagnosis) => {
+    setBusy(true)
+    const notes = single ? [{ title: `O que faltou em ${title}`, excerpt: gapExcerpt(diagnosis.gaps, missed) }] : diagnosis.gaps.map(gap => ({ title: gap.title, excerpt: gapExcerpt([gap], missed) }))
+    const ids = await explainGaps(target, notes)
+    ui.close()
+    if (ids[0]) navigate(paths.file(ids[0]))
+  }
+
+  return (
+    <Dialog
+      title={`Diagnóstico · ${title}`}
+      size="wide"
+      onClose={ui.close}
+      footer={
+        <>
+          <button className="btn quiet" onClick={onBack} disabled={busy}>
+            Voltar ao resultado
+          </button>
+          {state.kind === 'error' && (
+            <button className="btn" onClick={run}>
+              Tentar de novo
+            </button>
+          )}
+          <button className="btn primary" disabled={state.kind !== 'ready' || busy} onClick={() => state.kind === 'ready' && void generate(state.diagnosis)}>
+            <Icon name="bulb" />
+            {busy ? 'Criando…' : 'Gerar explicações'}
+          </button>
+        </>
+      }
+    >
+      <div className="db">
+        {state.kind === 'thinking' && (
+          <div className="progress" role="status">
+            <div className="step now">
+              <Icon name="sync" className="spinning" />
+              Lendo o que você errou para achar o que faltou aprender…
+            </div>
+          </div>
+        )}
+        {state.kind === 'error' && (
+          <div className="banner" role="alert">
+            <Icon name="warn" />
+            <span>{state.message}</span>
+          </div>
+        )}
+        {state.kind === 'ready' && (
+          <>
+            <span className="muted" style={{ fontSize: 13 }}>
+              {state.diagnosis.gaps.length === 1 ? 'Faltou aprender um tema:' : `Faltou aprender ${state.diagnosis.gaps.length} temas:`}
+            </span>
+            <ul className="gaps">
+              {state.diagnosis.gaps.map(gap => (
+                <li key={gap.title}>
+                  <b>{gap.title}</b>
+                  {gap.missing && <span>{gap.missing}</span>}
+                  {gap.questions.length > 0 && <small className="faint">{gap.questions.length === 1 ? 'questão' : 'questões'} {gap.questions.join(', ')}</small>}
+                </li>
+              ))}
+            </ul>
+            <div className="opts" role="radiogroup" aria-label="Como gerar as explicações">
+              <button className="opt" role="radio" aria-checked={single} onClick={() => setSingle(true)}>
+                <span className="radio" />
+                <span>
+                  <b>Uma nota com tudo{state.diagnosis.single ? ' (sugerido)' : ''}</b>
+                  <span>Uma explicação só, cobrindo todos os temas.</span>
+                </span>
+              </button>
+              <button className="opt" role="radio" aria-checked={!single} onClick={() => setSingle(false)}>
+                <span className="radio" />
+                <span>
+                  <b>
+                    Uma nota por tema ({state.diagnosis.gaps.length}){!state.diagnosis.single ? ' (sugerido)' : ''}
+                  </b>
+                  <span>Uma explicação para cada tema, geradas em lote.</span>
+                </span>
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    </Dialog>
+  )
+}
+
+function ExamRun({ title, questions, sourceOf, diagnosisTarget, onRegenerate }: ExamRunProps) {
   const ui = useUiStore()
   const recordAttempt = useLibraryStore(state => state.recordAttempt)
+  const oneAtATime = useLibraryStore(state => state.index.settings.examOneAtATime)
   const [seed, setSeed] = useState(0)
   const exam = useMemo(() => shuffleExam(questions.map(questionFromStored)), [questions, seed])
   const [answers, setAnswers] = useState<Record<number, UserAnswer>>({})
   const [certainty, setCertainty] = useState<Record<number, Certainty>>({})
   const [done, setDone] = useState(false)
+  const [current, setCurrent] = useState(0)
+  const [diagnosing, setDiagnosing] = useState(false)
   const summary = useMemo(() => summarizeExam(exam, answers, certainty), [exam, answers, certainty])
-  const answered = exam.filter(question => isAnswered(answers[question.id])).length
+  const stats = useMemo(() => examStats(exam, answers, summary.scores), [exam, answers, summary])
+  const answered = stats.done
+  const paged = oneAtATime && !done
+  const shown = paged ? exam.slice(current, current + 1) : exam
 
   const finish = async () => {
     setDone(true)
     const byFile = new Map<string, Question[]>()
     for (const question of exam) {
       const fileId = sourceOf?.(question.storedId!) ?? ''
-      if (!fileId) continue
+      if (!fileId || !isAnswered(answers[question.id])) continue
       byFile.set(fileId, [...(byFile.get(fileId) ?? []), question])
     }
     for (const [fileId, list] of byFile) {
@@ -228,8 +354,11 @@ function ExamRun({ title, questions, sourceOf, onRetryWrong, onRegenerate }: Exa
     }
   }
 
-  const wrong = exam.filter(question => summary.scores[question.id] < 1)
-  const percent = exam.length ? Math.round((summary.score / exam.length) * 100) : 0
+  const missed: MissedQuestion[] = exam
+    .filter(question => isAnswered(answers[question.id]) && summary.scores[question.id] < 1)
+    .map(question => ({ number: exam.indexOf(question) + 1, statement: question.enunciado, right: rightAnswerText(question), given: givenAnswerText(question, answers[question.id]), explanation: question.explicacao }))
+
+  if (diagnosing && diagnosisTarget) return <DiagnosisView title={title} missed={missed} target={diagnosisTarget} onBack={() => setDiagnosing(false)} />
 
   return (
     <Dialog
@@ -239,13 +368,13 @@ function ExamRun({ title, questions, sourceOf, onRetryWrong, onRegenerate }: Exa
       footer={
         done ? (
           <>
-            {onRetryWrong && wrong.length > 0 && (
-              <button className="btn" onClick={() => onRetryWrong(wrong)}>
-                <Icon name="exam" />
-                Reforço do que errei
+            {diagnosisTarget && missed.length > 0 && (
+              <button className="btn" onClick={() => setDiagnosing(true)}>
+                <Icon name="bulb" />
+                Ver o que faltou aprender
               </button>
             )}
-            <button className="btn" onClick={() => (setAnswers({}), setCertainty({}), setDone(false), setSeed(value => value + 1))}>
+            <button className="btn" onClick={() => (setAnswers({}), setCertainty({}), setDone(false), setCurrent(0), setSeed(value => value + 1))}>
               Refazer
             </button>
             <button className="btn primary" onClick={ui.close}>
@@ -265,7 +394,7 @@ function ExamRun({ title, questions, sourceOf, onRetryWrong, onRegenerate }: Exa
             <button className="btn quiet" onClick={ui.close}>
               Sair sem salvar
             </button>
-            <button className="btn primary" onClick={() => void finish()}>
+            <button className="btn primary" disabled={answered === 0} title={answered === 0 ? 'Responda pelo menos uma questão' : undefined} onClick={() => void finish()}>
               Entregar
             </button>
           </>
@@ -275,11 +404,17 @@ function ExamRun({ title, questions, sourceOf, onRetryWrong, onRegenerate }: Exa
       <div className="db">
         {done ? (
           <div className="result-head">
-            <div className="score">{percent}%</div>
+            <div className="score">{stats.percent}%</div>
             <div>
               <b>
-                {summary.score.toLocaleString('pt-BR', { maximumFractionDigits: 1 })} de {exam.length} certas
-              </b>{' '}
+                {stats.done} feita{stats.done === 1 ? '' : 's'}: {stats.right} certa{stats.right === 1 ? '' : 's'}
+                {stats.partial ? `, ${stats.partial} parcia${stats.partial === 1 ? 'l' : 'is'}` : ''}, {stats.wrong} errada{stats.wrong === 1 ? '' : 's'}
+              </b>
+              {stats.blank > 0 && (
+                <div className="muted" style={{ fontSize: 13 }}>
+                  {stats.blank} sem fazer: não contam na nota.
+                </div>
+              )}
               · pontos com certeza: {summary.certaintyPoints > 0 ? '+' : ''}
               {summary.certaintyPoints} de {summary.maxCertaintyPoints}
               <div className="muted" style={{ fontSize: 13 }}>
@@ -293,7 +428,23 @@ function ExamRun({ title, questions, sourceOf, onRetryWrong, onRegenerate }: Exa
             {exam.length} questões. Marcar a certeza é opcional: sem marcar, conta como baixa.
           </span>
         )}
-        {exam.map((question, index) => {
+        {paged && (
+          <div className="pager">
+            <button className="btn" disabled={current === 0} onClick={() => setCurrent(value => value - 1)}>
+              <Icon name="back" />
+              Anterior
+            </button>
+            <span className="muted">
+              {current + 1} de {exam.length}
+            </span>
+            <button className="btn" disabled={current === exam.length - 1} onClick={() => setCurrent(value => value + 1)}>
+              Próxima
+              <Icon name="fwd" />
+            </button>
+          </div>
+        )}
+        {shown.map(question => {
+          const index = exam.indexOf(question)
           const score = summary.scores[question.id]
           const yourWrong = done && questionType(question) === 'unica' && typeof answers[question.id] === 'string' && answers[question.id] !== question.correta ? question.explicacao_das_erradas?.[answers[question.id] as string] : undefined
           return (
@@ -398,7 +549,7 @@ export function ExamDialog({ fileId }: { fileId: string }) {
       </Dialog>
     )
   const questions = opened?.sidecar.questions ?? []
-  return <ExamRun title={meta.name} questions={questions} sourceOf={() => fileId} onRetryWrong={wrong => void generate(wrong)} onRegenerate={() => void generate()} />
+  return <ExamRun title={meta.name} questions={questions} sourceOf={() => fileId} diagnosisTarget={{ fileId, folderId: null }} onRegenerate={() => void generate()} />
 }
 
 export function FolderExamDialog({ folderId, fileIds }: { folderId: string | null; fileIds?: string[] }) {
@@ -424,7 +575,7 @@ export function FolderExamDialog({ folderId, fileIds }: { folderId: string | nul
 
   if (chosen && pool) {
     const owner = new Map(pool.map(item => [item.question.storedId, item.fileId]))
-    return <ExamRun title={folderName} questions={chosen} sourceOf={id => owner.get(id)} />
+    return <ExamRun title={folderName} questions={chosen} sourceOf={id => owner.get(id)} diagnosisTarget={{ fileId: null, folderId }} />
   }
 
   const total = pool?.length ?? 0

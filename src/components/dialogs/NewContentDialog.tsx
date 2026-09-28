@@ -135,7 +135,7 @@ export function NewContentDialog({ folderId: initialFolder }: { folderId?: strin
       setJobId,
     )
     if (fileId) {
-      ui.close()
+      ui.set({ handoffFileId: fileId })
       navigate(paths.file(fileId))
     }
   }

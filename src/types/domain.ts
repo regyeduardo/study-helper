@@ -177,13 +177,10 @@ export type AiProviderId =
   | 'anthropic'
   | 'openai'
   | 'gemini'
-  | 'mistral'
-  | 'groq'
-  | 'openrouter'
   | 'xai'
-  | 'ollama'
   | 'pollinations'
   | 'llm7'
+  | 'ovh'
   | 'custom'
 
 export interface AiSettings {
@@ -214,6 +211,7 @@ export interface Settings {
   githubToken: string
   layout: LayoutId
   storageLimitBytes: number | null
+  examOneAtATime: boolean
 }
 
 export interface TrashEntry {

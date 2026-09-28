@@ -59,6 +59,7 @@ interface UiState {
   columnsPane: 'nav' | 'list' | 'doc'
   columnsSheet: boolean
   focusPop: InspectorTab | null
+  handoffFileId: string | null
   reorder: boolean
   open(overlay: Overlay): void
   close(): void
@@ -74,7 +75,7 @@ interface UiState {
   clearFilters(): void
   setSort(sort: SortKey): void
   setGroup(group: GroupKey): void
-  set(patch: Partial<Pick<UiState, 'leftOpen' | 'rightOpen' | 'drawer' | 'inspectorTab' | 'peekId' | 'columnsPane' | 'columnsSheet' | 'focusPop' | 'reorder'>>): void
+  set(patch: Partial<Pick<UiState, 'leftOpen' | 'rightOpen' | 'drawer' | 'inspectorTab' | 'peekId' | 'columnsPane' | 'columnsSheet' | 'focusPop' | 'reorder' | 'handoffFileId'>>): void
 }
 
 let toastSeq = 0
@@ -99,6 +100,7 @@ export const useUiStore = create<UiState>((set, get) => ({
   columnsPane: 'list',
   columnsSheet: false,
   focusPop: null,
+  handoffFileId: null,
   reorder: false,
 
   open: overlay => set({ overlay, menu: null }),

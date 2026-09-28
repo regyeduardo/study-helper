@@ -60,6 +60,7 @@ interface JobsState {
   generateRemaining(folderId: string): Promise<void>
   regenerate(fileId: string): Promise<void>
   explainSelection(fileId: string, excerpt: string, prompt: string, mode: 'concept' | 'context'): Promise<string>
+  explainGaps(target: { fileId: string | null; folderId: string | null }, notes: { title: string; excerpt: string }[]): Promise<string[]>
   createQuestions(fileId: string, wrong?: WrongQuestion[]): Promise<number>
   readingExam(content: string, title: string): Promise<StoredQuestion[]>
   cancel(jobId: string): void
@@ -72,6 +73,8 @@ const AGENT_PROMPTS: Record<Exclude<Agent, 'reading' | 'meeting'>, string> = {
   lesson: PROMPTS.LESSON_PROMPT,
   explanation: PROMPTS.EXPLANATION_PROMPT,
 }
+
+const GAP_INSTRUCTION = 'Explique o que faltou aprender em cada tema, usando as questões erradas como exemplo do equívoco, sem repetir a prova.'
 
 const FILE_TYPE: Record<Agent, FileType> = { lesson: 'class', explanation: 'explanation', meeting: 'meeting', reading: 'reading' }
 
@@ -349,6 +352,33 @@ export const useJobsStore = create<JobsState>((set, get) => {
         if (saved) await library().updateFile(meta.id, { name: explanationName(saved, excerpt) })
       })()
       return meta.id
+    },
+
+    explainGaps: async (target, notes) => {
+      const source = target.fileId ? (library().files.find(file => file.id === target.fileId) ?? null) : null
+      let folderId = target.folderId
+      let context = ''
+      if (source) {
+        folderId = source.folderId
+        if (!folderId) {
+          const home = await library().createFolder({ name: source.name })
+          await library().updateFile(source.id, { folderId: home.id })
+          folderId = home.id
+        }
+        context = (await library().openFile(source.id)).content
+      }
+      const origin = source ? `diagnóstico da prova de "${source.name}"` : 'diagnóstico da prova da pasta'
+      const ids: string[] = []
+      for (const note of notes) {
+        const meta = await library().createFile(
+          { name: note.title, type: 'explanation', description: origin, folderId, parentFileId: source?.id ?? null, status: 'generating', origin: { input: 'text', name: origin, storage: 'none' } },
+          '',
+        )
+        const input = source ? selectionInput(source, context, library().files, note.excerpt, '', 'context') : `Trecho selecionado:\n\n${note.excerpt}\n\nInstrução:\n\n${GAP_INSTRUCTION}`
+        void runOnFile(meta, 'explanation', input, null, 'Explicação', origin)
+        ids.push(meta.id)
+      }
+      return ids
     },
 
     createQuestions: async (fileId, wrong) => {

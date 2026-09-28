@@ -13,20 +13,19 @@ export interface ProviderInfo {
   free: boolean
   keylessModel?: string
   keylessOneAtATime?: boolean
+  keylessIntervalMs?: number
+  models?: string[]
   keyHelpUrl?: string
 }
 
 export const PROVIDERS: ProviderInfo[] = [
-  { id: 'pollinations', name: 'Pollinations', tag: 'chave grátis', format: 'openai', baseUrl: 'https://gen.pollinations.ai/v1', needsKey: true, free: true, keyHelpUrl: 'https://auth.pollinations.ai' },
-  { id: 'llm7', name: 'LLM7', tag: 'sem chave', format: 'openai', baseUrl: 'https://api.llm7.io/v1', needsKey: false, free: true, keylessModel: 'default', keylessOneAtATime: true, keyHelpUrl: 'https://token.llm7.io' },
+  { id: 'ovh', name: 'OVHcloud', tag: 'sem chave', format: 'openai', baseUrl: 'https://oai.endpoints.kepler.ai.cloud.ovh.net/v1', needsKey: false, free: true, keylessModel: 'Meta-Llama-3_3-70B-Instruct', keylessOneAtATime: true, keylessIntervalMs: 31000, models: ['Meta-Llama-3_3-70B-Instruct'] },
+  { id: 'gemini', name: 'Google Gemini', tag: 'chave grátis', format: 'openai', baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai', needsKey: true, free: true, models: ['gemini-3.5-flash-lite'], keyHelpUrl: 'https://aistudio.google.com/apikey' },
+  { id: 'pollinations', name: 'Pollinations', tag: 'chave grátis', format: 'openai', baseUrl: 'https://gen.pollinations.ai/v1', needsKey: true, free: true, models: ['openai'], keyHelpUrl: 'https://enter.pollinations.ai' },
+  { id: 'llm7', name: 'LLM7', tag: 'chave grátis', format: 'openai', baseUrl: 'https://api.llm7.io/v1', needsKey: true, free: true, models: ['default'], keyHelpUrl: 'https://token.llm7.io' },
   { id: 'anthropic', name: 'Anthropic', tag: 'chave paga', format: 'anthropic', baseUrl: 'https://api.anthropic.com', needsKey: true, free: false, keyHelpUrl: 'https://console.anthropic.com/settings/keys' },
   { id: 'openai', name: 'OpenAI', tag: 'chave paga', format: 'openai', baseUrl: 'https://api.openai.com/v1', needsKey: true, free: false, keyHelpUrl: 'https://platform.openai.com/api-keys' },
-  { id: 'gemini', name: 'Google Gemini', tag: 'chave grátis', format: 'openai', baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai', needsKey: true, free: true, keyHelpUrl: 'https://aistudio.google.com/apikey' },
-  { id: 'mistral', name: 'Mistral', tag: 'chave grátis', format: 'openai', baseUrl: 'https://api.mistral.ai/v1', needsKey: true, free: true, keyHelpUrl: 'https://console.mistral.ai/api-keys' },
-  { id: 'groq', name: 'Groq', tag: 'chave grátis', format: 'openai', baseUrl: 'https://api.groq.com/openai/v1', needsKey: true, free: true, keyHelpUrl: 'https://console.groq.com/keys' },
-  { id: 'openrouter', name: 'OpenRouter', tag: 'chave grátis', format: 'openai', baseUrl: 'https://openrouter.ai/api/v1', needsKey: true, free: true, keyHelpUrl: 'https://openrouter.ai/settings/keys' },
   { id: 'xai', name: 'xAI', tag: 'chave paga', format: 'openai', baseUrl: 'https://api.x.ai/v1', needsKey: true, free: false, keyHelpUrl: 'https://console.x.ai' },
-  { id: 'ollama', name: 'Ollama', tag: 'no seu PC', format: 'openai', baseUrl: 'http://localhost:11434/v1', needsKey: false, free: true },
   { id: 'custom', name: 'Personalizado', tag: 'formato OpenAI', format: 'openai', baseUrl: '', needsKey: false, free: false },
 ]
 
@@ -47,6 +46,14 @@ export function modelOf(settings: AiSettings): string {
 
 export function oneAtATimeOf(settings: AiSettings): boolean {
   return !settings.apiKey && Boolean(providerOf(settings.provider).keylessOneAtATime)
+}
+
+export function intervalOf(settings: AiSettings): number {
+  return oneAtATimeOf(settings) ? (providerOf(settings.provider).keylessIntervalMs ?? 0) : 0
+}
+
+export function isKnownProvider(id: string): id is AiProviderId {
+  return PROVIDERS.some(provider => provider.id === id)
 }
 
 export function isFreeChoice(settings: AiSettings): boolean {

@@ -6,12 +6,15 @@ function viewerPage(): string {
 }
 const DEFAULT_HEIGHT = 320
 const RETRY_INTERVAL = 2500
-const MAX_RETRIES = 3
+const MAX_RETRIES = 24
 
 interface Diagram {
   code: string
   frame: HTMLIFrameElement
+  actions: HTMLElement
+  waiting: HTMLElement
   ready: boolean
+  asked: boolean
   tries: number
 }
 
@@ -48,25 +51,28 @@ export function mountDiagrams(container: ParentNode): () => void {
 
     const actions = document.createElement('div')
     actions.className = 'js-render-block-actions position-absolute top-0 pr-2 right-0 d-flex flex-justify-end flex-items-center'
+    actions.style.setProperty('display', 'none', 'important')
     actions.append(
       iconButton('Abrir em tela cheia', FIT_ICON, () => fullScreen(code)),
       iconButton('Copiar o diagrama', COPY_ICON_MARKUP, () => navigator.clipboard?.writeText(code)),
     )
 
-    wrapper.append(frame, actions)
+    const waiting = document.createElement('p')
+    waiting.className = 'color-fg-muted position-absolute top-0 left-0 m-3'
+    waiting.textContent = 'Desenhando o diagrama…'
+
+    wrapper.append(frame, waiting, actions)
     block.replaceWith(wrapper)
-    diagrams.set(identity, { code, frame, ready: false, tries: 0 })
+    diagrams.set(identity, { code, frame, actions, waiting, ready: false, asked: false, tries: 0 })
   })
 
   if (diagrams.size === 0) return () => {}
 
-  const feed = (diagram: Diagram, identity: string) => {
-    send(diagram.frame, identity, 'ack', true)
+  const feed = (diagram: Diagram, identity: string) =>
     send(diagram.frame, identity, 'code_rendering_service:data:ready', {
       data: diagram.code,
       width: diagram.frame.clientWidth,
     })
-  }
 
   const onMessage = (event: MessageEvent) => {
     let message: { type?: string; body?: string; identity?: string; payload?: { height?: number } }
@@ -80,19 +86,25 @@ export function mountDiagrams(container: ParentNode): () => void {
     const diagram = diagrams.get(message.identity)
     if (!diagram) return
 
-    if (message.body === 'hello') feed(diagram, message.identity)
+    if (message.body === 'hello') send(diagram.frame, message.identity, 'ack', true)
+    if (message.body === 'code_rendering_service:markdown:get_data') {
+      diagram.asked = true
+      feed(diagram, message.identity)
+    }
     if (message.body === 'ready') {
       diagram.ready = true
       diagram.frame.height = String((message.payload?.height ?? DEFAULT_HEIGHT) + 24)
+      diagram.waiting.remove()
+      diagram.actions.style.removeProperty('display')
       send(diagram.frame, message.identity, 'code_rendering_service:ready:ack', true)
     }
   }
 
   const retry = window.setInterval(() => {
     diagrams.forEach((diagram, identity) => {
-      if (diagram.ready || diagram.tries >= MAX_RETRIES) return
+      if (diagram.ready || diagram.asked || diagram.tries >= MAX_RETRIES) return
       diagram.tries += 1
-      feed(diagram, identity)
+      send(diagram.frame, identity, 'ack', true)
     })
   }, RETRY_INTERVAL)
 
@@ -126,10 +138,8 @@ function fullScreen(code: string) {
       return
     }
     if (message?.type !== 'render' || message.identity !== identity) return
-    if (message.body === 'hello') {
-      send(frame, identity, 'ack', true)
-      send(frame, identity, 'code_rendering_service:data:ready', { data: code, width: frame.clientWidth })
-    }
+    if (message.body === 'hello') send(frame, identity, 'ack', true)
+    if (message.body === 'code_rendering_service:markdown:get_data') send(frame, identity, 'code_rendering_service:data:ready', { data: code, width: frame.clientWidth })
     if (message.body === 'ready') send(frame, identity, 'code_rendering_service:ready:ack', true)
   }
 
