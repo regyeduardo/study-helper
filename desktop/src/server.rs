@@ -7,7 +7,7 @@ use tungstenite::handshake::server::{ErrorResponse, Request as Handshake, Respon
 use tungstenite::http::StatusCode;
 use tungstenite::{accept_hdr, Error, Message};
 
-use crate::capture::{list_sources, os_name, Capture};
+use crate::capture::{list_microphones, list_sources, os_name, Capture};
 use crate::protocol::{origin_allowed, Reply, Request};
 
 pub fn serve(listener: TcpListener) {
@@ -45,10 +45,11 @@ fn handle(stream: TcpStream) {
                         let (listing, windows) = list_sources();
                         Reply::Sources { listing, windows }
                     }
-                    Ok(Request::Start { source }) => {
+                    Ok(Request::Microphones) => Reply::Microphones { microphones: list_microphones() },
+                    Ok(Request::Start { source, microphone }) => {
                         capture = None;
                         while received.try_recv().is_ok() {}
-                        match Capture::start(source.clone(), frames.clone()) {
+                        match Capture::start(source.clone(), microphone, frames.clone()) {
                             Ok(started) => {
                                 capture = Some(started);
                                 Reply::Started { source }

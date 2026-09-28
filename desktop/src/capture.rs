@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::thread::JoinHandle;
 use std::time::Duration;
 
-use crate::protocol::{Listing, Source, WindowEntry};
+use crate::protocol::{Device, Listing, Source, WindowEntry};
 
 #[cfg(target_os = "linux")]
 use crate::linux as platform;
@@ -17,11 +17,11 @@ pub struct Capture {
 }
 
 impl Capture {
-    pub fn start(source: Source, frames: Sender<Vec<u8>>) -> Result<Capture, String> {
+    pub fn start(source: Source, microphone: Option<String>, frames: Sender<Vec<u8>>) -> Result<Capture, String> {
         let stop = Arc::new(AtomicBool::new(false));
         let (ready, started) = mpsc::channel();
         let flag = stop.clone();
-        let thread = std::thread::spawn(move || platform::run(source, frames, flag, ready));
+        let thread = std::thread::spawn(move || platform::run(source, microphone, frames, flag, ready));
         let capture = Capture { stop, thread: Some(thread) };
         match started.recv_timeout(Duration::from_secs(10)) {
             Ok(Ok(())) => Ok(capture),
@@ -42,6 +42,10 @@ impl Drop for Capture {
 
 pub fn list_sources() -> (Listing, Vec<WindowEntry>) {
     platform::list_sources()
+}
+
+pub fn list_microphones() -> Vec<Device> {
+    platform::list_microphones()
 }
 
 pub fn os_name() -> &'static str {

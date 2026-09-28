@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { createRoot } from 'react-dom/client'
 
 import type { SourceStorage } from '@/types/domain'
 import { Dialog } from '@/components/ui/Dialog'
@@ -8,10 +9,18 @@ import { LimitedAiNotice } from '@/components/dialogs/LimitedAiNotice'
 import { FolderPicker } from '@/components/dialogs/SimpleDialogs'
 import { SourceStoragePicker } from '@/components/dialogs/SourceStoragePicker'
 import type { LitterboxTime } from '@/controllers/hosting.controller'
-import { IntegrationCapture, IntegrationLink, type IntegrationSource, type IntegrationWindow, useIntegrationStore } from '@/lib/recording/integration'
+import {
+  IntegrationCapture,
+  type IntegrationDevice,
+  IntegrationLink,
+  integrationSourceKey,
+  integrationSourceOf,
+  type IntegrationWindow,
+  useIntegrationStore,
+} from '@/lib/recording/integration'
 import { linkLocalMedia } from '@/lib/recording/media-library'
 import { mountMiniplayer } from '@/lib/recording/miniplayer'
-import { type AudioInput, type CaptureMode, COMPUTER_AUDIO_AUTO, COMPUTER_AUDIO_NONE, listAudioInputs, systemAudioNotice } from '@/lib/recording/recorder'
+import { type AudioInput, type CaptureMode, COMPUTER_AUDIO_AUTO, COMPUTER_AUDIO_NONE, listAudioInputs, type LiveCapture, systemAudioNotice } from '@/lib/recording/recorder'
 import { defaultStorage, storageOptions } from '@/lib/storage/source-storage'
 import { useAccountStore } from '@/stores/account'
 import { useLibraryStore } from '@/stores/library'
@@ -28,15 +37,77 @@ function microphoneRefusal(failure: unknown): string {
   return 'O navegador não liberou o microfone. Confira se outro programa está usando e clique em Gravar de novo.'
 }
 
-const SYSTEM_CHOICE = 'system'
-const MICROPHONE_CHOICE = 'none'
+function clock(seconds: number): string {
+  const pad = (value: number) => String(value).padStart(2, '0')
+  const hours = Math.floor(seconds / 3600)
+  return `${hours ? `${hours}:` : ''}${pad(Math.floor((seconds % 3600) / 60))}:${pad(seconds % 60)}`
+}
+
+function windowsByProgram(windows: IntegrationWindow[]): IntegrationWindow[] {
+  const seen = new Set<number>()
+  return windows.filter(entry => !seen.has(entry.pid) && seen.add(entry.pid))
+}
+
+function sourceLabel(key: string, windows: IntegrationWindow[]): string {
+  if (key === 'system') return 'todo o som do computador'
+  return windows.find(entry => `pid:${entry.pid}` === key)?.title ?? ''
+}
+
+function microphonesOf(inputs: AudioInput[]): IntegrationDevice[] {
+  return inputs.filter(input => !input.computer && input.label).map(input => ({ id: input.deviceId, label: input.label }))
+}
+
+function MicrophoneField({ on, onToggle, id, onId, devices }: { on: boolean; onToggle(): void; id: string; onId(id: string): void; devices: IntegrationDevice[] }) {
+  return (
+    <div className="field">
+      <button className="opt" role="checkbox" aria-checked={on} onClick={onToggle}>
+        <span className="radio" style={{ borderRadius: 5 }} />
+        <span>
+          <b>Gravar o meu microfone</b>
+          <span>{on ? 'A sua voz entra na gravação.' : 'Fica desligado; dá para ligar no meio da gravação.'}</span>
+        </span>
+      </button>
+      <label className="lab" htmlFor="rec-microphone">
+        Microfone
+      </label>
+      <select className="input" id="rec-microphone" value={id} onChange={event => onId(event.target.value)}>
+        <option value="">Padrão do sistema</option>
+        {devices.map(device => (
+          <option key={device.id} value={device.id}>
+            {device.label}
+          </option>
+        ))}
+      </select>
+    </div>
+  )
+}
+
+function IntegrationSourceOptions({ windows, listing }: { windows: IntegrationWindow[]; listing: 'windows' | 'programs' }) {
+  return (
+    <>
+      <option value="system">Sistema inteiro (todo o som do computador)</option>
+      <optgroup label={listing === 'windows' ? 'Uma janela aberta' : 'Um programa aberto'}>
+        {windowsByProgram(windows).map(entry => (
+          <option key={entry.id} value={`pid:${entry.pid}`}>
+            {entry.title}
+            {entry.app && entry.app !== entry.title ? ` · ${entry.app}` : ''}
+          </option>
+        ))}
+      </optgroup>
+      <option value="none">Nenhum som do computador</option>
+    </>
+  )
+}
 
 function IntegrationRecord() {
   const ui = useUiStore()
   const startIntegration = useRecorderStore(state => state.startIntegration)
   const [windows, setWindows] = useState<IntegrationWindow[]>([])
+  const [microphones, setMicrophones] = useState<IntegrationDevice[]>([])
   const [listing, setListing] = useState<'windows' | 'programs'>('windows')
-  const [choice, setChoice] = useState(SYSTEM_CHOICE)
+  const [choice, setChoice] = useState('system')
+  const [microphoneOn, setMicrophoneOn] = useState(true)
+  const [microphoneId, setMicrophoneId] = useState('')
   const [capture, setCapture] = useState<IntegrationCapture | null>(null)
   const [error, setError] = useState<string | null>(null)
   const handed = useRef(false)
@@ -51,6 +122,7 @@ function IntegrationRecord() {
       const found = await link.sources()
       setWindows(found.windows)
       setListing(found.listing)
+      setMicrophones((await link.microphones().catch(() => ({ microphones: [] }))).microphones)
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : 'A integração não listou as janelas.')
     } finally {
@@ -60,16 +132,13 @@ function IntegrationRecord() {
   useEffect(() => {
     void refresh()
   }, [])
-  const picked = windows.find(entry => entry.id === choice)
-  const source: IntegrationSource = choice === SYSTEM_CHOICE ? { kind: 'system' } : choice === MICROPHONE_CHOICE || !picked ? { kind: 'none' } : { kind: 'window', pid: picked.pid }
-  const label = choice === SYSTEM_CHOICE ? 'todo o som do computador' : picked ? picked.title : ''
-  const sourceKey = JSON.stringify(source)
+  const label = sourceLabel(choice, windows)
   useEffect(() => {
     let alive = true
     let current: IntegrationCapture | null = null
     setCapture(null)
     setError(null)
-    IntegrationCapture.start(source, label)
+    IntegrationCapture.start(integrationSourceOf(choice), label, microphoneId || null)
       .then(started => {
         if (!alive) {
           void started.stop()
@@ -83,13 +152,20 @@ function IntegrationRecord() {
       alive = false
       if (current && !handed.current) void current.stop()
     }
-  }, [sourceKey])
-  useEffect(() => (capture && player.current ? mountMiniplayer(player.current, { preview: null, meters: capture.meters, computerAudio: capture.label }) : undefined), [capture])
+  }, [choice, microphoneId])
+  useEffect(
+    () =>
+      capture && player.current
+        ? mountMiniplayer(player.current, { preview: null, meters: { microphone: microphoneOn ? capture.meters.microphone : null, computer: choice === 'none' ? null : capture.meters.computer }, computerAudio: capture.label })
+        : undefined,
+    [capture, microphoneOn, choice],
+  )
+  const nothing = !microphoneOn && choice === 'none'
   const start = async () => {
-    if (!capture) return
+    if (!capture || nothing) return
     handed.current = true
     try {
-      await startIntegration(capture)
+      await startIntegration(capture, { microphoneOn, microphoneId: microphoneId || null })
       ui.close()
     } catch (failure) {
       handed.current = false
@@ -106,7 +182,7 @@ function IntegrationRecord() {
           <button className="btn quiet" onClick={ui.close}>
             Cancelar
           </button>
-          <button className="btn primary" onClick={() => void start()} disabled={!capture}>
+          <button className="btn primary" onClick={() => void start()} disabled={!capture || nothing}>
             <Icon name="rec" />
             Começar a gravar
           </button>
@@ -117,19 +193,10 @@ function IntegrationRecord() {
         <IntegrationStatus />
         <div className="field">
           <label className="lab" htmlFor="rec-integration">
-            O que gravar junto com o seu microfone
+            Som do computador
           </label>
           <select className="input" id="rec-integration" value={choice} onChange={event => setChoice(event.target.value)}>
-            <option value={SYSTEM_CHOICE}>Sistema inteiro (todo o som do computador)</option>
-            <optgroup label={listing === 'windows' ? 'Uma janela aberta' : 'Um programa aberto'}>
-              {windows.map(entry => (
-                <option key={entry.id} value={entry.id}>
-                  {entry.title}
-                  {entry.app && entry.app !== entry.title ? ` · ${entry.app}` : ''}
-                </option>
-              ))}
-            </optgroup>
-            <option value={MICROPHONE_CHOICE}>Só o microfone</option>
+            <IntegrationSourceOptions windows={windows} listing={listing} />
           </select>
           <span className="faint" style={{ fontSize: 12 }}>
             {listing === 'programs' ? 'Este sistema não deixa listar as janelas, então aparecem os programas. ' : ''}
@@ -139,11 +206,12 @@ function IntegrationRecord() {
             </button>
           </span>
         </div>
+        <MicrophoneField on={microphoneOn} onToggle={() => setMicrophoneOn(!microphoneOn)} id={microphoneId} onId={setMicrophoneId} devices={microphones} />
         <div className="field">
           <span className="lab">Confira antes de gravar</span>
           <div className="player" ref={player} aria-label="Ondas antes de gravar" style={{ height: 140, borderRadius: 8, overflow: 'hidden' }} />
           <span className="faint" style={{ fontSize: 12 }}>
-            {capture ? 'Fale e deixe o som tocar: as ondas mostram o que vai ser gravado.' : error ? '' : 'Ligando o som…'}
+            {nothing ? 'Ligue o microfone ou escolha um som do computador.' : capture ? 'Fale e deixe o som tocar: as ondas mostram o que vai ser gravado.' : error ? '' : 'Ligando o som…'}
           </span>
         </div>
         {error && (
@@ -163,6 +231,8 @@ export function RecordDialog() {
   const integration = useIntegrationStore(state => state.status)
   const [mode, setMode] = useState<CaptureMode>('tab')
   const [computerAudio, setComputerAudio] = useState(COMPUTER_AUDIO_AUTO)
+  const [microphoneOn, setMicrophoneOn] = useState(true)
+  const [microphoneId, setMicrophoneId] = useState('')
   const [inputs, setInputs] = useState<AudioInput[]>([])
   const [error, setError] = useState<string | null>(null)
   const [allowed, setAllowed] = useState(false)
@@ -208,10 +278,11 @@ export function RecordDialog() {
     )
   }
   if (integration === 'connected') return <IntegrationRecord />
+  const nothing = !microphoneOn && mode === 'microphone' && computerAudio === COMPUTER_AUDIO_NONE
   const start = async () => {
     setError(null)
     try {
-      await recorder.start(mode, computerAudio)
+      await recorder.start(mode, computerAudio, { microphoneOn, microphoneId: microphoneId || null })
       ui.close()
     } catch (failure) {
       setError(failure instanceof Error && failure.name === 'NotAllowedError' ? 'Você não deu permissão para gravar.' : failure instanceof Error ? failure.message : 'Não deu para começar a gravar.')
@@ -227,7 +298,7 @@ export function RecordDialog() {
           <button className="btn quiet" onClick={ui.close}>
             Cancelar
           </button>
-          <button className="btn primary" onClick={() => void start()} disabled={!supported && mode !== 'microphone'}>
+          <button className="btn primary" onClick={() => void start()} disabled={(!supported && mode !== 'microphone') || nothing}>
             <Icon name="rec" />
             Começar a gravar
           </button>
@@ -243,21 +314,21 @@ export function RecordDialog() {
               <span className="radio" />
               <span>
                 <b>A aba da reunião</b>
-                <span>Meet, Teams ou Zoom no navegador. Grava só o som da aba, mais o seu microfone.</span>
+                <span>Meet, Teams ou Zoom no navegador. Grava o som da aba.</span>
               </span>
             </button>
             <button className="opt" role="radio" aria-checked={mode === 'screen'} onClick={() => setMode('screen')}>
               <span className="radio" />
               <span>
                 <b>A tela inteira</b>
-                <span>Para reunião em app instalado. Grava só o som do computador e o seu microfone.</span>
+                <span>Para reunião em app instalado. Grava o som do computador que a tela entregar.</span>
               </span>
             </button>
             <button className="opt" role="radio" aria-checked={mode === 'microphone'} onClick={() => setMode('microphone')}>
               <span className="radio" />
               <span>
-                <b>Só o microfone</b>
-                <span>Reunião presencial ou aula: grava o seu microfone e o som do computador escolhido abaixo.</span>
+                <b>Sem compartilhar a tela</b>
+                <span>Reunião presencial, aula ou app de reunião: grava o som do computador escolhido abaixo.</span>
               </span>
             </button>
           </div>
@@ -265,11 +336,13 @@ export function RecordDialog() {
         {/Firefox\//.test(navigator.userAgent) && (
           <div className="banner" role="note" aria-label="Aviso do Firefox">
             <Icon name="warn" />
-            <span>No Firefox o som do computador não vem junto com a tela ou a aba: ele vem da entrada do sistema ("Monitor of…" no Linux, "Mixagem estéreo" no Windows), e o Automático abaixo já pega todas. Escolha "Só o microfone" para gravar o seu microfone e todo o som do computador.</span>
+            <span>No Firefox o som do computador não vem junto com a tela ou a aba: ele vem da entrada do sistema ("Monitor of…" no Linux, "Mixagem estéreo" no Windows), e o Automático abaixo já pega todas. Escolha "Sem compartilhar a tela" para gravar o seu microfone e todo o som do computador.</span>
           </div>
         )}
         <div className="field">
-          <label className="lab" htmlFor="rec-computer">Som do computador</label>
+          <label className="lab" htmlFor="rec-computer">
+            Som do computador
+          </label>
           <select className="input" id="rec-computer" value={computerAudio} onChange={event => setComputerAudio(event.target.value)}>
             <option value={COMPUTER_AUDIO_AUTO}>{detected.length > 1 ? 'Automático · todas as saídas de som do computador' : detected.length ? `Automático · ${detected[0].label}` : 'Automático'}</option>
             {inputs
@@ -295,9 +368,11 @@ export function RecordDialog() {
             )}
           </span>
         </div>
+        <MicrophoneField on={microphoneOn} onToggle={() => setMicrophoneOn(!microphoneOn)} id={microphoneId} onId={setMicrophoneId} devices={microphonesOf(inputs)} />
+        {nothing && <span className="faint">Ligue o microfone ou escolha um som do computador.</span>}
         <div className="banner info">
           <Icon name="info" />
-          <span>Um miniplayer mostra o que está sendo gravado, com as ondas do microfone e do som do computador, o tempo, Terminar e Cancelar. O arquivo é gravado em pedaços no navegador, então reunião longa não pesa. Parar pela barra do navegador também termina.</span>
+          <span>Um miniplayer mostra o que está sendo gravado, com as ondas do microfone e do som do computador, o tempo, e deixa pausar, ligar e desligar cada som e trocar as fontes. O arquivo é gravado em pedaços no navegador, então reunião longa não pesa. Parar pela barra do navegador também termina.</span>
         </div>
         <button className="btn quiet" style={{ justifySelf: 'start' }} onClick={() => ui.open({ kind: 'media' })}>
           <Icon name="mic" />
@@ -314,29 +389,62 @@ export function RecordDialog() {
   )
 }
 
-function clock(seconds: number): string {
-  const pad = (value: number) => String(value).padStart(2, '0')
-  const hours = Math.floor(seconds / 3600)
-  return `${hours ? `${hours}:` : ''}${pad(Math.floor((seconds % 3600) / 60))}:${pad(seconds % 60)}`
-}
-
-function Miniplayer() {
-  const live = useRecorderStore(state => state.live)
+function Miniplayer({ live }: { live: LiveCapture | null }) {
   const container = useRef<HTMLDivElement>(null)
   useEffect(() => (live && container.current ? mountMiniplayer(container.current, live) : undefined), [live])
   return <div className="player" ref={container} />
 }
 
-export function RecordingWindow() {
-  const { active, seconds, mode, live, floating, finish, cancel, openFloating } = useRecorderStore()
-  const [blocked, setBlocked] = useState(false)
+function useSwitchOptions(mode: CaptureMode | null) {
+  const [microphones, setMicrophones] = useState<IntegrationDevice[]>([])
+  const [windows, setWindows] = useState<IntegrationWindow[]>([])
+  const [listing, setListing] = useState<'windows' | 'programs'>('windows')
+  const [inputs, setInputs] = useState<AudioInput[]>([])
+  useEffect(() => {
+    let alive = true
+    void (async () => {
+      if (mode === 'integration') {
+        const link = await IntegrationLink.open()
+        if (!link) return
+        try {
+          const found = await link.sources()
+          const devices = await link.microphones().catch(() => ({ microphones: [] }))
+          if (!alive) return
+          setWindows(found.windows)
+          setListing(found.listing)
+          setMicrophones(devices.microphones)
+        } catch {
+          return
+        } finally {
+          link.close()
+        }
+      } else {
+        const found = await listAudioInputs().catch(() => [])
+        if (!alive) return
+        setInputs(found)
+        setMicrophones(microphonesOf(found))
+      }
+    })()
+    return () => {
+      alive = false
+    }
+  }, [mode])
+  return { microphones, windows, listing, inputs }
+}
+
+function RecordingControls() {
+  const { seconds, mode, live, floating, finish, cancel, pause, resume, setEnabled, switchMicrophone, switchComputerInput, reshare, switchIntegrationSource, openFloating } = useRecorderStore()
+  const toast = useUiStore(state => state.toast)
   const [confirming, setConfirming] = useState(false)
-  if (!active) return null
+  const [blocked, setBlocked] = useState(false)
+  const options = useSwitchOptions(mode)
+  const attempt = (action: () => Promise<void>) => void action().catch(failure => toast(failure instanceof Error ? failure.message : 'Não deu para trocar.'))
+  const what = mode === 'tab' ? 'a aba' : mode === 'screen' ? 'a tela' : mode === 'integration' && live?.computerAudio ? live.computerAudio : 'o microfone'
   return (
-    <div className="mini-rec" role="dialog" aria-label="Gravação em andamento">
+    <>
       <div className="bar-top">
         <Icon name="monitor" />
-        <span style={{ flex: 1 }}>Gravando {mode === 'tab' ? 'a aba' : mode === 'screen' ? 'a tela' : mode === 'integration' && live?.computerAudio ? live.computerAudio : 'o microfone'}</span>
+        <span style={{ flex: 1 }}>Gravando {what}</span>
         {!floating && (
           <button className="ibtn" aria-label="Abrir em janela própria" title="Abrir em janela própria" onClick={() => void openFloating().then(opened => setBlocked(!opened))}>
             <Icon name="monitor" />
@@ -344,10 +452,76 @@ export function RecordingWindow() {
         )}
       </div>
       {blocked && !floating && <div className="source">O navegador bloqueou a janela: libere as janelas deste site e tente de novo.</div>}
-      <Miniplayer />
+      <Miniplayer live={live} />
       {live?.computerAudio && <div className="source">Som do computador: {live.computerAudio}</div>}
       <div className="body">
-        <div className="timer">{clock(seconds)}</div>
+        <div className="timer">
+          {clock(seconds)}
+          {live?.paused ? <span className="faint" style={{ fontSize: 13 }}>pausado</span> : null}
+        </div>
+        <div className="toggles" style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+          <button className="btn" aria-pressed={live?.microphoneOn ?? true} onClick={() => setEnabled('microphone', !(live?.microphoneOn ?? true))}>
+            <Icon name="mic" />
+            {live?.microphoneOn === false ? 'Ligar o microfone' : 'Desligar o microfone'}
+          </button>
+          {live?.hasSource && (
+            <button className="btn" aria-pressed={live.sourceOn} onClick={() => setEnabled('source', !live.sourceOn)}>
+              <Icon name="monitor" />
+              {live.sourceOn ? 'Desligar o som do computador' : 'Ligar o som do computador'}
+            </button>
+          )}
+          <button className="btn" onClick={() => (live?.paused ? resume() : pause())}>
+            <Icon name={live?.paused ? 'rec' : 'clock'} />
+            {live?.paused ? 'Continuar' : 'Pausar'}
+          </button>
+        </div>
+        <label className="lab" htmlFor="live-microphone">
+          Microfone
+        </label>
+        <select className="input" id="live-microphone" value={live?.microphoneId ?? ''} onChange={event => attempt(() => switchMicrophone(event.target.value || null))}>
+          <option value="">Padrão do sistema</option>
+          {options.microphones.map(device => (
+            <option key={device.id} value={device.id}>
+              {device.label}
+            </option>
+          ))}
+        </select>
+        <label className="lab" htmlFor="live-source">
+          Som do computador
+        </label>
+        {mode === 'integration' ? (
+          <select
+            className="input"
+            id="live-source"
+            value={live?.sourceChoice ?? 'system'}
+            onChange={event => {
+              const key = event.target.value
+              attempt(() => switchIntegrationSource({ source: integrationSourceOf(key), label: sourceLabel(key, options.windows) }))
+            }}
+          >
+            <IntegrationSourceOptions windows={options.windows} listing={options.listing} />
+          </select>
+        ) : (
+          <>
+            <select className="input" id="live-source" value={live?.sourceChoice === 'display' ? 'display' : (live?.sourceChoice ?? COMPUTER_AUDIO_NONE)} onChange={event => attempt(() => (event.target.value === 'display' ? reshare() : switchComputerInput(event.target.value)))}>
+              {(mode === 'tab' || mode === 'screen') && <option value="display">{mode === 'tab' ? 'Som da aba compartilhada' : 'Som da tela compartilhada'}</option>}
+              <option value={COMPUTER_AUDIO_AUTO}>Automático · entradas de som do computador</option>
+              {options.inputs
+                .filter(input => input.computer)
+                .map(input => (
+                  <option key={input.deviceId} value={input.deviceId}>
+                    {input.label}
+                  </option>
+                ))}
+              <option value={COMPUTER_AUDIO_NONE}>Nenhum som do computador</option>
+            </select>
+            {(mode === 'tab' || mode === 'screen') && (
+              <button className="btn quiet" style={{ justifySelf: 'start' }} onClick={() => attempt(reshare)}>
+                {mode === 'tab' ? 'Trocar a aba' : 'Trocar a tela'}
+              </button>
+            )}
+          </>
+        )}
         <div className="acts">
           <button className="btn danger" onClick={() => setConfirming(true)}>
             Cancelar
@@ -368,11 +542,11 @@ export function RecordingWindow() {
           </div>
         )}
       </div>
-    </div>
+    </>
   )
 }
 
-export function RecordingDoneDialog() {
+function RecordingDoneOptions({ place }: { place: 'dialog' | 'window' }) {
   const { result, clearResult } = useRecorderStore()
   const account = useAccountStore(state => state.active())
   const limit = useLibraryStore(state => state.index.settings.storageLimitBytes)
@@ -400,65 +574,134 @@ export function RecordingDoneDialog() {
       if (fileId) void linkLocalMedia(storedName, fileId)
     })
   }
-  return (
-    <Dialog
-      title="Gravação pronta"
-      size="narrow"
-      onClose={later}
-      footer={
-        <>
-          <button className="btn quiet" onClick={later}>
-            Só salvar
-          </button>
-          <button className="btn primary" onClick={go}>
-            Transcrever e gerar
-          </button>
-        </>
-      }
-    >
-      <div className="db">
-        <span className="muted">
-          {duration(result.durationSeconds)} · {formatBytes(result.file.size)} · {result.mime || result.file.type}
-        </span>
-        <div className="banner info">
-          <Icon name="check" />
-          <span>A gravação já está guardada neste computador, em Mídias, e só sai de lá quando você apagar.</span>
-        </div>
-        <LimitedAiNotice />
-        <div className="field">
-          <span className="lab">O que gerar</span>
-          <div className="opts" role="radiogroup">
-            {(
-              [
-                ['meeting', 'Ata de reunião'],
-                ['lesson', 'Aula'],
-                ['reading', 'Só a transcrição'],
-              ] as [Agent, string][]
-            ).map(([id, label]) => (
-              <button key={id} className="opt" role="radio" aria-checked={agent === id} onClick={() => setAgent(id)}>
-                <span className="radio" />
-                <span>
-                  <b>{label}</b>
-                </span>
-              </button>
-            ))}
-          </div>
-        </div>
-        <SourceStoragePicker
-          label="Guardar também na nuvem?"
-          sizeBytes={result.file.size}
-          options={options}
-          chosen={chosen}
-          onChoose={setStorage}
-          litterboxTime={litterboxTime}
-          onLitterboxTime={setLitterboxTime}
-          names={{ none: { name: 'Não, só neste computador', description: 'Fica só em Mídias, neste navegador. A nota guarda o nome da gravação.' } }}
-        />
-        <div className="field">
-          <span className="lab">Pasta</span>
-          <FolderPicker value={folderId} onChange={setFolderId} />
+  const actions = (
+    <>
+      <button className="btn quiet" onClick={later}>
+        Só salvar
+      </button>
+      <button className="btn primary" onClick={go}>
+        Transcrever e gerar
+      </button>
+    </>
+  )
+  const body = (
+    <div className="db">
+      <span className="muted">
+        {duration(result.durationSeconds)} · {formatBytes(result.file.size)} · {result.mime || result.file.type}
+      </span>
+      <div className="banner info">
+        <Icon name="check" />
+        <span>A gravação já está guardada neste computador, em Mídias, e só sai de lá quando você apagar.</span>
+      </div>
+      <LimitedAiNotice />
+      <div className="field">
+        <span className="lab">O que gerar</span>
+        <div className="opts" role="radiogroup">
+          {(
+            [
+              ['meeting', 'Ata de reunião'],
+              ['lesson', 'Aula'],
+              ['reading', 'Só a transcrição'],
+            ] as [Agent, string][]
+          ).map(([id, label]) => (
+            <button key={id} className="opt" role="radio" aria-checked={agent === id} onClick={() => setAgent(id)}>
+              <span className="radio" />
+              <span>
+                <b>{label}</b>
+              </span>
+            </button>
+          ))}
         </div>
       </div>
-    </Dialog>
+      <SourceStoragePicker
+        label="Guardar também na nuvem?"
+        sizeBytes={result.file.size}
+        options={options}
+        chosen={chosen}
+        onChoose={setStorage}
+        litterboxTime={litterboxTime}
+        onLitterboxTime={setLitterboxTime}
+        names={{ none: { name: 'Não, só neste computador', description: 'Fica só em Mídias, neste navegador. A nota guarda o nome da gravação.' } }}
+      />
+      <div className="field">
+        <span className="lab">Pasta</span>
+        <FolderPicker value={folderId} onChange={setFolderId} />
+      </div>
+    </div>
   )
+  if (place === 'dialog') {
+    return (
+      <Dialog title="Gravação pronta" size="narrow" onClose={later} footer={actions}>
+        {body}
+      </Dialog>
+    )
+  }
+  return (
+    <>
+      <div className="bar-top">
+        <Icon name="check" />
+        <span style={{ flex: 1 }}>Gravação pronta</span>
+      </div>
+      <div className="body">
+        {body}
+        <div className="acts">{actions}</div>
+      </div>
+    </>
+  )
+}
+
+function FloatingContent() {
+  const active = useRecorderStore(state => state.active)
+  const done = useRecorderStore(state => Boolean(state.result) && state.resultPlace === 'window')
+  const paused = useRecorderStore(state => state.live?.paused)
+  if (!active && !done) return null
+  return (
+    <div className={`mini-rec${done ? ' done' : ''}${paused ? ' paused' : ''}`} role="dialog" aria-label={done ? 'Gravação pronta' : 'Gravação em andamento'}>
+      {done ? <RecordingDoneOptions place="window" /> : <RecordingControls />}
+    </div>
+  )
+}
+
+export function RecordingWindow() {
+  const active = useRecorderStore(state => state.active)
+  const floating = useRecorderStore(state => state.floating)
+  const done = useRecorderStore(state => Boolean(state.result) && state.resultPlace === 'window')
+  const paused = useRecorderStore(state => state.live?.paused)
+  useEffect(() => {
+    if (!floating) return
+    const container = floating.document.createElement('div')
+    floating.document.body.appendChild(container)
+    const root = createRoot(container)
+    root.render(<FloatingContent />)
+    return () => {
+      queueMicrotask(() => {
+        root.unmount()
+        container.remove()
+      })
+    }
+  }, [floating])
+  if (!active && !done) return null
+  if (floating) {
+    return (
+      <div className="mini-rec" role="status" aria-label="Gravação na janela flutuante">
+        <div className="bar-top">
+          <Icon name="monitor" />
+          <span style={{ flex: 1 }}>{done ? 'Gravação pronta na janela flutuante' : 'Gravando na janela flutuante'}</span>
+          <button className="ibtn" aria-label="Mostrar a janela flutuante" title="Mostrar a janela flutuante" onClick={() => floating.focus()}>
+            <Icon name="monitor" />
+          </button>
+        </div>
+      </div>
+    )
+  }
+  return (
+    <div className={`mini-rec${done ? ' done' : ''}${paused ? ' paused' : ''}`} role="dialog" aria-label={done ? 'Gravação pronta' : 'Gravação em andamento'}>
+      {done ? <RecordingDoneOptions place="window" /> : <RecordingControls />}
+    </div>
+  )
+}
+
+export function RecordingDoneDialog() {
+  const show = useRecorderStore(state => Boolean(state.result) && state.resultPlace === 'dialog')
+  return show ? <RecordingDoneOptions place="dialog" /> : null
 }

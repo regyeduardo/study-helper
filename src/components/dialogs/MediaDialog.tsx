@@ -3,15 +3,18 @@ import { useNavigate } from 'react-router-dom'
 
 import { Dialog } from '@/components/ui/Dialog'
 import { Icon } from '@/components/ui/Icon'
+import { transcriptFileName, transcriptOf } from '@/lib/generation/transcript'
 import { type LocalMedia, listLocalMedia, readLocalMedia, removeLocalMedia } from '@/lib/recording/media-library'
 import { paths } from '@/lib/paths'
 import { useLibraryStore } from '@/stores/library'
 import { useRecorderStore } from '@/stores/recorder'
 import { useUiStore } from '@/stores/ui'
+import { downloadBlob } from '@/utils/download'
 import { duration, formatBytes } from '@/utils/format'
 
 function MediaItem({ item, onRemoved }: { item: LocalMedia; onRemoved(): void }) {
   const files = useLibraryStore(state => state.files)
+  const repo = useLibraryStore(state => state.repo)
   const reopen = useRecorderStore(state => state.reopen)
   const ui = useUiStore()
   const navigate = useNavigate()
@@ -41,6 +44,16 @@ function MediaItem({ item, onRemoved }: { item: LocalMedia; onRemoved(): void })
     link.download = item.name
     link.click()
     setTimeout(() => URL.revokeObjectURL(link.href), 10000)
+  }
+  const downloadTranscript = async () => {
+    for (const note of notes) {
+      const transcript = repo ? await transcriptOf(note, repo) : null
+      if (transcript) {
+        downloadBlob(new Blob([transcript], { type: 'text/plain;charset=utf-8' }), transcriptFileName(note.name))
+        return
+      }
+    }
+    ui.toast('Essa gravação ainda não tem transcrição guardada.')
   }
   const generate = async () => {
     const file = await load()
@@ -98,6 +111,12 @@ function MediaItem({ item, onRemoved }: { item: LocalMedia; onRemoved(): void })
           <Icon name="download" />
           Baixar
         </button>
+        {notes.length > 0 && (
+          <button className="btn" onClick={() => void downloadTranscript()}>
+            <Icon name="download" />
+            Baixar a transcrição
+          </button>
+        )}
         <button className="btn" onClick={() => void generate()}>
           <Icon name="bulb" />
           {notes.length ? 'Gerar de novo' : 'Gerar'}

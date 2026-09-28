@@ -41,7 +41,10 @@ describe('MeetingRecorder capture', () => {
     expect(context.sources).toHaveLength(2)
     expect(context.sources[0].stream.getAudioTracks().map(track => track.label)).toEqual(['tab-audio'])
     expect(context.sources[1].stream).toBe(env.microphoneStream)
-    for (const source of context.sources) expect(source.connect).toHaveBeenCalledWith(context.destination)
+    expect(context.sources[0].connect).toHaveBeenCalledWith(context.sourceGain)
+    expect(context.sources[1].connect).toHaveBeenCalledWith(context.microphoneGain)
+    expect(context.microphoneGain.connect).toHaveBeenCalledWith(context.destination)
+    expect(context.sourceGain.connect).toHaveBeenCalledWith(context.destination)
     const recorded = lastRecorder().stream.getTracks().map(track => track.label)
     expect(recorded).toEqual(['mix'])
   })
@@ -127,7 +130,7 @@ describe('MeetingRecorder capture', () => {
   it('records only the microphone without asking for the screen', async () => {
     await new MeetingRecorder(callbacks()).start('microphone')
     expect(env.getDisplayMedia).not.toHaveBeenCalled()
-    expect(lastRecorder().options).toEqual({ mimeType: 'audio/webm;codecs=opus' })
+    expect(lastRecorder().options).toEqual({ mimeType: 'audio/webm;codecs=opus', audioBitsPerSecond: 32000 })
     expect(lastRecorder().stream.getTracks().map(track => track.label)).toEqual(['mix'])
   })
 })
@@ -135,16 +138,16 @@ describe('MeetingRecorder capture', () => {
 describe('MeetingRecorder through the integration', () => {
   it('records the microphone and the chosen source the integration streams, and lets it go when finished', async () => {
     const context = new FakeAudioContext()
-    const capture = { context, microphone: { connect: vi.fn() }, source: { connect: vi.fn() }, meters: { microphone: {}, computer: {} }, label: 'SoWork - Google Chrome', stop: vi.fn(async () => undefined) }
+    const capture = { context, microphone: { connect: vi.fn() }, source: { connect: vi.fn() }, meters: { microphone: {}, computer: {} }, label: 'SoWork - Google Chrome', choice: { source: { kind: 'window', pid: 7 }, microphone: null }, stop: vi.fn(async () => undefined), switchTo: vi.fn(async () => undefined) }
     const handlers = callbacks()
     const recorder = new MeetingRecorder(handlers)
     await recorder.startIntegration(capture as never)
     expect(env.getDisplayMedia).not.toHaveBeenCalled()
     expect(env.getUserMedia).not.toHaveBeenCalled()
-    expect(capture.microphone.connect).toHaveBeenCalledWith(context.destination)
-    expect(capture.source.connect).toHaveBeenCalledWith(context.destination)
-    expect(lastRecorder().options).toEqual({ mimeType: 'audio/webm;codecs=opus' })
-    expect(handlers.onLive).toHaveBeenCalledWith(expect.objectContaining({ computerAudio: 'SoWork - Google Chrome', meters: capture.meters }))
+    expect(capture.microphone.connect).toHaveBeenCalledWith(context.microphoneGain)
+    expect(capture.source.connect).toHaveBeenCalledWith(context.sourceGain)
+    expect(lastRecorder().options).toEqual({ mimeType: 'audio/webm;codecs=opus', audioBitsPerSecond: 32000 })
+    expect(handlers.onLive).toHaveBeenCalledWith(expect.objectContaining({ computerAudio: 'SoWork - Google Chrome', sourceChoice: 'pid:7', hasSource: true, hasMicrophone: true }))
     recorder.finish()
     await vi.waitFor(() => expect(handlers.onFinished).toHaveBeenCalledTimes(1))
     expect(capture.stop).toHaveBeenCalled()
@@ -152,9 +155,15 @@ describe('MeetingRecorder through the integration', () => {
 })
 
 describe('MeetingRecorder format', () => {
+  it('records light mono audio, about 14 MB an hour', async () => {
+    await new MeetingRecorder(callbacks()).start('tab')
+    expect(lastRecorder().options?.audioBitsPerSecond).toBe(32000)
+    expect(FakeAudioContext.instances[0].destination).toMatchObject({ channelCount: 1, channelCountMode: 'explicit' })
+  })
+
   it('records only the audio when sharing a tab or the screen', async () => {
     await new MeetingRecorder(callbacks()).start('tab')
-    expect(lastRecorder().options).toEqual({ mimeType: 'audio/webm;codecs=opus' })
+    expect(lastRecorder().options).toEqual({ mimeType: 'audio/webm;codecs=opus', audioBitsPerSecond: 32000 })
     expect(lastRecorder().stream.getTracks().map(track => track.kind)).toEqual(['audio'])
     expect([...env.directory.files.keys()][0]).toMatch(/^gravacao-\d+\.webm$/)
   })
@@ -162,14 +171,14 @@ describe('MeetingRecorder format', () => {
   it('falls back to MP4 audio when WebM is not supported', async () => {
     FakeMediaRecorder.supported = new Set(['video/mp4;codecs=avc1,opus', 'video/mp4', 'audio/mp4;codecs=opus'])
     await new MeetingRecorder(callbacks()).start('tab')
-    expect(lastRecorder().options).toEqual({ mimeType: 'audio/mp4;codecs=opus' })
+    expect(lastRecorder().options).toEqual({ mimeType: 'audio/mp4;codecs=opus', audioBitsPerSecond: 32000 })
     expect([...env.directory.files.keys()][0]).toMatch(/\.mp4$/)
   })
 
   it('lets the browser pick when nothing listed is supported', async () => {
     FakeMediaRecorder.supported = new Set()
     await new MeetingRecorder(callbacks()).start('tab')
-    expect(lastRecorder().options).toBeUndefined()
+    expect(lastRecorder().options).toEqual({ audioBitsPerSecond: 32000 })
   })
 })
 
@@ -275,20 +284,132 @@ describe('MeetingRecorder status', () => {
     }
   })
 
-  it('opens a floating window whose buttons finish the recording', async () => {
+  it('opens a floating window with the app styles, and keeps it open after finishing so the choices show there', async () => {
+    const style = document.head.appendChild(document.createElement('style'))
+    style.textContent = '.mini-rec{color:red}'
     const pipDocument = document.implementation.createHTMLDocument('pip')
-    const pipWindow = Object.assign(new EventTarget(), { document: pipDocument, close: vi.fn() })
+    const pipWindow = Object.assign(new EventTarget(), { document: pipDocument, close: vi.fn(), focus: vi.fn() })
     const requestWindow = vi.fn(async () => pipWindow)
     ;(window as { documentPictureInPicture?: unknown }).documentPictureInPicture = { requestWindow }
+    const handlers = { ...callbacks(), onFloating: vi.fn() }
+    const recorder = new MeetingRecorder(handlers)
+    await recorder.start('tab')
+    expect(requestWindow).toHaveBeenCalledWith({ width: 340, height: 360 })
+    expect(handlers.onFloating).toHaveBeenCalledWith(pipWindow)
+    expect(pipDocument.head.textContent).toContain('.mini-rec{color:red}')
+    expect(pipDocument.body.className).toBe('floating-recorder')
+    recorder.finish()
+    await vi.waitFor(() => expect(handlers.onFinished).toHaveBeenCalled())
+    expect(pipWindow.close).not.toHaveBeenCalled()
+    style.remove()
+  })
+
+  it('closes the floating window when the recording is discarded', async () => {
+    const pipWindow = Object.assign(new EventTarget(), { document: document.implementation.createHTMLDocument('pip'), close: vi.fn(), focus: vi.fn() })
+    ;(window as { documentPictureInPicture?: unknown }).documentPictureInPicture = { requestWindow: vi.fn(async () => pipWindow) }
     const handlers = callbacks()
     const recorder = new MeetingRecorder(handlers)
     await recorder.start('tab')
-    expect(requestWindow).toHaveBeenCalledWith({ width: 320, height: 250 })
-    expect(pipDocument.querySelector('#player [data-miniplayer] video')).not.toBeNull()
-    expect(pipDocument.getElementById('timer')?.textContent).toContain('00:00')
-    ;(pipDocument.getElementById('finish') as HTMLButtonElement).click()
-    await vi.waitFor(() => expect(handlers.onFinished).toHaveBeenCalled())
+    recorder.cancel()
+    await vi.waitFor(() => expect(handlers.onCancelled).toHaveBeenCalled())
     expect(pipWindow.close).toHaveBeenCalled()
+  })
+})
+
+describe('MeetingRecorder freedom while recording', () => {
+  it('turns the microphone and the computer sound off and on, which silences only that sound', async () => {
+    const handlers = callbacks()
+    const recorder = new MeetingRecorder(handlers)
+    await recorder.start('tab')
+    const context = FakeAudioContext.instances[0]
+    recorder.setEnabled('microphone', false)
+    expect(context.microphoneGain.gain.value).toBe(0)
+    expect(context.sourceGain.gain.value).toBe(1)
+    expect(handlers.onLive).toHaveBeenLastCalledWith(expect.objectContaining({ microphoneOn: false, sourceOn: true }))
+    recorder.setEnabled('source', false)
+    recorder.setEnabled('microphone', true)
+    expect(context.microphoneGain.gain.value).toBe(1)
+    expect(context.sourceGain.gain.value).toBe(0)
+    expect(recorder.active).toBe(true)
+  })
+
+  it('starts with the microphone off when unchecked, and it can be turned on later', async () => {
+    const handlers = callbacks()
+    const recorder = new MeetingRecorder(handlers)
+    await recorder.start('tab', undefined, { microphoneOn: false })
+    const context = FakeAudioContext.instances[0]
+    expect(context.sources.map(source => source.stream)).toContain(env.microphoneStream)
+    expect(context.microphoneGain.gain.value).toBe(0)
+    recorder.setEnabled('microphone', true)
+    expect(context.microphoneGain.gain.value).toBe(1)
+  })
+
+  it('refuses to start with nothing to record', async () => {
+    env.getUserMedia.mockRejectedValue(new DOMException('denied', 'NotAllowedError'))
+    await expect(new MeetingRecorder(callbacks()).start('microphone', COMPUTER_AUDIO_NONE, { microphoneOn: false })).rejects.toThrow('Não há som para gravar')
+  })
+
+  it('pauses without recording and stops the clock, then continues in the same file', async () => {
+    vi.useFakeTimers()
+    const handlers = callbacks()
+    const recorder = new MeetingRecorder(handlers)
+    await recorder.start('tab')
+    vi.advanceTimersByTime(2000)
+    recorder.pause()
+    expect(lastRecorder().state).toBe('paused')
+    expect(handlers.onLive).toHaveBeenLastCalledWith(expect.objectContaining({ paused: true }))
+    vi.advanceTimersByTime(5000)
+    expect(handlers.onTick).toHaveBeenLastCalledWith(2)
+    recorder.resume()
+    vi.advanceTimersByTime(1000)
+    expect(handlers.onTick).toHaveBeenLastCalledWith(3)
+    expect(FakeMediaRecorder.instances).toHaveLength(1)
+    vi.useRealTimers()
+  })
+
+  it('switches to another microphone in the middle, keeping the recording', async () => {
+    const handlers = callbacks()
+    const recorder = new MeetingRecorder(handlers)
+    await recorder.start('tab')
+    const headset = new MediaStream()
+    env.getUserMedia.mockResolvedValueOnce(headset)
+    await recorder.switchMicrophone('headset-1')
+    expect(env.getUserMedia).toHaveBeenLastCalledWith({ audio: { deviceId: { exact: 'headset-1' }, echoCancellation: true, noiseSuppression: true } })
+    const context = FakeAudioContext.instances[0]
+    const oldMicrophone = context.sources.find(source => source.stream === env.microphoneStream)!
+    expect(oldMicrophone.disconnect).toHaveBeenCalled()
+    expect(context.sources.at(-1)!.stream).toBe(headset)
+    expect(context.sources.at(-1)!.connect).toHaveBeenCalledWith(context.microphoneGain)
+    expect(handlers.onLive).toHaveBeenLastCalledWith(expect.objectContaining({ microphoneId: 'headset-1' }))
+    expect(FakeMediaRecorder.instances).toHaveLength(1)
+  })
+
+  it('switches the computer sound to a system input and back to none', async () => {
+    env = installMediaEnvironment({ computerInput: true })
+    const handlers = callbacks()
+    const recorder = new MeetingRecorder(handlers)
+    await recorder.start('tab')
+    await recorder.switchComputerInput(COMPUTER_INPUT.deviceId)
+    expect(handlers.onLive).toHaveBeenLastCalledWith(expect.objectContaining({ computerAudio: COMPUTER_INPUT.label, sourceChoice: COMPUTER_INPUT.deviceId, hasSource: true }))
+    await recorder.switchComputerInput(COMPUTER_AUDIO_NONE)
+    expect(handlers.onLive).toHaveBeenLastCalledWith(expect.objectContaining({ hasSource: false, sourceChoice: COMPUTER_AUDIO_NONE }))
+    expect(recorder.active).toBe(true)
+  })
+
+  it('asks the integration to switch the source without stopping', async () => {
+    const context = new FakeAudioContext()
+    const capture = { context, microphone: { connect: vi.fn() }, source: { connect: vi.fn() }, meters: { microphone: {}, computer: {} }, label: 'Sistema', choice: { source: { kind: 'system' }, microphone: null }, stop: vi.fn(async () => undefined) } as Record<string, unknown>
+    capture.switchTo = vi.fn(async (next: { source?: unknown; label?: string }) => {
+      capture.choice = { source: next.source, microphone: null }
+      capture.label = next.label
+    })
+    const handlers = callbacks()
+    const recorder = new MeetingRecorder(handlers)
+    await recorder.startIntegration(capture as never)
+    await recorder.switchIntegrationSource({ source: { kind: 'window', pid: 9 }, label: 'SoWork' })
+    expect(capture.switchTo).toHaveBeenCalledWith({ source: { kind: 'window', pid: 9 }, label: 'SoWork' })
+    expect(handlers.onLive).toHaveBeenLastCalledWith(expect.objectContaining({ computerAudio: 'SoWork', sourceChoice: 'pid:9' }))
+    expect(capture.stop).not.toHaveBeenCalled()
   })
 })
 

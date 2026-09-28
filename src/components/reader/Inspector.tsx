@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 
 import type { FileMeta, Highlight } from '@/types/domain'
@@ -9,6 +9,7 @@ import { lineageOf } from '@/lib/generation/course-lesson'
 import { courseOf } from '@/lib/generation/course-lesson'
 import { newId, nowIso } from '@/lib/ids'
 import { paths } from '@/lib/paths'
+import { transcriptFileName, transcriptOf } from '@/lib/generation/transcript'
 import { downloadStoredSource, removeStoredSource, sourceExpired } from '@/lib/storage/source-storage'
 import { ENGINES } from '@/lib/transcription'
 import { isNarrowScreen } from '@/hooks/use-is-narrow'
@@ -19,7 +20,7 @@ import { downloadBlob } from '@/utils/download'
 import { dateTime, duration, formatBytes } from '@/utils/format'
 
 const INPUT_LABEL: Record<string, string> = { file: 'Arquivo', url: 'Link', youtube: 'YouTube', topic: 'Tema', text: 'Texto', recording: 'Gravação', import: 'Importado' }
-const STORAGE_LABEL: Record<string, string> = { drive: 'Google Drive', gofile: 'Gofile', litterbox: 'Litterbox', filebin: 'filebin', tmpfiles: 'tmpfiles', none: 'Não guardada' }
+const STORAGE_LABEL: Record<string, string> = { drive: 'Google Drive', gofile: 'Gofile', litterbox: 'Litterbox', filebin: 'filebin', tmpfiles: 'tmpfiles', onlyfiles: 'OnlyFiles', none: 'Não guardada' }
 
 export function TocPanel({ onPick }: { onPick?: () => void }) {
   const headings = useDocumentStore(state => state.headings)
@@ -150,6 +151,26 @@ export function NotesPanel({ fileId }: { fileId: string }) {
         </div>
       </div>
     </>
+  )
+}
+
+function TranscriptDownload({ meta }: { meta: FileMeta }) {
+  const repo = useLibraryStore(state => state.repo)
+  const [transcript, setTranscript] = useState<string | null>(null)
+  useEffect(() => {
+    let alive = true
+    setTranscript(null)
+    if (repo) void transcriptOf(meta, repo).then(found => alive && setTranscript(found))
+    return () => {
+      alive = false
+    }
+  }, [meta, repo])
+  if (!transcript) return null
+  return (
+    <button className="btn" style={{ marginTop: 10 }} onClick={() => downloadBlob(new Blob([transcript], { type: 'text/plain;charset=utf-8' }), transcriptFileName(meta.name))}>
+      <Icon name="download" />
+      Baixar a transcrição
+    </button>
   )
 }
 
@@ -329,6 +350,7 @@ export function InfoPanel({ fileId }: { fileId: string }) {
             </dd>
           </dl>
           <SourceActions meta={meta} />
+          <TranscriptDownload meta={meta} />
         </div>
       )}
       {generation && (

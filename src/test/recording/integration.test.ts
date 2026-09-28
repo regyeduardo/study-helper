@@ -60,6 +60,6 @@ describe('integration connection', () => {
     FakeSocket.replies.start = { type: 'error', message: 'O som do computador recusou a conexão.' }
     const link = (await IntegrationLink.open())!
     await expect(link.start({ kind: 'window', pid: 5 })).rejects.toThrow('O som do computador recusou a conexão.')
-    expect(FakeSocket.instances[0].sent.at(-1)).toEqual({ type: 'start', source: { kind: 'window', pid: 5 } })
+    expect(FakeSocket.instances[0].sent.at(-1)).toEqual({ type: 'start', source: { kind: 'window', pid: 5 }, microphone: null })
   })
 })

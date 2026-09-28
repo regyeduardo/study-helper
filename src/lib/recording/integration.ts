@@ -20,6 +20,17 @@ export interface IntegrationWindow {
   pid: number
 }
 
+export interface IntegrationDevice {
+  id: string
+  label: string
+}
+
+export interface IntegrationSourceChoice {
+  source?: IntegrationSource
+  microphone?: string | null
+  label?: string
+}
+
 export interface IntegrationHello {
   version: string
   os: string
@@ -29,6 +40,7 @@ type Reply =
   | ({ type: 'hello' } & IntegrationHello)
   | { type: 'sources'; listing: 'windows' | 'programs'; windows: IntegrationWindow[] }
   | { type: 'started'; source: IntegrationSource }
+  | { type: 'microphones'; microphones: IntegrationDevice[] }
   | { type: 'stopped' }
   | { type: 'error'; message: string }
 
@@ -37,6 +49,15 @@ export function integrationOsOf(agent: string = navigator.userAgent): Integratio
   if (/Windows/.test(agent)) return 'windows'
   if (/Linux|X11/.test(agent)) return 'linux'
   return null
+}
+
+export function integrationSourceKey(source: IntegrationSource): string {
+  return source.kind === 'window' ? `pid:${source.pid}` : source.kind
+}
+
+export function integrationSourceOf(key: string): IntegrationSource {
+  if (key.startsWith('pid:')) return { kind: 'window', pid: Number(key.slice(4)) }
+  return key === 'system' ? { kind: 'system' } : { kind: 'none' }
 }
 
 export class IntegrationLink {
@@ -99,8 +120,12 @@ export class IntegrationLink {
     return this.request({ type: 'sources' }, 'sources')
   }
 
-  start(source: IntegrationSource): Promise<unknown> {
-    return this.request({ type: 'start', source }, 'started')
+  microphones(): Promise<{ microphones: IntegrationDevice[] }> {
+    return this.request({ type: 'microphones' }, 'microphones')
+  }
+
+  start(source: IntegrationSource, microphone: string | null = null): Promise<unknown> {
+    return this.request({ type: 'start', source, microphone }, 'started')
   }
 
   stop(): Promise<unknown> {
@@ -118,15 +143,18 @@ interface IntegrationState {
   check(): Promise<boolean>
 }
 
+let latestCheck = 0
+
 export const useIntegrationStore = create<IntegrationState>((set, get) => ({
   status: 'unknown',
   hello: null,
   check: async () => {
+    const check = ++latestCheck
     if (get().status !== 'connected') set({ status: 'checking' })
     const link = await IntegrationLink.open()
     const hello = link ? await link.hello().catch(() => null) : null
     link?.close()
-    set({ status: hello ? 'connected' : 'missing', hello })
+    if (check === latestCheck) set({ status: hello ? 'connected' : 'missing', hello })
     return Boolean(hello)
   },
 }))
@@ -174,12 +202,13 @@ export class IntegrationCapture {
     private readonly link: IntegrationLink,
     readonly context: AudioContext,
     readonly microphone: AudioNode,
-    readonly source: AudioNode | null,
+    readonly source: AudioNode,
     readonly meters: Meters,
-    readonly label: string,
+    public label: string,
+    public choice: { source: IntegrationSource; microphone: string | null },
   ) {}
 
-  static async start(source: IntegrationSource, label: string): Promise<IntegrationCapture> {
+  static async start(source: IntegrationSource, label: string, microphoneId: string | null = null): Promise<IntegrationCapture> {
     const link = await IntegrationLink.open()
     if (!link) throw new Error('A integração não respondeu. Confira se ela está aberta.')
     const context = new AudioContext({ sampleRate: INTEGRATION_SAMPLE_RATE })
@@ -196,21 +225,25 @@ export class IntegrationCapture {
         node.connect(analyser)
         return analyser
       }
-      let played: AudioNode | null = null
-      if (source.kind !== 'none') {
-        played = context.createGain()
-        feed.connect(played, 1)
-      }
-      const meters: Meters = { microphone: meter(microphone), computer: played ? meter(played) : null }
+      const played = context.createGain()
+      feed.connect(played, 1)
+      const meters: Meters = { microphone: meter(microphone), computer: meter(played) }
       link.onFrame = (channel, samples) => feed.port.postMessage({ channel, samples }, [samples.buffer])
-      await link.start(source)
+      await link.start(source, microphoneId)
       void context.resume().catch(() => undefined)
-      return new IntegrationCapture(link, context, microphone, played, meters, label)
+      return new IntegrationCapture(link, context, microphone, played, meters, label, { source, microphone: microphoneId })
     } catch (error) {
       link.close()
       void context.close().catch(() => undefined)
       throw error
     }
+  }
+
+  async switchTo(next: IntegrationSourceChoice): Promise<void> {
+    const choice = { source: next.source ?? this.choice.source, microphone: next.microphone === undefined ? this.choice.microphone : next.microphone }
+    await this.link.start(choice.source, choice.microphone)
+    this.choice = choice
+    if (next.label !== undefined) this.label = next.label
   }
 
   async stop(): Promise<void> {

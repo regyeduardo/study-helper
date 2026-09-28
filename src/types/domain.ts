@@ -76,7 +76,7 @@ export interface Highlight {
 
 export type SourceInput = 'file' | 'url' | 'youtube' | 'topic' | 'text' | 'recording' | 'import'
 
-export type SourceStorage = 'none' | 'drive' | 'gofile' | 'litterbox' | 'filebin' | 'tmpfiles'
+export type SourceStorage = 'none' | 'drive' | 'gofile' | 'litterbox' | 'filebin' | 'tmpfiles' | 'onlyfiles'
 
 export interface SourceMeta {
   input: SourceInput
@@ -140,6 +140,7 @@ export interface FileSidecar {
   questions: StoredQuestion[]
   attempts: Attempt[]
   highlights: Highlight[]
+  transcript?: string
 }
 
 export interface FolderMeta {

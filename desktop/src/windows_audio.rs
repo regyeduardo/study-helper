@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Sender};
 use std::sync::Arc;
 
-use wasapi::{get_default_device, initialize_mta, AudioClient, Direction, SampleType, StreamMode, WaveFormat};
+use wasapi::{get_default_device, initialize_mta, AudioClient, DeviceCollection, Direction, SampleType, StreamMode, WaveFormat};
 use windows::core::{BOOL, PWSTR};
 use windows::Win32::Foundation::{CloseHandle, HWND, LPARAM};
 use windows::Win32::System::Threading::{OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION};
@@ -11,17 +11,20 @@ use windows::Win32::UI::WindowsAndMessaging::{
     EnumWindows, GetWindow, GetWindowLongW, GetWindowTextW, GetWindowThreadProcessId, IsWindowVisible, GWL_EXSTYLE, GW_OWNER, WS_EX_TOOLWINDOW,
 };
 
-use crate::protocol::{encode_frame, Listing, Source, WindowEntry, MICROPHONE, SAMPLE_RATE, SOURCE};
+use crate::protocol::{encode_frame, Device, Listing, Source, WindowEntry, MICROPHONE, SAMPLE_RATE, SOURCE};
 
 enum Endpoint {
-    Microphone,
+    Microphone(Option<String>),
     System,
     Process(u32),
 }
 
 fn open(endpoint: &Endpoint) -> Result<AudioClient, String> {
     let client = match endpoint {
-        Endpoint::Microphone => get_default_device(&Direction::Capture).and_then(|device| device.get_iaudioclient()),
+        Endpoint::Microphone(None) => get_default_device(&Direction::Capture).and_then(|device| device.get_iaudioclient()),
+        Endpoint::Microphone(Some(name)) => DeviceCollection::new(&Direction::Capture)
+            .and_then(|devices| devices.get_device_with_name(name))
+            .and_then(|device| device.get_iaudioclient()),
         Endpoint::System => get_default_device(&Direction::Render).and_then(|device| device.get_iaudioclient()),
         Endpoint::Process(pid) => AudioClient::new_application_loopback_client(*pid, true),
     };
@@ -76,8 +79,8 @@ fn stream(endpoint: Endpoint, channel: u8, frames: Sender<Vec<u8>>, stop: Arc<At
     let _ = client.stop_stream();
 }
 
-pub fn run(source: Source, frames: Sender<Vec<u8>>, stop: Arc<AtomicBool>, ready: Sender<Result<(), String>>) {
-    let mut endpoints = vec![(Endpoint::Microphone, MICROPHONE)];
+pub fn run(source: Source, microphone: Option<String>, frames: Sender<Vec<u8>>, stop: Arc<AtomicBool>, ready: Sender<Result<(), String>>) {
+    let mut endpoints = vec![(Endpoint::Microphone(microphone), MICROPHONE)];
     match source {
         Source::System => endpoints.push((Endpoint::System, SOURCE)),
         Source::Window { pid } => endpoints.push((Endpoint::Process(pid), SOURCE)),
@@ -146,6 +149,17 @@ unsafe extern "system" fn collect(window: HWND, found: LPARAM) -> BOOL {
         windows.push(WindowEntry { id: format!("hwnd:{}", window.0 as usize), title, app: process_name(pid), pid });
     }
     true.into()
+}
+
+pub fn list_microphones() -> Vec<Device> {
+    let _ = initialize_mta().ok();
+    let Ok(devices) = DeviceCollection::new(&Direction::Capture) else { return Vec::new() };
+    let count = devices.get_nbr_devices().unwrap_or(0);
+    (0..count)
+        .filter_map(|index| devices.get_device_at_index(index).ok())
+        .filter_map(|device| device.get_friendlyname().ok())
+        .map(|name| Device { id: name.clone(), label: name })
+        .collect()
 }
 
 pub fn list_sources() -> (Listing, Vec<WindowEntry>) {

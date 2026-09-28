@@ -645,3 +645,8 @@ input.lib-search{width:220px}
 .gaps{margin:0;padding-left:18px;display:grid;gap:8px;font-size:13.5px}
 .gaps li{display:grid;gap:2px}
 .gaps span{color:var(--fg-muted)}
+.mini-rec.done{width:360px;max-height:calc(100vh - 36px);display:flex;flex-direction:column}
+.mini-rec.done .body{overflow:auto}
+.mini-rec .toggles .btn[aria-pressed="false"]{color:var(--fg-muted)}
+body.floating-recorder{margin:0;background:var(--bg);color:var(--fg);font:14px/1.45 system-ui,sans-serif}
+body.floating-recorder .mini-rec{position:static;width:auto;max-height:none;border:0;border-radius:0;box-shadow:none;min-height:100vh}

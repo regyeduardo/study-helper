@@ -19,8 +19,19 @@ pub enum Source {
 pub enum Request {
     Hello,
     Sources,
-    Start { source: Source },
+    Start {
+        source: Source,
+        #[serde(default)]
+        microphone: Option<String>,
+    },
+    Microphones,
     Stop,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Device {
+    pub id: String,
+    pub label: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -37,6 +48,7 @@ pub enum Reply {
     Hello { version: String, os: String },
     Sources { listing: Listing, windows: Vec<WindowEntry> },
     Started { source: Source },
+    Microphones { microphones: Vec<Device> },
     Stopped,
     Error { message: String },
 }
@@ -107,12 +119,13 @@ mod tests {
         assert_eq!(serde_json::from_str::<Request>(r#"{"type":"hello"}"#).unwrap(), Request::Hello);
         assert_eq!(
             serde_json::from_str::<Request>(r#"{"type":"start","source":{"kind":"window","pid":42}}"#).unwrap(),
-            Request::Start { source: Source::Window { pid: 42 } }
+            Request::Start { source: Source::Window { pid: 42 }, microphone: None }
         );
         assert_eq!(
-            serde_json::from_str::<Request>(r#"{"type":"start","source":{"kind":"system"}}"#).unwrap(),
-            Request::Start { source: Source::System }
+            serde_json::from_str::<Request>(r#"{"type":"start","source":{"kind":"system"},"microphone":"alsa_input.usb"}"#).unwrap(),
+            Request::Start { source: Source::System, microphone: Some("alsa_input.usb".into()) }
         );
+        assert_eq!(serde_json::from_str::<Request>(r#"{"type":"microphones"}"#).unwrap(), Request::Microphones);
     }
 
     #[test]

@@ -51,15 +51,16 @@ beforeEach(() => {
 })
 
 describe('NewContentDialog storage choice', () => {
-  it('lists every host that fits with its expiry and defaults to Gofile on Local', async () => {
+  it('lists every host that fits with its expiry and defaults to OnlyFiles on Local', async () => {
     const group = await openWithFile(sizedFile('notes.txt', 20))
     const names = group.getAllByRole('radio').map(radio => radio.querySelector('b')!.textContent)
-    expect(names).toEqual(['Google Drive', 'Gofile', 'Litterbox (temporário)', 'filebin', 'tmpfiles', 'Não guardar'])
+    expect(names).toEqual(['Google Drive', 'Gofile', 'Litterbox (temporário)', 'filebin', 'tmpfiles', 'OnlyFiles', 'Não guardar'])
     expect(group.getByText(/10 dias sem ninguém baixar/)).toBeInTheDocument()
     expect(group.getByText(/1 h a 72 h/)).toBeInTheDocument()
     expect(group.getByText(/fica 7 dias/i)).toBeInTheDocument()
     expect(group.getByText(/fica 1 hora/i)).toBeInTheDocument()
-    expect(checkedName(group)).toBe('Gofile')
+    expect(group.getByText(/Fica para sempre, mas o OnlyFiles pode apagar por falta de espaço/)).toBeInTheDocument()
+    expect(checkedName(group)).toBe('OnlyFiles')
     expect(group.getByText('Entre com o Google para guardar no Drive.')).toBeInTheDocument()
     expect(screen.getByText(/Serviço de terceiro, sem garantia de guardar/)).toBeInTheDocument()
   })
@@ -68,8 +69,10 @@ describe('NewContentDialog storage choice', () => {
     const group = await openWithFile(sizedFile('lecture.txt', 150 * MB))
     const names = group.getAllByRole('radio').map(radio => radio.querySelector('b')!.textContent)
     expect(names).not.toContain('tmpfiles')
+    expect(names).not.toContain('OnlyFiles')
     expect(names).toContain('Litterbox (temporário)')
-    expect(screen.getByText(/Não cabem .*: tmpfiles\./)).toBeInTheDocument()
+    expect(screen.getByText(/Não cabem .*: tmpfiles, OnlyFiles\./)).toBeInTheDocument()
+    expect(checkedName(group)).toBe('Gofile')
   })
 
   it('defaults to Litterbox between 200 MB and 1 GB on Local', async () => {
@@ -104,6 +107,6 @@ describe('NewContentDialog storage choice', () => {
   it('does not let Drive be picked while logged out', async () => {
     const group = await openWithFile(sizedFile('lecture.txt', 20))
     fireEvent.click(group.getByText('Google Drive'))
-    expect(checkedName(group)).toBe('Gofile')
+    expect(checkedName(group)).toBe('OnlyFiles')
   })
 })

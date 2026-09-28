@@ -27,7 +27,7 @@ const MODEL_NAMES: Record<ModelId, string> = {
   speakers: 'Separação de quem falou',
 }
 
-const isWhisper = (url: string) => url.includes(WHISPER_MODEL)
+const isWhisper = (url: string) => url.includes(WHISPER_MODEL) || url.includes('onnxruntime-web')
 
 async function openCache(name: string): Promise<Cache | null> {
   if (typeof caches === 'undefined' || !(await caches.has(name))) return null
@@ -48,8 +48,9 @@ async function cacheBytes(name: string, keep: (url: string) => boolean = () => t
   return total
 }
 
-function openParakeet(): Promise<IDBDatabase | null> {
-  if (typeof indexedDB === 'undefined') return Promise.resolve(null)
+async function openParakeet(): Promise<IDBDatabase | null> {
+  if (typeof indexedDB === 'undefined') return null
+  if (indexedDB.databases && !(await indexedDB.databases()).some(database => database.name === PARAKEET_DB)) return null
   return new Promise(resolve => {
     const request = indexedDB.open(PARAKEET_DB, 1)
     request.onupgradeneeded = () => {

@@ -8,6 +8,7 @@ import {
   uploadToFilebinController,
   uploadToGofileController,
   uploadToLitterboxController,
+  uploadToOnlyfilesController,
   uploadToTmpfilesController,
 } from '@/controllers/hosting.controller'
 import type { Repository } from '@/lib/storage/repository'
@@ -52,8 +53,8 @@ afterEach(() => {
 })
 
 describe('storage options', () => {
-  it('offers Drive, Gofile, Litterbox, filebin, tmpfiles and do-not-store', () => {
-    expect(storageOptions(10, true, null).map(option => option.id)).toEqual(['drive', 'gofile', 'litterbox', 'filebin', 'tmpfiles', 'none'])
+  it('offers Drive, Gofile, Litterbox, filebin, tmpfiles, OnlyFiles and do-not-store', () => {
+    expect(storageOptions(10, true, null).map(option => option.id)).toEqual(['drive', 'gofile', 'litterbox', 'filebin', 'tmpfiles', 'onlyfiles', 'none'])
   })
 
   it('caps Litterbox at 1 GB and tmpfiles at 100 MB', () => {
@@ -77,7 +78,7 @@ describe('storage options', () => {
 
   it('flags third-party hosts as unreliable and Drive as not', () => {
     const byId = Object.fromEntries(storageOptions(10, true, null).map(option => [option.id, option.thirdParty]))
-    expect(byId).toEqual({ drive: false, gofile: true, litterbox: true, filebin: true, tmpfiles: true, none: false })
+    expect(byId).toEqual({ drive: false, gofile: true, litterbox: true, filebin: true, tmpfiles: true, onlyfiles: true, none: false })
   })
 
   it('disables Drive without login and when it does not fit the app limit', () => {
@@ -101,7 +102,9 @@ describe('default storage', () => {
   })
 
   it.each([
-    [1, 'gofile'],
+    [1, 'onlyfiles'],
+    [100 * MB, 'onlyfiles'],
+    [100 * MB + 1, 'gofile'],
     [200 * MB, 'gofile'],
     [200 * MB + 1, 'litterbox'],
     [GB, 'litterbox'],
@@ -109,6 +112,38 @@ describe('default storage', () => {
     [8 * GB, 'gofile'],
   ])('on the Local profile a %i byte file goes to %s', (size, expected) => {
     expect(defaultStorage(size, false, storageOptions(size, false, null))).toBe(expected)
+  })
+})
+
+describe('OnlyFiles', () => {
+  it('keeps the file forever, is capped at 100 MB and warns it may still disappear', () => {
+    const onlyfiles = storageOptions(100 * MB + 1, false, null).find(option => option.id === 'onlyfiles')!
+    expect(onlyfiles.fits).toBe(false)
+    expect(onlyfiles.description).toMatch(/^Até 100 MB\. Fica para sempre, mas o OnlyFiles pode apagar por falta de espaço/)
+    expect(onlyfiles.description).toMatch(/remover no app não apaga lá/)
+  })
+
+  it('stays with Drive when logged in', () => {
+    expect(defaultStorage(10 * MB, true, storageOptions(10 * MB, true, null))).toBe('drive')
+  })
+
+  it('uploads with expire=0 and keeps the full link, with no expiry date', async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ status: true, data: { file: { url: { full: 'https://onlyfiles.com/wswdwDwVA4DT/notes.txt', short: 'https://onlyfiles.com/wswdwDwVA4DT' } } } }))
+    await expect(uploadToOnlyfilesController(textFile())).resolves.toEqual({ url: 'https://onlyfiles.com/wswdwDwVA4DT/notes.txt', expiresAt: null })
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(url).toBe('https://api.onlyfiles.com/v1/upload')
+    expect((init.body as FormData).get('expire')).toBe('0')
+    expect((init.body as FormData).get('file')).toBeInstanceOf(File)
+  })
+
+  it('passes on the reason OnlyFiles gives for refusing', async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ status: false, error: { message: 'The file is too large. Max filesize: 100 MB', type: 'ERROR_FILE_SIZE_EXCEEDED', code: 31 } }))
+    await expect(uploadToOnlyfilesController(textFile())).rejects.toThrow('O OnlyFiles recusou o arquivo: The file is too large. Max filesize: 100 MB')
+  })
+
+  it('stores a source there through the storage choice', async () => {
+    fetchMock.mockResolvedValueOnce(new Response(null, { status: 200 })).mockResolvedValueOnce(jsonResponse({ status: true, data: { file: { url: { full: 'https://onlyfiles.com/abc/notes.txt' } } } }))
+    await expect(storeSource(textFile(), 'onlyfiles', 'file-1', fakeRepo(), '72h')).resolves.toEqual({ storage: 'onlyfiles', storedUrl: 'https://onlyfiles.com/abc/notes.txt', expiresAt: null })
   })
 })
 

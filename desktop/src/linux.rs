@@ -20,7 +20,7 @@ use x11rb::protocol::res::{ClientIdMask, ClientIdSpec, ConnectionExt as ResExt};
 use x11rb::protocol::xproto::{AtomEnum, ConnectionExt};
 
 use crate::mixer::Lanes;
-use crate::protocol::{decode_samples, encode_frame, Listing, Source, WindowEntry, MICROPHONE, SAMPLE_RATE, SOURCE};
+use crate::protocol::{decode_samples, encode_frame, Device, Listing, Source, WindowEntry, MICROPHONE, SAMPLE_RATE, SOURCE};
 
 const SYSTEM_LANE: u64 = 1;
 const FIRST_PROGRAM_LANE: u64 = 2;
@@ -201,7 +201,7 @@ fn record(
     Ok(stream)
 }
 
-pub fn run(source: Source, frames: Sender<Vec<u8>>, stop: Arc<AtomicBool>, ready: Sender<Result<(), String>>) {
+pub fn run(source: Source, microphone: Option<String>, frames: Sender<Vec<u8>>, stop: Arc<AtomicBool>, ready: Sender<Result<(), String>>) {
     let mut pulse = match connect() {
         Ok(pulse) => pulse,
         Err(message) => {
@@ -211,7 +211,7 @@ pub fn run(source: Source, frames: Sender<Vec<u8>>, stop: Arc<AtomicBool>, ready
     };
     let lanes: Rc<RefCell<[Lanes; 2]>> = Rc::new(RefCell::new([Lanes::default(), Lanes::default()]));
     let mut streams: HashMap<u64, Rc<RefCell<Stream>>> = HashMap::new();
-    match record(&pulse, "Microfone", None, None, lanes.clone(), MICROPHONE, 0) {
+    match record(&pulse, "Microfone", microphone.as_deref(), None, lanes.clone(), MICROPHONE, 0) {
         Ok(stream) => {
             streams.insert(0, stream);
         }
@@ -372,6 +372,27 @@ fn programs() -> Vec<WindowEntry> {
         .filter(|(pid, name)| *pid != own && !name.is_empty() && seen.insert(*pid))
         .map(|(pid, name)| WindowEntry { id: format!("pulse:{pid}"), title: name.clone(), app: binary_of(pid).unwrap_or(name), pid })
         .collect()
+}
+
+pub fn list_microphones() -> Vec<Device> {
+    let Ok(mut pulse) = connect() else { return Vec::new() };
+    let found: Rc<RefCell<Vec<Device>>> = Rc::new(RefCell::new(Vec::new()));
+    let done = Rc::new(Cell::new(false));
+    let (into, finished) = (found.clone(), done.clone());
+    let _operation = pulse.context.borrow().introspect().get_source_info_list(move |result| match result {
+        ListResult::Item(info) => {
+            if info.monitor_of_sink.is_none() {
+                if let Some(name) = &info.name {
+                    let label = info.description.as_ref().map(|text| text.to_string()).unwrap_or_else(|| name.to_string());
+                    into.borrow_mut().push(Device { id: name.to_string(), label });
+                }
+            }
+        }
+        _ => finished.set(true),
+    });
+    wait(&mut pulse, &done);
+    let list = found.borrow().clone();
+    list
 }
 
 pub fn list_sources() -> (Listing, Vec<WindowEntry>) {

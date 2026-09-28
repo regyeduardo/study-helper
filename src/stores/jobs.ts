@@ -198,6 +198,12 @@ export const useJobsStore = create<JobsState>((set, get) => {
       },
       agent === 'reading' ? resolved.content.replace(/^# Conteúdo\n\n/, '') : '',
     )
+    if (resolved.transcription) {
+      const transcript = resolved.transcription.text
+      await library()
+        .updateSidecar(meta.id, sidecar => ({ ...sidecar, transcript }))
+        .catch(() => undefined)
+    }
     if (request.input.kind === 'file' || request.input.kind === 'recording') {
       try {
         const stored = await storeSource(request.input.file, request.storage, meta.id, library().repo!, request.litterboxTime)

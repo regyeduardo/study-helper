@@ -41,6 +41,7 @@ export function installIntegration(options: { available: boolean; windows?: Inte
   FakeSocket.replies = {
     hello: { type: 'hello', version: '0.1.0', os: 'linux' },
     sources: { type: 'sources', listing: options.listing ?? 'windows', windows: options.windows ?? [] },
+    microphones: { type: 'microphones', microphones: [{ id: 'alsa_input.usb-headset', label: 'Headset USB' }] },
     start: { type: 'started', source: { kind: 'system' } },
     stop: { type: 'stopped' },
   }

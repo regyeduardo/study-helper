@@ -100,7 +100,9 @@ let memory: ReturnType<typeof memoryRepository>
 
 beforeEach(() => {
   memory = memoryRepository()
-  useLibraryStore.setState({ repo: memory.repo, accountId: 'local', ready: true, folders: [], files: [], index: defaultIndex(), opened: {}, openedAt: {} })
+  const index = defaultIndex()
+  index.settings.ai = { provider: 'llm7', baseUrl: '', apiKey: 'llm7-test-key', model: 'default' }
+  useLibraryStore.setState({ repo: memory.repo, accountId: 'local', ready: true, folders: [], files: [], index, opened: {}, openedAt: {} })
   useJobsStore.setState({ jobs: [], live: {}, proposals: [] })
 })
 
@@ -158,6 +160,34 @@ describe('generation fills metadata', () => {
     expect(meta.origin).toEqual({ input: 'recording', name: 'reuniao.webm', sizeBytes: 2048, mime: 'audio/webm', durationSeconds: 125, storage: 'drive', storedFileId: `drive-${id}`, expiresAt: null })
     expect(meta.generation).toMatchObject({ provider: 'llm7', model: 'default', inputTokens: 90, outputTokens: 50, estimatedTokens: false, transcriptionEngine: 'groq', language: 'pt' })
     expect(memory.contents.get(id!)).toContain('## Decisões\n- Lançar em maio')
+  })
+
+  it('keeps the meeting transcription next to the note and offers it for download in the note panel', async () => {
+    installFetch(provider())
+    const file = new NodeFile([new Uint8Array(2048)], 'reuniao.webm', { type: 'audio/webm' }) as unknown as File
+    const id = await useJobsStore.getState().startNewContent(request({ agent: 'meeting', input: { kind: 'recording', file }, storage: 'none' }))
+    await readyFile(id!)
+    expect(memory.sidecars.get(id!)?.transcript).toBe('Ana: vamos lançar em maio. Bruno: eu mando a proposta.')
+    render(
+      <MemoryRouter>
+        <InfoPanel fileId={id!} />
+      </MemoryRouter>,
+    )
+    expect(await screen.findByRole('button', { name: 'Baixar a transcrição' })).toBeInTheDocument()
+  })
+
+  it('a lesson from a web link has no transcription to download', async () => {
+    installFetch(provider())
+    const id = await useJobsStore.getState().startNewContent(request({}))
+    await readyFile(id!)
+    expect(memory.sidecars.get(id!)?.transcript).toBeUndefined()
+    render(
+      <MemoryRouter>
+        <InfoPanel fileId={id!} />
+      </MemoryRouter>,
+    )
+    await waitFor(() => expect(screen.getByText('De onde veio')).toBeInTheDocument())
+    expect(screen.queryByRole('button', { name: 'Baixar a transcrição' })).not.toBeInTheDocument()
   })
 
   it('questions update the question count', async () => {

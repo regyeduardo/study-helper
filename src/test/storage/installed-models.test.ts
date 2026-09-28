@@ -49,27 +49,36 @@ beforeEach(() => {
   Object.defineProperty(navigator, 'storage', { configurable: true, value: { estimate: async () => ({ usage: 100_000 }) } })
 })
 
-afterEach(() => {
+afterEach(async () => {
   vi.unstubAllGlobals()
-  indexedDB.deleteDatabase('parakeet-cache-db')
+  await new Promise(resolve => {
+    const request = indexedDB.deleteDatabase('parakeet-cache-db')
+    request.onsuccess = request.onerror = request.onblocked = resolve
+  })
 })
 
 describe('installed models', () => {
-  it('measures Whisper, Parakeet and the speaker models, and lists only what was downloaded', async () => {
+  it('measures Whisper with its AI engine, Parakeet and the speaker models, and lists only what was downloaded', async () => {
     expect(await installedModels()).toEqual([])
     const transformers = new FakeCache()
     transformers.entries.set('https://huggingface.co/onnx-community/whisper-small/resolve/main/onnx/encoder_model.onnx', 40_000)
     transformers.entries.set('https://huggingface.co/other/model/resolve/main/model.onnx', 999)
+    transformers.entries.set('https://cdn.jsdelivr.net/npm/onnxruntime-web@1.31.0/dist/ort-wasm-simd-threaded.asyncify.wasm', 5_000)
     stores.set('transformers-cache', transformers)
     const speakers = new FakeCache()
     speakers.entries.set('https://huggingface.co/csukuangfj/model.onnx', 7_000)
     stores.set('study-helper-models', speakers)
     await putParakeet('encoder', 20_000)
     expect(await installedModels()).toEqual([
-      { id: 'whisper', name: 'Whisper', bytes: 40_000 },
+      { id: 'whisper', name: 'Whisper', bytes: 45_000 },
       { id: 'parakeet', name: 'Parakeet', bytes: 20_000 },
       { id: 'speakers', name: 'Separação de quem falou', bytes: 7_000 },
     ])
+  })
+
+  it('measuring does not create the Parakeet database when it was never downloaded', async () => {
+    await installedModels()
+    expect((await indexedDB.databases()).map(database => database.name)).not.toContain('parakeet-cache-db')
   })
 
   it('splits what the app takes into models, recordings and the rest', async () => {

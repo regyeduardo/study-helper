@@ -38,8 +38,9 @@ export class FakeMediaStream {
 export class FakeAudioContext {
   static instances: FakeAudioContext[] = []
   readonly mixTrack = new FakeTrack('audio', 'mix')
-  readonly destination = { stream: new FakeMediaStream([this.mixTrack]) }
-  readonly sources: { stream: FakeMediaStream; connect: ReturnType<typeof vi.fn> }[] = []
+  readonly destination: { stream: FakeMediaStream; channelCount?: number; channelCountMode?: string } = { stream: new FakeMediaStream([this.mixTrack]) }
+  readonly sources: { stream: FakeMediaStream; connect: ReturnType<typeof vi.fn>; disconnect: ReturnType<typeof vi.fn> }[] = []
+  readonly gains: { gain: { value: number }; connect: ReturnType<typeof vi.fn>; disconnect: ReturnType<typeof vi.fn> }[] = []
   readonly close = vi.fn(async () => undefined)
 
   constructor() {
@@ -51,9 +52,23 @@ export class FakeAudioContext {
   }
 
   createMediaStreamSource(stream: FakeMediaStream) {
-    const source = { stream, connect: vi.fn() }
+    const source = { stream, connect: vi.fn(), disconnect: vi.fn() }
     this.sources.push(source)
     return source
+  }
+
+  createGain() {
+    const gain = { gain: { value: 1 }, connect: vi.fn(), disconnect: vi.fn() }
+    this.gains.push(gain)
+    return gain
+  }
+
+  get microphoneGain() {
+    return this.gains[0]
+  }
+
+  get sourceGain() {
+    return this.gains[1]
   }
 
   createAnalyser() {
@@ -65,14 +80,14 @@ export class FakeMediaRecorder {
   static instances: FakeMediaRecorder[] = []
   static supported = new Set<string>()
   static isTypeSupported = vi.fn((mime: string) => FakeMediaRecorder.supported.has(mime))
-  state: 'inactive' | 'recording' = 'inactive'
+  state: 'inactive' | 'recording' | 'paused' = 'inactive'
   timeslice: number | undefined
   ondataavailable: ((event: { data: Blob }) => void) | null = null
   onstop: (() => void) | null = null
 
   constructor(
     readonly stream: FakeMediaStream,
-    readonly options?: { mimeType?: string },
+    readonly options?: { mimeType?: string; audioBitsPerSecond?: number },
   ) {
     FakeMediaRecorder.instances.push(this)
   }
@@ -84,6 +99,14 @@ export class FakeMediaRecorder {
 
   emit(text: string): void {
     this.ondataavailable?.({ data: new Blob([text]) })
+  }
+
+  pause(): void {
+    this.state = 'paused'
+  }
+
+  resume(): void {
+    this.state = 'recording'
   }
 
   stop(): void {

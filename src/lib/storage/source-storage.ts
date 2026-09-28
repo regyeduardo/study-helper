@@ -8,6 +8,7 @@ import {
   uploadToFilebinController,
   uploadToGofileController,
   uploadToLitterboxController,
+  uploadToOnlyfilesController,
   uploadToTmpfilesController,
 } from '@/controllers/hosting.controller'
 import type { Repository } from '@/lib/storage/repository'
@@ -15,6 +16,7 @@ import type { Repository } from '@/lib/storage/repository'
 const MB = 1024 * 1024
 const GOFILE_PREFERRED_UNTIL = 200 * MB
 const LITTERBOX_UNTIL = 1024 * MB
+const ONLYFILES_UNTIL = 100 * MB
 
 export interface StorageOption {
   id: SourceStorage
@@ -54,6 +56,7 @@ export function storageOptions(sizeBytes: number, driveAvailable: boolean, drive
 export function defaultStorage(sizeBytes: number, driveAvailable: boolean, options: StorageOption[]): SourceStorage {
   const drive = options.find(option => option.id === 'drive')
   if (driveAvailable && drive?.enabled) return 'drive'
+  if (!driveAvailable && sizeBytes <= ONLYFILES_UNTIL) return 'onlyfiles'
   if (sizeBytes <= GOFILE_PREFERRED_UNTIL) return 'gofile'
   if (sizeBytes <= LITTERBOX_UNTIL) return 'litterbox'
   return 'gofile'
@@ -78,6 +81,7 @@ export async function storeSource(
     litterbox: () => uploadToLitterboxController(file, litterboxTime),
     filebin: () => uploadToFilebinController(file),
     tmpfiles: () => uploadToTmpfilesController(file),
+    onlyfiles: () => uploadToOnlyfilesController(file),
   }
   const hosted = await upload[choice as HostId]()
   return { storage: choice, storedUrl: hosted.url, expiresAt: hosted.expiresAt }

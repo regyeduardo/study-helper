@@ -201,6 +201,17 @@ describe('Puter', () => {
 describe('transcribe() picks the engine from settings', () => {
   const settings = (engine: 'whisper' | 'parakeet' | 'groq' | 'puter') => ({ engine, groqApiKey: 'gsk_x', language: 'pt', separateSpeakers: false })
 
+  it('does not download or run a local model when the person declines the download', async () => {
+    const { setModelDownloadAsker } = await import('@/lib/transcription/consent')
+    const asked = vi.fn(async () => false)
+    setModelDownloadAsker(asked)
+    const { transcribe } = await import('@/lib/transcription')
+    await expect(transcribe(audioBlob(), settings('whisper'))).rejects.toThrow('A transcrição foi cancelada: o modelo não foi baixado.')
+    setModelDownloadAsker(null)
+    expect(asked).toHaveBeenCalledWith([{ id: 'whisper', name: 'Whisper', megabytes: 515 }])
+    expect(mocks.pipeline).not.toHaveBeenCalled()
+  })
+
   it.each([
     ['whisper', 'olá mundo'],
     ['parakeet', 'bom dia'],

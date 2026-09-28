@@ -20,6 +20,13 @@ export const HOSTS: HostInfo[] = [
   { id: 'litterbox', name: 'Litterbox', maxBytes: 1024 * MB, keeps: 'fica pelo prazo escolhido (1 h a 72 h)', probeUrl: 'https://litterbox.catbox.moe' },
   { id: 'filebin', name: 'filebin', maxBytes: null, keeps: 'fica 7 dias', probeUrl: 'https://filebin.net' },
   { id: 'tmpfiles', name: 'tmpfiles', maxBytes: 100 * MB, keeps: 'fica 1 hora', probeUrl: 'https://tmpfiles.org' },
+  {
+    id: 'onlyfiles',
+    name: 'OnlyFiles',
+    maxBytes: 100 * MB,
+    keeps: 'fica para sempre, mas o OnlyFiles pode apagar por falta de espaço (os menos baixados primeiro), e remover no app não apaga lá',
+    probeUrl: 'https://onlyfiles.com',
+  },
 ]
 
 export interface HostedFile {
@@ -87,6 +94,16 @@ export async function uploadToTmpfilesController(file: File): Promise<HostedFile
   const body = (await response.json()) as { status?: string; data?: { url?: string } }
   if (!body.data?.url) throw new HostingError('O tmpfiles não devolveu o link.')
   return { url: body.data.url.replace('tmpfiles.org/', 'tmpfiles.org/dl/'), expiresAt: hoursFromNow(1) }
+}
+
+export async function uploadToOnlyfilesController(file: File): Promise<HostedFile> {
+  const form = new FormData()
+  form.append('file', file)
+  form.append('expire', '0')
+  const response = await post('https://api.onlyfiles.com/v1/upload', { method: 'POST', body: form }, 'OnlyFiles')
+  const body = (await response.json()) as { status?: boolean; data?: { file?: { url?: { full?: string } } }; error?: { message?: string } }
+  if (!body.status || !body.data?.file?.url?.full) throw new HostingError(body.error?.message ? `O OnlyFiles recusou o arquivo: ${body.error.message}` : 'O OnlyFiles não devolveu o link.')
+  return { url: body.data.file.url.full, expiresAt: null }
 }
 
 export async function deleteFromFilebinController(url: string): Promise<boolean> {

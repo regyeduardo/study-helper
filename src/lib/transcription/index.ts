@@ -1,6 +1,7 @@
 import type { TranscriptionEngine, TranscriptionSettings } from '@/types/domain'
 import { transcribeWithGroqController } from '@/controllers/transcription.controller'
 import { decodeToMono16k, durationOf, encodeWav, splitSamples, withoutSilence } from '@/lib/transcription/audio'
+import { confirmModelDownloads, modelsNeeded } from '@/lib/transcription/consent'
 import { runOffThread } from '@/lib/transcription/offload'
 import { transcribeWithPuter } from '@/lib/transcription/puter'
 import { withSpeakers } from '@/lib/transcription/speakers'
@@ -50,6 +51,7 @@ export async function transcribe(audio: Blob, settings: TranscriptionSettings, p
   if (settings.engine === 'groq') remote = await groqSegments(samples, settings, progress, signal)
   else if (settings.engine === 'puter') remote = await transcribeWithPuter(encodeWav(samples), settings.language, durationOf(samples), progress)
   const engine = remote ? null : settings.engine === 'parakeet' ? 'parakeet' : 'whisper'
+  if (engine || settings.separateSpeakers) await confirmModelDownloads(modelsNeeded(engine, settings.language, settings.separateSpeakers))
   const local = engine || settings.separateSpeakers ? await runOffThread({ engine, language: settings.language, separateSpeakers: settings.separateSpeakers, samples }, progress) : { segments: null, turns: [] }
   const segments = remote ?? local.segments ?? []
   const turns = local.turns
