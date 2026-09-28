@@ -157,6 +157,18 @@ describe('DriveRepository: estrutura no Google Drive', () => {
     expect(list.search.get('fields')).toContain('md5Checksum')
   })
 
+  it('fonte maior que 5 MB vai pelo envio em partes do Google e chega inteira', async () => {
+    const repo = await openRepo()
+    const before = drive.requests.length
+    const big = new Blob(['a'.repeat(6 * 1024 * 1024)], { type: 'video/mp4' })
+    const stored = await repo.putSource('file-9', big, 'reuniao.mp4')
+    const file = drive.files.get(stored.ref)!
+    expect(drive.pathOf(file.id)).toBe(`${ROOT_NAME}/sources/file-9-reuniao.mp4`)
+    expect(file.content?.length).toBe(6 * 1024 * 1024)
+    const uploads = drive.requests.slice(before).filter(request => request.path === '/upload/drive/v3/files')
+    expect(uploads.map(request => `${request.method} ${request.search.get('uploadType')}`)).toEqual(['POST resumable', 'PUT resumable'])
+  })
+
   it('fontes vão para sources/ e voltam', async () => {
     const repo = await openRepo()
     const stored = await repo.putSource('file-1', new Blob(['bytes do audio'], { type: 'audio/mpeg' }), 'aula.mp3')

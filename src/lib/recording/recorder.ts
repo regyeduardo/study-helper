@@ -26,6 +26,7 @@ export interface RecordingResult {
 
 export interface RecorderCallbacks {
   onLive?(live: LiveCapture): void
+  onFloating?(open: boolean): void
   onTick(seconds: number): void
   onFinished(result: RecordingResult): void
   onCancelled(): void
@@ -200,7 +201,7 @@ export class MeetingRecorder {
       this.callbacks.onTick(this.seconds)
       this.paintPip()
     }, 1000)
-    await this.openPip()
+    if ((window as Window & { documentPictureInPicture?: PictureInPictureApi }).documentPictureInPicture) await this.openFloating()
   }
 
   finish(): void {
@@ -215,16 +216,19 @@ export class MeetingRecorder {
     this.recorder!.stop()
   }
 
-  private async openPip(): Promise<void> {
-    const api = (window as Window & { documentPictureInPicture?: PictureInPictureApi }).documentPictureInPicture
-    if (!api) return
-    try {
-      this.pip = await api.requestWindow({ width: 320, height: 250 })
-    } catch {
-      this.pip = null
-      return
+  async openFloating(): Promise<boolean> {
+    if (!this.active) return false
+    if (this.pip) {
+      this.pip.focus()
+      return true
     }
-    const doc = this.pip.document
+    const api = (window as Window & { documentPictureInPicture?: PictureInPictureApi }).documentPictureInPicture
+    let floating: Window | null = null
+    if (api) floating = await api.requestWindow({ width: 320, height: 250 }).catch(() => null)
+    if (!floating) floating = window.open('', 'study-helper-gravacao', 'popup,width=340,height=300')
+    if (!floating) return false
+    this.pip = floating
+    const doc = floating.document
     doc.title = 'Gravando'
     doc.body.style.cssText = 'margin:0;font:14px system-ui,sans-serif;background:#111827;color:#f9fafb;display:flex;flex-direction:column;box-sizing:border-box;height:100vh'
     doc.body.innerHTML = `<div id="player" style="flex:1;min-height:0"></div>
@@ -236,11 +240,15 @@ export class MeetingRecorder {
     this.unmountPip = mountMiniplayer(doc.getElementById('player')!, this.live)
     doc.getElementById('finish')!.addEventListener('click', () => this.finish())
     doc.getElementById('cancel')!.addEventListener('click', () => this.cancel())
-    this.pip.addEventListener('pagehide', () => {
+    floating.addEventListener('pagehide', () => {
       this.unmountPip?.()
       this.unmountPip = null
       this.pip = null
+      this.callbacks.onFloating?.(false)
     })
+    this.paintPip()
+    this.callbacks.onFloating?.(true)
+    return true
   }
 
   private paintPip(): void {

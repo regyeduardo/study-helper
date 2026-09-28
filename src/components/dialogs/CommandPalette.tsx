@@ -58,6 +58,7 @@ export function CommandPalette() {
       [
       { key: 'new', icon: 'plus', title: 'Novo conteúdo', hint: 'N', run: () => ui.open({ kind: 'new' }) },
       { key: 'record', icon: 'rec', title: 'Gravar reunião', hint: 'R', run: () => ui.open({ kind: 'record' }) },
+      { key: 'media', icon: 'mic', title: 'Mídias gravadas neste computador', hint: '', run: () => ui.open({ kind: 'media' }) },
       { key: 'import', icon: 'upload', title: 'Importar arquivo (.md, .zip, PDF, docx)', hint: '', run: () => ui.open({ kind: 'import' }) },
       ...(route.view === 'doc' && route.fileId ? [{ key: 'exam', icon: 'exam' as IconName, title: 'Fazer a prova deste documento', hint: '', run: () => ui.open({ kind: 'exam', fileId: route.fileId! }) }] : []),
       { key: 'sync', icon: 'sync', title: 'Sincronizar agora', hint: '', run: () => void syncNow() },

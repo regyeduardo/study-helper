@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from 'react'
 import type { AiProviderId, AiSettings, LayoutId, TranscriptionEngine } from '@/types/domain'
 import { Icon } from '@/components/ui/Icon'
 import { listModelsController } from '@/controllers/ai.controller'
-import { isFreeChoice, PROVIDERS, type ProviderInfo, providerOf } from '@/lib/ai/providers'
+import { isFreeChoice, modelOf, PROVIDERS, type ProviderInfo, providerOf } from '@/lib/ai/providers'
 import { DEFAULT_STORAGE_LIMIT_BYTES } from '@/lib/defaults'
 import { currentDevice } from '@/lib/device'
 import { applyTheme, savedTheme, type ThemeChoice } from '@/lib/theme'
@@ -85,40 +85,52 @@ function AiTab() {
   const updateSettings = useLibraryStore(state => state.updateSettings)
   const [draft, setDraft] = useState<AiSettings>(saved)
   const [keys, setKeys] = useState<Record<string, string>>({ [saved.provider]: saved.apiKey })
-  const [models, setModels] = useState<string[]>(saved.model ? [saved.model] : [])
+  const [models, setModels] = useState<string[]>(providerOf(saved.provider).models ?? (saved.model ? [saved.model] : []))
   const [test, setTest] = useState<{ state: 'idle' | 'busy' | 'ok' | 'fail'; message?: string }>({ state: 'idle' })
   const provider = providerOf(draft.provider)
   const changed = JSON.stringify(draft) !== JSON.stringify(saved)
 
   const pick = (id: AiProviderId) => {
     setDraft({ provider: id, baseUrl: id === 'custom' ? draft.baseUrl : '', apiKey: keys[id] ?? '', model: '' })
-    setModels([])
+    setModels(providerOf(id).models ?? [])
     setTest({ state: 'idle' })
   }
 
-  const runTest = async (): Promise<boolean> => {
+  const runTest = async (): Promise<AiSettings | null> => {
     setTest({ state: 'busy' })
     try {
       const found = provider.models ?? (await listModelsController(draft))
       if (provider.models) await listModelsController(draft)
       setModels(found)
-      if (!draft.model && found.length) setDraft(current => ({ ...current, model: provider.keylessModel && !current.apiKey && found.includes(provider.keylessModel) ? provider.keylessModel : found[0] }))
+      const fallback = provider.keylessModel && !draft.apiKey && found.includes(provider.keylessModel) ? provider.keylessModel : found[0]
+      const tested = { ...draft, model: draft.model || fallback || '' }
+      setDraft(tested)
       setTest({ state: 'ok', message: `Conectado · ${found.length} ${found.length === 1 ? 'modelo disponível' : 'modelos disponíveis'}` })
-      return true
+      return tested
     } catch (error) {
       setTest({ state: 'fail', message: error instanceof Error ? error.message : 'Não respondeu.' })
-      return false
+      return null
     }
   }
 
   const save = async () => {
-    if (!(await runTest())) return
-    await updateSettings({ ai: draft })
+    const tested = await runTest()
+    if (!tested) return
+    await updateSettings({ ai: tested })
     setTest(current => ({ ...current, message: `${current.message ?? 'Conectado'} · salvo` }))
   }
 
+  const savedProvider = providerOf(saved.provider)
   return (
     <>
+      <div className="banner info" role="note" aria-label="IA em uso">
+        <Icon name="check" />
+        <span>
+          Em uso: <b>{savedProvider.name}</b> · {modelOf(saved) || 'sem modelo'}
+          {saved.provider === 'custom' && saved.baseUrl ? ` · ${saved.baseUrl}` : ''}
+          {saved.apiKey ? ` · chave ••••${saved.apiKey.slice(-4)}` : savedProvider.needsKey ? ' · sem chave' : ''}
+        </span>
+      </div>
       {PROVIDER_GROUPS.map(group => (
         <div className="field" key={group.label}>
           <span className="lab">{group.label}</span>
@@ -169,8 +181,8 @@ function AiTab() {
       <div className="field">
         <label htmlFor="ai-model">Modelo</label>
         {models.length ? (
-          <select className="input" id="ai-model" value={draft.model} onChange={event => setDraft({ ...draft, model: event.target.value })}>
-            {!models.includes(draft.model) && <option value={draft.model}>{draft.model || 'escolha'}</option>}
+          <select className="input" id="ai-model" value={modelOf(draft)} onChange={event => setDraft({ ...draft, model: event.target.value })}>
+            {!models.includes(modelOf(draft)) && <option value={modelOf(draft)}>{modelOf(draft) || 'escolha'}</option>}
             {models.map(model => (
               <option key={model} value={model}>
                 {model}
@@ -181,7 +193,7 @@ function AiTab() {
           <input className="input" id="ai-model" placeholder={provider.keylessModel ?? 'Teste para listar os modelos'} value={draft.model} onChange={event => setDraft({ ...draft, model: event.target.value })} />
         )}
         <span className="faint" style={{ fontSize: 12 }}>
-          A lista vem do próprio {provider.name} depois do teste.
+          {provider.models ? 'Só o modelo que passou no teste de uso contínuo do app.' : `A lista vem do próprio ${provider.name} depois do teste.`}
         </span>
       </div>
       {isFreeChoice(draft) && (

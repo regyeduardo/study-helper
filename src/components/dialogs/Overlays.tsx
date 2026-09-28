@@ -5,6 +5,7 @@ import { CommandPalette } from '@/components/dialogs/CommandPalette'
 import { ConflictDialog } from '@/components/dialogs/ConflictDialog'
 import { ExamDialog, FolderExamDialog } from '@/components/dialogs/ExamDialog'
 import { JobsPanel } from '@/components/dialogs/JobsPanel'
+import { MediaDialog } from '@/components/dialogs/MediaDialog'
 import { ActivityDialog, CourseProposalDialog, ExplainDialog, ImportDialog, OrderDialog, SendLocalDialog, StorageLimitDialog } from '@/components/dialogs/MoreDialogs'
 import { NewContentDialog } from '@/components/dialogs/NewContentDialog'
 import { RecordDialog, RecordingDoneDialog, RecordingWindow } from '@/components/dialogs/RecordDialogs'
@@ -33,6 +34,7 @@ export function Overlays() {
   if (overlay?.kind === 'palette') content = <CommandPalette />
   else if (overlay?.kind === 'new') content = <NewContentDialog folderId={overlay.folderId} />
   else if (overlay?.kind === 'record') content = <RecordDialog />
+  else if (overlay?.kind === 'media') content = <MediaDialog />
   else if (overlay?.kind === 'settings') content = <SettingsDialog initial={overlay.tab} />
   else if (overlay?.kind === 'exam') content = <ExamDialog fileId={overlay.fileId} />
   else if (overlay?.kind === 'folder-exam') content = <FolderExamDialog folderId={overlay.folderId} fileIds={overlay.fileIds} />

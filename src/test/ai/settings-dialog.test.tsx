@@ -15,10 +15,12 @@ afterEach(() => {
 })
 
 describe('SettingsDialog AI tab', () => {
-  it('shows every provider button, LLM7 selected by default, and the free-model warning', () => {
+  it('shows every provider button, OVHcloud in use by default with its model, and the free-model warning', () => {
     render(<SettingsDialog initial="ai" />)
     for (const provider of PROVIDERS) expect(screen.getByRole('button', { name: new RegExp(`^${provider.name}\\s*${provider.tag}$`) })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /^LLM7/ })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByRole('button', { name: /^OVHcloud/ })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByRole('note', { name: 'IA em uso' })).toHaveTextContent('Em uso: OVHcloud · Meta-Llama-3_3-70B-Instruct')
+    expect(screen.getByLabelText('Modelo')).toHaveValue('Meta-Llama-3_3-70B-Instruct')
     expect(screen.queryByText(/DeepSeek/i)).not.toBeInTheDocument()
     expect(screen.getByText('Modelos grátis podem comprometer o resultado da geração.')).toBeInTheDocument()
   })
@@ -30,15 +32,32 @@ describe('SettingsDialog AI tab', () => {
   })
 
   it('"Testar sem gastar token" only lists models via GET and fills the model list', async () => {
-    const { calls } = installFetch(() => jsonResponse({ data: [{ id: 'default' }, { id: 'fast' }] }))
+    const { calls } = installFetch(() => jsonResponse({ data: [{ id: 'gpt-4o' }, { id: 'gpt-4o-mini' }] }))
     render(<SettingsDialog initial="ai" />)
+    fireEvent.click(screen.getByRole('button', { name: /^OpenAI/ }))
+    fireEvent.change(screen.getByLabelText('Chave da API'), { target: { value: 'sk-teste' } })
     fireEvent.click(screen.getByRole('button', { name: /Testar sem gastar token/ }))
-    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Conectado · 2 modelos disponíveis'))
+    await waitFor(() => expect(screen.getAllByRole('status')[0]).toHaveTextContent('Conectado · 2 modelos disponíveis'))
     expect(calls).toHaveLength(1)
     expect(calls[0].method).toBe('GET')
-    expect(calls[0].url).toBe('https://api.llm7.io/v1/models')
-    expect(screen.getByRole('option', { name: 'fast' })).toBeInTheDocument()
-    expect(useLibraryStore.getState().index.settings.ai.provider).toBe('llm7')
+    expect(calls[0].url).toBe('https://api.openai.com/v1/models')
+    expect(screen.getByRole('option', { name: 'gpt-4o-mini' })).toBeInTheDocument()
+    expect(useLibraryStore.getState().index.settings.ai.provider).toBe('ovh')
+  })
+
+  it('"Testar e salvar" keeps the model the test filled in, and reopening shows what is saved', async () => {
+    installFetch(() => jsonResponse({ data: [{ id: 'gemini-3.5-flash-lite' }] }))
+    useLibraryStore.setState({ repo: { saveIndex: async () => undefined } as never })
+    const { unmount } = render(<SettingsDialog initial="ai" />)
+    fireEvent.click(screen.getByRole('button', { name: /^Google Gemini/ }))
+    fireEvent.change(screen.getByLabelText('Chave da API'), { target: { value: 'AQ.chave-9876' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Testar e salvar' }))
+    await waitFor(() => expect(useLibraryStore.getState().index.settings.ai).toEqual({ provider: 'gemini', baseUrl: '', apiKey: 'AQ.chave-9876', model: 'gemini-3.5-flash-lite' }))
+    unmount()
+    render(<SettingsDialog initial="ai" />)
+    expect(screen.getByRole('note', { name: 'IA em uso' })).toHaveTextContent('Em uso: Google Gemini · gemini-3.5-flash-lite · chave ••••9876')
+    expect(screen.getByRole('button', { name: /^Google Gemini/ })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByLabelText('Modelo')).toHaveValue('gemini-3.5-flash-lite')
   })
 })
 

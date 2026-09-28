@@ -136,6 +136,23 @@ function multipart(metadata: object, media: Blob): { body: Blob; boundary: strin
   return { body, boundary }
 }
 
+const MULTIPART_LIMIT_BYTES = 5 * 1024 * 1024
+
+async function createResumable(token: TokenProvider, metadata: object, media: Blob): Promise<DriveFile> {
+  const type = media.type || 'application/octet-stream'
+  const opened = await call(token, `/upload/drive/v3/files?uploadType=resumable&fields=${FILE_FIELDS}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json; charset=UTF-8', 'X-Upload-Content-Type': type, 'X-Upload-Content-Length': String(media.size) },
+    body: JSON.stringify(metadata),
+  })
+  const uploadId = opened.headers.get('X-GUploader-UploadID')
+  const session = opened.headers.get('Location') ?? (uploadId ? `${env.googleApiBase}/upload/drive/v3/files?uploadType=resumable&fields=${FILE_FIELDS}&upload_id=${uploadId}` : null)
+  if (!session) throw new DriveError(0, 'O Google Drive não abriu o envio do arquivo grande.')
+  const response = await fetch(session, { method: 'PUT', headers: { 'Content-Type': type }, body: media })
+  if (!response.ok) throw new DriveError(response.status, driveMessage(response.status, await response.text().catch(() => '')))
+  return (await response.json()) as DriveFile
+}
+
 export async function createDriveFileController(
   token: TokenProvider,
   name: string,
@@ -143,7 +160,9 @@ export async function createDriveFileController(
   media: Blob,
   appProperties: Record<string, string>,
 ): Promise<DriveFile> {
-  const { body, boundary } = multipart({ name, parents: [parentId], appProperties, mimeType: media.type || undefined }, media)
+  const metadata = { name, parents: [parentId], appProperties, mimeType: media.type || undefined }
+  if (media.size > MULTIPART_LIMIT_BYTES) return createResumable(token, metadata, media)
+  const { body, boundary } = multipart(metadata, media)
   const response = await call(token, `/upload/drive/v3/files?uploadType=multipart&fields=${FILE_FIELDS}`, {
     method: 'POST',
     headers: { 'Content-Type': `multipart/related; boundary=${boundary}` },

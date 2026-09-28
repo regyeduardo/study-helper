@@ -41,6 +41,10 @@ export function ColumnsShell({ children }: { children: ReactNode }) {
           {nav('review', 'warn', 'Para revisar', paths.review, counts.review)}
           {nav('favorites', 'star', 'Favoritos', paths.favorites, counts.favorites)}
           {nav('trash', 'trash', 'Lixeira', paths.trash, counts.trash)}
+          <button className="nv" onClick={() => ui.open({ kind: 'media' })}>
+            <Icon name="mic" />
+            Mídias
+          </button>
           <div className="nh">Recentes</div>
           <RecentList currentId={fileId} />
         </nav>

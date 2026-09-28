@@ -7,6 +7,7 @@ export type Overlay =
   | { kind: 'palette' }
   | { kind: 'new'; folderId?: string | null }
   | { kind: 'record' }
+  | { kind: 'media' }
   | { kind: 'settings'; tab?: SettingsTab }
   | { kind: 'exam'; fileId: string }
   | { kind: 'folder-exam'; folderId: string | null; fileIds?: string[] }

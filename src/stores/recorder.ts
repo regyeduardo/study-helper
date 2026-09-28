@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 
-import { type CaptureMode, discardRecording, type LiveCapture, MeetingRecorder, type RecordingResult } from '@/lib/recording/recorder'
+import { addLocalMedia } from '@/lib/recording/media-library'
+import { type CaptureMode, type LiveCapture, MeetingRecorder, type RecordingResult } from '@/lib/recording/recorder'
 import { useUiStore } from '@/stores/ui'
 
 interface RecorderState {
@@ -8,21 +9,25 @@ interface RecorderState {
   seconds: number
   mode: CaptureMode | null
   live: LiveCapture | null
+  floating: boolean
   result: RecordingResult | null
   error: string | null
   start(mode: CaptureMode, computerAudio?: string): Promise<void>
   finish(): void
   cancel(): void
   clearResult(): void
+  reopen(result: RecordingResult): void
+  openFloating(): Promise<boolean>
 }
 
 let recorder: MeetingRecorder | null = null
 
-export const useRecorderStore = create<RecorderState>((set, get) => ({
+export const useRecorderStore = create<RecorderState>(set => ({
   active: false,
   seconds: 0,
   mode: null,
   live: null,
+  floating: false,
   result: null,
   error: null,
 
@@ -30,8 +35,12 @@ export const useRecorderStore = create<RecorderState>((set, get) => ({
     set({ error: null, seconds: 0, result: null, live: null })
     recorder = new MeetingRecorder({
       onLive: live => set({ live }),
+      onFloating: floating => set({ floating }),
       onTick: seconds => set({ seconds }),
-      onFinished: result => set({ active: false, result, mode: null, live: null }),
+      onFinished: result => {
+        set({ active: false, result, mode: null, live: null, floating: false })
+        void addLocalMedia({ storedName: result.storedName, name: result.file.name, mime: result.mime || result.file.type, durationSeconds: result.durationSeconds, size: result.file.size, createdAt: new Date().toISOString(), fileIds: [] })
+      },
       onCancelled: () => {
         set({ active: false, mode: null, live: null })
         useUiStore.getState().toast('Gravação descartada')
@@ -48,9 +57,7 @@ export const useRecorderStore = create<RecorderState>((set, get) => ({
   },
   finish: () => recorder?.finish(),
   cancel: () => recorder?.cancel(),
-  clearResult: () => {
-    const storedName = get().result?.storedName
-    set({ result: null })
-    if (storedName) void discardRecording(storedName)
-  },
+  clearResult: () => set({ result: null }),
+  reopen: result => set({ result }),
+  openFloating: async () => (recorder ? recorder.openFloating() : false),
 }))

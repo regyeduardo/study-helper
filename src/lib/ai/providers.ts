@@ -41,7 +41,8 @@ export function baseUrlOf(settings: AiSettings): string {
 }
 
 export function modelOf(settings: AiSettings): string {
-  return settings.model.trim() || (!settings.apiKey ? (providerOf(settings.provider).keylessModel ?? '') : '')
+  const provider = providerOf(settings.provider)
+  return settings.model.trim() || (!settings.apiKey ? provider.keylessModel : undefined) || provider.models?.[0] || ''
 }
 
 export function oneAtATimeOf(settings: AiSettings): boolean {

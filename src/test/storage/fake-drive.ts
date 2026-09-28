@@ -54,6 +54,7 @@ export class FakeDrive {
   requests: RecordedRequest[] = []
   quota: { limit?: string; usage?: string } = { limit: '16106127360', usage: '5368709120' }
   queuedStatuses: number[] = []
+  private readonly sessions = new Map<string, { metadata: Record<string, unknown>; length: number }>()
   private clock = Date.parse('2026-01-01T00:00:00.000Z')
   private seq = 0
 
@@ -161,6 +162,26 @@ export class FakeDrive {
     if (method === 'POST' && path === '/drive/v3/files') {
       const body = JSON.parse(String(init.body)) as { name: string; mimeType: string; parents?: string[]; appProperties?: Record<string, string> }
       const file = this.add({ name: body.name, mimeType: body.mimeType, parents: body.parents ?? [], appProperties: body.appProperties })
+      return json(this.meta(file))
+    }
+
+    if (method === 'POST' && path === '/upload/drive/v3/files' && search.get('uploadType') === 'resumable') {
+      const id = `upload-${this.sessions.size + 1}`
+      this.sessions.set(id, { metadata: JSON.parse(String(init.body)) as Record<string, unknown>, length: Number(headers['X-Upload-Content-Length']) })
+      return new Response(null, { status: 200, headers: { Location: `${parsed.origin}/upload/drive/v3/files?uploadType=resumable&upload_id=${id}` } })
+    }
+
+    if (method === 'PUT' && path === '/upload/drive/v3/files' && search.get('upload_id')) {
+      const session = this.sessions.get(search.get('upload_id')!)
+      if (!session) return json({ error: { message: 'no session' } }, 404)
+      const media = await readBlob(init.body as Blob)
+      const file = this.add({
+        name: String(session.metadata.name),
+        mimeType: String(session.metadata.mimeType ?? 'application/octet-stream'),
+        parents: (session.metadata.parents as string[]) ?? [],
+        appProperties: session.metadata.appProperties as Record<string, string>,
+        content: media,
+      })
       return json(this.meta(file))
     }
 

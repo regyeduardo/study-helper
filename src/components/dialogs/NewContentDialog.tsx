@@ -4,7 +4,9 @@ import { useNavigate } from 'react-router-dom'
 import type { SourceStorage, TranscriptionEngine } from '@/types/domain'
 import { Dialog } from '@/components/ui/Dialog'
 import { Icon } from '@/components/ui/Icon'
+import { LimitedAiNotice } from '@/components/dialogs/LimitedAiNotice'
 import { FolderPicker } from '@/components/dialogs/SimpleDialogs'
+import { SourceStoragePicker } from '@/components/dialogs/SourceStoragePicker'
 import type { LitterboxTime } from '@/controllers/hosting.controller'
 import { youtubeId } from '@/controllers/sources.controller'
 import { isFreeChoice, modelOf, providerOf } from '@/lib/ai/providers'
@@ -188,6 +190,7 @@ export function NewContentDialog({ folderId: initialFolder }: { folderId?: strin
         </button>
       </div>
       <div className="db" style={{ paddingTop: 14 }}>
+        <LimitedAiNotice />
         {tab === 'link' && (
           <>
             <div className="field">
@@ -222,46 +225,15 @@ export function NewContentDialog({ folderId: initialFolder }: { folderId?: strin
             </label>
             <input ref={input} type="file" id="nc-file" hidden accept={ACCEPT} onChange={event => void pickFile(event.target.files?.[0] ?? null)} />
             {file && (
-              <div className="field">
-                <span className="lab">Onde guardar o arquivo original</span>
-                <div className="opts" role="radiogroup">
-                  {options
-                    .filter(option => option.fits)
-                    .map(option => (
-                      <button key={option.id} className="opt" role="radio" aria-checked={chosen === option.id} aria-disabled={!option.enabled} onClick={() => option.enabled && setStorage(option.id)}>
-                        <span className="radio" />
-                        <span>
-                          <b>{option.name}</b>
-                          <span>
-                            {option.description}
-                            {!option.enabled && option.reason && <> <span className="lim">{option.reason}</span></>}
-                          </span>
-                        </span>
-                      </button>
-                    ))}
-                </div>
-                {chosen === 'litterbox' && (
-                  <div className="field">
-                    <label htmlFor="nc-until">Prazo do Litterbox</label>
-                    <select className="input" id="nc-until" value={litterboxTime} onChange={event => setLitterboxTime(event.target.value as LitterboxTime)}>
-                      {(['1h', '12h', '24h', '72h'] as LitterboxTime[]).map(time => (
-                        <option key={time}>{time}</option>
-                      ))}
-                    </select>
-                  </div>
-                )}
-                {options.some(option => !option.fits) && (
-                  <span className="faint" style={{ fontSize: 12 }}>
-                    Não cabem {formatBytes(file.size)}: {options.filter(option => !option.fits).map(option => option.name).join(', ')}.
-                  </span>
-                )}
-                {options.find(option => option.id === chosen)?.thirdParty && (
-                  <div className="banner">
-                    <Icon name="warn" />
-                    <span>Serviço de terceiro, sem garantia de guardar: pode perder o arquivo. O único 100% confiável é o seu Google Drive.</span>
-                  </div>
-                )}
-              </div>
+              <SourceStoragePicker
+                label="Onde guardar o arquivo original"
+                sizeBytes={file.size}
+                options={options}
+                chosen={chosen}
+                onChoose={setStorage}
+                litterboxTime={litterboxTime}
+                onLitterboxTime={setLitterboxTime}
+              />
             )}
             {file && isMedia && (
               <div className="field">
