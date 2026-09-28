@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { COMPUTER_AUDIO_NONE, discardRecording, isComputerInput, listAudioInputs, MeetingRecorder, type RecorderCallbacks, type RecordingResult, systemAudioNotice } from '@/lib/recording/recorder'
 import { useRecorderStore } from '@/stores/recorder'
-import { blobText, COMPUTER_INPUT, FakeAudioContext, FakeMediaRecorder, installMediaEnvironment, type MediaEnvironment } from '@/test/recording/media-fakes'
+import { blobText, COMPUTER_INPUT, FakeAudioContext, MICROPHONE_INPUT, FakeMediaRecorder, installMediaEnvironment, type MediaEnvironment } from '@/test/recording/media-fakes'
 
 const UA = {
   firefox: 'Mozilla/5.0 (X11; Linux x86_64; rv:128.0) Gecko/20100101 Firefox/128.0',
@@ -43,7 +43,7 @@ describe('MeetingRecorder capture', () => {
     expect(context.sources[1].stream).toBe(env.microphoneStream)
     for (const source of context.sources) expect(source.connect).toHaveBeenCalledWith(context.destination)
     const recorded = lastRecorder().stream.getTracks().map(track => track.label)
-    expect(recorded).toEqual(['screen', 'mix'])
+    expect(recorded).toEqual(['mix'])
   })
 
   it('allows whole monitors in screen mode', async () => {
@@ -104,12 +104,24 @@ describe('MeetingRecorder capture', () => {
     expect(handlers.onLive!.mock.calls[0][0].meters.computer).toBeNull()
   })
 
-  it('microphone mode adds the computer input only when picked', async () => {
+  it('microphone mode records the computer input on automatic and leaves it out when turned off', async () => {
     env = installMediaEnvironment({ computerInput: true })
     await new MeetingRecorder(callbacks()).start('microphone')
-    expect(FakeAudioContext.instances[0].sources.map(source => source.stream)).toEqual([env.microphoneStream])
-    await new MeetingRecorder(callbacks()).start('microphone', COMPUTER_INPUT.deviceId)
-    expect(FakeAudioContext.instances[1].sources.map(source => source.stream)).toEqual([env.microphoneStream, env.computerStream])
+    expect(FakeAudioContext.instances[0].sources.map(source => source.stream)).toEqual([env.microphoneStream, env.computerStream])
+    await new MeetingRecorder(callbacks()).start('microphone', COMPUTER_AUDIO_NONE)
+    expect(FakeAudioContext.instances[1].sources.map(source => source.stream)).toEqual([env.microphoneStream])
+  })
+
+  it('mixes every computer output on automatic, so the sound comes in whichever output is playing', async () => {
+    env = installMediaEnvironment({ computerInput: true })
+    const hdmiStream = new MediaStream()
+    env.enumerateDevices.mockResolvedValue([MICROPHONE_INPUT, { kind: 'audioinput', deviceId: 'monitor-hdmi', label: 'Monitor of HDMI Audio', groupId: 'g3' }, COMPUTER_INPUT])
+    const original = env.getUserMedia.getMockImplementation()!
+    env.getUserMedia.mockImplementation(async (constraints: { audio: { deviceId?: { exact: string } } }) => (constraints.audio.deviceId?.exact === 'monitor-hdmi' ? hdmiStream : original(constraints)))
+    const handlers = callbacks()
+    await new MeetingRecorder(handlers).start('microphone')
+    expect(FakeAudioContext.instances[0].sources.map(source => source.stream)).toEqual([env.microphoneStream, hdmiStream, env.computerStream])
+    expect(handlers.onLive).toHaveBeenCalledWith(expect.objectContaining({ computerAudio: `Monitor of HDMI Audio + ${COMPUTER_INPUT.label}` }))
   })
 
   it('records only the microphone without asking for the screen', async () => {
@@ -121,16 +133,17 @@ describe('MeetingRecorder capture', () => {
 })
 
 describe('MeetingRecorder format', () => {
-  it('prefers WebM with VP8 and Opus, encoded by the browser itself, over the video card H.264', async () => {
+  it('records only the audio when sharing a tab or the screen', async () => {
     await new MeetingRecorder(callbacks()).start('tab')
-    expect(lastRecorder().options).toEqual({ mimeType: 'video/webm;codecs=vp8,opus' })
+    expect(lastRecorder().options).toEqual({ mimeType: 'audio/webm;codecs=opus' })
+    expect(lastRecorder().stream.getTracks().map(track => track.kind)).toEqual(['audio'])
     expect([...env.directory.files.keys()][0]).toMatch(/^gravacao-\d+\.webm$/)
   })
 
-  it('falls back to MP4 when WebM is not supported', async () => {
+  it('falls back to MP4 audio when WebM is not supported', async () => {
     FakeMediaRecorder.supported = new Set(['video/mp4;codecs=avc1,opus', 'video/mp4', 'audio/mp4;codecs=opus'])
     await new MeetingRecorder(callbacks()).start('tab')
-    expect(lastRecorder().options).toEqual({ mimeType: 'video/mp4;codecs=avc1,opus' })
+    expect(lastRecorder().options).toEqual({ mimeType: 'audio/mp4;codecs=opus' })
     expect([...env.directory.files.keys()][0]).toMatch(/\.mp4$/)
   })
 
@@ -157,10 +170,10 @@ describe('MeetingRecorder saving', () => {
     expect(handle.closed).toBe(true)
     const result = handlers.onFinished.mock.calls[0][0] as RecordingResult
     expect(await blobText(result.file)).toBe('chunk-1|chunk-2|')
-    expect(result.mime).toBe('video/webm;codecs=vp8,opus')
+    expect(result.mime).toBe('audio/webm;codecs=opus')
     expect(result.file.name).toMatch(/^Reunião .+\.webm$/)
     expect(result.file.name).not.toMatch(/[/:]/)
-    expect(result.file.type).toBe('video/webm;codecs=vp8,opus')
+    expect(result.file.type).toBe('audio/webm;codecs=opus')
     expect(handlers.onError).not.toHaveBeenCalled()
   })
 

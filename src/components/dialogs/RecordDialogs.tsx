@@ -59,7 +59,7 @@ export function RecordDialog() {
     }
   }, [])
   const named = inputs.some(input => input.label)
-  const detected = inputs.find(input => input.computer)
+  const detected = inputs.filter(input => input.computer)
   const findInputs = async () => {
     try {
       setInputs(await listAudioInputs(true))
@@ -109,21 +109,21 @@ export function RecordDialog() {
               <span className="radio" />
               <span>
                 <b>A aba da reunião</b>
-                <span>Meet, Teams ou Zoom no navegador. Grava vídeo e o som da aba, mais o seu microfone.</span>
+                <span>Meet, Teams ou Zoom no navegador. Grava só o som da aba, mais o seu microfone.</span>
               </span>
             </button>
             <button className="opt" role="radio" aria-checked={mode === 'screen'} onClick={() => setMode('screen')}>
               <span className="radio" />
               <span>
                 <b>A tela inteira</b>
-                <span>Para reunião em app instalado. Grava a tela, o som do computador e o seu microfone.</span>
+                <span>Para reunião em app instalado. Grava só o som do computador e o seu microfone.</span>
               </span>
             </button>
             <button className="opt" role="radio" aria-checked={mode === 'microphone'} onClick={() => setMode('microphone')}>
               <span className="radio" />
               <span>
                 <b>Só o microfone</b>
-                <span>Reunião presencial ou aula: grava só o áudio (mais o som do computador, se você escolher uma entrada abaixo).</span>
+                <span>Reunião presencial ou aula: grava o seu microfone e o som do computador escolhido abaixo.</span>
               </span>
             </button>
           </div>
@@ -131,13 +131,13 @@ export function RecordDialog() {
         {/Firefox\//.test(navigator.userAgent) && (
           <div className="banner" role="note" aria-label="Aviso do Firefox">
             <Icon name="warn" />
-            <span>No Firefox não dá pra gravar o som do computador junto com a tela ou a aba. Ele só entra se você escolher abaixo a entrada do sistema ("Monitor of…" no Linux, "Mixagem estéreo" no Windows); sem ela, grave pelo Chrome ou pelo Edge.</span>
+            <span>No Firefox o som do computador não vem junto com a tela ou a aba: ele vem da entrada do sistema ("Monitor of…" no Linux, "Mixagem estéreo" no Windows), e o Automático abaixo já pega todas. Escolha "Só o microfone" para gravar o seu microfone e todo o som do computador.</span>
           </div>
         )}
         <div className="field">
           <label className="lab" htmlFor="rec-computer">Som do computador</label>
           <select className="input" id="rec-computer" value={computerAudio} onChange={event => setComputerAudio(event.target.value)}>
-            <option value={COMPUTER_AUDIO_AUTO}>{detected ? `Automático · ${detected.label}` : 'Automático'}</option>
+            <option value={COMPUTER_AUDIO_AUTO}>{detected.length > 1 ? 'Automático · todas as saídas de som do computador' : detected.length ? `Automático · ${detected[0].label}` : 'Automático'}</option>
             {inputs
               .filter(input => input.label)
               .map(input => (
@@ -150,7 +150,7 @@ export function RecordDialog() {
           </select>
           <span className="faint" style={{ fontSize: 12 }}>
             {systemAudioNotice()}
-            {named && !detected && ' Nenhuma entrada de som do computador apareceu aqui: no Linux, com Chrome ou Edge, ligue chrome://flags/#pulseaudio-loopback-for-screen-share, ou grave uma aba.'}
+            {named && !detected.length && ' Nenhuma entrada de som do computador apareceu aqui: neste navegador o som do computador só vem da aba ou da tela compartilhada, e o microfone chega mudo se outra chamada estiver usando ele. Para gravar o seu microfone e todo o som do computador, use o Firefox.'}
             {!named && (
               <>
                 {' '}
@@ -256,7 +256,7 @@ export function RecordingDoneDialog() {
   const chosen: SourceStorage = storage && options.some(option => option.id === storage && option.fits && option.enabled) ? storage : defaultStorage(result.file.size, driveAvailable, options)
   const later = () => {
     clearResult()
-    toast('A gravação ficou guardada em Mídias')
+    toast('A gravação ficou salva em Mídias')
   }
   const go = () => {
     const { file, storedName } = result
@@ -274,7 +274,7 @@ export function RecordingDoneDialog() {
       footer={
         <>
           <button className="btn quiet" onClick={later}>
-            Agora não
+            Só salvar
           </button>
           <button className="btn primary" onClick={go}>
             Transcrever e gerar

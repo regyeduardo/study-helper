@@ -48,7 +48,7 @@ describe('RecordDialog', () => {
     expect(screen.getByRole('option', { name: 'Não gravar o som do computador' })).toBeInTheDocument()
     expect(screen.getAllByText(/Monitor of…/).length).toBeGreaterThan(0)
     expect(screen.queryByText(/só o microfone e a imagem/)).not.toBeInTheDocument()
-    expect(screen.getByRole('note', { name: 'Aviso do Firefox' })).toHaveTextContent('No Firefox não dá pra gravar o som do computador junto com a tela ou a aba')
+    expect(screen.getByRole('note', { name: 'Aviso do Firefox' })).toHaveTextContent('Escolha "Só o microfone" para gravar o seu microfone e todo o som do computador')
     expect(screen.getByText(/Parar pela barra do navegador também termina/)).toBeInTheDocument()
   })
 
@@ -183,12 +183,12 @@ describe('RecordingDoneDialog', () => {
     expect(checked().some(text => text?.startsWith('Litterbox'))).toBe(true)
   })
 
-  it('"Agora não" keeps the recording in the browser', async () => {
+  it('"Só salvar" keeps the recording in the browser without generating', async () => {
     const removeEntry = vi.fn(async () => undefined)
     Object.defineProperty(navigator, 'storage', { configurable: true, value: { getDirectory: async () => ({ removeEntry }) } })
     useRecorderStore.setState({ result: recordingOf(5 * MB) })
     renderDone()
-    fireEvent.click(screen.getByRole('button', { name: 'Agora não' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Só salvar' }))
     expect(useRecorderStore.getState().result).toBeNull()
     await new Promise(resolve => setTimeout(resolve, 20))
     expect(removeEntry).not.toHaveBeenCalled()

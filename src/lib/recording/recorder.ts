@@ -33,8 +33,7 @@ export interface RecorderCallbacks {
   onError(message: string): void
 }
 
-const MIME_OPTIONS = ['video/webm;codecs=vp8,opus', 'video/webm;codecs=vp9,opus', 'video/webm', 'video/mp4;codecs=avc1,opus', 'video/mp4']
-const AUDIO_MIME_OPTIONS = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4;codecs=opus']
+const MIME_OPTIONS = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4;codecs=opus']
 const RECORDING_TITLE = '● Gravando — '
 const COMPUTER_INPUT = /monitor|stereo mix|mixagem|what u hear|loopback|blackhole|soundflower|vb-audio|cable output/i
 const CHUNK_MS = 1000
@@ -65,9 +64,8 @@ export async function listAudioInputs(askPermission = false): Promise<AudioInput
     .map(device => ({ deviceId: device.deviceId, label: device.label, computer: isComputerInput(device.label) }))
 }
 
-function supportedMime(video: boolean): string {
-  const options = video ? MIME_OPTIONS : AUDIO_MIME_OPTIONS
-  return options.find(mime => MediaRecorder.isTypeSupported(mime)) ?? ''
+function supportedMime(): string {
+  return MIME_OPTIONS.find(mime => MediaRecorder.isTypeSupported(mime)) ?? ''
 }
 
 function extensionOf(mime: string): string {
@@ -112,28 +110,34 @@ export class MeetingRecorder {
     }
   }
 
-  private meter(stream: MediaStream, mix: MediaStreamAudioDestinationNode): AnalyserNode {
-    const source = this.audioContext!.createMediaStreamSource(stream)
-    source.connect(mix)
+  private meter(streams: MediaStream[], mix: MediaStreamAudioDestinationNode): AnalyserNode {
     const analyser = this.audioContext!.createAnalyser()
     analyser.fftSize = 1024
-    source.connect(analyser)
+    for (const stream of streams) {
+      const source = this.audioContext!.createMediaStreamSource(stream)
+      source.connect(mix)
+      source.connect(analyser)
+    }
     return analyser
   }
 
-  private async computerInput(choice: string, mode: CaptureMode): Promise<{ stream: MediaStream; label: string } | null> {
-    if (choice === COMPUTER_AUDIO_NONE || (choice === COMPUTER_AUDIO_AUTO && mode === 'microphone')) return null
+  private async computerInput(choice: string): Promise<{ streams: MediaStream[]; label: string } | null> {
+    if (choice === COMPUTER_AUDIO_NONE) return null
     const inputs = await listAudioInputs().catch(() => [])
-    const input = choice === COMPUTER_AUDIO_AUTO ? inputs.find(item => item.computer) : inputs.find(item => item.deviceId === choice)
-    if (!input) return null
-    const stream = await navigator.mediaDevices
-      .getUserMedia({ audio: { deviceId: { exact: input.deviceId }, echoCancellation: false, noiseSuppression: false, autoGainControl: false } })
-      .catch(() => null)
-    return stream ? { stream, label: input.label } : null
+    const picked = choice === COMPUTER_AUDIO_AUTO ? inputs.filter(item => item.computer) : inputs.filter(item => item.deviceId === choice)
+    const opened = await Promise.all(
+      picked.map(input =>
+        navigator.mediaDevices
+          .getUserMedia({ audio: { deviceId: { exact: input.deviceId }, echoCancellation: false, noiseSuppression: false, autoGainControl: false } })
+          .then(stream => ({ stream, label: input.label }))
+          .catch(() => null),
+      ),
+    )
+    const found = opened.filter(item => item !== null)
+    return found.length ? { streams: found.map(item => item.stream), label: found.map(item => item.label).join(' + ') } : null
   }
 
   private async begin(mode: CaptureMode, computerAudio: string): Promise<void> {
-    const tracks: MediaStreamTrack[] = []
     this.audioContext = new AudioContext()
     const mix = this.audioContext.createMediaStreamDestination()
     let displayAudio: MediaStream | null = null
@@ -149,7 +153,6 @@ export class MeetingRecorder {
         monitorTypeSurfaces: mode === 'screen' ? 'include' : 'exclude',
       } as DisplayMediaStreamOptions)
       this.streams.push(display)
-      tracks.push(...display.getVideoTracks())
       if (display.getVideoTracks().length) this.live.preview = new MediaStream(display.getVideoTracks())
       if (display.getAudioTracks().length) displayAudio = new MediaStream(display.getAudioTracks())
       display.getVideoTracks()[0]?.addEventListener('ended', () => this.finish())
@@ -157,35 +160,34 @@ export class MeetingRecorder {
 
     const useDisplayAudio = displayAudio && computerAudio === COMPUTER_AUDIO_AUTO
     if (useDisplayAudio) {
-      this.live.meters.computer = this.meter(displayAudio!, mix)
+      this.live.meters.computer = this.meter([displayAudio!], mix)
       this.live.computerAudio = mode === 'tab' ? 'som da aba' : 'som da tela'
     }
 
     try {
       const microphone = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } })
       this.streams.push(microphone)
-      this.live.meters.microphone = this.meter(microphone, mix)
+      this.live.meters.microphone = this.meter([microphone], mix)
     } catch {
       if (mode === 'microphone') throw new Error('O navegador não deixou usar o microfone.')
     }
 
     if (!useDisplayAudio) {
-      const input = await this.computerInput(computerAudio, mode)
+      const input = await this.computerInput(computerAudio)
       if (input) {
-        this.streams.push(input.stream)
-        this.live.meters.computer = this.meter(input.stream, mix)
+        this.streams.push(...input.streams)
+        this.live.meters.computer = this.meter(input.streams, mix)
         this.live.computerAudio = input.label
       }
     }
     this.callbacks.onLive?.(this.live)
 
-    tracks.push(...mix.stream.getAudioTracks())
-    this.mime = supportedMime(mode !== 'microphone')
+    this.mime = supportedMime()
     const root = await navigator.storage.getDirectory()
     this.handle = await root.getFileHandle(`gravacao-${Date.now()}.${extensionOf(this.mime)}`, { create: true })
     this.writable = await this.handle.createWritable()
 
-    this.recorder = new MediaRecorder(new MediaStream(tracks), this.mime ? { mimeType: this.mime } : undefined)
+    this.recorder = new MediaRecorder(new MediaStream(mix.stream.getAudioTracks()), this.mime ? { mimeType: this.mime } : undefined)
     this.recorder.ondataavailable = event => {
       if (!event.data.size || !this.writable) return
       const writable = this.writable
