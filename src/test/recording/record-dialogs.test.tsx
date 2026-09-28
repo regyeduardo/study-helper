@@ -12,7 +12,7 @@ vi.mock('@/stores/jobs', async () => {
 import { RecordDialog, RecordingDoneDialog, RecordingWindow } from '@/components/dialogs/RecordDialogs'
 import { LOCAL_ACCOUNT, useAccountStore } from '@/stores/account'
 import { useRecorderStore } from '@/stores/recorder'
-import { installMediaEnvironment } from '@/test/recording/media-fakes'
+import { COMPUTER_INPUT, installMediaEnvironment } from '@/test/recording/media-fakes'
 
 const FIREFOX = 'Mozilla/5.0 (X11; Linux x86_64; rv:128.0) Gecko/20100101 Firefox/128.0'
 const CHROME_WINDOWS = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36'
@@ -38,17 +38,42 @@ afterEach(() => {
 })
 
 describe('RecordDialog', () => {
-  it('warns Firefox users that only the microphone is recorded', () => {
+  it('offers the computer audio the same way in Firefox, with the system input picked on automatic', async () => {
     vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue(FIREFOX)
+    installMediaEnvironment({ computerInput: true })
     render(<RecordDialog />)
-    expect(screen.getByText(/O Firefox não grava o som do sistema.*grava só o microfone/)).toBeInTheDocument()
+    expect(await screen.findByRole('option', { name: `Automático · ${COMPUTER_INPUT.label}` })).toBeInTheDocument()
+    expect(screen.getByRole('option', { name: `${COMPUTER_INPUT.label} · som do computador` })).toBeInTheDocument()
+    expect(screen.getByRole('option', { name: 'Não gravar o som do computador' })).toBeInTheDocument()
+    expect(screen.getByText(/Monitor of…/)).toBeInTheDocument()
+    expect(screen.queryByText(/só o microfone e a imagem/)).not.toBeInTheDocument()
     expect(screen.getByText(/Parar pela barra do navegador também termina/)).toBeInTheDocument()
   })
 
-  it('explains tab audio sharing on Chrome for Windows', () => {
+  it('names the Windows system input', () => {
     vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue(CHROME_WINDOWS)
     render(<RecordDialog />)
-    expect(screen.getByText(/marque "Compartilhar áudio da guia"/)).toBeInTheDocument()
+    expect(screen.getByText(/Mixagem estéreo/)).toBeInTheDocument()
+  })
+
+  it('asks the microphone permission to show the input names when the browser hides them', async () => {
+    const env = installMediaEnvironment({ computerInput: true })
+    env.enumerateDevices.mockResolvedValueOnce([{ kind: 'audioinput', deviceId: 'x', label: '', groupId: '' }])
+    render(<RecordDialog />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Mostrar as entradas de som' }))
+    expect(await screen.findByRole('option', { name: `${COMPUTER_INPUT.label} · som do computador` })).toBeInTheDocument()
+    expect(env.getUserMedia).toHaveBeenCalledWith({ audio: true })
+  })
+
+  it('starts with the computer input the person picked', async () => {
+    installMediaEnvironment({ computerInput: true })
+    const start = vi.fn(async () => undefined)
+    useRecorderStore.setState({ start })
+    render(<RecordDialog />)
+    await screen.findByRole('option', { name: `${COMPUTER_INPUT.label} · som do computador` })
+    fireEvent.change(screen.getByLabelText('Som do computador'), { target: { value: COMPUTER_INPUT.deviceId } })
+    fireEvent.click(screen.getByRole('button', { name: /Começar a gravar/ }))
+    await waitFor(() => expect(start).toHaveBeenCalledWith('tab', COMPUTER_INPUT.deviceId))
   })
 
   it('starts recording the selected mode', async () => {
@@ -57,7 +82,7 @@ describe('RecordDialog', () => {
     render(<RecordDialog />)
     fireEvent.click(screen.getByRole('radio', { name: /Só o microfone/ }))
     fireEvent.click(screen.getByRole('button', { name: /Começar a gravar/ }))
-    await waitFor(() => expect(start).toHaveBeenCalledWith('microphone'))
+    await waitFor(() => expect(start).toHaveBeenCalledWith('microphone', 'auto'))
   })
 
   it('explains a denied permission', async () => {

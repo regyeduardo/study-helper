@@ -1,11 +1,12 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 
 import type { SourceStorage } from '@/types/domain'
 import { Dialog } from '@/components/ui/Dialog'
 import { Icon } from '@/components/ui/Icon'
 import { FolderPicker } from '@/components/dialogs/SimpleDialogs'
-import { type CaptureMode, systemAudioNotice } from '@/lib/recording/recorder'
+import { mountMiniplayer } from '@/lib/recording/miniplayer'
+import { type AudioInput, type CaptureMode, COMPUTER_AUDIO_AUTO, COMPUTER_AUDIO_NONE, listAudioInputs, systemAudioNotice } from '@/lib/recording/recorder'
 import { paths } from '@/lib/paths'
 import { defaultStorage, storageOptions } from '@/lib/storage/source-storage'
 import { useAccountStore } from '@/stores/account'
@@ -18,8 +19,22 @@ export function RecordDialog() {
   const ui = useUiStore()
   const recorder = useRecorderStore()
   const [mode, setMode] = useState<CaptureMode>('tab')
+  const [computerAudio, setComputerAudio] = useState(COMPUTER_AUDIO_AUTO)
+  const [inputs, setInputs] = useState<AudioInput[]>([])
   const [error, setError] = useState<string | null>(null)
   const supported = Boolean(navigator.mediaDevices?.getDisplayMedia) && typeof MediaRecorder !== 'undefined'
+  useEffect(() => {
+    if (navigator.mediaDevices) void listAudioInputs().then(setInputs).catch(() => undefined)
+  }, [])
+  const named = inputs.some(input => input.label)
+  const detected = inputs.find(input => input.computer)
+  const findInputs = async () => {
+    try {
+      setInputs(await listAudioInputs(true))
+    } catch {
+      setError('Sem a permissão do microfone o navegador não mostra o nome das entradas de som.')
+    }
+  }
   if (recorder.active) {
     return (
       <Dialog title="Gravar reunião" size="narrow" onClose={ui.close}>
@@ -30,7 +45,7 @@ export function RecordDialog() {
   const start = async () => {
     setError(null)
     try {
-      await recorder.start(mode)
+      await recorder.start(mode, computerAudio)
       ui.close()
     } catch (failure) {
       setError(failure instanceof Error && failure.name === 'NotAllowedError' ? 'Você não deu permissão para gravar.' : failure instanceof Error ? failure.message : 'Não deu para começar a gravar.')
@@ -68,27 +83,48 @@ export function RecordDialog() {
               <span className="radio" />
               <span>
                 <b>A tela inteira</b>
-                <span>
-                  Para reunião em app instalado. <span className="lim">O som do sistema só vem no Chrome/Edge do Windows, do ChromeOS e do macOS 14.2+.</span>
-                </span>
+                <span>Para reunião em app instalado. Grava a tela, o som do computador e o seu microfone.</span>
               </span>
             </button>
             <button className="opt" role="radio" aria-checked={mode === 'microphone'} onClick={() => setMode('microphone')}>
               <span className="radio" />
               <span>
                 <b>Só o microfone</b>
-                <span>Reunião presencial ou aula: grava só o áudio.</span>
+                <span>Reunião presencial ou aula: grava só o áudio (mais o som do computador, se você escolher uma entrada abaixo).</span>
               </span>
             </button>
           </div>
         </div>
-        <div className="banner">
-          <Icon name="warn" />
-          <span>{systemAudioNotice()}</span>
+        <div className="field">
+          <label className="lab" htmlFor="rec-computer">Som do computador</label>
+          <select className="input" id="rec-computer" value={computerAudio} onChange={event => setComputerAudio(event.target.value)}>
+            <option value={COMPUTER_AUDIO_AUTO}>{detected ? `Automático · ${detected.label}` : 'Automático'}</option>
+            {inputs
+              .filter(input => input.label)
+              .map(input => (
+                <option key={input.deviceId} value={input.deviceId}>
+                  {input.label}
+                  {input.computer ? ' · som do computador' : ''}
+                </option>
+              ))}
+            <option value={COMPUTER_AUDIO_NONE}>Não gravar o som do computador</option>
+          </select>
+          <span className="faint" style={{ fontSize: 12 }}>
+            {systemAudioNotice()}
+            {named && !detected && ' Nenhuma entrada de som do computador apareceu aqui: no Linux, com Chrome ou Edge, ligue chrome://flags/#pulseaudio-loopback-for-screen-share, ou grave uma aba.'}
+            {!named && (
+              <>
+                {' '}
+                <button className="btn quiet" style={{ height: 24, padding: '0 8px' }} onClick={() => void findInputs()}>
+                  Mostrar as entradas de som
+                </button>
+              </>
+            )}
+          </span>
         </div>
         <div className="banner info">
           <Icon name="info" />
-          <span>Uma janelinha fica por cima de tudo com o tempo, Terminar e Cancelar. O arquivo é gravado em pedaços no navegador, então reunião longa não pesa. Parar pela barra do navegador também termina.</span>
+          <span>Um miniplayer mostra o que está sendo gravado, com as ondas do microfone e do som do computador, o tempo, Terminar e Cancelar. O arquivo é gravado em pedaços no navegador, então reunião longa não pesa. Parar pela barra do navegador também termina.</span>
         </div>
         {error && (
           <div className="banner" role="alert">
@@ -107,8 +143,15 @@ function clock(seconds: number): string {
   return `${hours ? `${hours}:` : ''}${pad(Math.floor((seconds % 3600) / 60))}:${pad(seconds % 60)}`
 }
 
+function Miniplayer() {
+  const live = useRecorderStore(state => state.live)
+  const container = useRef<HTMLDivElement>(null)
+  useEffect(() => (live && container.current ? mountMiniplayer(container.current, live) : undefined), [live])
+  return <div className="player" ref={container} />
+}
+
 export function RecordingWindow() {
-  const { active, seconds, mode, finish, cancel } = useRecorderStore()
+  const { active, seconds, mode, live, finish, cancel } = useRecorderStore()
   const [confirming, setConfirming] = useState(false)
   if (!active) return null
   return (
@@ -117,6 +160,8 @@ export function RecordingWindow() {
         <Icon name="monitor" />
         <span style={{ flex: 1 }}>Gravando {mode === 'tab' ? 'a aba' : mode === 'screen' ? 'a tela' : 'o microfone'}</span>
       </div>
+      <Miniplayer />
+      {live?.computerAudio && <div className="source">Som do computador: {live.computerAudio}</div>}
       <div className="body">
         <div className="timer">{clock(seconds)}</div>
         <div className="acts">

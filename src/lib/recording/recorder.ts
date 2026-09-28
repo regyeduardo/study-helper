@@ -1,4 +1,21 @@
+import { mountMiniplayer, type Meters } from '@/lib/recording/miniplayer'
+
 export type CaptureMode = 'tab' | 'screen' | 'microphone'
+
+export const COMPUTER_AUDIO_AUTO = 'auto'
+export const COMPUTER_AUDIO_NONE = 'none'
+
+export interface AudioInput {
+  deviceId: string
+  label: string
+  computer: boolean
+}
+
+export interface LiveCapture {
+  preview: MediaStream | null
+  meters: Meters
+  computerAudio: string
+}
 
 export interface RecordingResult {
   file: File
@@ -8,6 +25,7 @@ export interface RecordingResult {
 }
 
 export interface RecorderCallbacks {
+  onLive?(live: LiveCapture): void
   onTick(seconds: number): void
   onFinished(result: RecordingResult): void
   onCancelled(): void
@@ -17,6 +35,7 @@ export interface RecorderCallbacks {
 const MIME_OPTIONS = ['video/mp4;codecs=avc1,opus', 'video/mp4', 'video/webm;codecs=vp9,opus', 'video/webm']
 const AUDIO_MIME_OPTIONS = ['audio/mp4;codecs=opus', 'audio/webm;codecs=opus', 'audio/webm']
 const RECORDING_TITLE = '● Gravando — '
+const COMPUTER_INPUT = /monitor|stereo mix|mixagem|what u hear|loopback|blackhole|soundflower|vb-audio|cable output/i
 const CHUNK_MS = 1000
 
 interface PictureInPictureApi {
@@ -24,13 +43,25 @@ interface PictureInPictureApi {
 }
 
 export function systemAudioNotice(agent: string = navigator.userAgent): string {
-  const firefox = /Firefox\//.test(agent)
-  const safari = /Safari\//.test(agent) && !/Chrome\//.test(agent)
-  const linux = /Linux/.test(agent) && !/Android/.test(agent)
-  if (firefox) return 'O Firefox não grava o som do sistema nem de outra aba: grava só o microfone e a imagem.'
-  if (safari) return 'O Safari não grava o som do sistema nem de outra aba: grava só o microfone e a imagem.'
-  if (linux) return 'Neste navegador no Linux, o som só vem se você escolher uma ABA (marque "Compartilhar áudio da guia"); a tela inteira grava sem o som do sistema.'
-  return 'Escolha a aba da reunião e marque "Compartilhar áudio da guia". Tela inteira com o som do sistema só funciona no Chrome/Edge do Windows, ChromeOS e macOS 14.2+.'
+  const mac = /Mac OS X/.test(agent) && !/iPhone|iPad/.test(agent)
+  const windows = /Windows/.test(agent)
+  const input = mac ? 'um cabo virtual de áudio, como o BlackHole' : windows ? 'a entrada "Mixagem estéreo"' : 'a entrada "Monitor of…"'
+  return `O som do computador vem junto com a tela quando o navegador entrega; quando não entrega, o app grava ${input} como som do computador. Escolha abaixo.`
+}
+
+export function isComputerInput(label: string): boolean {
+  return COMPUTER_INPUT.test(label)
+}
+
+export async function listAudioInputs(askPermission = false): Promise<AudioInput[]> {
+  if (askPermission) {
+    const probe = await navigator.mediaDevices.getUserMedia({ audio: true })
+    probe.getTracks().forEach(track => track.stop())
+  }
+  const devices = await navigator.mediaDevices.enumerateDevices()
+  return devices
+    .filter(device => device.kind === 'audioinput' && device.deviceId && device.deviceId !== 'default' && device.deviceId !== 'communications')
+    .map(device => ({ deviceId: device.deviceId, label: device.label, computer: isComputerInput(device.label) }))
 }
 
 function supportedMime(video: boolean): string {
@@ -59,6 +90,8 @@ export class MeetingRecorder {
   private seconds = 0
   private cancelled = false
   private pip: Window | null = null
+  private unmountPip: (() => void) | null = null
+  private live: LiveCapture = { preview: null, meters: { microphone: null, computer: null }, computerAudio: '' }
   private originalTitle = ''
   private mime = ''
   private writing: Promise<void> = Promise.resolve()
@@ -69,19 +102,40 @@ export class MeetingRecorder {
     return this.recorder !== null && this.recorder.state !== 'inactive'
   }
 
-  async start(mode: CaptureMode): Promise<void> {
+  async start(mode: CaptureMode, computerAudio: string = COMPUTER_AUDIO_AUTO): Promise<void> {
     try {
-      await this.begin(mode)
+      await this.begin(mode, computerAudio)
     } catch (error) {
       await this.releaseDevices()
       throw error
     }
   }
 
-  private async begin(mode: CaptureMode): Promise<void> {
+  private meter(stream: MediaStream, mix: MediaStreamAudioDestinationNode): AnalyserNode {
+    const source = this.audioContext!.createMediaStreamSource(stream)
+    source.connect(mix)
+    const analyser = this.audioContext!.createAnalyser()
+    analyser.fftSize = 1024
+    source.connect(analyser)
+    return analyser
+  }
+
+  private async computerInput(choice: string, mode: CaptureMode): Promise<{ stream: MediaStream; label: string } | null> {
+    if (choice === COMPUTER_AUDIO_NONE || (choice === COMPUTER_AUDIO_AUTO && mode === 'microphone')) return null
+    const inputs = await listAudioInputs().catch(() => [])
+    const input = choice === COMPUTER_AUDIO_AUTO ? inputs.find(item => item.computer) : inputs.find(item => item.deviceId === choice)
+    if (!input) return null
+    const stream = await navigator.mediaDevices
+      .getUserMedia({ audio: { deviceId: { exact: input.deviceId }, echoCancellation: false, noiseSuppression: false, autoGainControl: false } })
+      .catch(() => null)
+    return stream ? { stream, label: input.label } : null
+  }
+
+  private async begin(mode: CaptureMode, computerAudio: string): Promise<void> {
     const tracks: MediaStreamTrack[] = []
     this.audioContext = new AudioContext()
     const mix = this.audioContext.createMediaStreamDestination()
+    let displayAudio: MediaStream | null = null
 
     if (mode !== 'microphone') {
       const display = await navigator.mediaDevices.getDisplayMedia({
@@ -95,17 +149,34 @@ export class MeetingRecorder {
       } as DisplayMediaStreamOptions)
       this.streams.push(display)
       tracks.push(...display.getVideoTracks())
-      if (display.getAudioTracks().length) this.audioContext.createMediaStreamSource(new MediaStream(display.getAudioTracks())).connect(mix)
+      if (display.getVideoTracks().length) this.live.preview = new MediaStream(display.getVideoTracks())
+      if (display.getAudioTracks().length) displayAudio = new MediaStream(display.getAudioTracks())
       display.getVideoTracks()[0]?.addEventListener('ended', () => this.finish())
+    }
+
+    const useDisplayAudio = displayAudio && computerAudio === COMPUTER_AUDIO_AUTO
+    if (useDisplayAudio) {
+      this.live.meters.computer = this.meter(displayAudio!, mix)
+      this.live.computerAudio = mode === 'tab' ? 'som da aba' : 'som da tela'
     }
 
     try {
       const microphone = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } })
       this.streams.push(microphone)
-      this.audioContext.createMediaStreamSource(microphone).connect(mix)
+      this.live.meters.microphone = this.meter(microphone, mix)
     } catch {
       if (mode === 'microphone') throw new Error('O navegador não deixou usar o microfone.')
     }
+
+    if (!useDisplayAudio) {
+      const input = await this.computerInput(computerAudio, mode)
+      if (input) {
+        this.streams.push(input.stream)
+        this.live.meters.computer = this.meter(input.stream, mix)
+        this.live.computerAudio = input.label
+      }
+    }
+    this.callbacks.onLive?.(this.live)
 
     tracks.push(...mix.stream.getAudioTracks())
     this.mime = supportedMime(mode !== 'microphone')
@@ -148,20 +219,28 @@ export class MeetingRecorder {
     const api = (window as Window & { documentPictureInPicture?: PictureInPictureApi }).documentPictureInPicture
     if (!api) return
     try {
-      this.pip = await api.requestWindow({ width: 280, height: 96 })
+      this.pip = await api.requestWindow({ width: 320, height: 250 })
     } catch {
       this.pip = null
       return
     }
     const doc = this.pip.document
     doc.title = 'Gravando'
-    doc.body.style.cssText = 'margin:0;font:14px system-ui,sans-serif;background:#111827;color:#f9fafb;display:flex;align-items:center;gap:8px;padding:12px;box-sizing:border-box;height:100vh'
-    doc.body.innerHTML = `<span id="timer" style="flex:1;font-variant-numeric:tabular-nums"><span style="color:#ef4444">●</span> 00:00</span>
+    doc.body.style.cssText = 'margin:0;font:14px system-ui,sans-serif;background:#111827;color:#f9fafb;display:flex;flex-direction:column;box-sizing:border-box;height:100vh'
+    doc.body.innerHTML = `<div id="player" style="flex:1;min-height:0"></div>
+      <div style="display:flex;align-items:center;gap:8px;padding:10px 12px">
+      <span id="timer" style="flex:1;font-variant-numeric:tabular-nums"><span style="color:#ef4444">●</span> 00:00</span>
       <button id="finish" style="font:inherit;padding:6px 10px;border-radius:6px;border:0;background:#2563eb;color:#fff;cursor:pointer">Terminar</button>
-      <button id="cancel" style="font:inherit;padding:6px 10px;border-radius:6px;border:1px solid #4b5563;background:transparent;color:#f9fafb;cursor:pointer">Cancelar</button>`
+      <button id="cancel" style="font:inherit;padding:6px 10px;border-radius:6px;border:1px solid #4b5563;background:transparent;color:#f9fafb;cursor:pointer">Cancelar</button>
+      </div>`
+    this.unmountPip = mountMiniplayer(doc.getElementById('player')!, this.live)
     doc.getElementById('finish')!.addEventListener('click', () => this.finish())
     doc.getElementById('cancel')!.addEventListener('click', () => this.cancel())
-    this.pip.addEventListener('pagehide', () => (this.pip = null))
+    this.pip.addEventListener('pagehide', () => {
+      this.unmountPip?.()
+      this.unmountPip = null
+      this.pip = null
+    })
   }
 
   private paintPip(): void {
@@ -178,6 +257,8 @@ export class MeetingRecorder {
   private async close(): Promise<void> {
     window.clearInterval(this.timer)
     document.title = this.originalTitle
+    this.unmountPip?.()
+    this.unmountPip = null
     this.pip?.close()
     this.pip = null
     await this.releaseDevices()

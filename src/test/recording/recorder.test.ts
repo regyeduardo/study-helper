@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { discardRecording, MeetingRecorder, type RecorderCallbacks, type RecordingResult, systemAudioNotice } from '@/lib/recording/recorder'
+import { COMPUTER_AUDIO_NONE, discardRecording, isComputerInput, listAudioInputs, MeetingRecorder, type RecorderCallbacks, type RecordingResult, systemAudioNotice } from '@/lib/recording/recorder'
 import { useRecorderStore } from '@/stores/recorder'
-import { blobText, FakeAudioContext, FakeMediaRecorder, installMediaEnvironment, type MediaEnvironment } from '@/test/recording/media-fakes'
+import { blobText, COMPUTER_INPUT, FakeAudioContext, FakeMediaRecorder, installMediaEnvironment, type MediaEnvironment } from '@/test/recording/media-fakes'
 
 const UA = {
   firefox: 'Mozilla/5.0 (X11; Linux x86_64; rv:128.0) Gecko/20100101 Firefox/128.0',
@@ -12,7 +12,7 @@ const UA = {
 }
 
 function callbacks(): RecorderCallbacks & { [key in keyof RecorderCallbacks]: ReturnType<typeof vi.fn> } {
-  return { onTick: vi.fn(), onFinished: vi.fn(), onCancelled: vi.fn(), onError: vi.fn() }
+  return { onLive: vi.fn(), onTick: vi.fn(), onFinished: vi.fn(), onCancelled: vi.fn(), onError: vi.fn() }
 }
 
 function lastRecorder(): FakeMediaRecorder {
@@ -67,6 +67,49 @@ describe('MeetingRecorder capture', () => {
   it('fails in microphone mode when the microphone is denied', async () => {
     env.getUserMedia.mockRejectedValue(new DOMException('denied', 'NotAllowedError'))
     await expect(new MeetingRecorder(callbacks()).start('microphone')).rejects.toThrow('O navegador não deixou usar o microfone.')
+  })
+
+  it('records the computer input when the shared surface brings no audio, in any browser', async () => {
+    env = installMediaEnvironment({ displayAudio: false, computerInput: true })
+    const handlers = callbacks()
+    await new MeetingRecorder(handlers).start('screen')
+    expect(env.getUserMedia).toHaveBeenCalledWith({ audio: { deviceId: { exact: COMPUTER_INPUT.deviceId }, echoCancellation: false, noiseSuppression: false, autoGainControl: false } })
+    expect(FakeAudioContext.instances[0].sources.map(source => source.stream)).toEqual([env.microphoneStream, env.computerStream])
+    expect(handlers.onLive).toHaveBeenCalledWith(expect.objectContaining({ computerAudio: COMPUTER_INPUT.label }))
+    const live = handlers.onLive!.mock.calls[0][0]
+    expect(live.meters.microphone).not.toBeNull()
+    expect(live.meters.computer).not.toBeNull()
+    expect(live.preview.getVideoTracks().map((track: { label: string }) => track.label)).toEqual(['screen'])
+  })
+
+  it('prefers the audio the shared surface brings over the computer input on automatic', async () => {
+    env = installMediaEnvironment({ computerInput: true })
+    const handlers = callbacks()
+    await new MeetingRecorder(handlers).start('tab')
+    expect(FakeAudioContext.instances[0].sources).toHaveLength(2)
+    expect(handlers.onLive).toHaveBeenCalledWith(expect.objectContaining({ computerAudio: 'som da aba' }))
+  })
+
+  it('uses the input the person picked even when the surface has audio', async () => {
+    env = installMediaEnvironment({ computerInput: true })
+    await new MeetingRecorder(callbacks()).start('tab', COMPUTER_INPUT.deviceId)
+    expect(FakeAudioContext.instances[0].sources.map(source => source.stream)).toEqual([env.microphoneStream, env.computerStream])
+  })
+
+  it('records no computer audio when the person turns it off', async () => {
+    env = installMediaEnvironment({ displayAudio: false, computerInput: true })
+    const handlers = callbacks()
+    await new MeetingRecorder(handlers).start('screen', COMPUTER_AUDIO_NONE)
+    expect(FakeAudioContext.instances[0].sources.map(source => source.stream)).toEqual([env.microphoneStream])
+    expect(handlers.onLive!.mock.calls[0][0].meters.computer).toBeNull()
+  })
+
+  it('microphone mode adds the computer input only when picked', async () => {
+    env = installMediaEnvironment({ computerInput: true })
+    await new MeetingRecorder(callbacks()).start('microphone')
+    expect(FakeAudioContext.instances[0].sources.map(source => source.stream)).toEqual([env.microphoneStream])
+    await new MeetingRecorder(callbacks()).start('microphone', COMPUTER_INPUT.deviceId)
+    expect(FakeAudioContext.instances[1].sources.map(source => source.stream)).toEqual([env.microphoneStream, env.computerStream])
   })
 
   it('records only the microphone without asking for the screen', async () => {
@@ -208,7 +251,8 @@ describe('MeetingRecorder status', () => {
     const handlers = callbacks()
     const recorder = new MeetingRecorder(handlers)
     await recorder.start('tab')
-    expect(requestWindow).toHaveBeenCalledWith({ width: 280, height: 96 })
+    expect(requestWindow).toHaveBeenCalledWith({ width: 320, height: 250 })
+    expect(pipDocument.querySelector('#player [data-miniplayer] video')).not.toBeNull()
     expect(pipDocument.getElementById('timer')?.textContent).toContain('00:00')
     ;(pipDocument.getElementById('finish') as HTMLButtonElement).click()
     await vi.waitFor(() => expect(handlers.onFinished).toHaveBeenCalled())
@@ -216,22 +260,30 @@ describe('MeetingRecorder status', () => {
   })
 })
 
-describe('system audio notice per browser', () => {
-  it('warns Firefox users that only the microphone is recorded', () => {
-    expect(systemAudioNotice(UA.firefox)).toMatch(/Firefox.*grava só o microfone/)
+describe('computer audio notice and inputs', () => {
+  it('points every browser to the system input, named per system, never to a single browser', () => {
+    expect(systemAudioNotice(UA.firefox)).toMatch(/Monitor of/)
+    expect(systemAudioNotice(UA.chromeLinux)).toMatch(/Monitor of/)
+    expect(systemAudioNotice(UA.chromeWindows)).toMatch(/Mixagem estéreo/)
+    expect(systemAudioNotice(UA.safari)).toMatch(/BlackHole/)
+    for (const agent of Object.values(UA)) expect(systemAudioNotice(agent)).not.toMatch(/Chrome|Firefox|Safari|Edge/)
   })
 
-  it('warns Safari users that only the microphone is recorded', () => {
-    expect(systemAudioNotice(UA.safari)).toMatch(/Safari.*grava só o microfone/)
+  it('recognizes system inputs by name', () => {
+    for (const label of ['Monitor of Built-in Audio Analog Stereo', 'Mixagem estéreo (Realtek)', 'Stereo Mix', 'BlackHole 2ch', 'CABLE Output (VB-Audio)']) expect(isComputerInput(label)).toBe(true)
+    expect(isComputerInput('Microfone interno')).toBe(false)
   })
 
-  it('tells Linux Chrome users to share a tab', () => {
-    expect(systemAudioNotice(UA.chromeLinux)).toMatch(/Linux.*ABA/)
-  })
-
-  it('explains tab audio sharing elsewhere', () => {
-    expect(systemAudioNotice(UA.chromeWindows)).toMatch(/Compartilhar áudio da guia/)
-    expect(systemAudioNotice(UA.chromeAndroid)).not.toMatch(/Linux/)
+  it('lists audio inputs without the default aliases and asks permission only when told', async () => {
+    env = installMediaEnvironment({ computerInput: true })
+    expect(await listAudioInputs()).toEqual([
+      { deviceId: 'mic-1', label: 'Microfone interno', computer: false },
+      { deviceId: COMPUTER_INPUT.deviceId, label: COMPUTER_INPUT.label, computer: true },
+    ])
+    expect(env.getUserMedia).not.toHaveBeenCalled()
+    await listAudioInputs(true)
+    expect(env.getUserMedia).toHaveBeenCalledWith({ audio: true })
+    expect(env.microphoneStream.getTracks()[0].stop).toHaveBeenCalled()
   })
 })
 

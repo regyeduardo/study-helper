@@ -55,6 +55,10 @@ export class FakeAudioContext {
     this.sources.push(source)
     return source
   }
+
+  createAnalyser() {
+    return { fftSize: 2048, getByteTimeDomainData: vi.fn() }
+  }
 }
 
 export class FakeMediaRecorder {
@@ -127,11 +131,16 @@ export interface MediaEnvironment {
   directory: FakeDirectory
   displayStream: FakeMediaStream
   microphoneStream: FakeMediaStream
+  computerStream: FakeMediaStream
   getDisplayMedia: ReturnType<typeof vi.fn>
   getUserMedia: ReturnType<typeof vi.fn>
+  enumerateDevices: ReturnType<typeof vi.fn>
 }
 
-export function installMediaEnvironment(options: { displayAudio?: boolean } = {}): MediaEnvironment {
+export const MICROPHONE_INPUT = { kind: 'audioinput', deviceId: 'mic-1', label: 'Microfone interno', groupId: 'g1' }
+export const COMPUTER_INPUT = { kind: 'audioinput', deviceId: 'monitor-1', label: 'Monitor of Built-in Audio Analog Stereo', groupId: 'g1' }
+
+export function installMediaEnvironment(options: { displayAudio?: boolean; computerInput?: boolean } = {}): MediaEnvironment {
   FakeAudioContext.instances = []
   FakeMediaRecorder.instances = []
   FakeMediaRecorder.supported = new Set(['video/mp4;codecs=avc1,opus', 'video/mp4', 'video/webm;codecs=vp9,opus', 'video/webm', 'audio/mp4;codecs=opus', 'audio/webm;codecs=opus', 'audio/webm'])
@@ -141,13 +150,19 @@ export function installMediaEnvironment(options: { displayAudio?: boolean } = {}
   const displayStream = new FakeMediaStream(displayTracks)
   const microphoneStream = new FakeMediaStream([new FakeTrack('audio', 'mic')])
   const getDisplayMedia = vi.fn(async () => displayStream)
-  const getUserMedia = vi.fn(async () => microphoneStream)
+  const computerStream = new FakeMediaStream([new FakeTrack('audio', 'computer')])
+  const getUserMedia = vi.fn(async (constraints: { audio: { deviceId?: { exact: string } } | boolean }) =>
+    typeof constraints.audio === 'object' && constraints.audio.deviceId?.exact === COMPUTER_INPUT.deviceId ? computerStream : microphoneStream,
+  )
+  const devices = [{ kind: 'videoinput', deviceId: 'cam', label: 'Câmera', groupId: 'g2' }, { kind: 'audioinput', deviceId: 'default', label: 'Padrão', groupId: 'g1' }, MICROPHONE_INPUT]
+  if (options.computerInput) devices.push(COMPUTER_INPUT)
+  const enumerateDevices = vi.fn(async () => devices)
   vi.stubGlobal('AudioContext', FakeAudioContext)
   vi.stubGlobal('MediaStream', FakeMediaStream)
   vi.stubGlobal('MediaRecorder', FakeMediaRecorder)
-  Object.defineProperty(navigator, 'mediaDevices', { configurable: true, value: { getDisplayMedia, getUserMedia } })
+  Object.defineProperty(navigator, 'mediaDevices', { configurable: true, value: { getDisplayMedia, getUserMedia, enumerateDevices } })
   Object.defineProperty(navigator, 'storage', { configurable: true, value: { getDirectory: async () => directory } })
-  return { directory, displayStream, microphoneStream, getDisplayMedia, getUserMedia }
+  return { directory, displayStream, microphoneStream, computerStream, getDisplayMedia, getUserMedia, enumerateDevices }
 }
 
 export function blobText(blob: Blob): Promise<string> {
