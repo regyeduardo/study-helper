@@ -26,21 +26,40 @@ function transcriptionWorker(): Worker {
     else waiting.reject(new Error(reply.message))
   }
   worker.onerror = event => {
-    for (const waiting of pending.values()) waiting.reject(new Error(event.message || 'A transcrição parou no navegador.'))
+    event.preventDefault()
+    for (const waiting of pending.values()) waiting.reject(new Error(event.message || 'o segundo plano do navegador parou'))
     pending.clear()
+    worker?.terminate()
     worker = null
   }
   return worker
 }
 
-export async function runOffThread(job: LocalJob, progress: Progress): Promise<LocalResult> {
-  if (typeof Worker === 'undefined') {
-    const { runLocalJob } = await import('@/lib/transcription/local-work')
-    return runLocalJob(job, progress)
-  }
+async function onThisPage(job: LocalJob, progress: Progress): Promise<LocalResult> {
+  const { runLocalJob } = await import('@/lib/transcription/local-work')
+  return runLocalJob(job, progress)
+}
+
+function inWorker(job: LocalJob, progress: Progress): Promise<LocalResult> {
   const id = ++sequence
   return new Promise<LocalResult>((resolve, reject) => {
     pending.set(id, { progress, resolve, reject })
-    transcriptionWorker().postMessage({ id, job }, [job.samples.buffer])
+    try {
+      transcriptionWorker().postMessage({ id, job })
+    } catch (error) {
+      pending.delete(id)
+      reject(error instanceof Error ? error : new Error(String(error)))
+    }
   })
+}
+
+export async function runOffThread(job: LocalJob, progress: Progress): Promise<LocalResult> {
+  if (typeof Worker === 'undefined') return onThisPage(job, progress)
+  try {
+    return await inWorker(job, progress)
+  } catch (error) {
+    console.warn('Transcrição em segundo plano falhou; seguindo nesta aba:', error)
+    progress('Transcrevendo nesta aba (o segundo plano do navegador falhou; o app pode ficar lento até terminar)')
+    return onThisPage(job, progress)
+  }
 }

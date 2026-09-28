@@ -13,7 +13,7 @@ export default defineConfig(({ mode }) => {
     react(),
     obfuscatorPlugin({
       include: [/src\/.*\.[jt]sx?$/],
-      exclude: [/node_modules/],
+      exclude: [/node_modules/, /src\/lib\/transcription\/offload\.ts$/],
       apply: 'build',
       options: {
         compact: true,

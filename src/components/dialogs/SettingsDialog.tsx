@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 
-import type { AiProviderId, AiSettings, LayoutId, TranscriptionEngine } from '@/types/domain'
+import type { AiProviderId, AiSettings, LayoutId, Settings, TranscriptionEngine } from '@/types/domain'
 import { Icon } from '@/components/ui/Icon'
 import { listModelsController } from '@/controllers/ai.controller'
 import { isFreeChoice, modelOf, PROVIDERS, type ProviderInfo, providerOf } from '@/lib/ai/providers'
@@ -425,7 +425,60 @@ function GeneralTab() {
         <label htmlFor="gh">Token do GitHub (leitor de markdown)</label>
         <input className="input" id="gh" type="password" autoComplete="off" value={settings.githubToken} onChange={event => void updateSettings({ githubToken: event.target.value })} placeholder="Opcional: sem token, o GitHub deixa 60 documentos por hora" />
       </div>
+      <SettingsImport />
     </>
+  )
+}
+
+function readText(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(String(reader.result ?? ''))
+    reader.onerror = () => reject(reader.error)
+    reader.readAsText(file)
+  })
+}
+
+function settingsFrom(text: string): Partial<Settings> | null {
+  try {
+    const parsed = JSON.parse(text) as { settings?: Partial<Settings> } & Partial<Settings>
+    const found = parsed.settings ?? parsed
+    return found && typeof found === 'object' && ('ai' in found || 'transcription' in found) ? found : null
+  } catch {
+    return null
+  }
+}
+
+function SettingsImport() {
+  const updateSettings = useLibraryStore(state => state.updateSettings)
+  const [status, setStatus] = useState<string | null>(null)
+  const restore = async (file: File | undefined) => {
+    if (!file) return
+    const imported = settingsFrom(await readText(file))
+    if (!imported) {
+      setStatus('Esse arquivo não tem configurações do app. Escolha o study-helper.json da pasta .sync-study-helper.')
+      return
+    }
+    await updateSettings(imported)
+    setStatus('Configurações trazidas do arquivo: IA, transcrição, links, fuso, layout e o resto.')
+  }
+  return (
+    <div className="field">
+      <span className="lab">Trazer configurações de um arquivo</span>
+      <span className="faint" style={{ fontSize: 12 }}>
+        Escolha o study-helper.json de uma pasta .sync-study-helper (de outra conta ou de uma cópia) para trazer todas as configurações de lá.
+      </span>
+      <label className="btn" style={{ justifySelf: 'start' }}>
+        <Icon name="upload" />
+        Escolher o study-helper.json
+        <input type="file" accept=".json,application/json" hidden aria-label="Arquivo de configurações" onChange={event => void restore(event.target.files?.[0])} />
+      </label>
+      {status && (
+        <span role="status" style={{ fontSize: 13 }}>
+          {status}
+        </span>
+      )}
+    </div>
   )
 }
 

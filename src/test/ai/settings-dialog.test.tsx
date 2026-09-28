@@ -61,6 +61,25 @@ describe('SettingsDialog AI tab', () => {
   })
 })
 
+describe('SettingsDialog restore from a study-helper.json', () => {
+  it('brings every setting from the file', async () => {
+    useLibraryStore.setState({ repo: { saveIndex: async () => undefined } as never })
+    render(<SettingsDialog initial="general" />)
+    const saved = { version: 1, settings: { ai: { provider: 'custom', baseUrl: 'https://api.deepseek.com', apiKey: 'sk-cfd', model: 'deepseek-flash' }, transcription: { engine: 'parakeet', groqApiKey: '', language: 'pt', separateSpeakers: true }, timezone: 'America/Manaus', layout: 'focus' } }
+    const file = new File([JSON.stringify(saved)], 'study-helper.json', { type: 'application/json' })
+    fireEvent.change(screen.getByLabelText('Arquivo de configurações'), { target: { files: [file] } })
+    await waitFor(() => expect(useLibraryStore.getState().index.settings.ai).toEqual(saved.settings.ai))
+    expect(useLibraryStore.getState().index.settings).toMatchObject({ timezone: 'America/Manaus', layout: 'focus', transcription: { engine: 'parakeet' } })
+    expect(screen.getByText(/Configurações trazidas do arquivo/)).toBeInTheDocument()
+  })
+
+  it('refuses a file without settings', async () => {
+    render(<SettingsDialog initial="general" />)
+    fireEvent.change(screen.getByLabelText('Arquivo de configurações'), { target: { files: [new File(['{"x":1}'], 'outro.json')] } })
+    expect(await screen.findByText(/não tem configurações do app/)).toBeInTheDocument()
+  })
+})
+
 describe('SettingsDialog links limits', () => {
   it('shows the Jina, youtube-transcript.ai and Gemini limits', () => {
     render(<SettingsDialog initial="transcription" />)
