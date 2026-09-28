@@ -22,6 +22,7 @@ export default defineConfig(({ mode }) => {
         stringArray: true,
         stringArrayEncoding: ['base64'],
         stringArrayThreshold: 0.75,
+        reservedStrings: ['^@', '^\\.{1,2}/', '^(mammoth|mermaid|onnxruntime-web|parakeet\\.js|zustand)$', '^pdfjs-dist'],
         splitStrings: false,
         transformObjectKeys: false,
         selfDefending: false,
