@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Study Helper Áudio
+Comment=Grava o som do computador e o microfone para o Study Helper
+Exec=study-helper-audio
+Icon=study-helper-audio
+Terminal=false
+Categories=AudioVideo;Audio;

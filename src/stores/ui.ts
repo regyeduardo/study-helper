@@ -23,7 +23,7 @@ export type Overlay =
   | { kind: 'send-local' }
   | { kind: 'storage-limit' }
 
-export type SettingsTab = 'appearance' | 'ai' | 'transcription' | 'storage' | 'devices' | 'general'
+export type SettingsTab = 'appearance' | 'ai' | 'transcription' | 'storage' | 'devices' | 'general' | 'others'
 
 export type SortKey = 'recent' | 'title' | 'mastery'
 export type GroupKey = 'none' | 'type' | 'folder'

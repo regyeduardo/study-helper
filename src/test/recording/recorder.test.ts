@@ -132,6 +132,25 @@ describe('MeetingRecorder capture', () => {
   })
 })
 
+describe('MeetingRecorder through the integration', () => {
+  it('records the microphone and the chosen source the integration streams, and lets it go when finished', async () => {
+    const context = new FakeAudioContext()
+    const capture = { context, microphone: { connect: vi.fn() }, source: { connect: vi.fn() }, meters: { microphone: {}, computer: {} }, label: 'SoWork - Google Chrome', stop: vi.fn(async () => undefined) }
+    const handlers = callbacks()
+    const recorder = new MeetingRecorder(handlers)
+    await recorder.startIntegration(capture as never)
+    expect(env.getDisplayMedia).not.toHaveBeenCalled()
+    expect(env.getUserMedia).not.toHaveBeenCalled()
+    expect(capture.microphone.connect).toHaveBeenCalledWith(context.destination)
+    expect(capture.source.connect).toHaveBeenCalledWith(context.destination)
+    expect(lastRecorder().options).toEqual({ mimeType: 'audio/webm;codecs=opus' })
+    expect(handlers.onLive).toHaveBeenCalledWith(expect.objectContaining({ computerAudio: 'SoWork - Google Chrome', meters: capture.meters }))
+    recorder.finish()
+    await vi.waitFor(() => expect(handlers.onFinished).toHaveBeenCalledTimes(1))
+    expect(capture.stop).toHaveBeenCalled()
+  })
+})
+
 describe('MeetingRecorder format', () => {
   it('records only the audio when sharing a tab or the screen', async () => {
     await new MeetingRecorder(callbacks()).start('tab')

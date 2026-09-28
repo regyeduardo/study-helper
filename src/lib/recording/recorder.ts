@@ -1,6 +1,7 @@
+import type { IntegrationCapture } from '@/lib/recording/integration'
 import { mountMiniplayer, type Meters } from '@/lib/recording/miniplayer'
 
-export type CaptureMode = 'tab' | 'screen' | 'microphone'
+export type CaptureMode = 'tab' | 'screen' | 'microphone' | 'integration'
 
 export const COMPUTER_AUDIO_AUTO = 'auto'
 export const COMPUTER_AUDIO_NONE = 'none'
@@ -83,6 +84,7 @@ export class MeetingRecorder {
   private recorder: MediaRecorder | null = null
   private streams: MediaStream[] = []
   private audioContext: AudioContext | null = null
+  private integration: IntegrationCapture | null = null
   private writable: FileSystemWritableFileStream | null = null
   private handle: FileSystemFileHandle | null = null
   private timer = 0
@@ -104,6 +106,22 @@ export class MeetingRecorder {
   async start(mode: CaptureMode, computerAudio: string = COMPUTER_AUDIO_AUTO): Promise<void> {
     try {
       await this.begin(mode, computerAudio)
+    } catch (error) {
+      await this.releaseDevices()
+      throw error
+    }
+  }
+
+  async startIntegration(capture: IntegrationCapture): Promise<void> {
+    try {
+      this.integration = capture
+      this.audioContext = capture.context
+      const mix = capture.context.createMediaStreamDestination()
+      capture.microphone.connect(mix)
+      capture.source?.connect(mix)
+      this.live = { preview: null, meters: capture.meters, computerAudio: capture.label }
+      this.callbacks.onLive?.(this.live)
+      await this.record(mix)
     } catch (error) {
       await this.releaseDevices()
       throw error
@@ -181,7 +199,10 @@ export class MeetingRecorder {
       }
     }
     this.callbacks.onLive?.(this.live)
+    await this.record(mix)
+  }
 
+  private async record(mix: MediaStreamAudioDestinationNode): Promise<void> {
     this.mime = supportedMime()
     const root = await navigator.storage.getDirectory()
     this.handle = await root.getFileHandle(`gravacao-${Date.now()}.${extensionOf(this.mime)}`, { create: true })
@@ -261,7 +282,8 @@ export class MeetingRecorder {
   private async releaseDevices(): Promise<void> {
     this.streams.forEach(stream => stream.getTracks().forEach(track => track.stop()))
     this.streams = []
-    await this.audioContext?.close().catch(() => undefined)
+    if (this.integration) await this.integration.stop()
+    else await this.audioContext?.close().catch(() => undefined)
   }
 
   private async close(): Promise<void> {

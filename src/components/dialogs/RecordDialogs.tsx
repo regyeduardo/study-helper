@@ -3,10 +3,12 @@ import { useEffect, useRef, useState } from 'react'
 import type { SourceStorage } from '@/types/domain'
 import { Dialog } from '@/components/ui/Dialog'
 import { Icon } from '@/components/ui/Icon'
+import { IntegrationStatus } from '@/components/dialogs/IntegrationStatus'
 import { LimitedAiNotice } from '@/components/dialogs/LimitedAiNotice'
 import { FolderPicker } from '@/components/dialogs/SimpleDialogs'
 import { SourceStoragePicker } from '@/components/dialogs/SourceStoragePicker'
 import type { LitterboxTime } from '@/controllers/hosting.controller'
+import { IntegrationCapture, IntegrationLink, type IntegrationSource, type IntegrationWindow, useIntegrationStore } from '@/lib/recording/integration'
 import { linkLocalMedia } from '@/lib/recording/media-library'
 import { mountMiniplayer } from '@/lib/recording/miniplayer'
 import { type AudioInput, type CaptureMode, COMPUTER_AUDIO_AUTO, COMPUTER_AUDIO_NONE, listAudioInputs, systemAudioNotice } from '@/lib/recording/recorder'
@@ -26,9 +28,139 @@ function microphoneRefusal(failure: unknown): string {
   return 'O navegador não liberou o microfone. Confira se outro programa está usando e clique em Gravar de novo.'
 }
 
+const SYSTEM_CHOICE = 'system'
+const MICROPHONE_CHOICE = 'none'
+
+function IntegrationRecord() {
+  const ui = useUiStore()
+  const startIntegration = useRecorderStore(state => state.startIntegration)
+  const [windows, setWindows] = useState<IntegrationWindow[]>([])
+  const [listing, setListing] = useState<'windows' | 'programs'>('windows')
+  const [choice, setChoice] = useState(SYSTEM_CHOICE)
+  const [capture, setCapture] = useState<IntegrationCapture | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const handed = useRef(false)
+  const player = useRef<HTMLDivElement>(null)
+  const refresh = async () => {
+    const link = await IntegrationLink.open()
+    if (!link) {
+      setError('A integração não respondeu. Confira se ela está aberta.')
+      return
+    }
+    try {
+      const found = await link.sources()
+      setWindows(found.windows)
+      setListing(found.listing)
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : 'A integração não listou as janelas.')
+    } finally {
+      link.close()
+    }
+  }
+  useEffect(() => {
+    void refresh()
+  }, [])
+  const picked = windows.find(entry => entry.id === choice)
+  const source: IntegrationSource = choice === SYSTEM_CHOICE ? { kind: 'system' } : choice === MICROPHONE_CHOICE || !picked ? { kind: 'none' } : { kind: 'window', pid: picked.pid }
+  const label = choice === SYSTEM_CHOICE ? 'todo o som do computador' : picked ? picked.title : ''
+  const sourceKey = JSON.stringify(source)
+  useEffect(() => {
+    let alive = true
+    let current: IntegrationCapture | null = null
+    setCapture(null)
+    setError(null)
+    IntegrationCapture.start(source, label)
+      .then(started => {
+        if (!alive) {
+          void started.stop()
+          return
+        }
+        current = started
+        setCapture(started)
+      })
+      .catch((failure: unknown) => alive && setError(failure instanceof Error ? failure.message : 'A integração não começou a ouvir.'))
+    return () => {
+      alive = false
+      if (current && !handed.current) void current.stop()
+    }
+  }, [sourceKey])
+  useEffect(() => (capture && player.current ? mountMiniplayer(player.current, { preview: null, meters: capture.meters, computerAudio: capture.label }) : undefined), [capture])
+  const start = async () => {
+    if (!capture) return
+    handed.current = true
+    try {
+      await startIntegration(capture)
+      ui.close()
+    } catch (failure) {
+      handed.current = false
+      setError(failure instanceof Error ? failure.message : 'Não deu para começar a gravar.')
+    }
+  }
+  return (
+    <Dialog
+      title="Gravar reunião"
+      size="narrow"
+      onClose={ui.close}
+      footer={
+        <>
+          <button className="btn quiet" onClick={ui.close}>
+            Cancelar
+          </button>
+          <button className="btn primary" onClick={() => void start()} disabled={!capture}>
+            <Icon name="rec" />
+            Começar a gravar
+          </button>
+        </>
+      }
+    >
+      <div className="db">
+        <IntegrationStatus />
+        <div className="field">
+          <label className="lab" htmlFor="rec-integration">
+            O que gravar junto com o seu microfone
+          </label>
+          <select className="input" id="rec-integration" value={choice} onChange={event => setChoice(event.target.value)}>
+            <option value={SYSTEM_CHOICE}>Sistema inteiro (todo o som do computador)</option>
+            <optgroup label={listing === 'windows' ? 'Uma janela aberta' : 'Um programa aberto'}>
+              {windows.map(entry => (
+                <option key={entry.id} value={entry.id}>
+                  {entry.title}
+                  {entry.app && entry.app !== entry.title ? ` · ${entry.app}` : ''}
+                </option>
+              ))}
+            </optgroup>
+            <option value={MICROPHONE_CHOICE}>Só o microfone</option>
+          </select>
+          <span className="faint" style={{ fontSize: 12 }}>
+            {listing === 'programs' ? 'Este sistema não deixa listar as janelas, então aparecem os programas. ' : ''}
+            Uma janela que ainda está sem som pode ser escolhida: o som dela entra quando ela tocar.{' '}
+            <button className="btn quiet" style={{ height: 24, padding: '0 8px' }} onClick={() => void refresh()}>
+              Atualizar a lista
+            </button>
+          </span>
+        </div>
+        <div className="field">
+          <span className="lab">Confira antes de gravar</span>
+          <div className="player" ref={player} aria-label="Ondas antes de gravar" style={{ height: 140, borderRadius: 8, overflow: 'hidden' }} />
+          <span className="faint" style={{ fontSize: 12 }}>
+            {capture ? 'Fale e deixe o som tocar: as ondas mostram o que vai ser gravado.' : error ? '' : 'Ligando o som…'}
+          </span>
+        </div>
+        {error && (
+          <div className="banner" role="alert">
+            <Icon name="warn" />
+            <span>{error}</span>
+          </div>
+        )}
+      </div>
+    </Dialog>
+  )
+}
+
 export function RecordDialog() {
   const ui = useUiStore()
   const recorder = useRecorderStore()
+  const integration = useIntegrationStore(state => state.status)
   const [mode, setMode] = useState<CaptureMode>('tab')
   const [computerAudio, setComputerAudio] = useState(COMPUTER_AUDIO_AUTO)
   const [inputs, setInputs] = useState<AudioInput[]>([])
@@ -75,6 +207,7 @@ export function RecordDialog() {
       </Dialog>
     )
   }
+  if (integration === 'connected') return <IntegrationRecord />
   const start = async () => {
     setError(null)
     try {
@@ -102,6 +235,7 @@ export function RecordDialog() {
       }
     >
       <div className="db">
+        <IntegrationStatus />
         <div className="field">
           <span className="lab">O que gravar</span>
           <div className="opts" role="radiogroup">
@@ -202,7 +336,7 @@ export function RecordingWindow() {
     <div className="mini-rec" role="dialog" aria-label="Gravação em andamento">
       <div className="bar-top">
         <Icon name="monitor" />
-        <span style={{ flex: 1 }}>Gravando {mode === 'tab' ? 'a aba' : mode === 'screen' ? 'a tela' : 'o microfone'}</span>
+        <span style={{ flex: 1 }}>Gravando {mode === 'tab' ? 'a aba' : mode === 'screen' ? 'a tela' : mode === 'integration' && live?.computerAudio ? live.computerAudio : 'o microfone'}</span>
         {!floating && (
           <button className="ibtn" aria-label="Abrir em janela própria" title="Abrir em janela própria" onClick={() => void openFloating().then(opened => setBlocked(!opened))}>
             <Icon name="monitor" />

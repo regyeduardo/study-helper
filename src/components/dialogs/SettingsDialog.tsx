@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useState } from 'react'
 
 import type { AiProviderId, AiSettings, LayoutId, Settings, TranscriptionEngine } from '@/types/domain'
+import { IntegrationStatus } from '@/components/dialogs/IntegrationStatus'
 import { Icon } from '@/components/ui/Icon'
 import { listModelsController } from '@/controllers/ai.controller'
 import { isFreeChoice, modelOf, PROVIDERS, type ProviderInfo, providerOf } from '@/lib/ai/providers'
 import { DEFAULT_STORAGE_LIMIT_BYTES } from '@/lib/defaults'
 import { currentDevice } from '@/lib/device'
+import { deleteModel, type ModelId, storageBreakdown, type StorageBreakdown } from '@/lib/storage/installed-models'
 import { applyTheme, savedTheme, type ThemeChoice } from '@/lib/theme'
 import { ENGINES } from '@/lib/transcription'
 import { useAccountStore } from '@/stores/account'
@@ -482,6 +484,91 @@ function SettingsImport() {
   )
 }
 
+function OthersTab() {
+  const [breakdown, setBreakdown] = useState<StorageBreakdown | null>(null)
+  const [confirming, setConfirming] = useState<ModelId | null>(null)
+  const [busy, setBusy] = useState(false)
+  const load = () =>
+    storageBreakdown()
+      .then(setBreakdown)
+      .catch(() => setBreakdown({ models: [], mediaBytes: 0, appBytes: 0, totalBytes: null }))
+  useEffect(() => {
+    void load()
+  }, [])
+  const remove = async (id: ModelId) => {
+    setBusy(true)
+    await deleteModel(id).catch(() => undefined)
+    setConfirming(null)
+    await load()
+    setBusy(false)
+  }
+  const parts: [string, number][] = breakdown
+    ? [...breakdown.models.map(model => [model.name, model.bytes] as [string, number]), ['Gravações em Mídias', breakdown.mediaBytes], ['Dados do app (notas, cache e configurações)', breakdown.appBytes]]
+    : []
+  return (
+    <>
+      <div className="field">
+        <span className="lab">Integração no computador</span>
+        <IntegrationStatus />
+      </div>
+      <div className="field">
+        <span className="lab">Modelos de transcrição instalados</span>
+        {breakdown === null ? (
+          <span className="faint">Medindo…</span>
+        ) : breakdown.models.length === 0 ? (
+          <span className="faint">Nenhum modelo baixado neste navegador. Eles baixam na primeira transcrição.</span>
+        ) : (
+          breakdown.models.map(model => (
+            <div key={model.id} role="group" aria-label={model.name} style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+              <span style={{ flex: 1 }}>
+                <b>{model.name}</b> · {formatBytes(model.bytes)}
+              </span>
+              {confirming === model.id ? (
+                <span className="inline-confirm">
+                  Apagar o {model.name}?
+                  <button className="btn danger" onClick={() => void remove(model.id)} disabled={busy}>
+                    Apagar
+                  </button>
+                  <button className="btn quiet" onClick={() => setConfirming(null)}>
+                    Voltar
+                  </button>
+                </span>
+              ) : (
+                <button className="btn quiet" onClick={() => setConfirming(model.id)}>
+                  <Icon name="trash" />
+                  Apagar
+                </button>
+              )}
+            </div>
+          ))
+        )}
+        <span className="faint" style={{ fontSize: 12 }}>
+          Apagado, o modelo é baixado de novo na próxima vez que for usado.
+        </span>
+      </div>
+      <div className="field">
+        <span className="lab">Quanto o app ocupa neste navegador</span>
+        {breakdown === null ? (
+          <span className="faint">Medindo…</span>
+        ) : (
+          <>
+            {parts.map(([name, bytes]) => (
+              <span key={name} className="usage" style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+                <span>{name}</span>
+                <span>{formatBytes(bytes)}</span>
+              </span>
+            ))}
+            <span className="usage" style={{ display: 'flex', justifyContent: 'space-between', gap: 8, fontWeight: 600 }}>
+              <span>Total</span>
+              <span>{breakdown.totalBytes === null ? 'o navegador não informa' : formatBytes(breakdown.totalBytes)}</span>
+            </span>
+          </>
+        )}
+      </div>
+    </>
+  )
+}
+
 const TABS: [SettingsTab, string][] = [
   ['appearance', 'Aparência'],
   ['ai', 'Inteligência artificial'],
@@ -489,6 +576,7 @@ const TABS: [SettingsTab, string][] = [
   ['storage', 'Armazenamento'],
   ['devices', 'Dispositivos'],
   ['general', 'Geral'],
+  ['others', 'Outros'],
 ]
 
 export function SettingsDialog({ initial = 'appearance' }: { initial?: SettingsTab }) {
@@ -524,6 +612,7 @@ export function SettingsDialog({ initial = 'appearance' }: { initial?: SettingsT
             {tab === 'storage' && <StorageTab />}
             {tab === 'devices' && <DevicesTab />}
             {tab === 'general' && <GeneralTab />}
+            {tab === 'others' && <OthersTab />}
           </div>
         </div>
         <div className="df">

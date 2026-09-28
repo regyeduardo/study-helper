@@ -13,6 +13,8 @@ import { RecordDialog, RecordingDoneDialog, RecordingWindow } from '@/components
 import { LOCAL_ACCOUNT, useAccountStore } from '@/stores/account'
 import { useRecorderStore } from '@/stores/recorder'
 import { useUiStore } from '@/stores/ui'
+import { IntegrationCapture, useIntegrationStore } from '@/lib/recording/integration'
+import { installIntegration } from '@/test/recording/integration-fakes'
 import { COMPUTER_INPUT, installMediaEnvironment } from '@/test/recording/media-fakes'
 
 const FIREFOX = 'Mozilla/5.0 (X11; Linux x86_64; rv:128.0) Gecko/20100101 Firefox/128.0'
@@ -28,6 +30,8 @@ function recordingOf(size: number) {
 
 beforeEach(() => {
   installMediaEnvironment()
+  installIntegration({ available: false })
+  useIntegrationStore.setState({ status: 'unknown', hello: null })
   startNewContent.mockClear()
   useAccountStore.setState({ accounts: [LOCAL_ACCOUNT], activeId: LOCAL_ACCOUNT.id })
   useRecorderStore.setState({ active: false, seconds: 0, mode: null, result: null, error: null })
@@ -39,6 +43,41 @@ afterEach(() => {
 })
 
 describe('RecordDialog', () => {
+  it('without the integration, offers the download for this system', async () => {
+    vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue(FIREFOX)
+    render(<RecordDialog />)
+    const download = await screen.findByRole('link', { name: 'Baixar a integração (Linux)' })
+    expect(download).toHaveAttribute('href', expect.stringMatching(/desktop-latest\/study-helper-audio-x86_64\.AppImage$/))
+    expect(screen.getByRole('status', { name: 'Integração' })).toHaveTextContent('Integração não conectada')
+    expect(screen.getByRole('radio', { name: /A aba da reunião/ })).toBeInTheDocument()
+  })
+
+  it('with the integration, lists the open windows, previews the chosen one and records exactly that preview', async () => {
+    installIntegration({ available: true, windows: [{ id: 'x11:9', title: 'SoWork - Google Chrome', app: 'Google-chrome', pid: 77 }] })
+    const captures: { stop: ReturnType<typeof vi.fn>; source: unknown }[] = []
+    const start = vi.spyOn(IntegrationCapture, 'start').mockImplementation(async source => {
+      const capture = { stop: vi.fn(async () => undefined), source, meters: { microphone: null, computer: null }, label: 'x' }
+      captures.push(capture)
+      return capture as unknown as IntegrationCapture
+    })
+    const startIntegration = vi.fn(async () => undefined)
+    useRecorderStore.setState({ startIntegration })
+    render(<RecordDialog />)
+    const picker = await screen.findByRole('combobox', { name: 'O que gravar junto com o seu microfone' })
+    expect(screen.getByRole('status', { name: 'Integração' })).toHaveTextContent('Integração conectada (versão 0.1.0)')
+    expect(await screen.findByRole('option', { name: 'SoWork - Google Chrome · Google-chrome' })).toBeInTheDocument()
+    expect(screen.getByRole('option', { name: 'Sistema inteiro (todo o som do computador)' })).toBeInTheDocument()
+    expect(screen.getByRole('option', { name: 'Só o microfone' })).toBeInTheDocument()
+    await waitFor(() => expect(start).toHaveBeenCalledWith({ kind: 'system' }, 'todo o som do computador'))
+    fireEvent.change(picker, { target: { value: 'x11:9' } })
+    await waitFor(() => expect(start).toHaveBeenLastCalledWith({ kind: 'window', pid: 77 }, 'SoWork - Google Chrome'))
+    await waitFor(() => expect(captures[0].stop).toHaveBeenCalled())
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Começar a gravar' })).toBeEnabled())
+    fireEvent.click(screen.getByRole('button', { name: 'Começar a gravar' }))
+    await waitFor(() => expect(startIntegration).toHaveBeenCalledWith(captures.at(-1)))
+    expect(captures.at(-1)!.stop).not.toHaveBeenCalled()
+  })
+
   it('offers the computer audio the same way in Firefox, with the system input picked on automatic', async () => {
     vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue(FIREFOX)
     installMediaEnvironment({ computerInput: true })
