@@ -1,12 +1,10 @@
 import type { TranscriptionEngine, TranscriptionSettings } from '@/types/domain'
 import { transcribeWithGroqController } from '@/controllers/transcription.controller'
 import { decodeToMono16k, durationOf, encodeWav, splitSamples, withoutSilence } from '@/lib/transcription/audio'
-import { speakerTurns } from '@/lib/transcription/diarization'
-import { transcribeWithParakeet } from '@/lib/transcription/parakeet'
+import { runOffThread } from '@/lib/transcription/offload'
 import { transcribeWithPuter } from '@/lib/transcription/puter'
 import { withSpeakers } from '@/lib/transcription/speakers'
 import type { Progress, Segment } from '@/lib/transcription/types'
-import { transcribeWithWhisper } from '@/lib/transcription/whisper'
 
 const GROQ_CHUNK_SECONDS = 600
 
@@ -48,20 +46,13 @@ export async function transcribe(audio: Blob, settings: TranscriptionSettings, p
   const samples = withoutSilence(decoded)
   const durationSeconds = durationOf(decoded)
 
-  let segments: Segment[]
-  if (settings.engine === 'parakeet') segments = await transcribeWithParakeet(samples, settings.language, progress)
-  else if (settings.engine === 'groq') segments = await groqSegments(samples, settings, progress, signal)
-  else if (settings.engine === 'puter') segments = await transcribeWithPuter(encodeWav(samples), settings.language, durationOf(samples), progress)
-  else segments = await transcribeWithWhisper(samples, settings.language, progress)
-
-  let turns: Awaited<ReturnType<typeof speakerTurns>> = []
-  if (settings.separateSpeakers) {
-    try {
-      turns = await speakerTurns(samples, progress)
-    } catch {
-      turns = []
-    }
-  }
+  let remote: Segment[] | null = null
+  if (settings.engine === 'groq') remote = await groqSegments(samples, settings, progress, signal)
+  else if (settings.engine === 'puter') remote = await transcribeWithPuter(encodeWav(samples), settings.language, durationOf(samples), progress)
+  const engine = remote ? null : settings.engine === 'parakeet' ? 'parakeet' : 'whisper'
+  const local = engine || settings.separateSpeakers ? await runOffThread({ engine, language: settings.language, separateSpeakers: settings.separateSpeakers, samples }, progress) : { segments: null, turns: [] }
+  const segments = remote ?? local.segments ?? []
+  const turns = local.turns
   return {
     text: withSpeakers(segments, turns),
     engine: settings.engine,

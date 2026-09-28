@@ -128,6 +128,12 @@ export function RecordDialog() {
             </button>
           </div>
         </div>
+        {/Firefox\//.test(navigator.userAgent) && (
+          <div className="banner" role="note" aria-label="Aviso do Firefox">
+            <Icon name="warn" />
+            <span>No Firefox não dá pra gravar o som do computador junto com a tela ou a aba. Ele só entra se você escolher abaixo a entrada do sistema ("Monitor of…" no Linux, "Mixagem estéreo" no Windows); sem ela, grave pelo Chrome ou pelo Edge.</span>
+          </div>
+        )}
         <div className="field">
           <label className="lab" htmlFor="rec-computer">Som do computador</label>
           <select className="input" id="rec-computer" value={computerAudio} onChange={event => setComputerAudio(event.target.value)}>

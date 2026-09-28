@@ -46,8 +46,9 @@ describe('RecordDialog', () => {
     expect(await screen.findByRole('option', { name: `Automático · ${COMPUTER_INPUT.label}` })).toBeInTheDocument()
     expect(screen.getByRole('option', { name: `${COMPUTER_INPUT.label} · som do computador` })).toBeInTheDocument()
     expect(screen.getByRole('option', { name: 'Não gravar o som do computador' })).toBeInTheDocument()
-    expect(screen.getByText(/Monitor of…/)).toBeInTheDocument()
+    expect(screen.getAllByText(/Monitor of…/).length).toBeGreaterThan(0)
     expect(screen.queryByText(/só o microfone e a imagem/)).not.toBeInTheDocument()
+    expect(screen.getByRole('note', { name: 'Aviso do Firefox' })).toHaveTextContent('No Firefox não dá pra gravar o som do computador junto com a tela ou a aba')
     expect(screen.getByText(/Parar pela barra do navegador também termina/)).toBeInTheDocument()
   })
 
@@ -55,6 +56,7 @@ describe('RecordDialog', () => {
     vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue(CHROME_WINDOWS)
     render(<RecordDialog />)
     expect(await screen.findByText(/Mixagem estéreo/)).toBeInTheDocument()
+    expect(screen.queryByRole('note', { name: 'Aviso do Firefox' })).not.toBeInTheDocument()
   })
 
   it('opens only after the microphone is allowed, and asks to keep the recordings for good', async () => {
