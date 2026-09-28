@@ -10,7 +10,7 @@ import { useLibraryStore } from '@/stores/library'
 import { useSyncStore } from '@/stores/sync'
 import { useUiStore } from '@/stores/ui'
 
-function useShortcuts() {
+export function useShortcuts() {
   const ui = useUiStore()
   const navigate = useNavigate()
   useEffect(() => {
@@ -21,7 +21,7 @@ function useShortcuts() {
         ui.open({ kind: 'palette' })
         return
       }
-      if (typing || ui.overlay) return
+      if (typing || ui.overlay || event.ctrlKey || event.metaKey || event.altKey) return
       if (event.key === 'Escape') {
         if (ui.selection.size) ui.clearSelection()
         else if (ui.peekId) ui.set({ peekId: null })
