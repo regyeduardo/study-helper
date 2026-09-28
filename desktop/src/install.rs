@@ -48,7 +48,7 @@ fn start_with_login(installed: &Path) -> std::io::Result<()> {
 #[cfg(target_os = "linux")]
 pub fn desktop_entry(installed: &Path) -> String {
     format!(
-        "[Desktop Entry]\nType=Application\nName=Study Helper Áudio\nComment=Grava o som do computador e o microfone para o Study Helper\nExec=\"{}\"\nTerminal=false\nX-GNOME-Autostart-enabled=true\n",
+        "[Desktop Entry]\nType=Application\nName=Study Helper Áudio\nComment=Grava o som do computador e o microfone para o Study Helper\nExec=env APPIMAGELAUNCHER_DISABLE=1 \"{}\"\nTerminal=false\nX-GNOME-Autostart-enabled=true\n",
         installed.display()
     )
 }
@@ -67,7 +67,7 @@ pub fn install_and_relaunch() -> bool {
     if copied.is_err() {
         return false;
     }
-    Command::new(&installed).spawn().is_ok()
+    Command::new(&installed).env("APPIMAGELAUNCHER_DISABLE", "1").spawn().is_ok()
 }
 
 #[cfg(all(test, target_os = "linux"))]
@@ -78,7 +78,7 @@ mod tests {
     fn the_login_entry_runs_the_installed_copy() {
         let entry = desktop_entry(Path::new("/home/pessoa/.local/share/study-helper-audio/study-helper-audio.AppImage"));
         assert!(entry.starts_with("[Desktop Entry]\n"));
-        assert!(entry.contains("Exec=\"/home/pessoa/.local/share/study-helper-audio/study-helper-audio.AppImage\"\n"));
+        assert!(entry.contains("Exec=env APPIMAGELAUNCHER_DISABLE=1 \"/home/pessoa/.local/share/study-helper-audio/study-helper-audio.AppImage\"\n"));
         assert!(entry.contains("Terminal=false\n"));
     }
 }
