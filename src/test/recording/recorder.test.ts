@@ -115,23 +115,23 @@ describe('MeetingRecorder capture', () => {
   it('records only the microphone without asking for the screen', async () => {
     await new MeetingRecorder(callbacks()).start('microphone')
     expect(env.getDisplayMedia).not.toHaveBeenCalled()
-    expect(lastRecorder().options).toEqual({ mimeType: 'audio/mp4;codecs=opus' })
+    expect(lastRecorder().options).toEqual({ mimeType: 'audio/webm;codecs=opus' })
     expect(lastRecorder().stream.getTracks().map(track => track.label)).toEqual(['mix'])
   })
 })
 
 describe('MeetingRecorder format', () => {
-  it('prefers MP4 with H.264 and Opus when supported', async () => {
+  it('prefers WebM with VP8 and Opus, encoded by the browser itself, over the video card H.264', async () => {
     await new MeetingRecorder(callbacks()).start('tab')
-    expect(lastRecorder().options).toEqual({ mimeType: 'video/mp4;codecs=avc1,opus' })
-    expect([...env.directory.files.keys()][0]).toMatch(/^gravacao-\d+\.mp4$/)
+    expect(lastRecorder().options).toEqual({ mimeType: 'video/webm;codecs=vp8,opus' })
+    expect([...env.directory.files.keys()][0]).toMatch(/^gravacao-\d+\.webm$/)
   })
 
-  it('falls back to WebM when MP4 is not supported', async () => {
-    FakeMediaRecorder.supported = new Set(['video/webm;codecs=vp9,opus', 'video/webm'])
+  it('falls back to MP4 when WebM is not supported', async () => {
+    FakeMediaRecorder.supported = new Set(['video/mp4;codecs=avc1,opus', 'video/mp4', 'audio/mp4;codecs=opus'])
     await new MeetingRecorder(callbacks()).start('tab')
-    expect(lastRecorder().options).toEqual({ mimeType: 'video/webm;codecs=vp9,opus' })
-    expect([...env.directory.files.keys()][0]).toMatch(/\.webm$/)
+    expect(lastRecorder().options).toEqual({ mimeType: 'video/mp4;codecs=avc1,opus' })
+    expect([...env.directory.files.keys()][0]).toMatch(/\.mp4$/)
   })
 
   it('lets the browser pick when nothing listed is supported', async () => {
@@ -157,10 +157,10 @@ describe('MeetingRecorder saving', () => {
     expect(handle.closed).toBe(true)
     const result = handlers.onFinished.mock.calls[0][0] as RecordingResult
     expect(await blobText(result.file)).toBe('chunk-1|chunk-2|')
-    expect(result.mime).toBe('video/mp4;codecs=avc1,opus')
-    expect(result.file.name).toMatch(/^Reunião .+\.mp4$/)
+    expect(result.mime).toBe('video/webm;codecs=vp8,opus')
+    expect(result.file.name).toMatch(/^Reunião .+\.webm$/)
     expect(result.file.name).not.toMatch(/[/:]/)
-    expect(result.file.type).toBe('video/mp4;codecs=avc1,opus')
+    expect(result.file.type).toBe('video/webm;codecs=vp8,opus')
     expect(handlers.onError).not.toHaveBeenCalled()
   })
 

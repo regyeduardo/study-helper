@@ -33,8 +33,8 @@ export interface RecorderCallbacks {
   onError(message: string): void
 }
 
-const MIME_OPTIONS = ['video/mp4;codecs=avc1,opus', 'video/mp4', 'video/webm;codecs=vp9,opus', 'video/webm']
-const AUDIO_MIME_OPTIONS = ['audio/mp4;codecs=opus', 'audio/webm;codecs=opus', 'audio/webm']
+const MIME_OPTIONS = ['video/webm;codecs=vp8,opus', 'video/webm;codecs=vp9,opus', 'video/webm', 'video/mp4;codecs=avc1,opus', 'video/mp4']
+const AUDIO_MIME_OPTIONS = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4;codecs=opus']
 const RECORDING_TITLE = '● Gravando — '
 const COMPUTER_INPUT = /monitor|stereo mix|mixagem|what u hear|loopback|blackhole|soundflower|vb-audio|cable output/i
 const CHUNK_MS = 1000

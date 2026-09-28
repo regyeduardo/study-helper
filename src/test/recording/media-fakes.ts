@@ -143,7 +143,7 @@ export const COMPUTER_INPUT = { kind: 'audioinput', deviceId: 'monitor-1', label
 export function installMediaEnvironment(options: { displayAudio?: boolean; computerInput?: boolean } = {}): MediaEnvironment {
   FakeAudioContext.instances = []
   FakeMediaRecorder.instances = []
-  FakeMediaRecorder.supported = new Set(['video/mp4;codecs=avc1,opus', 'video/mp4', 'video/webm;codecs=vp9,opus', 'video/webm', 'audio/mp4;codecs=opus', 'audio/webm;codecs=opus', 'audio/webm'])
+  FakeMediaRecorder.supported = new Set(['video/mp4;codecs=avc1,opus', 'video/mp4', 'video/webm;codecs=vp8,opus', 'video/webm;codecs=vp9,opus', 'video/webm', 'audio/mp4;codecs=opus', 'audio/webm;codecs=opus', 'audio/webm'])
   const directory = new FakeDirectory()
   const displayTracks = [new FakeTrack('video', 'screen')]
   if (options.displayAudio !== false) displayTracks.push(new FakeTrack('audio', 'tab-audio'))
