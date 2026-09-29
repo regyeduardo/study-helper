@@ -6,6 +6,7 @@ import { Dialog } from '@/components/ui/Dialog'
 import { Icon } from '@/components/ui/Icon'
 import { FreeMinutes } from '@/components/dialogs/FreeMinutes'
 import { IntegrationStatus } from '@/components/dialogs/IntegrationStatus'
+import { FreeAi } from '@/components/dialogs/FreeAi'
 import { LimitedAiNotice } from '@/components/dialogs/LimitedAiNotice'
 import { FolderPicker } from '@/components/dialogs/SimpleDialogs'
 import { SourceStoragePicker } from '@/components/dialogs/SourceStoragePicker'
@@ -598,6 +599,7 @@ function RecordingDoneOptions({ place }: { place: 'dialog' | 'window' }) {
       </div>
       <FreeMinutes check={freeMinutes} />
       <LimitedAiNotice />
+      <FreeAi />
       <div className="field">
         <span className="lab">O que gerar</span>
         <div className="opts" role="radiogroup">

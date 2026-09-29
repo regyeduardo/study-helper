@@ -5,6 +5,7 @@ import type { SourceStorage, TranscriptionEngine } from '@/types/domain'
 import { Dialog } from '@/components/ui/Dialog'
 import { Icon } from '@/components/ui/Icon'
 import { FreeMinutes } from '@/components/dialogs/FreeMinutes'
+import { FreeAi } from '@/components/dialogs/FreeAi'
 import { LimitedAiNotice } from '@/components/dialogs/LimitedAiNotice'
 import { FolderPicker } from '@/components/dialogs/SimpleDialogs'
 import { SourceStoragePicker } from '@/components/dialogs/SourceStoragePicker'
@@ -194,6 +195,7 @@ export function NewContentDialog({ folderId: initialFolder }: { folderId?: strin
       </div>
       <div className="db" style={{ paddingTop: 14 }}>
         <LimitedAiNotice />
+        <FreeAi />
         {tab === 'link' && (
           <>
             <div className="field">

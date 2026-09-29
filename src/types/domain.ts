@@ -175,6 +175,7 @@ export interface Activity {
 }
 
 export type AiProviderId =
+  | 'free'
   | 'anthropic'
   | 'openai'
   | 'gemini'

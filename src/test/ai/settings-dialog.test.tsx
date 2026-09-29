@@ -17,7 +17,8 @@ afterEach(() => {
 describe('SettingsDialog AI tab', () => {
   it('shows every provider button, OVHcloud in use by default with its model, and the free-model warning', () => {
     render(<SettingsDialog initial="ai" />)
-    for (const provider of PROVIDERS) expect(screen.getByRole('button', { name: new RegExp(`^${provider.name}\\s*${provider.tag}$`) })).toBeInTheDocument()
+    for (const provider of PROVIDERS.filter(item => item.id !== 'free')) expect(screen.getByRole('button', { name: new RegExp(`^${provider.name}\\s*${provider.tag}$`) })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /^Grátis \(Ling\)/ })).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: /^OVHcloud/ })).toHaveAttribute('aria-pressed', 'true')
     expect(screen.getByRole('note', { name: 'IA em uso' })).toHaveTextContent('Em uso: OVHcloud · Meta-Llama-3_3-70B-Instruct')
     expect(screen.getByLabelText('Modelo')).toHaveValue('Meta-Llama-3_3-70B-Instruct')

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 
 import type { AiProviderId, AiSettings, LayoutId, Settings, TranscriptionEngine } from '@/types/domain'
+import { FreeAi } from '@/components/dialogs/FreeAi'
 import { FreeMinutes } from '@/components/dialogs/FreeMinutes'
 import { IntegrationStatus } from '@/components/dialogs/IntegrationStatus'
 import { Icon } from '@/components/ui/Icon'
@@ -85,6 +86,7 @@ const PROVIDER_GROUPS: { label: string; includes: (provider: ProviderInfo) => bo
 ]
 
 function AiTab() {
+  const signedIn = useAccountStore(state => state.active().kind === 'google')
   const saved = useLibraryStore(state => state.index.settings.ai)
   const updateSettings = useLibraryStore(state => state.updateSettings)
   const [draft, setDraft] = useState<AiSettings>(saved)
@@ -135,11 +137,12 @@ function AiTab() {
           {saved.apiKey ? ` · chave ••••${saved.apiKey.slice(-4)}` : savedProvider.needsKey ? ' · sem chave' : ''}
         </span>
       </div>
+      <FreeAi />
       {PROVIDER_GROUPS.map(group => (
         <div className="field" key={group.label}>
           <span className="lab">{group.label}</span>
           <div className="prov">
-            {PROVIDERS.filter(group.includes).map(item => (
+            {PROVIDERS.filter(group.includes).filter(item => item.id !== 'free' || signedIn).map(item => (
               <button key={item.id} aria-pressed={draft.provider === item.id} onClick={() => pick(item.id)}>
                 <b>{item.name}</b>
                 <small className={item.free ? 'free' : ''}>{item.tag}</small>

@@ -10,7 +10,7 @@ function settings(overrides: Partial<AiSettings>): AiSettings {
 describe('provider catalog', () => {
   it('lists exactly the supported providers', () => {
     expect(PROVIDERS.map(provider => provider.id).sort()).toEqual(
-      ['anthropic', 'custom', 'gemini', 'llm7', 'openai', 'ovh', 'pollinations', 'xai'].sort(),
+      ['anthropic', 'custom', 'free', 'gemini', 'llm7', 'openai', 'ovh', 'pollinations', 'xai'].sort(),
     )
   })
 

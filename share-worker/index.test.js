@@ -155,6 +155,16 @@ describe('share worker', () => {
     expect(JSON.parse(env.BUCKET.objects.get(`shared/${id}.json`).body).files[0].source).toBeUndefined()
   })
 
+  it('an account with the secret code bonus shares up to 600 KB a day', async () => {
+    const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode('perm-ana'))
+    const hash = [...new Uint8Array(digest)].map(byte => byte.toString(16).padStart(2, '0')).join('').slice(0, 32)
+    await env.BUCKET.put(`grants/account-${hash}.json`, JSON.stringify({ factor: 2 }))
+    expect((await post({ contentBytes: 200 * KB })).status).toBe(201)
+    expect((await post({ contentBytes: 150 * KB })).status).toBe(201)
+    const quota = await (await call('GET', '/quota', { token: 'token-ana' })).json()
+    expect(quota.account.limit).toBe(600 * KB)
+  })
+
   it('refuses an account over 300 KB with the remaining', async () => {
     const first = await post({ contentBytes: 200 * KB })
     expect(first.status).toBe(201)

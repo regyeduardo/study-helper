@@ -102,9 +102,13 @@ async function adjust(bucket, key, delta, limit) {
   throw new Error('counter_busy')
 }
 
-function countersOf(day, accountKey, ipKey) {
+async function factorOf(bucket, accountKey) {
+  return (await bucket.get(`grants/${accountKey}.json`)) ? 2 : 1
+}
+
+function countersOf(day, accountKey, ipKey, factor = 1) {
   return [
-    { name: 'account', key: counterKey(day, accountKey), limit: LIMITS.account },
+    { name: 'account', key: counterKey(day, accountKey), limit: LIMITS.account * factor },
     { name: 'ip', key: counterKey(day, ipKey), limit: LIMITS.ip },
     { name: 'site', key: counterKey(day, 'site'), limit: LIMITS.site },
   ]
@@ -197,7 +201,7 @@ async function createShare(request, env, headers) {
   const now = Date.now()
   const day = dayOf(now)
   const ipKey = await ipKeyOf(request)
-  const counters = countersOf(day, accountKey, ipKey)
+  const counters = countersOf(day, accountKey, ipKey, await factorOf(env.BUCKET, accountKey))
   const reserved = await reserve(env.BUCKET, counters, bytes)
   if (!reserved.ok) return json({ error: `${reserved.failed}_limit`, remaining: reserved.remaining, bytes }, 429, headers)
   const id = newShareId()
@@ -229,7 +233,7 @@ async function deleteShare(request, env, headers, id) {
   const bytes = Number(meta.bytes) || 0
   const sameDay = meta.day === day
   if (sameDay && bytes) for (const counter of countersOf(day, meta.owner, meta.ip)) await adjust(env.BUCKET, counter.key, -bytes, counter.limit)
-  const quota = await quotaOf(env.BUCKET, countersOf(day, accountKey, await ipKeyOf(request)))
+  const quota = await quotaOf(env.BUCKET, countersOf(day, accountKey, await ipKeyOf(request), await factorOf(env.BUCKET, accountKey)))
   return json({ returned: sameDay ? bytes : 0, remaining: quota.remaining }, 200, headers)
 }
 
@@ -237,7 +241,7 @@ async function readQuota(request, env, headers) {
   const accountKey = await identify(request, env)
   if (!accountKey) return json({ error: 'login_required' }, 401, headers)
   const day = dayOf(Date.now())
-  return json({ day, ...(await quotaOf(env.BUCKET, countersOf(day, accountKey, await ipKeyOf(request)))) }, 200, headers)
+  return json({ day, ...(await quotaOf(env.BUCKET, countersOf(day, accountKey, await ipKeyOf(request), await factorOf(env.BUCKET, accountKey)))) }, 200, headers)
 }
 
 async function serveShared(env, headers, id) {

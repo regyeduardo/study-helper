@@ -23,7 +23,7 @@ export function defaultIndex(): LibraryIndex {
 
 export function newAccountIndex(): LibraryIndex {
   const index = defaultIndex()
-  return { ...index, settings: { ...index.settings, transcription: { ...index.settings.transcription, engine: 'free' } } }
+  return { ...index, settings: { ...index.settings, ai: { ...index.settings.ai, provider: 'free' }, transcription: { ...index.settings.transcription, engine: 'free' } } }
 }
 
 export function newFileMeta(fields: Partial<FileMeta> & { name: string; type: FileType }): FileMeta {

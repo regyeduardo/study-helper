@@ -1,8 +1,10 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 
 import { Icon } from '@/components/ui/Icon'
 import { Popover } from '@/components/ui/Popover'
+import { unlockBonusController } from '@/controllers/ai.controller'
 import { isGoogleLoginConfigured } from '@/controllers/google-auth.controller'
+import { freeAiToken } from '@/lib/ai/free'
 import { LocalRepository } from '@/lib/storage/local-repository'
 import { type Account, initialsOf, useAccountStore } from '@/stores/account'
 import { useLibraryStore } from '@/stores/library'
@@ -15,6 +17,28 @@ function Mini({ account }: { account: Account }) {
     <span className={`avatar ${account.kind === 'local' ? 'local' : ''}`} style={{ width: 22, height: 22, fontSize: 10 }}>
       {initialsOf(account)}
     </span>
+  )
+}
+
+const SECRET_CLICKS = 5
+const SECRET_WINDOW_MS = 2000
+
+function SecretCode({ onDone }: { onDone(unlocked: boolean): void }) {
+  const [code, setCode] = useState('')
+  const submit = async () => {
+    const token = await freeAiToken()
+    onDone(Boolean(token) && (await unlockBonusController(token ?? '', code)))
+  }
+  return (
+    <form
+      onSubmit={event => {
+        event.preventDefault()
+        void submit()
+      }}
+      style={{ padding: '0 10px 8px' }}
+    >
+      <input className="input" aria-label="Código" autoFocus value={code} onChange={event => setCode(event.target.value)} />
+    </form>
   )
 }
 
@@ -31,6 +55,23 @@ export function AccountMenu() {
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const configured = isGoogleLoginConfigured()
+  const clicks = useRef<number[]>([])
+  const [asking, setAsking] = useState(false)
+
+  const tapPhoto = () => {
+    if (active.kind !== 'google') return
+    const now = Date.now()
+    clicks.current = [...clicks.current, now].filter(at => now - at < SECRET_WINDOW_MS)
+    if (clicks.current.length >= SECRET_CLICKS) {
+      clicks.current = []
+      setAsking(true)
+    }
+  }
+
+  const secretDone = (unlocked: boolean) => {
+    setAsking(false)
+    if (unlocked) ui.toast('Uau')
+  }
 
   const add = async () => {
     setBusy(true)
@@ -60,12 +101,15 @@ export function AccountMenu() {
   return (
     <Popover x={window.innerWidth - 300} y={52} onClose={ui.close} label="Conta">
       <div className="who">
-        <Mini account={active} />
+        <span onClick={tapPhoto}>
+          <Mini account={active} />
+        </span>
         <div>
           <b>{active.name}</b>
           <small>{active.email}</small>
         </div>
       </div>
+      {asking && <SecretCode onDone={secretDone} />}
       <div className="hr" />
       <div className="mh">Trocar de conta</div>
       {accounts.map(account => (
