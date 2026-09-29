@@ -73,6 +73,7 @@ async function turnstilePassed(token, request, env) {
   if (ip) form.append('remoteip', ip)
   const response = await fetch(TURNSTILE_URL, { method: 'POST', body: form }).catch(() => null)
   const body = await response?.json().catch(() => null)
+  if (body?.success !== true) console.log(JSON.stringify({ turnstile: body?.['error-codes'] ?? 'no_response', hostname: body?.hostname ?? null }))
   return body?.success === true
 }
 

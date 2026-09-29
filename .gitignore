@@ -25,3 +25,4 @@ docs/*
 /Docker/Api.Dockerfile
 /Docker/Browser.Dockerfile
 /.env keep
+.wrangler/
