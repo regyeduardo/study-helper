@@ -16,5 +16,7 @@ export function useViewRoute(): ViewRoute {
   if (pathname.startsWith('/revisar')) return { view: 'review', folderId: null, fileId: null }
   if (pathname.startsWith('/favoritos')) return { view: 'favorites', folderId: null, fileId: null }
   if (pathname.startsWith('/lixeira')) return { view: 'trash', folderId: null, fileId: null }
+  if (pathname.startsWith('/compartilhados-comigo')) return { view: 'sharedWithMe', folderId: null, fileId: null }
+  if (pathname.startsWith('/compartilhados')) return { view: 'shares', folderId: null, fileId: null }
   return { view: 'home', folderId: null, fileId: null }
 }

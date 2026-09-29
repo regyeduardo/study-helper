@@ -3,6 +3,7 @@ import { useMemo } from 'react'
 import type { FileMeta, FolderMeta } from '@/types/domain'
 import { LOW_MASTERY_BELOW, REVIEW_BELOW } from '@/lib/file-types'
 import type { View } from '@/lib/paths'
+import { fileBytes, folderBytes } from '@/lib/storage/file-sizes'
 import { liveFiles, liveFolders, useLibraryStore } from '@/stores/library'
 import { useUiStore } from '@/stores/ui'
 
@@ -10,11 +11,13 @@ export interface FolderTile {
   folder: FolderMeta
   files: number
   subfolders: number
+  bytes: number
 }
 
 export interface CourseGroup {
   module: FolderMeta | null
   files: FileMeta[]
+  bytes: number
 }
 
 function descendants(folders: FolderMeta[], id: string): string[] {
@@ -25,6 +28,12 @@ export function useLiveLibrary() {
   const files = useLibraryStore(state => state.files)
   const folders = useLibraryStore(state => state.folders)
   return useMemo(() => ({ files: liveFiles(files, folders), folders: liveFolders(folders) }), [files, folders])
+}
+
+export function useFileBytes(file: FileMeta): number {
+  const stored = useLibraryStore(state => state.sizes[file.id])
+  const media = useLibraryStore(state => state.localMedia)
+  return fileBytes(file, stored, media)
 }
 
 export function useFolderPath(folderId: string | null): FolderMeta[] {
@@ -60,6 +69,8 @@ export function usePathName() {
 export function useLibraryView(view: View, folderId: string | null) {
   const { files, folders } = useLiveLibrary()
   const contents = useLibraryStore(state => state.opened)
+  const sizes = useLibraryStore(state => state.sizes)
+  const media = useLibraryStore(state => state.localMedia)
   const { query, types, lowMastery, tag, sort } = useUiStore()
   const trimmed = query.trim().toLowerCase()
 
@@ -88,22 +99,31 @@ export function useLibraryView(view: View, folderId: string | null) {
           .sort((a, b) => a.position - b.position || a.name.localeCompare(b.name, 'pt-BR'))
           .map(item => {
             const ids = new Set(descendants(folders, item.id))
-            return { folder: item, files: files.filter(file => file.folderId && ids.has(file.folderId)).length, subfolders: folders.filter(other => other.parentId === item.id).length }
+            return {
+              folder: item,
+              files: files.filter(file => file.folderId && ids.has(file.folderId)).length,
+              subfolders: folders.filter(other => other.parentId === item.id).length,
+              bytes: folderBytes(item.id, folders, files, file => fileBytes(file, sizes[file.id], media)),
+            }
           })
       : []
 
     const courseGroups: CourseGroup[] = isCourse
       ? [
-          { module: null, files: sorted.filter(file => file.folderId === folderId) },
+          { module: null, files: sorted.filter(file => file.folderId === folderId), bytes: 0 },
           ...folders
             .filter(item => item.parentId === folderId)
             .sort((a, b) => a.position - b.position)
-            .map(module => ({ module, files: files.filter(file => file.folderId === module.id).sort((a, b) => a.position - b.position) })),
+            .map(module => ({
+              module,
+              files: files.filter(file => file.folderId === module.id).sort((a, b) => a.position - b.position),
+              bytes: folderBytes(module.id, folders, files, file => fileBytes(file, sizes[file.id], media)),
+            })),
         ].filter(group => group.files.length)
       : []
 
     const filtering = Boolean(types.size || lowMastery || tag || trimmed)
     const hideFiles = browsing && !sorted.length && tiles.length > 0 && !filtering
     return { folder, files: sorted, tiles, isCourse, courseGroups, filtering, hideFiles, browsing }
-  }, [files, folders, contents, view, folderId, trimmed, types, lowMastery, tag, sort])
+  }, [files, folders, contents, sizes, media, view, folderId, trimmed, types, lowMastery, tag, sort])
 }

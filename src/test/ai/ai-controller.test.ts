@@ -104,7 +104,7 @@ describe('chatController streaming', () => {
     expect(reply.usage).toEqual({ inputTokens: 11, outputTokens: 7, estimated: false })
     expect(calls[0].url).toBe('https://api.llm7.io/v1/chat/completions')
     expect(calls[0].method).toBe('POST')
-    expect(calls[0].headers.authorization).toBeUndefined()
+    expect(calls[0].headers.authorization).toBe('Bearer chave-llm7')
     expect(calls[0].body).toMatchObject({ model: 'default', stream: true, stream_options: { include_usage: true } })
     expect(systemPromptOf(calls[0])).toBe('sistema')
     expect(userContentOf(calls[0])).toBe('conteúdo')

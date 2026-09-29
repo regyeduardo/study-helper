@@ -3,6 +3,7 @@ import { render, screen, waitFor, within } from '@testing-library/react'
 import { File as NodeFile } from 'node:buffer'
 import { MemoryRouter } from 'react-router-dom'
 
+import { ReaderRow } from '@/components/library/FileRows'
 import { InfoPanel } from '@/components/reader/Inspector'
 import { defaultIndex, newFileMeta } from '@/lib/defaults'
 import { PROMPTS } from '@/lib/generation/prompts.data'
@@ -67,6 +68,7 @@ function memoryRepository() {
       sources.delete(ref)
     },
     usage: async () => ({}) as Awaited<ReturnType<Repository['usage']>>,
+    fileSizes: async () => ({}),
     pullChanges: async () => ({}) as Awaited<ReturnType<Repository['pullChanges']>>,
     setConflictResolver: () => undefined,
     forget: async () => undefined,
@@ -174,6 +176,27 @@ describe('generation fills metadata', () => {
       </MemoryRouter>,
     )
     expect(await screen.findByRole('button', { name: 'Baixar a transcrição' })).toBeInTheDocument()
+  })
+
+  it('a recording whose source could not be stored becomes a pending note with the transcript kept for a retry', async () => {
+    installFetch(provider())
+    memory.repo.putSource = async () => {
+      throw new Error('Failed to fetch')
+    }
+    const file = new NodeFile([new Uint8Array(2048)], 'reuniao.webm', { type: 'audio/webm' }) as unknown as File
+    expect(await useJobsStore.getState().startNewContent(request({ agent: 'meeting', input: { kind: 'recording', file }, storage: 'drive' }))).toBeNull()
+
+    const meta = useLibraryStore.getState().files[0]
+    expect(meta).toMatchObject({ status: 'pending', origin: { storage: 'none' } })
+    expect(meta.pendingExcerpt).toContain('vamos lançar em maio')
+    expect(useJobsStore.getState().jobs[0]).toMatchObject({ status: 'error' })
+    render(
+      <MemoryRouter>
+        <ReaderRow file={meta} showWhere={false} />
+      </MemoryRouter>,
+    )
+    expect(screen.getByText('pendente · gerar agora')).toBeInTheDocument()
+    expect(screen.queryByText('gerando…')).not.toBeInTheDocument()
   })
 
   it('a lesson from a web link has no transcription to download', async () => {

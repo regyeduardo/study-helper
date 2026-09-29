@@ -10,8 +10,8 @@ import { LOCAL_ACCOUNT, useAccountStore } from '@/stores/account'
 import { useLibraryStore } from '@/stores/library'
 
 describe('engine list and limits', () => {
-  it('offers the four engines in order', () => {
-    expect(ENGINES.map(engine => engine.id)).toEqual(['whisper', 'parakeet', 'groq', 'puter'])
+  it('offers the five engines in order', () => {
+    expect(ENGINES.map(engine => engine.id)).toEqual(['free', 'whisper', 'parakeet', 'groq', 'puter'])
   })
 
   it.each([
@@ -33,7 +33,7 @@ describe('engine list and limits', () => {
     useAccountStore.setState({ accounts: [LOCAL_ACCOUNT], activeId: LOCAL_ACCOUNT.id })
     useLibraryStore.setState({ index: defaultIndex() })
     render(<SettingsDialog initial="transcription" />)
-    for (const engine of ENGINES) {
+    for (const engine of ENGINES.filter(item => item.id !== 'free')) {
       const radio = screen.getByText(engine.name).closest('[role=radio]')!
       expect(radio.querySelector('.lim')?.textContent).toBe(engine.limits)
       expect(radio.textContent).toContain(engine.where)

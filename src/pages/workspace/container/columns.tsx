@@ -8,6 +8,7 @@ import { ColumnsCard, excerptOf } from '@/components/library/FileRows'
 import { FilterChips } from '@/components/library/Filters'
 import { FolderTiles } from '@/components/library/FolderTiles'
 import { SelectionBar } from '@/components/library/SelectionBar'
+import { SHARING_TITLES, SharingView } from '@/components/library/SharingLists'
 import { TrashList } from '@/components/library/TrashList'
 import { useFileActions } from '@/components/library/use-file-actions'
 import { DocumentBody } from '@/components/reader/DocumentArticle'
@@ -17,9 +18,10 @@ import type { ViewRoute } from '@/hooks/use-view-route'
 import { paths, type View } from '@/lib/paths'
 import { useLibraryStore } from '@/stores/library'
 import { type InspectorTab, useUiStore } from '@/stores/ui'
+import { formatBytes } from '@/utils/format'
 import { useScrollerRef } from '@/pages/workspace/container/shared'
 
-const TITLES: Record<View, string> = { folder: 'Biblioteca', review: 'Para revisar', favorites: 'Favoritos', trash: 'Lixeira', home: 'Biblioteca', doc: 'Biblioteca' }
+const TITLES: Record<View, string> = { folder: 'Biblioteca', review: 'Para revisar', favorites: 'Favoritos', trash: 'Lixeira', home: 'Biblioteca', doc: 'Biblioteca', ...SHARING_TITLES }
 
 function ListColumn({ view, folderId, currentId }: { view: View; folderId: string | null; currentId: string | null }) {
   const ui = useUiStore()
@@ -27,6 +29,23 @@ function ListColumn({ view, folderId, currentId }: { view: View; folderId: strin
   const contents = useLibraryStore(state => state.opened)
   const trashCount = useLibraryStore(state => state.files.filter(file => file.deletedAt).length)
   const title = view === 'folder' ? (data.folder?.name ?? 'Biblioteca') : TITLES[view]
+  if (view === 'shares' || view === 'sharedWithMe') {
+    return (
+      <section className="col-list" aria-label="Lista">
+        <div className="lh">
+          <div className="t">
+            <button className="ibtn back-mob" onClick={() => ui.set({ columnsPane: 'nav' })} aria-label="Coleções">
+              <Icon name="back" />
+            </button>
+            <h2>{title}</h2>
+          </div>
+        </div>
+        <div className="items">
+          <SharingView view={view} heading={false} />
+        </div>
+      </section>
+    )
+  }
   return (
     <section className="col-list" aria-label="Lista">
       <div className="lh">
@@ -95,7 +114,7 @@ function ListColumn({ view, folderId, currentId }: { view: View; folderId: strin
                         <div key={group.module?.id ?? 'root'}>
                           {group.module && (
                             <div className="grp-h gh" style={{ margin: '10px 0 4px' }}>
-                              <Icon name="layers" /> {group.module.name} <span className="faint">{group.files.length} aulas</span>
+                              <Icon name="layers" /> {group.module.name} <span className="faint">{group.files.length} aulas · {formatBytes(group.bytes)}</span>
                             </div>
                           )}
                           {group.files.map(file => (

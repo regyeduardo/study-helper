@@ -10,6 +10,7 @@ import { courseOf } from '@/lib/generation/course-lesson'
 import { newId, nowIso } from '@/lib/ids'
 import { paths } from '@/lib/paths'
 import { transcriptFileName, transcriptOf } from '@/lib/generation/transcript'
+import { fileBytes } from '@/lib/storage/file-sizes'
 import { downloadStoredSource, removeStoredSource, sourceExpired } from '@/lib/storage/source-storage'
 import { ENGINES } from '@/lib/transcription'
 import { isNarrowScreen } from '@/hooks/use-is-narrow'
@@ -394,6 +395,8 @@ export function InfoPanel({ fileId }: { fileId: string }) {
           <dd>{meta.readingMinutes || '—'} min</dd>
           <dt>Questões</dt>
           <dd>{meta.questionCount}</dd>
+          <dt>Tamanho</dt>
+          <dd>{formatBytes(fileBytes(meta, library.sizes[meta.id], library.localMedia))}</dd>
           <dt>Tags</dt>
           <dd>
             <TagEditor meta={meta} />

@@ -7,6 +7,7 @@ import { ReaderRow } from '@/components/library/FileRows'
 import { FilterChips, SortSelect } from '@/components/library/Filters'
 import { FolderTiles } from '@/components/library/FolderTiles'
 import { SelectionBar } from '@/components/library/SelectionBar'
+import { SHARING_TITLES, SharingView } from '@/components/library/SharingLists'
 import { TrashList } from '@/components/library/TrashList'
 import { UpButton } from '@/components/library/Crumbs'
 import { DocumentBody } from '@/components/reader/DocumentArticle'
@@ -16,9 +17,10 @@ import type { ViewRoute } from '@/hooks/use-view-route'
 import { isNarrowScreen } from '@/hooks/use-is-narrow'
 import { useLibraryStore } from '@/stores/library'
 import { useUiStore } from '@/stores/ui'
+import { formatBytes } from '@/utils/format'
 import { ContinueCard, greeting, QuickActions, reviewSentence, todayText, useHomeData, useScrollerRef, WelcomeEmpty } from '@/pages/workspace/container/shared'
 
-const TITLES = { folder: 'Biblioteca', review: 'Para revisar', favorites: 'Favoritos', trash: 'Lixeira', home: 'Início', doc: '' }
+const TITLES = { folder: 'Biblioteca', review: 'Para revisar', favorites: 'Favoritos', trash: 'Lixeira', home: 'Início', doc: '', ...SHARING_TITLES }
 
 function Home() {
   const data = useHomeData()
@@ -131,7 +133,7 @@ export function Library({ route }: { route: ViewRoute }) {
                       <div key={group.module?.id ?? 'root'}>
                         {group.module && (
                           <div className="grp-h gh">
-                            <Icon name="layers" /> {group.module.name} <span className="faint">{group.files.length} aulas</span>
+                            <Icon name="layers" /> {group.module.name} <span className="faint">{group.files.length} aulas · {formatBytes(group.bytes)}</span>
                           </div>
                         )}
                         {group.files.map(file => (
@@ -203,7 +205,7 @@ export function ReaderWorkspace({ route }: { route: ViewRoute }) {
   }
   return (
     <ReaderShell>
-      <div className="libwrap">{route.view === 'home' ? <Home /> : <Library route={route} />}</div>
+      <div className="libwrap">{route.view === 'home' ? <Home /> : route.view === 'shares' || route.view === 'sharedWithMe' ? <SharingView view={route.view} /> : <Library route={route} />}</div>
     </ReaderShell>
   )
 }

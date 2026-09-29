@@ -3,10 +3,10 @@ import { Check } from '@/components/ui/Check'
 import { Icon } from '@/components/ui/Icon'
 import { FileIcon, MasteryMeter, PendingBadge, Tags, TypeDot } from '@/components/library/Badges'
 import { useFileActions } from '@/components/library/use-file-actions'
-import { usePathName } from '@/hooks/use-library-view'
+import { useFileBytes, usePathName } from '@/hooks/use-library-view'
 import { useLibraryStore } from '@/stores/library'
 import { useUiStore } from '@/stores/ui'
-import { plainText, shortDate } from '@/utils/format'
+import { formatBytes, plainText, shortDate } from '@/utils/format'
 
 interface RowProps {
   file: FileMeta
@@ -63,6 +63,10 @@ function Where({ file }: { file: FileMeta }) {
   )
 }
 
+function FileBytes({ file }: { file: FileMeta }) {
+  return <span>{formatBytes(useFileBytes(file))}</span>
+}
+
 function useRowHandlers(file: FileMeta, onActivate: () => void) {
   const openMenu = useUiStore(state => state.openMenu)
   const { dragFile } = useFileActions()
@@ -98,10 +102,14 @@ export function ReaderRow({ file, showWhere, inCourse, siblings }: RowProps & { 
           <TypeDot type={file.type} />
           {showWhere && !inCourse && <Where file={file} />}
           {file.status !== 'ready' ? (
-            <PendingBadge generating={file.status === 'generating'} />
+            <>
+              <PendingBadge generating={file.status === 'generating'} />
+              <FileBytes file={file} />
+            </>
           ) : (
             <>
               <span>{file.readingMinutes} min</span>
+              <FileBytes file={file} />
               <MasteryMeter value={file.mastery} />
             </>
           )}
@@ -140,6 +148,7 @@ export function ColumnsCard({ file, showWhere, currentId, excerpt, siblings }: R
           <TypeDot type={file.type} />
           {showWhere && <Where file={file} />}
           <span>{shortDate(file.updated.at, timeZone)}</span>
+          <FileBytes file={file} />
           {file.status !== 'ready' ? <span className="pending">{file.status === 'generating' ? 'gerando…' : 'pendente'}</span> : <MasteryMeter value={file.mastery} />}
           {file.favorite && (
             <span className="star on">
@@ -162,6 +171,7 @@ export function CommandsRow({ file, showWhere, inCourse, siblings }: RowProps & 
   const pathName = usePathName()
   const timeZone = useLibraryStore(state => state.index.settings.timezone)
   const selected = selection.has(file.id)
+  const bytes = useFileBytes(file)
   const handlers = useRowHandlers(file, () => set({ peekId: peekId === file.id ? null : file.id }))
   const updated = new Date(file.updated.at).toLocaleString('pt-BR', { timeZone, day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
   return (
@@ -172,7 +182,8 @@ export function CommandsRow({ file, showWhere, inCourse, siblings }: RowProps & 
         {file.name}
         <small>
           {showWhere && !inCourse ? `${pathName(file.folderId)} · ` : ''}
-          {file.tags.map(tag => `#${tag}`).join(' ')}
+          {formatBytes(bytes)}
+          {file.tags.length ? ` · ${file.tags.map(tag => `#${tag}`).join(' ')}` : ''}
         </small>
       </div>
       <div className="hide-s">
@@ -204,10 +215,14 @@ export function FocusRow({ file, showWhere, inCourse, order, siblings }: RowProp
         <div className="faint" style={{ fontSize: 12.5, marginTop: 2, display: 'flex', gap: 10, flexWrap: 'wrap' }}>
           {showWhere && <Where file={file} />}
           {file.status !== 'ready' ? (
-            <span className="pending">{file.status === 'generating' ? 'gerando…' : 'pendente'}</span>
+            <>
+              <span className="pending">{file.status === 'generating' ? 'gerando…' : 'pendente'}</span>
+              <FileBytes file={file} />
+            </>
           ) : (
             <>
               <span>{file.readingMinutes} min</span>
+              <FileBytes file={file} />
               <MasteryMeter value={file.mastery} />
             </>
           )}

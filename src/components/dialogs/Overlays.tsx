@@ -3,7 +3,7 @@ import { useEffect } from 'react'
 import { AccountMenu } from '@/components/dialogs/AccountMenu'
 import { CommandPalette } from '@/components/dialogs/CommandPalette'
 import { ConflictDialog } from '@/components/dialogs/ConflictDialog'
-import { ExamDialog, FolderExamDialog } from '@/components/dialogs/ExamDialog'
+import { ExamDialog, ExamRun, FolderExamDialog } from '@/components/dialogs/ExamDialog'
 import { JobsPanel } from '@/components/dialogs/JobsPanel'
 import { MediaDialog } from '@/components/dialogs/MediaDialog'
 import { ModelDownloadDialog } from '@/components/dialogs/ModelDownloadDialog'
@@ -11,6 +11,7 @@ import { ActivityDialog, CourseProposalDialog, ExplainDialog, ImportDialog, Orde
 import { NewContentDialog } from '@/components/dialogs/NewContentDialog'
 import { RecordDialog, RecordingDoneDialog, RecordingWindow } from '@/components/dialogs/RecordDialogs'
 import { SettingsDialog } from '@/components/dialogs/SettingsDialog'
+import { ShareDialog } from '@/components/dialogs/ShareDialog'
 import { ConfirmDialog, MoveDialog, NewFolderDialog, RenameDialog } from '@/components/dialogs/SimpleDialogs'
 import { useAccountStore } from '@/stores/account'
 import { useLibraryStore } from '@/stores/library'
@@ -50,6 +51,8 @@ export function Overlays() {
   else if (overlay?.kind === 'import') content = <ImportDialog />
   else if (overlay?.kind === 'send-local') content = <SendLocalDialog />
   else if (overlay?.kind === 'storage-limit') content = <StorageLimitDialog />
+  else if (overlay?.kind === 'share') content = <ShareDialog target={overlay.target} id={overlay.id} />
+  else if (overlay?.kind === 'shared-exam') content = <ExamRun title={overlay.title} questions={overlay.questions} sourceOf={() => 'shared'} onRecord={(_, fields) => overlay.onRecord(fields)} />
   return (
     <>
       {content}

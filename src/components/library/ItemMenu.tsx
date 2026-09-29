@@ -48,6 +48,10 @@ export function ItemMenu() {
           <Icon name="exam" />
           Prova da pasta
         </button>
+        <button className="mi" onClick={act(() => ui.open({ kind: 'share', target: 'folder', id: folder.id }))}>
+          <Icon name="link" />
+          {folder.isCourse ? 'Compartilhar o curso' : 'Compartilhar a pasta'}
+        </button>
         {folder.isCourse && (
           <>
             <button className="mi" onClick={act(() => ui.open({ kind: 'order', folderId: folder.id }))}>
@@ -113,6 +117,10 @@ export function ItemMenu() {
       >
         <Icon name="info" />
         Informações
+      </button>
+      <button className="mi" onClick={act(() => ui.open({ kind: 'share', target: 'file', id: file.id }))}>
+        <Icon name="link" />
+        Compartilhar
       </button>
       <div className="sep" />
       <button className="mi" onClick={act(() => exportFileAsMarkdown(file.id))}>

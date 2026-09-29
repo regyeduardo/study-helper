@@ -1,4 +1,5 @@
 import { listLocalMedia } from '@/lib/recording/media-library'
+import { bytesOf } from '@/lib/storage/repository'
 import { WHISPER_MODEL } from '@/lib/transcription/whisper'
 
 export type ModelId = 'whisper' | 'parakeet' | 'speakers'
@@ -20,6 +21,7 @@ const WHISPER_CACHE = 'transformers-cache'
 const SPEAKERS_CACHE = 'study-helper-models'
 const PARAKEET_DB = 'parakeet-cache-db'
 const PARAKEET_STORE = 'file-store'
+const APP_DATABASE_PREFIX = 'study-helper'
 
 const MODEL_NAMES: Record<ModelId, string> = {
   whisper: 'Whisper',
@@ -117,15 +119,53 @@ export async function deleteModel(id: ModelId): Promise<void> {
   for (const request of await cache.keys()) if (isWhisper(request.url)) await cache.delete(request)
 }
 
+function valueBytes(value: unknown): number {
+  if (typeof value === 'string') return bytesOf(value)
+  if (value instanceof Blob) return value.size
+  if (value instanceof ArrayBuffer || ArrayBuffer.isView(value)) return value.byteLength
+  return bytesOf(JSON.stringify(value) ?? '')
+}
+
+function databaseBytes(name: string): Promise<number> {
+  return new Promise(resolve => {
+    const request = indexedDB.open(name)
+    request.onerror = () => resolve(0)
+    request.onsuccess = () => {
+      const db = request.result
+      const stores = [...db.objectStoreNames]
+      if (!stores.length) {
+        db.close()
+        resolve(0)
+        return
+      }
+      let total = 0
+      const transaction = db.transaction(stores, 'readonly')
+      for (const store of stores) {
+        const cursor = transaction.objectStore(store).openCursor()
+        cursor.onsuccess = () => {
+          if (!cursor.result) return
+          total += valueBytes(cursor.result.value)
+          cursor.result.continue()
+        }
+      }
+      transaction.oncomplete = transaction.onerror = transaction.onabort = () => {
+        db.close()
+        resolve(total)
+      }
+    }
+  })
+}
+
+async function appDataBytes(): Promise<number> {
+  if (typeof indexedDB === 'undefined' || !indexedDB.databases) return 0
+  const names = (await indexedDB.databases()).map(database => database.name ?? '').filter(name => name.startsWith(APP_DATABASE_PREFIX))
+  const sizes = await Promise.all(names.map(databaseBytes))
+  return sizes.reduce((sum, bytes) => sum + bytes, 0)
+}
+
 export async function storageBreakdown(): Promise<StorageBreakdown> {
-  const [models, media, estimate] = await Promise.all([
-    installedModels(),
-    listLocalMedia().catch(() => []),
-    navigator.storage?.estimate ? navigator.storage.estimate().catch(() => null) : Promise.resolve(null),
-  ])
+  const [models, media, appBytes] = await Promise.all([installedModels(), listLocalMedia().catch(() => []), appDataBytes().catch(() => 0)])
   const modelBytes = models.reduce((sum, model) => sum + model.bytes, 0)
   const mediaBytes = media.reduce((sum, item) => sum + item.size, 0)
-  const measured = estimate?.usage ?? null
-  const totalBytes = measured === null ? null : Math.max(measured, modelBytes + mediaBytes)
-  return { models, mediaBytes, appBytes: totalBytes === null ? 0 : totalBytes - modelBytes - mediaBytes, totalBytes }
+  return { models, mediaBytes, appBytes, totalBytes: modelBytes + mediaBytes + appBytes }
 }

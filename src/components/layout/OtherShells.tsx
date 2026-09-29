@@ -5,6 +5,7 @@ import { Icon } from '@/components/ui/Icon'
 import { Avatar, AvatarButton, RecentList, SyncPill, UsageLine } from '@/components/layout/Chrome'
 import { useCounts } from '@/components/layout/ReaderShell'
 import { Crumbs, UpButton } from '@/components/library/Crumbs'
+import { SHARING_TITLES } from '@/components/library/SharingLists'
 import { useViewRoute } from '@/hooks/use-view-route'
 import { paths, type View } from '@/lib/paths'
 import { useAccountStore } from '@/stores/account'
@@ -41,6 +42,8 @@ export function ColumnsShell({ children }: { children: ReactNode }) {
           {nav('review', 'warn', 'Para revisar', paths.review, counts.review)}
           {nav('favorites', 'star', 'Favoritos', paths.favorites, counts.favorites)}
           {nav('trash', 'trash', 'Lixeira', paths.trash, counts.trash)}
+          {nav('shares', 'link', SHARING_TITLES.shares, paths.shares, counts.shares)}
+          {nav('sharedWithMe', 'user', SHARING_TITLES.sharedWithMe, paths.sharedWithMe, counts.sharedWithMe)}
           <button className="nv" onClick={() => ui.open({ kind: 'media' })}>
             <Icon name="mic" />
             Mídias

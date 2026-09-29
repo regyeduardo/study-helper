@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useState } from 'react'
 
 import type { AiProviderId, AiSettings, LayoutId, Settings, TranscriptionEngine } from '@/types/domain'
+import { FreeMinutes } from '@/components/dialogs/FreeMinutes'
 import { IntegrationStatus } from '@/components/dialogs/IntegrationStatus'
 import { Icon } from '@/components/ui/Icon'
 import { listModelsController } from '@/controllers/ai.controller'
+import { useFreeMinutes } from '@/hooks/use-free-minutes'
 import { isFreeChoice, modelOf, PROVIDERS, type ProviderInfo, providerOf } from '@/lib/ai/providers'
 import { DEFAULT_STORAGE_LIMIT_BYTES } from '@/lib/defaults'
 import { currentDevice } from '@/lib/device'
@@ -225,12 +227,13 @@ function TranscriptionTab() {
   const updateSettings = useLibraryStore(state => state.updateSettings)
   const transcription = settings.transcription
   const set = (patch: Partial<typeof transcription>) => void updateSettings({ transcription: { ...transcription, ...patch } })
+  const freeMinutes = useFreeMinutes(null)
   return (
     <>
       <div className="field">
         <span className="lab">Transcrição de áudio e vídeo</span>
         <div className="opts" role="radiogroup">
-          {ENGINES.map(engine => (
+          {ENGINES.filter(engine => engine.id !== 'free' || freeMinutes.kind !== 'invite').map(engine => (
             <button key={engine.id} className="opt" role="radio" aria-checked={transcription.engine === engine.id} onClick={() => set({ engine: engine.id as TranscriptionEngine })}>
               <span className="radio" />
               <span>
@@ -243,6 +246,7 @@ function TranscriptionTab() {
           ))}
         </div>
       </div>
+      <FreeMinutes check={freeMinutes} />
       {transcription.engine === 'groq' && (
         <div className="field">
           <label htmlFor="groq-key">Chave da Groq</label>

@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 
-import type { FileType } from '@/types/domain'
+import type { Attempt, FileType, ShareKind, StoredQuestion } from '@/types/domain'
 import { isNarrowScreen } from '@/hooks/use-is-narrow'
 
 export type Overlay =
@@ -22,6 +22,8 @@ export type Overlay =
   | { kind: 'import' }
   | { kind: 'send-local' }
   | { kind: 'storage-limit' }
+  | { kind: 'share'; target: ShareKind; id: string }
+  | { kind: 'shared-exam'; title: string; questions: StoredQuestion[]; onRecord: (fields: Omit<Attempt, 'id' | 'createdAt' | 'deviceId'>) => void }
 
 export type SettingsTab = 'appearance' | 'ai' | 'transcription' | 'storage' | 'devices' | 'general' | 'others'
 

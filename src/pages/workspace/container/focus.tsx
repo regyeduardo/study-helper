@@ -8,6 +8,7 @@ import { FocusRow } from '@/components/library/FileRows'
 import { FilterChips, SortSelect } from '@/components/library/Filters'
 import { FolderTiles } from '@/components/library/FolderTiles'
 import { SelectionBar } from '@/components/library/SelectionBar'
+import { SHARING_TITLES, SharingView } from '@/components/library/SharingLists'
 import { TrashList } from '@/components/library/TrashList'
 import { useFileActions } from '@/components/library/use-file-actions'
 import { DocumentBody } from '@/components/reader/DocumentArticle'
@@ -17,6 +18,7 @@ import type { ViewRoute } from '@/hooks/use-view-route'
 import { paths } from '@/lib/paths'
 import { useLibraryStore } from '@/stores/library'
 import { type InspectorTab, useUiStore } from '@/stores/ui'
+import { formatBytes } from '@/utils/format'
 import { ContinueCard, QuickActions, reviewSentence, useHomeData, useScrollerRef, WelcomeEmpty } from '@/pages/workspace/container/shared'
 
 function Home() {
@@ -102,6 +104,8 @@ function Library({ route }: { route: ViewRoute }) {
         {pill(route.view === 'review', 'warn', 'Para revisar', paths.review)}
         {pill(route.view === 'favorites', 'star', 'Favoritos', paths.favorites)}
         {pill(route.view === 'trash', 'trash', 'Lixeira', paths.trash)}
+        {pill(route.view === 'shares', 'link', SHARING_TITLES.shares, paths.shares)}
+        {pill(route.view === 'sharedWithMe', 'user', SHARING_TITLES.sharedWithMe, paths.sharedWithMe)}
       </div>
       {data.browsing && (
         <div className="crumbs" style={{ fontSize: 14 }}>
@@ -113,7 +117,9 @@ function Library({ route }: { route: ViewRoute }) {
           </button>
         </div>
       )}
-      {route.view === 'trash' ? (
+      {route.view === 'shares' || route.view === 'sharedWithMe' ? (
+        <SharingView view={route.view} heading={false} />
+      ) : route.view === 'trash' ? (
         <TrashList />
       ) : (
         <>
@@ -142,7 +148,7 @@ function Library({ route }: { route: ViewRoute }) {
                       <div key={group.module?.id ?? 'root'} className="sect" style={{ marginTop: 14 }}>
                         {group.module && (
                           <h3>
-                            {group.module.name} <span className="ln" />
+                            {group.module.name} <span className="faint">{formatBytes(group.bytes)}</span> <span className="ln" />
                           </h3>
                         )}
                         {group.files.map((file, index) => (

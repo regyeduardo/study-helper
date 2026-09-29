@@ -2,7 +2,7 @@ import { marked } from 'marked'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 
-import type { Certainty, Question, StoredQuestion, UserAnswer } from '@/types/domain'
+import type { Attempt, Certainty, Question, StoredQuestion, UserAnswer } from '@/types/domain'
 import { Dialog } from '@/components/ui/Dialog'
 import { Icon } from '@/components/ui/Icon'
 import { CERTAINTY_LABELS, examStats, givenAnswerText, isAnswered, LETTERS, LEVEL_LABELS, questionFromStored, questionType, rightAnswerText, shuffleExam, statementLines, storedAnswer, summarizeExam } from '@/lib/exam'
@@ -206,6 +206,7 @@ interface ExamRunProps {
   sourceOf?: (storedId: string) => string | undefined
   diagnosisTarget?: DiagnosisTarget
   onRegenerate?: () => void
+  onRecord?: (fileId: string, fields: Omit<Attempt, 'id' | 'createdAt' | 'deviceId'>) => void | Promise<void>
 }
 
 function DiagnosisView({ title, missed, target, onBack }: { title: string; missed: MissedQuestion[]; target: DiagnosisTarget; onBack(): void }) {
@@ -320,9 +321,10 @@ function DiagnosisView({ title, missed, target, onBack }: { title: string; misse
   )
 }
 
-function ExamRun({ title, questions, sourceOf, diagnosisTarget, onRegenerate }: ExamRunProps) {
+export function ExamRun({ title, questions, sourceOf, diagnosisTarget, onRegenerate, onRecord }: ExamRunProps) {
   const ui = useUiStore()
-  const recordAttempt = useLibraryStore(state => state.recordAttempt)
+  const libraryRecord = useLibraryStore(state => state.recordAttempt)
+  const recordAttempt = onRecord ?? libraryRecord
   const oneAtATime = useLibraryStore(state => state.index.settings.examOneAtATime)
   const [seed, setSeed] = useState(0)
   const exam = useMemo(() => shuffleExam(questions.map(questionFromStored)), [questions, seed])

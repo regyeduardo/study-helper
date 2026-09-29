@@ -10,6 +10,8 @@ import type {
   Highlight,
   LibraryIndex,
   Settings,
+  SharedLink,
+  ShareRecord,
   Snapshot,
   StoredQuestion,
 } from '@/types/domain'
@@ -18,10 +20,12 @@ import { isKnownProvider, providerOf } from '@/lib/ai/providers'
 import { defaultIndex, newFileMeta, newFolderMeta, newSidecar } from '@/lib/defaults'
 import { currentDevice, stamp } from '@/lib/device'
 import { masteryOf } from '@/lib/exam'
+import { activeLinks } from '@/lib/share'
 import { newId, nowIso } from '@/lib/ids'
+import { type LocalMedia, listLocalMedia, watchLocalMedia } from '@/lib/recording/media-library'
 import { openDriveLibrary } from '@/lib/storage/hidden-migration'
 import { LocalRepository } from '@/lib/storage/local-repository'
-import type { Repository } from '@/lib/storage/repository'
+import type { Repository, StoredSize } from '@/lib/storage/repository'
 import type { TrackedTask } from '@/stores/jobs'
 import { readingMinutes, wordCount } from '@/utils/format'
 
@@ -45,6 +49,8 @@ interface LibraryState {
   index: LibraryIndex
   opened: Record<string, OpenedFile>
   openedAt: Record<string, number>
+  sizes: Record<string, StoredSize>
+  localMedia: LocalMedia[]
   connect(accountId: string, tokenProvider?: TokenProvider): Promise<void>
   applySnapshot(snapshot: Snapshot, changedFileIds?: string[]): void
   openFile(id: string): Promise<OpenedFile>
@@ -72,6 +78,10 @@ interface LibraryState {
   removeHighlight(id: string, highlightId: string): Promise<void>
   markOpened(id: string): void
   forgetCurrent(): Promise<void>
+  saveShare(share: ShareRecord): Promise<void>
+  dropShare(id: string): Promise<void>
+  rememberSharedLink(link: SharedLink): Promise<void>
+  pruneSharedLinks(): Promise<void>
 }
 
 function statsOf(content: string): Pick<FileMeta, 'words' | 'readingMinutes'> {
@@ -117,8 +127,21 @@ export const useLibraryStore = create<LibraryState>((set, get) => {
 
   const sidecarOf = async (id: string): Promise<FileSidecar> => get().opened[id]?.sidecar ?? (await repository().readSidecar(id))
 
+  const measure = (repo: Repository, fileIds?: string[]) =>
+    void repo.fileSizes(fileIds).then(
+      sizes => {
+        if (get().repo === repo) set(state => ({ sizes: fileIds ? { ...state.sizes, ...sizes } : sizes }))
+      },
+      () => undefined,
+    )
+
+  const refreshMedia = () => void listLocalMedia().then(localMedia => set({ localMedia }), () => undefined)
+
+  watchLocalMedia(refreshMedia)
+
   const saveSidecarOnly = async (sidecar: FileSidecar): Promise<FileSidecar> => {
     const saved = await repository().saveFile(sidecar)
+    measure(repository(), [saved.meta.id])
     replaceFile(saved.meta)
     set(state => (state.opened[saved.meta.id] ? { opened: { ...state.opened, [saved.meta.id]: { ...state.opened[saved.meta.id], sidecar: saved } } } : {}))
     return saved
@@ -141,9 +164,11 @@ export const useLibraryStore = create<LibraryState>((set, get) => {
     index: defaultIndex(),
     opened: {},
     openedAt: {},
+    sizes: {},
+    localMedia: [],
 
     connect: async (accountId, tokenProvider) => {
-      set({ repo: null, accountId, ready: false, loadError: null, hiddenPending: false, hiddenWarning: null, folders: [], files: [], opened: {}, openedAt: readOpened(accountId) })
+      set({ repo: null, accountId, ready: false, loadError: null, hiddenPending: false, hiddenWarning: null, folders: [], files: [], opened: {}, openedAt: readOpened(accountId), sizes: {} })
       let repo: Repository
       try {
         if (!tokenProvider) repo = new LocalRepository()
@@ -182,6 +207,9 @@ export const useLibraryStore = create<LibraryState>((set, get) => {
         for (const id of changedFileIds) delete opened[id]
         return { folders: snapshot.folders, files: snapshot.files, index: { ...defaultIndex(), ...snapshot.index, settings: withUsableAi({ ...defaultIndex().settings, ...snapshot.index.settings }) }, opened }
       })
+      const repo = get().repo
+      if (repo) measure(repo)
+      refreshMedia()
     },
 
     openFile: async id => {
@@ -197,6 +225,7 @@ export const useLibraryStore = create<LibraryState>((set, get) => {
       const meta = newFileMeta({ ...fields, ...statsOf(content) })
       const sidecar = newSidecar(meta)
       await repository().saveFile(sidecar, content)
+      measure(repository(), [meta.id])
       replaceFile(meta)
       set(state => ({ opened: { ...state.opened, [meta.id]: { content, sidecar } } }))
       return meta
@@ -206,6 +235,7 @@ export const useLibraryStore = create<LibraryState>((set, get) => {
       const sidecar = await sidecarOf(id)
       const next: FileSidecar = { ...sidecar, meta: { ...sidecar.meta, ...patch, ...statsOf(content), updated: stamp() } }
       const saved = await repository().saveFile(next, content)
+      measure(repository(), [id])
       const merged = await repository().readContent(id).catch(() => content)
       replaceFile(saved.meta)
       set(state => ({ opened: { ...state.opened, [id]: { content: merged, sidecar: saved } } }))
@@ -243,7 +273,9 @@ export const useLibraryStore = create<LibraryState>((set, get) => {
       set(state => {
         const opened = { ...state.opened }
         delete opened[id]
-        return { files: state.files.filter(file => file.id !== id), opened }
+        const sizes = { ...state.sizes }
+        delete sizes[id]
+        return { files: state.files.filter(file => file.id !== id), opened, sizes }
       })
     },
 
@@ -352,6 +384,27 @@ export const useLibraryStore = create<LibraryState>((set, get) => {
       } catch {
         return
       }
+    },
+
+    saveShare: async share => {
+      const index = get().index
+      await saveIndex({ ...index, shares: [share, ...index.shares.filter(item => item.id !== share.id)], updated: stamp() })
+    },
+
+    dropShare: async id => {
+      const index = get().index
+      await saveIndex({ ...index, shares: index.shares.filter(item => item.id !== id), updated: stamp() })
+    },
+
+    rememberSharedLink: async link => {
+      const index = get().index
+      await saveIndex({ ...index, sharedWithMe: activeLinks([link, ...index.sharedWithMe.filter(item => item.id !== link.id)]), updated: stamp() })
+    },
+
+    pruneSharedLinks: async () => {
+      const index = get().index
+      const kept = activeLinks(index.sharedWithMe)
+      if (kept.length !== index.sharedWithMe.length) await saveIndex({ ...index, sharedWithMe: kept, updated: stamp() })
     },
 
     forgetCurrent: async () => {

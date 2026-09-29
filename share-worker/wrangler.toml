@@ -1,0 +1,11 @@
+name = "study-helper-share"
+main = "index.js"
+compatibility_date = "2026-09-01"
+workers_dev = true
+
+[vars]
+ALLOWED_ORIGINS = "https://study.ryns.me,https://regyeduardo.github.io"
+
+[[r2_buckets]]
+binding = "BUCKET"
+bucket_name = "study-helper"

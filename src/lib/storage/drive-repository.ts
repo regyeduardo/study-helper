@@ -15,7 +15,7 @@ import {
   type TokenProvider,
   updateDriveFileController,
 } from '@/controllers/drive.controller'
-import { defaultIndex, newFileMeta, newSidecar } from '@/lib/defaults'
+import { defaultIndex, newAccountIndex, newFileMeta, newSidecar } from '@/lib/defaults'
 import { deleteDatabase, KeyValueStore } from '@/lib/storage/idb'
 import {
   bytesOf,
@@ -25,9 +25,10 @@ import {
   type Repository,
   StorageLimitError,
   type StorageUsage,
+  type StoredSize,
   type StoredSource,
 } from '@/lib/storage/repository'
-import { applyFieldChoices, hasTextConflict, joinHunks, mergeSidecar, mergeText } from '@/lib/sync/merge'
+import { applyFieldChoices, hasTextConflict, joinHunks, mergeKept, mergeSidecar, mergeText } from '@/lib/sync/merge'
 
 export const ROOT_NAME = '.sync-study-helper'
 export const INDEX_NAME = 'study-helper.json'
@@ -293,6 +294,20 @@ export class DriveRepository implements Repository {
     }
   }
 
+  async fileSizes(fileIds?: string[]): Promise<Record<string, StoredSize>> {
+    const sourceBytes = new Map<string, number>()
+    for (const file of this.sources.values()) {
+      const fileId = file.appProperties?.shId
+      if (fileId) sourceBytes.set(fileId, (sourceBytes.get(fileId) ?? 0) + Number(file.size ?? 0))
+    }
+    const sizes: Record<string, StoredSize> = {}
+    for (const fileId of fileIds ?? this.files.keys()) {
+      const entry = this.files.get(fileId)
+      if (entry) sizes[fileId] = { noteBytes: Number(entry.md?.size ?? 0) + Number(entry.sidecar?.size ?? 0), sourceBytes: sourceBytes.get(fileId) ?? 0 }
+    }
+    return sizes
+  }
+
   async heartbeat(device: DeviceRecord): Promise<void> {
     const existing = this.devices.get(device.id)
     const file = existing
@@ -400,7 +415,7 @@ export class DriveRepository implements Repository {
 
   private async loadIndex(): Promise<LibraryIndex> {
     if (!this.indexFile) {
-      const index = defaultIndex()
+      const index = newAccountIndex()
       await this.saveIndex(index)
       return index
     }
@@ -491,6 +506,8 @@ export class DriveRepository implements Repository {
       ...mine,
       tags: [...new Set([...mine.tags, ...(theirs.tags ?? []).filter(tag => !removedTags.has(tag))])],
       activities: [...byId.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
+      shares: mergeKept(base.value.shares ?? [], mine.shares, theirs.shares ?? []),
+      sharedWithMe: mergeKept(base.value.sharedWithMe ?? [], mine.sharedWithMe, theirs.sharedWithMe ?? []),
     }
   }
 

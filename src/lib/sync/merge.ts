@@ -156,6 +156,12 @@ function mergeById<T>(
   return merged
 }
 
+export function mergeKept<T extends { id: string }>(base: T[], mine: T[], theirs: T[]): T[] {
+  const mineIds = new Set(mine.map(item => item.id))
+  const removed = new Set(base.filter(item => !mineIds.has(item.id)).map(item => item.id))
+  return [...mine, ...theirs.filter(item => !mineIds.has(item.id) && !removed.has(item.id))]
+}
+
 export interface SidecarMerge {
   merged: FileSidecar
   conflicts: FieldConflict[]

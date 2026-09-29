@@ -9,6 +9,7 @@ import {
   type Repository,
   StorageLimitError,
   type StorageUsage,
+  type StoredSize,
   type StoredSource,
 } from '@/lib/storage/repository'
 
@@ -94,11 +95,23 @@ export class LocalRepository implements Repository {
     const index = await this.db.get<LibraryIndex>('index', INDEX_KEY)
     const estimate = navigator.storage?.estimate ? await navigator.storage.estimate() : null
     return {
-      appBytes: estimate?.usage ?? (await this.measuredBytes()),
+      appBytes: await this.measuredBytes(),
       limitBytes: index?.settings.storageLimitBytes ?? null,
       cloudUsedBytes: null,
       cloudTotalBytes: estimate?.quota ?? null,
     }
+  }
+
+  async fileSizes(fileIds?: string[]): Promise<Record<string, StoredSize>> {
+    const ids = fileIds ?? (await this.db.keys('files'))
+    const sizes: Record<string, StoredSize> = {}
+    await Promise.all(
+      ids.map(async fileId => {
+        const [content, sidecar] = await Promise.all([this.db.get<string>('contents', fileId), this.db.get<FileSidecar>('files', fileId)])
+        if (sidecar) sizes[fileId] = { noteBytes: bytesOf(content ?? '') + bytesOf(JSON.stringify(sidecar)), sourceBytes: 0 }
+      }),
+    )
+    return sizes
   }
 
   async pullChanges(): Promise<RemoteChanges> {
@@ -112,8 +125,8 @@ export class LocalRepository implements Repository {
   }
 
   private async measuredBytes(): Promise<number> {
-    const [contents, sidecars] = await Promise.all([this.db.all<string>('contents'), this.db.all<FileSidecar>('files')])
-    return contents.reduce((sum, text) => sum + bytesOf(text), 0) + bytesOf(JSON.stringify(sidecars))
+    const [contents, sidecars, sources] = await Promise.all([this.db.all<string>('contents'), this.db.all<FileSidecar>('files'), this.db.all<Blob>('sources')])
+    return contents.reduce((sum, text) => sum + bytesOf(text), 0) + bytesOf(JSON.stringify(sidecars)) + sources.reduce((sum, blob) => sum + blob.size, 0)
   }
 
   private async growthOf(sidecar: FileSidecar, content?: string): Promise<number> {

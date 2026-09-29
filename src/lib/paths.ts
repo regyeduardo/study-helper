@@ -6,6 +6,9 @@ export const paths = {
   favorites: '/favoritos',
   trash: '/lixeira',
   file: (id: string) => `/arquivo/${id}`,
+  shares: '/compartilhados',
+  sharedWithMe: '/compartilhados-comigo',
+  shared: (id: string) => `/shared/${id}`,
 }
 
-export type View = 'home' | 'folder' | 'review' | 'favorites' | 'trash' | 'doc'
+export type View = 'home' | 'folder' | 'review' | 'favorites' | 'trash' | 'doc' | 'shares' | 'sharedWithMe'

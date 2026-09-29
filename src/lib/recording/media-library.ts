@@ -9,6 +9,7 @@ export interface LocalMedia {
 }
 
 const INDEX_NAME = 'midias.json'
+const watchers = new Set<() => void>()
 
 async function root(): Promise<FileSystemDirectoryHandle> {
   return navigator.storage.getDirectory()
@@ -28,6 +29,11 @@ async function writeIndex(items: LocalMedia[]): Promise<void> {
   const writable = await handle.createWritable()
   await writable.write(JSON.stringify(items))
   await writable.close()
+  for (const watcher of watchers) watcher()
+}
+
+export function watchLocalMedia(watcher: () => void): void {
+  watchers.add(watcher)
 }
 
 let queue: Promise<unknown> = Promise.resolve()

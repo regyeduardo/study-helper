@@ -4,11 +4,13 @@ import { createRoot } from 'react-dom/client'
 import type { SourceStorage } from '@/types/domain'
 import { Dialog } from '@/components/ui/Dialog'
 import { Icon } from '@/components/ui/Icon'
+import { FreeMinutes } from '@/components/dialogs/FreeMinutes'
 import { IntegrationStatus } from '@/components/dialogs/IntegrationStatus'
 import { LimitedAiNotice } from '@/components/dialogs/LimitedAiNotice'
 import { FolderPicker } from '@/components/dialogs/SimpleDialogs'
 import { SourceStoragePicker } from '@/components/dialogs/SourceStoragePicker'
 import type { LitterboxTime } from '@/controllers/hosting.controller'
+import { useFreeMinutes } from '@/hooks/use-free-minutes'
 import {
   IntegrationCapture,
   type IntegrationDevice,
@@ -557,6 +559,7 @@ function RecordingDoneOptions({ place }: { place: 'dialog' | 'window' }) {
   const [folderId, setFolderId] = useState<string | null>(null)
   const [storage, setStorage] = useState<SourceStorage | null>(null)
   const [litterboxTime, setLitterboxTime] = useState<LitterboxTime>('72h')
+  const freeMinutes = useFreeMinutes(result?.file ?? null)
   if (!result) return null
   const driveAvailable = account.kind === 'google'
   const room = usage && limit ? limit - usage.appBytes : null
@@ -579,7 +582,7 @@ function RecordingDoneOptions({ place }: { place: 'dialog' | 'window' }) {
       <button className="btn quiet" onClick={later}>
         Só salvar
       </button>
-      <button className="btn primary" onClick={go}>
+      <button className="btn primary" disabled={freeMinutes.kind === 'ready' && freeMinutes.short} onClick={go}>
         Transcrever e gerar
       </button>
     </>
@@ -593,6 +596,7 @@ function RecordingDoneOptions({ place }: { place: 'dialog' | 'window' }) {
         <Icon name="check" />
         <span>A gravação já está guardada neste computador, em Mídias, e só sai de lá quando você apagar.</span>
       </div>
+      <FreeMinutes check={freeMinutes} />
       <LimitedAiNotice />
       <div className="field">
         <span className="lab">O que gerar</span>

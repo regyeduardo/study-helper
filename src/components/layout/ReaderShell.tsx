@@ -4,19 +4,24 @@ import { useNavigate } from 'react-router-dom'
 import { Icon } from '@/components/ui/Icon'
 import { AvatarButton, RecentList, SyncPill, UsageLine } from '@/components/layout/Chrome'
 import { Crumbs } from '@/components/library/Crumbs'
+import { SHARING_TITLES } from '@/components/library/SharingLists'
 import { useLiveLibrary } from '@/hooks/use-library-view'
 import { useViewRoute } from '@/hooks/use-view-route'
 import { REVIEW_BELOW } from '@/lib/file-types'
 import { paths, type View } from '@/lib/paths'
+import { activeLinks } from '@/lib/share'
 import { useLibraryStore } from '@/stores/library'
 import { useUiStore } from '@/stores/ui'
 
-const VIEW_NAME: Record<View, string> = { home: 'Início', folder: 'Biblioteca', review: 'Para revisar', favorites: 'Favoritos', trash: 'Lixeira', doc: 'Documento' }
+const VIEW_NAME: Record<View, string> = { home: 'Início', folder: 'Biblioteca', review: 'Para revisar', favorites: 'Favoritos', trash: 'Lixeira', doc: 'Documento', ...SHARING_TITLES }
 
 export function useCounts() {
   const { files } = useLiveLibrary()
   const trashCount = useLibraryStore(state => state.files.filter(file => file.deletedAt).length + state.folders.filter(folder => folder.deletedAt).length)
+  const index = useLibraryStore(state => state.index)
   return {
+    shares: index.shares.length,
+    sharedWithMe: activeLinks(index.sharedWithMe).length,
     library: files.length,
     review: files.filter(file => file.mastery !== null && file.mastery < REVIEW_BELOW).length,
     favorites: files.filter(file => file.favorite).length,
@@ -59,6 +64,8 @@ export function ReaderShell({ children, docActions }: { children: ReactNode; doc
           {nav('review', 'warn', 'Para revisar', paths.review, counts.review)}
           {nav('favorites', 'star', 'Favoritos', paths.favorites, counts.favorites)}
           {nav('trash', 'trash', 'Lixeira', paths.trash, counts.trash)}
+          {nav('shares', 'link', SHARING_TITLES.shares, paths.shares, counts.shares)}
+          {nav('sharedWithMe', 'user', SHARING_TITLES.sharedWithMe, paths.sharedWithMe, counts.sharedWithMe)}
           <button className="nv" onClick={() => ui.open({ kind: 'media' })}>
             <Icon name="mic" />
             Mídias

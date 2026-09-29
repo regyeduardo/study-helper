@@ -5,6 +5,7 @@ import { DRAG_FOLDER, useFileActions } from '@/components/library/use-file-actio
 import type { FolderTile } from '@/hooks/use-library-view'
 import { paths } from '@/lib/paths'
 import { useUiStore } from '@/stores/ui'
+import { formatBytes } from '@/utils/format'
 
 function plural(count: number, one: string, many: string): string {
   return `${count} ${count === 1 ? one : many}`
@@ -22,7 +23,7 @@ export function FolderTiles({ tiles }: { tiles: FolderTile[] }) {
         Pastas <span>{tiles.length}</span>
       </h3>
       <div className="tiles">
-        {tiles.map(({ folder, files, subfolders }) => (
+        {tiles.map(({ folder, files, subfolders, bytes }) => (
           <div
             key={folder.id}
             className="tile"
@@ -48,6 +49,7 @@ export function FolderTiles({ tiles }: { tiles: FolderTile[] }) {
             <span className="tile-m">
               {plural(files, 'arquivo', 'arquivos')}
               {subfolders ? ` · ${plural(subfolders, 'pasta', 'pastas')}` : ''}
+              {` · ${formatBytes(bytes)}`}
             </span>
             <button
               className="ibtn more"

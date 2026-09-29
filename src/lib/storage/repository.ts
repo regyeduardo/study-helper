@@ -8,6 +8,11 @@ export interface StorageUsage {
   cloudTotalBytes: number | null
 }
 
+export interface StoredSize {
+  noteBytes: number
+  sourceBytes: number
+}
+
 export interface StoredSource {
   ref: string
   url?: string
@@ -66,6 +71,7 @@ export interface Repository {
   getSource(ref: string): Promise<Blob>
   removeSource(ref: string): Promise<void>
   usage(): Promise<StorageUsage>
+  fileSizes(fileIds?: string[]): Promise<Record<string, StoredSize>>
   pullChanges(): Promise<RemoteChanges>
   setConflictResolver(resolver: ConflictResolver): void
   forget(): Promise<void>

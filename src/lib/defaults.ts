@@ -18,7 +18,12 @@ export function defaultSettings(): Settings {
 }
 
 export function defaultIndex(): LibraryIndex {
-  return { version: 1, settings: defaultSettings(), tags: [], activities: [], updated: stamp() }
+  return { version: 1, settings: defaultSettings(), tags: [], activities: [], shares: [], sharedWithMe: [], updated: stamp() }
+}
+
+export function newAccountIndex(): LibraryIndex {
+  const index = defaultIndex()
+  return { ...index, settings: { ...index.settings, transcription: { ...index.settings.transcription, engine: 'free' } } }
 }
 
 export function newFileMeta(fields: Partial<FileMeta> & { name: string; type: FileType }): FileMeta {

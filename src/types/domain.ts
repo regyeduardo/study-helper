@@ -191,7 +191,7 @@ export interface AiSettings {
   model: string
 }
 
-export type TranscriptionEngine = 'whisper' | 'parakeet' | 'groq' | 'puter'
+export type TranscriptionEngine = 'free' | 'whisper' | 'parakeet' | 'groq' | 'puter'
 
 export interface TranscriptionSettings {
   engine: TranscriptionEngine
@@ -221,11 +221,69 @@ export interface TrashEntry {
   deletedAt: string
 }
 
+export type ShareKind = 'file' | 'folder'
+
+export interface ShareRecord {
+  id: string
+  kind: ShareKind
+  itemId: string
+  title: string
+  bytes: number
+  withExams: boolean
+  createdAt: string
+  expiresAt: string
+}
+
+export interface SharedLink {
+  id: string
+  kind: ShareKind
+  title: string
+  openedAt: string
+  expiresAt: string
+}
+
+export interface SharedFolder {
+  id: string
+  name: string
+  parentId: string | null
+  position: number
+  isCourse: boolean
+  description: string
+}
+
+export interface SharedFile {
+  id: string
+  name: string
+  folderId: string | null
+  type: FileType
+  position: number
+  description: string
+  tags: string[]
+  content: string
+  questions: StoredQuestion[]
+}
+
+export interface ShareContent {
+  kind: ShareKind
+  title: string
+  folders: SharedFolder[]
+  files: SharedFile[]
+}
+
+export interface SharedItem extends ShareContent {
+  version: number
+  id: string
+  createdAt: string
+  expiresAt: string
+}
+
 export interface LibraryIndex {
   version: number
   settings: Settings
   tags: string[]
   activities: Activity[]
+  shares: ShareRecord[]
+  sharedWithMe: SharedLink[]
   updated: StampedChange
 }
 

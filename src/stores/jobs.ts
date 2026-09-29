@@ -216,7 +216,7 @@ export const useJobsStore = create<JobsState>((set, get) => {
         const stored = await storeSource(request.input.file, request.storage, meta.id, library().repo!, request.litterboxTime)
         await library().updateFile(meta.id, { origin: { ...resolved.origin, ...stored } as SourceMeta })
       } catch (error) {
-        await library().updateFile(meta.id, { origin: { ...resolved.origin, storage: 'none' } })
+        await library().updateFile(meta.id, { status: 'pending', origin: { ...resolved.origin, storage: 'none' } })
         throw new Error(`A aula não foi gerada porque a fonte não pôde ser guardada: ${failureText(error)}`)
       }
     }

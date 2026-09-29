@@ -11,6 +11,7 @@ import { EmptyList } from '@/components/library/EmptyList'
 import { CommandsRow } from '@/components/library/FileRows'
 import { FolderTiles } from '@/components/library/FolderTiles'
 import { SelectionBar } from '@/components/library/SelectionBar'
+import { SHARING_TITLES, SharingView } from '@/components/library/SharingLists'
 import { TrashList } from '@/components/library/TrashList'
 import { useFileActions } from '@/components/library/use-file-actions'
 import { DocumentBody, DocumentHead } from '@/components/reader/DocumentArticle'
@@ -23,6 +24,7 @@ import { FILE_TYPES, typeInfo } from '@/lib/file-types'
 import { paths, type View } from '@/lib/paths'
 import { useLibraryStore } from '@/stores/library'
 import { type GroupKey, type SortKey, useUiStore } from '@/stores/ui'
+import { formatBytes } from '@/utils/format'
 import { useScrollerRef } from '@/pages/workspace/container/shared'
 
 function FilterBar() {
@@ -190,7 +192,9 @@ function Table({ route }: { route: ViewRoute }) {
           <div className="gh">
             <Icon name="layers" />
             {group.module.name}
-            <span className="faint">{group.files.length}</span>
+            <span className="faint">
+              {group.files.length} · {formatBytes(group.bytes)}
+            </span>
           </div>
         )}
         {rows(group.files, true)}
@@ -387,6 +391,8 @@ export function CommandsWorkspace({ route }: { route: ViewRoute }) {
         {tab('review', 'Para revisar', paths.review, counts.review)}
         {tab('favorites', 'Favoritos', paths.favorites, counts.favorites)}
         {tab('trash', 'Lixeira', paths.trash, counts.trash)}
+        {tab('shares', SHARING_TITLES.shares, paths.shares, counts.shares)}
+        {tab('sharedWithMe', SHARING_TITLES.sharedWithMe, paths.sharedWithMe, counts.sharedWithMe)}
         {data.browsing && (
           <button className="btn quiet" onClick={() => ui.open({ kind: 'new-folder', parentId: effective.folderId })}>
             <Icon name="folder" />
@@ -411,9 +417,15 @@ export function CommandsWorkspace({ route }: { route: ViewRoute }) {
           Configurações
         </button>
       </nav>
-      {view !== 'trash' && <FilterBar />}
+      {view !== 'trash' && view !== 'shares' && view !== 'sharedWithMe' && <FilterBar />}
       <div className="body">
-        <Table route={effective} />
+        {view === 'shares' || view === 'sharedWithMe' ? (
+          <div className="tbl" style={{ padding: 12 }}>
+            <SharingView view={view} heading={false} />
+          </div>
+        ) : (
+          <Table route={effective} />
+        )}
         {ui.peekId && <Peek fileId={ui.peekId} />}
         {ui.selection.size > 0 && (
           <div className="floatbar">

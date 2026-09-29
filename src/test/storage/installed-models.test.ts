@@ -36,6 +36,21 @@ function putParakeet(key: string, bytes: number): Promise<void> {
   })
 }
 
+function putAppData(database: string, store: string, key: string, value: unknown): Promise<void> {
+  return new Promise(resolve => {
+    const request = indexedDB.open(database, 1)
+    request.onupgradeneeded = () => request.result.createObjectStore(store)
+    request.onsuccess = () => {
+      const transaction = request.result.transaction(store, 'readwrite')
+      transaction.objectStore(store).put(value, key)
+      transaction.oncomplete = () => {
+        request.result.close()
+        resolve()
+      }
+    }
+  })
+}
+
 beforeEach(() => {
   stores = new Map()
   vi.stubGlobal('caches', {
@@ -51,10 +66,12 @@ beforeEach(() => {
 
 afterEach(async () => {
   vi.unstubAllGlobals()
-  await new Promise(resolve => {
-    const request = indexedDB.deleteDatabase('parakeet-cache-db')
-    request.onsuccess = request.onerror = request.onblocked = resolve
-  })
+  for (const { name } of await indexedDB.databases()) {
+    await new Promise(resolve => {
+      const request = indexedDB.deleteDatabase(name!)
+      request.onsuccess = request.onerror = request.onblocked = resolve
+    })
+  }
 })
 
 describe('installed models', () => {
@@ -81,19 +98,22 @@ describe('installed models', () => {
     expect((await indexedDB.databases()).map(database => database.name)).not.toContain('parakeet-cache-db')
   })
 
-  it('splits what the app takes into models, recordings and the rest', async () => {
+  it('splits what the app takes into models, recordings and the app data it measures itself', async () => {
     const transformers = new FakeCache()
     transformers.entries.set('https://huggingface.co/onnx-community/whisper-small/resolve/main/x.onnx', 60_000)
     stores.set('transformers-cache', transformers)
+    await putAppData('study-helper-local', 'contents', 'nota', 'a'.repeat(30_000))
+    await putAppData('study-helper-render-cache', 'cache', 'fonte', new Uint8Array(2_000))
     expect(await storageBreakdown()).toEqual({ models: [{ id: 'whisper', name: 'Whisper', bytes: 60_000 }], mediaBytes: 8_000, appBytes: 32_000, totalBytes: 100_000 })
   })
 
-  it('never shows a total smaller than the parts, when the browser reports it late', async () => {
-    Object.defineProperty(navigator, 'storage', { configurable: true, value: { estimate: async () => ({ usage: 1_000 }) } })
-    const transformers = new FakeCache()
-    transformers.entries.set('https://huggingface.co/onnx-community/whisper-small/resolve/main/x.onnx', 60_000)
-    stores.set('transformers-cache', transformers)
-    expect(await storageBreakdown()).toMatchObject({ mediaBytes: 8_000, appBytes: 0, totalBytes: 68_000 })
+  it('ignores the inflated number the browser reports for the whole profile', async () => {
+    Object.defineProperty(navigator, 'storage', { configurable: true, value: { estimate: async () => ({ usage: 7 * 1024 ** 3 }), persisted: async () => true } })
+    await putAppData('study-helper-drive-acc', 'cache', 'md:1', { md5: 'x', value: 'b'.repeat(10_000) })
+    await putAppData('other-site-db', 'store', 'k', 'c'.repeat(90_000))
+    const breakdown = await storageBreakdown()
+    expect(breakdown.appBytes).toBe(JSON.stringify({ md5: 'x', value: 'b'.repeat(10_000) }).length)
+    expect(breakdown.totalBytes).toBe(breakdown.appBytes + breakdown.mediaBytes)
   })
 
   it('deletes only the chosen model', async () => {
