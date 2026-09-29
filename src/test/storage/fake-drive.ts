@@ -12,7 +12,10 @@ export interface FakeFile {
   modifiedTime: string
   appProperties?: Record<string, string>
   content?: string
+  space?: 'drive' | 'appDataFolder'
 }
+
+export const HIDDEN_ROOT = 'appdata-root'
 
 export interface RecordedRequest {
   method: string
@@ -54,6 +57,8 @@ export class FakeDrive {
   requests: RecordedRequest[] = []
   quota: { limit?: string; usage?: string } = { limit: '16106127360', usage: '5368709120' }
   queuedStatuses: number[] = []
+  appDataGranted = false
+  driveFileGranted = true
   private readonly sessions = new Map<string, { metadata: Record<string, unknown>; length: number }>()
   private clock = Date.parse('2026-01-01T00:00:00.000Z')
   private seq = 0
@@ -85,7 +90,9 @@ export class FakeDrive {
   }
 
   add(fields: Partial<FakeFile> & { name: string }): FakeFile {
-    const file: FakeFile = { id: `f${++this.seq}`, mimeType: 'application/octet-stream', parents: [], modifiedTime: this.tick(), ...fields }
+    const hidden = fields.parents?.includes('appDataFolder') || fields.parents?.includes(HIDDEN_ROOT) || fields.parents?.some(parent => this.files.get(parent)?.space === 'appDataFolder')
+    const parents = (fields.parents ?? []).map(parent => (parent === 'appDataFolder' ? HIDDEN_ROOT : parent))
+    const file: FakeFile = { id: `f${++this.seq}`, mimeType: 'application/octet-stream', modifiedTime: this.tick(), ...fields, parents, space: hidden ? 'appDataFolder' : 'drive' }
     this.files.set(file.id, file)
     return file
   }
@@ -94,6 +101,14 @@ export class FakeDrive {
     const file = this.files.get(id)!
     file.content = content
     file.modifiedTime = this.tick()
+  }
+
+  hiddenFiles(): FakeFile[] {
+    return [...this.files.values()].filter(file => file.space === 'appDataFolder')
+  }
+
+  visibleFiles(): FakeFile[] {
+    return [...this.files.values()].filter(file => file.space !== 'appDataFolder')
   }
 
   root(): FakeFile | undefined {
@@ -153,14 +168,20 @@ export class FakeDrive {
 
     if (method === 'GET' && path === '/drive/v3/about') return json({ storageQuota: this.quota })
 
+    const denied = () => json({ error: { code: 403, message: 'Request had insufficient authentication scopes.', errors: [{ reason: 'insufficientPermissions' }], status: 'PERMISSION_DENIED' } }, 403)
+
     if (method === 'GET' && path === '/drive/v3/files') {
-      return json({ files: [...this.files.values()].map(file => this.meta(file)) })
+      const space = search.get('spaces') ?? 'drive'
+      if (space === 'appDataFolder' && !this.appDataGranted) return denied()
+      if (space === 'drive' && !this.driveFileGranted) return denied()
+      return json({ files: [...this.files.values()].filter(file => (file.space ?? 'drive') === space).map(file => this.meta(file)) })
     }
 
     const fileMatch = /^\/(upload\/)?drive\/v3\/files\/([^/]+)$/.exec(path)
 
     if (method === 'POST' && path === '/drive/v3/files') {
       const body = JSON.parse(String(init.body)) as { name: string; mimeType: string; parents?: string[]; appProperties?: Record<string, string> }
+      if (body.parents?.includes('appDataFolder') && !this.appDataGranted) return denied()
       const file = this.add({ name: body.name, mimeType: body.mimeType, parents: body.parents ?? [], appProperties: body.appProperties })
       return json(this.meta(file))
     }

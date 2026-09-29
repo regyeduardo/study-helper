@@ -22,7 +22,7 @@ export type JobStatus = 'running' | 'done' | 'error' | 'cancelled'
 
 export interface Job {
   id: string
-  kind: 'generation' | 'questions' | 'course' | 'transcription'
+  kind: 'generation' | 'questions' | 'course' | 'transcription' | 'sync'
   title: string
   fileId: string | null
   status: JobStatus
@@ -65,6 +65,13 @@ interface JobsState {
   readingExam(content: string, title: string): Promise<StoredQuestion[]>
   cancel(jobId: string): void
   dismiss(jobId: string): void
+  trackTask(title: string): TrackedTask
+}
+
+export interface TrackedTask {
+  update(message: string, fraction: number | null): void
+  done(message: string): void
+  fail(error: string): void
 }
 
 const controllers = new Map<string, AbortController>()
@@ -423,6 +430,14 @@ export const useJobsStore = create<JobsState>((set, get) => {
       }
     },
 
+    trackTask: title => {
+      const { job } = openJob('sync', title, null)
+      return {
+        update: (message, fraction) => patchJob(job.id, { message, fraction }),
+        done: message => closeJob(job.id, 'done', message),
+        fail: error => closeJob(job.id, 'error', 'Não terminou', error),
+      }
+    },
     cancel: jobId => {
       controllers.get(jobId)?.abort()
     },

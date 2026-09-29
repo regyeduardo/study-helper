@@ -650,3 +650,4 @@ input.lib-search{width:220px}
 .mini-rec .toggles .btn[aria-pressed="false"]{color:var(--fg-muted)}
 body.floating-recorder{margin:0;background:var(--bg);color:var(--fg);font:14px/1.45 system-ui,sans-serif}
 body.floating-recorder .mini-rec{position:static;width:auto;max-height:none;border:0;border-radius:0;box-shadow:none;min-height:100vh}
+.reconnect-bar.notice{z-index:30}

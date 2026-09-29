@@ -1,7 +1,8 @@
 import { env } from '@/lib/env'
 
 export const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file'
-const SCOPES = `${DRIVE_SCOPE} openid email profile`
+export const HIDDEN_SCOPE = 'https://www.googleapis.com/auth/drive.appdata'
+const SCOPES = HIDDEN_SCOPE
 
 export interface GoogleToken {
   accessToken: string
@@ -113,10 +114,10 @@ function popupMessage(error: { type?: string; message?: string }): string {
   return error.message ?? 'O login do Google falhou.'
 }
 
+const MISSING_HIDDEN_FOLDER = 'O Google não liberou a pasta do app no seu Drive; sem ela o app não tem onde guardar. Entre de novo e confirme o acesso.'
+
 function checkDriveScope(scope: string | undefined): void {
-  if (scope && !scope.split(' ').includes(DRIVE_SCOPE)) {
-    throw new GoogleAuthError('Na tela do Google, marque a caixa que dá acesso ao Google Drive; sem ela o app não tem onde guardar.')
-  }
+  if (scope && !scope.split(' ').includes(HIDDEN_SCOPE)) throw new GoogleAuthError(MISSING_HIDDEN_FOLDER)
 }
 
 async function callAuthWorker(path: '/token' | '/refresh', payload: Record<string, string>): Promise<WorkerTokenResponse> {
@@ -183,8 +184,8 @@ export async function requestGoogleTokenController(options: { prompt: '' | 'cons
           reject(new GoogleAuthError(response.error_description || 'O Google não liberou o acesso.'))
           return
         }
-        if (response.scope && !response.scope.split(' ').includes(DRIVE_SCOPE)) {
-          reject(new GoogleAuthError('Na tela do Google, marque a caixa que dá acesso ao Google Drive; sem ela o app não tem onde guardar.'))
+        if (response.scope && !response.scope.split(' ').includes(HIDDEN_SCOPE)) {
+          reject(new GoogleAuthError(MISSING_HIDDEN_FOLDER))
           return
         }
         resolve({ accessToken: response.access_token, expiresAt: Date.now() + (response.expires_in ?? 3600) * 1000 })
@@ -196,11 +197,12 @@ export async function requestGoogleTokenController(options: { prompt: '' | 'cons
 }
 
 export async function getGoogleProfileController(accessToken: string): Promise<GoogleProfile> {
-  const response = await fetch(`${env.googleApiBase}/oauth2/v3/userinfo`, { headers: { Authorization: `Bearer ${accessToken}` } })
+  const fields = new URLSearchParams({ fields: 'user(displayName,emailAddress,photoLink,permissionId)' })
+  const response = await fetch(`${env.googleApiBase}/drive/v3/about?${fields}`, { headers: { Authorization: `Bearer ${accessToken}` } })
   if (!response.ok) throw new GoogleAuthError('Não consegui ler o seu perfil do Google.')
-  const body = (await response.json()) as Partial<GoogleProfile>
-  if (!body.sub) throw new GoogleAuthError('O Google não devolveu a sua conta.')
-  return { sub: body.sub, name: body.name ?? body.email ?? 'Conta Google', email: body.email ?? '', picture: body.picture ?? '' }
+  const user = ((await response.json()) as { user?: { displayName?: string; emailAddress?: string; photoLink?: string; permissionId?: string } }).user
+  if (!user?.permissionId) throw new GoogleAuthError('O Google não devolveu a sua conta.')
+  return { sub: user.permissionId, name: user.displayName ?? user.emailAddress ?? 'Conta Google', email: user.emailAddress ?? '', picture: user.photoLink ?? '' }
 }
 
 export async function revokeGoogleTokenController(accessToken: string): Promise<void> {

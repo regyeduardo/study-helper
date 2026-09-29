@@ -6,9 +6,11 @@ import {
   downloadDriveBlobController,
   downloadDriveTextController,
   type DriveFile,
+  type DriveSpace,
   FOLDER_MIME,
   getDriveFileController,
   getDriveQuotaController,
+  HIDDEN_SPACE_PARENT,
   listDriveFilesController,
   type TokenProvider,
   updateDriveFileController,
@@ -69,6 +71,8 @@ function jsonBlob(value: unknown): Blob {
   return new Blob([JSON.stringify(value, null, 2)], { type: JSON_TYPE })
 }
 
+const retiredVisibleFolders = new Set<string>()
+
 export class DriveRepository implements Repository {
   readonly kind = 'drive' as const
   private readonly db: KeyValueStore
@@ -83,12 +87,50 @@ export class DriveRepository implements Repository {
   private devices = new Map<string, DriveFile>()
   private sources = new Map<string, DriveFile>()
   private listing: DriveFile[] = []
+  unlimited = false
 
   constructor(
     readonly accountId: string,
     private readonly token: TokenProvider,
+    readonly space: DriveSpace = 'drive',
   ) {
     this.db = new KeyValueStore(`study-helper-drive-${accountId}`)
+  }
+
+  async exists(): Promise<boolean> {
+    const listing = await listDriveFilesController(this.token, 'trashed=false', this.space)
+    return Boolean(this.findRoot(listing))
+  }
+
+  async removeEverything(): Promise<void> {
+    if (!this.rootId) await this.ensureRoot()
+    await deleteDriveFileController(this.token, this.rootId)
+    this.rootId = ''
+    if (this.space === 'drive') retiredVisibleFolders.add(this.accountId)
+  }
+
+  sourceRefFor(fileId: string): string | null {
+    return [...this.sources.values()].find(file => file.appProperties?.shId === fileId)?.id ?? null
+  }
+
+  sourceChecksum(ref: string): string | null {
+    return this.sources.get(ref)?.md5Checksum ?? null
+  }
+
+  async contentFromDrive(fileId: string): Promise<string | null> {
+    const md = this.files.get(fileId)?.md
+    return md ? downloadDriveTextController(this.token, md.id) : null
+  }
+
+  async sidecarFromDrive(fileId: string): Promise<FileSidecar | null> {
+    const file = this.files.get(fileId)?.sidecar
+    if (!file) return null
+    const sidecar = JSON.parse(await downloadDriveTextController(this.token, file.id)) as FileSidecar
+    return this.withTreeFacts(fileId, { ...sidecar, questions: sidecar.questions ?? [], attempts: sidecar.attempts ?? [], highlights: sidecar.highlights ?? [] })
+  }
+
+  async indexFromDrive(): Promise<LibraryIndex | null> {
+    return this.indexFile ? { ...defaultIndex(), ...(JSON.parse(await downloadDriveTextController(this.token, this.indexFile.id)) as LibraryIndex) } : null
   }
 
   setConflictResolver(resolver: ConflictResolver): void {
@@ -284,11 +326,18 @@ export class DriveRepository implements Repository {
     await deleteDatabase(`study-helper-drive-${this.accountId}`)
   }
 
+  private findRoot(listing: DriveFile[]): DriveFile | undefined {
+    const tagged = listing.find(file => kindOf(file) === 'root')
+    if (tagged || this.space === 'appDataFolder') return tagged
+    return listing.find(file => file.name === ROOT_NAME && file.mimeType === FOLDER_MIME && !file.parents?.some(parent => listing.some(other => other.id === parent)))
+  }
+
   private async ensureRoot(): Promise<void> {
-    this.listing = await listDriveFilesController(this.token, 'trashed=false')
-    let root = this.listing.find(file => kindOf(file) === 'root' || (file.name === ROOT_NAME && file.mimeType === FOLDER_MIME && !file.parents?.some(parent => this.listing.some(other => other.id === parent))))
+    this.listing = await listDriveFilesController(this.token, 'trashed=false', this.space)
+    let root = this.findRoot(this.listing)
+    if (!root && this.space === 'drive' && retiredVisibleFolders.has(this.accountId)) throw new Error('A biblioteca mudou para a pasta oculta do Drive; recarregue a página.')
     if (!root) {
-      root = await createDriveFolderController(this.token, ROOT_NAME, null, { shKind: 'root', shId: 'root' })
+      root = await createDriveFolderController(this.token, ROOT_NAME, this.space === 'appDataFolder' ? HIDDEN_SPACE_PARENT : null, { shKind: 'root', shId: 'root' })
       this.listing.push(root)
     }
     this.rootId = root.id
@@ -516,7 +565,7 @@ export class DriveRepository implements Repository {
   }
 
   private async ensureRoom(growth: number): Promise<void> {
-    if (growth <= 0) return
+    if (growth <= 0 || this.unlimited) return
     const index = (await this.db.get<Cached<LibraryIndex>>('cache', 'index'))?.value
     const limit = index?.settings.storageLimitBytes ?? null
     if (limit === null) return

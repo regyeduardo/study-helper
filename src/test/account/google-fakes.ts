@@ -2,7 +2,7 @@ import { vi } from 'vitest'
 
 export const WORKER = 'https://auth.example.workers.dev'
 export const API = 'https://api.example.test'
-export const DRIVE = 'https://www.googleapis.com/auth/drive.file'
+export const DRIVE = 'https://www.googleapis.com/auth/drive.appdata'
 
 export interface Profile {
   sub: string
@@ -70,10 +70,10 @@ export function installFetch(): WorkerFake {
     fake.calls.push({ url, body })
     if (url === `${WORKER}/token`) return new Response(JSON.stringify(fake.tokenReply))
     if (url === `${WORKER}/refresh`) return new Response(JSON.stringify(fake.refreshReply), { status: fake.refreshReply.error ? 400 : 200 })
-    if (url === `${API}/oauth2/v3/userinfo`) {
+    if (url.startsWith(`${API}/drive/v3/about?`)) {
       const token = (init?.headers as Record<string, string>).Authorization.replace('Bearer ', '')
       const profile = fake.profiles[token]
-      return profile ? new Response(JSON.stringify(profile)) : new Response('{}', { status: 401 })
+      return profile ? new Response(JSON.stringify({ user: { permissionId: profile.sub, displayName: profile.name, emailAddress: profile.email, photoLink: profile.picture } })) : new Response('{}', { status: 401 })
     }
     return new Response('not found', { status: 404 })
   })

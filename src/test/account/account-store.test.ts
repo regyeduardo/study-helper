@@ -167,7 +167,7 @@ describe('durable login with the auth worker', () => {
 
   it('refuses a login without the Drive permission', async () => {
     google.nextCode = { code: 'auth-code', scope: 'openid email profile' }
-    await expect(useAccountStore.getState().addGoogleAccount()).rejects.toThrow(/acesso ao Google Drive/)
+    await expect(useAccountStore.getState().addGoogleAccount()).rejects.toThrow(/pasta do app no seu Drive/)
     expect(useAccountStore.getState().accounts).toEqual([LOCAL_ACCOUNT])
   })
 })
@@ -181,7 +181,7 @@ describe('legacy token flow without the auth worker', () => {
     const added = await useAccountStore.getState().addGoogleAccount()
     expect(google.codeConfigs).toHaveLength(0)
     expect(google.tokenRequests).toEqual([{ prompt: 'select_account', login_hint: undefined }])
-    expect(server.calls.map(call => call.url)).toEqual(['https://api.example.test/oauth2/v3/userinfo'])
+    expect(server.calls.map(call => call.url)).toEqual(['https://api.example.test/drive/v3/about?fields=user%28displayName%2CemailAddress%2CphotoLink%2CpermissionId%29'])
     expect(added.token?.accessToken).toBe('popup-token')
     expect(added.token?.refreshToken).toBeUndefined()
     expect(useAccountStore.getState().reconnectId).toBeNull()
@@ -222,6 +222,20 @@ describe('multiple accounts', () => {
     useAccountStore.getState().switchTo(LOCAL_ACCOUNT_ID)
     expect(useAccountStore.getState().active()).toEqual(LOCAL_ACCOUNT)
     expect(savedAccounts().map(item => item.id)).toEqual(['sub-ana', 'sub-bruno'])
+  })
+
+  it('asks Google only for the app hidden folder, so there is no checkbox to forget', async () => {
+    await useAccountStore.getState().addGoogleAccount()
+    expect(google.codeConfigs[0].scope).toBe('https://www.googleapis.com/auth/drive.appdata')
+  })
+
+  it('keeps the id of an account saved before, now that Google identifies it through Drive', async () => {
+    seedGoogle({ id: 'sub-ana-antigo', token: { accessToken: 'old', expiresAt: 0, refreshToken: 'refresh-kept' } })
+    server.profiles['access-1'] = { ...ANA, sub: 'permission-ana' }
+    const added = await useAccountStore.getState().addGoogleAccount()
+    expect(added.id).toBe('sub-ana-antigo')
+    expect(useAccountStore.getState().accounts.map(item => item.id)).toEqual([LOCAL_ACCOUNT_ID, 'sub-ana-antigo'])
+    expect(account('sub-ana-antigo')?.token?.refreshToken).toBe('refresh-1')
   })
 
   it('does not duplicate an account that logs in again', async () => {

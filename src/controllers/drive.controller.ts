@@ -5,6 +5,10 @@ export const FOLDER_MIME = 'application/vnd.google-apps.folder'
 
 export type TokenProvider = (options?: { force?: boolean }) => Promise<string>
 
+export type DriveSpace = 'drive' | 'appDataFolder'
+
+export const HIDDEN_SPACE_PARENT = 'appDataFolder'
+
 export interface DriveFile {
   id: string
   name: string
@@ -77,7 +81,17 @@ function driveMessage(status: number, body: string): string {
   return `O Google Drive recusou o pedido (${status}${reason ? `, ${reason}` : ''})${message ? `: ${message}` : '.'}`
 }
 
-export async function listDriveFilesController(token: TokenProvider, query: string): Promise<DriveFile[]> {
+export async function hasAppDataAccessController(token: TokenProvider): Promise<boolean> {
+  try {
+    await call(token, `/drive/v3/files?${new URLSearchParams({ spaces: 'appDataFolder', pageSize: '1', fields: 'files(id)' })}`)
+    return true
+  } catch (error) {
+    if (error instanceof DriveError && error.status === 403) return false
+    throw error
+  }
+}
+
+export async function listDriveFilesController(token: TokenProvider, query: string, space: DriveSpace = 'drive'): Promise<DriveFile[]> {
   const files: DriveFile[] = []
   let pageToken = ''
   do {
@@ -85,7 +99,7 @@ export async function listDriveFilesController(token: TokenProvider, query: stri
       q: query,
       fields: `nextPageToken,files(${FILE_FIELDS})`,
       pageSize: '1000',
-      spaces: 'drive',
+      spaces: space,
     })
     if (pageToken) params.set('pageToken', pageToken)
     const response = await call(token, `/drive/v3/files?${params}`)

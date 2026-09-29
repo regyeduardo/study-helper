@@ -127,9 +127,9 @@ export const useAccountStore = create<AccountState>((set, get) => {
       const durable = isDurableLoginConfigured()
       const granted = durable ? await requestGoogleCodeController({ selectAccount: true }) : await requestGoogleTokenController({ prompt: 'select_account' })
       const profile = await getGoogleProfileController(granted.accessToken)
-      const previous = get().accounts.find(item => item.id === profile.sub)
+      const previous = get().accounts.find(item => item.kind === 'google' && (item.id === profile.sub || (profile.email !== '' && item.email === profile.email)))
       const token = keepRefreshToken(granted, previous?.token)
-      const account: Account = { id: profile.sub, kind: 'google', name: profile.name, email: profile.email, picture: profile.picture, token }
+      const account: Account = { id: previous?.id ?? profile.sub, kind: 'google', name: profile.name, email: profile.email, picture: profile.picture, token }
       const others = get().accounts.filter(item => item.id !== account.id)
       const next = [...others, account]
       const missingOffline = durable && !token.refreshToken

@@ -3,6 +3,7 @@ import { Outlet, useNavigate } from 'react-router-dom'
 
 import { Overlays } from '@/components/dialogs/Overlays'
 import { ItemMenu } from '@/components/library/ItemMenu'
+import { Icon } from '@/components/ui/Icon'
 import { Toasts } from '@/components/ui/Toasts'
 import { paths } from '@/lib/paths'
 import { useAccountStore } from '@/stores/account'
@@ -41,12 +42,13 @@ export function useShortcuts() {
 export default function App() {
   const account = useAccountStore(state => state.active())
   const tokenFor = useAccountStore(state => state.tokenFor)
-  const { ready, loadError, connect } = useLibraryStore()
+  const { ready, loadError, connect, hiddenPending, hiddenWarning } = useLibraryStore()
   const reauthorize = useAccountStore(state => state.reauthorize)
   const reconnectId = useAccountStore(state => state.reconnectId)
   const reconnectMessage = useAccountStore(state => state.reconnectMessage)
   const [reauthError, setReauthError] = useState<string | null>(null)
   const [reconnecting, setReconnecting] = useState(false)
+  const [hiddenNoticeClosed, setHiddenNoticeClosed] = useState(false)
   const startSync = useSyncStore(state => state.start)
   const stopSync = useSyncStore(state => state.stop)
   useShortcuts()
@@ -71,6 +73,21 @@ export default function App() {
     try {
       await reauthorize(account.id)
       if (useLibraryStore.getState().loadError) await connect(account.id, tokenProvider)
+      startSync()
+    } catch (error) {
+      setReauthError(error instanceof Error ? error.message : 'O login falhou.')
+    } finally {
+      setReconnecting(false)
+    }
+  }
+
+  const authorizeHidden = async () => {
+    setReauthError(null)
+    setReconnecting(true)
+    try {
+      await reauthorize(account.id)
+      stopSync()
+      await connect(account.id, tokenProvider)
       startSync()
     } catch (error) {
       setReauthError(error instanceof Error ? error.message : 'O login falhou.')
@@ -112,6 +129,25 @@ export default function App() {
                 <span>{reauthError ?? reconnectMessage}</span>
                 <button className="btn primary" disabled={reconnecting} onClick={() => void reconnect()}>
                   Reconectar
+                </button>
+              </div>
+            )}
+            {account.kind === 'google' && hiddenPending && !needsReconnect && !hiddenNoticeClosed && (
+              <div className="reconnect-bar notice" role="status" aria-label="Pasta oculta do Drive">
+                <span>{reauthError ?? 'Para esconder a pasta do app no seu Google Drive, autorize o acesso à pasta oculta. Até lá, tudo segue na pasta .sync-study-helper.'}</span>
+                <button className="btn primary" disabled={reconnecting} onClick={() => void authorizeHidden()}>
+                  Autorizar
+                </button>
+                <button className="ibtn" aria-label="Fechar o aviso" title="Fechar o aviso" onClick={() => setHiddenNoticeClosed(true)}>
+                  <Icon name="x" />
+                </button>
+              </div>
+            )}
+            {hiddenWarning && !hiddenNoticeClosed && (
+              <div className="reconnect-bar notice" role="alert">
+                <span>{hiddenWarning}</span>
+                <button className="ibtn" aria-label="Fechar o aviso" title="Fechar o aviso" onClick={() => setHiddenNoticeClosed(true)}>
+                  <Icon name="x" />
                 </button>
               </div>
             )}

@@ -19,9 +19,10 @@ import { defaultIndex, newFileMeta, newFolderMeta, newSidecar } from '@/lib/defa
 import { currentDevice, stamp } from '@/lib/device'
 import { masteryOf } from '@/lib/exam'
 import { newId, nowIso } from '@/lib/ids'
-import { DriveRepository } from '@/lib/storage/drive-repository'
+import { openDriveLibrary } from '@/lib/storage/hidden-migration'
 import { LocalRepository } from '@/lib/storage/local-repository'
 import type { Repository } from '@/lib/storage/repository'
+import type { TrackedTask } from '@/stores/jobs'
 import { readingMinutes, wordCount } from '@/utils/format'
 
 export const TRASH_DAYS = 30
@@ -37,6 +38,8 @@ interface LibraryState {
   accountId: string | null
   ready: boolean
   loadError: string | null
+  hiddenPending: boolean
+  hiddenWarning: string | null
   folders: FolderMeta[]
   files: FileMeta[]
   index: LibraryIndex
@@ -131,6 +134,8 @@ export const useLibraryStore = create<LibraryState>((set, get) => {
     accountId: null,
     ready: false,
     loadError: null,
+    hiddenPending: false,
+    hiddenWarning: null,
     folders: [],
     files: [],
     index: defaultIndex(),
@@ -138,8 +143,28 @@ export const useLibraryStore = create<LibraryState>((set, get) => {
     openedAt: {},
 
     connect: async (accountId, tokenProvider) => {
-      const repo = tokenProvider ? new DriveRepository(accountId, tokenProvider) : new LocalRepository()
-      set({ repo, accountId, ready: false, loadError: null, folders: [], files: [], opened: {}, openedAt: readOpened(accountId) })
+      set({ repo: null, accountId, ready: false, loadError: null, hiddenPending: false, hiddenWarning: null, folders: [], files: [], opened: {}, openedAt: readOpened(accountId) })
+      let repo: Repository
+      try {
+        if (!tokenProvider) repo = new LocalRepository()
+        else {
+          const { useJobsStore } = await import('@/stores/jobs')
+          let task: TrackedTask | null = null
+          const library = await openDriveLibrary(accountId, tokenProvider, (message, fraction) => {
+            task ??= useJobsStore.getState().trackTask('Mudando para a pasta oculta do Drive')
+            task.update(message, fraction)
+          })
+          if (library.warning) (task as TrackedTask | null)?.fail(library.warning)
+          else (task as TrackedTask | null)?.done('Tudo na pasta oculta do Drive')
+          if (get().accountId !== accountId) return
+          repo = library.repo
+          set({ hiddenPending: library.hiddenPending, hiddenWarning: library.warning })
+        }
+      } catch (error) {
+        set({ loadError: error instanceof Error ? error.message : 'Não consegui abrir a biblioteca.', ready: true })
+        return
+      }
+      set({ repo })
       try {
         const snapshot = await repo.load()
         if (get().repo !== repo) return
