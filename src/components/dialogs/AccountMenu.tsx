@@ -49,6 +49,7 @@ async function localHasContent(): Promise<boolean> {
 
 export function AccountMenu() {
   const ui = useUiStore()
+  const anchor = ui.overlay?.kind === 'account' ? ui.overlay : null
   const accounts = useAccountStore(state => state.accounts)
   const active = useAccountStore(state => state.active())
   const { addGoogleAccount, switchTo, forgetAccount } = useAccountStore()
@@ -99,7 +100,7 @@ export function AccountMenu() {
   }
 
   return (
-    <Popover x={window.innerWidth - 300} y={52} onClose={ui.close} label="Conta">
+    <Popover x={anchor?.x ?? window.innerWidth - 300} y={anchor?.y ?? 52} onClose={ui.close} label="Conta">
       <div className="who">
         <span onClick={tapPhoto}>
           <Mini account={active} />

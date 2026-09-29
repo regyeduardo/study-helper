@@ -17,7 +17,7 @@ export function useFileActions() {
   const jobs = useJobsStore()
 
   const openFile = (file: FileMeta) => {
-    if (file.status === 'pending' && courseOfFolders(library.folders, file.folderId)) {
+    if (file.status === 'pending' && courseOfFolders(library.folders, file.folderId) && !library.sharedView) {
       ui.open({
         kind: 'confirm',
         title: file.name,

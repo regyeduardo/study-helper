@@ -12,7 +12,8 @@ import { CommandsRow } from '@/components/library/FileRows'
 import { FolderTiles } from '@/components/library/FolderTiles'
 import { SelectionBar } from '@/components/library/SelectionBar'
 import { SHARING_TITLES, SharingView } from '@/components/library/SharingLists'
-import { SharedView } from '@/pages/shared'
+import { SharedBadge } from '@/components/library/SharedBadge'
+import { SharedStatus } from '@/pages/shared'
 import { TrashList } from '@/components/library/TrashList'
 import { useFileActions } from '@/components/library/use-file-actions'
 import { DocumentBody, DocumentHead } from '@/components/reader/DocumentArticle'
@@ -363,13 +364,14 @@ export function CommandsWorkspace({ route }: { route: ViewRoute }) {
   const counts = useCounts()
   const scroller = useScrollerRef()
   const data = useLibraryView(route.view === 'home' ? 'folder' : route.view, route.folderId)
+  const shared = useLibraryStore(state => state.sharedView)
   const effective: ViewRoute = route.view === 'home' ? { view: 'folder', folderId: null, fileId: null } : route
   if (route.view === 'shared') {
     return (
       <CommandsShell>
         <div className="body">
           <div className="docscroll" ref={scroller}>
-            <SharedView shareId={route.shareId ?? ''} fileId={route.fileId} />
+            <SharedStatus unavailable={Boolean(route.unavailable)} />
           </div>
         </div>
       </CommandsShell>
@@ -405,14 +407,15 @@ export function CommandsWorkspace({ route }: { route: ViewRoute }) {
         {tab('trash', 'Lixeira', paths.trash, counts.trash)}
         {tab('shares', SHARING_TITLES.shares, paths.shares, counts.shares)}
         {tab('sharedWithMe', SHARING_TITLES.sharedWithMe, paths.sharedWithMe, counts.sharedWithMe)}
-        {data.browsing && (
+        {data.browsing && !shared && (
           <button className="btn quiet" onClick={() => ui.open({ kind: 'new-folder', parentId: effective.folderId })}>
             <Icon name="folder" />
             Nova pasta
           </button>
         )}
         <span className="spacer" />
-        {data.isCourse && (
+        <SharedBadge />
+        {data.isCourse && !shared && (
           <button className="btn quiet" aria-pressed={ui.reorder} onClick={() => ui.set({ reorder: !ui.reorder })}>
             <Icon name="sort" />
             {ui.reorder ? 'Pronto' : 'Ordenar aulas'}

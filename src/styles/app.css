@@ -676,3 +676,6 @@ body.floating-recorder .mini-rec{position:static;width:auto;max-height:none;bord
   .share-actions{grid-column:1 / -1;justify-content:flex-start}
   .share-copy{flex-direction:column}
 }
+.shared-badge{display:inline-flex;align-items:center;gap:8px;flex-wrap:wrap}
+[data-shared] .check,[data-shared] .ibtn.star,[data-shared] .ibtn.more{visibility:hidden;pointer-events:none}
+[data-shared] .drag-hint,[data-shared] .selwrap{display:none!important}

@@ -9,7 +9,8 @@ import { FilterChips } from '@/components/library/Filters'
 import { FolderTiles } from '@/components/library/FolderTiles'
 import { SelectionBar } from '@/components/library/SelectionBar'
 import { SHARING_TITLES, SharingView } from '@/components/library/SharingLists'
-import { SharedView } from '@/pages/shared'
+import { SharedBadge } from '@/components/library/SharedBadge'
+import { SharedStatus } from '@/pages/shared'
 import { TrashList } from '@/components/library/TrashList'
 import { useFileActions } from '@/components/library/use-file-actions'
 import { DocumentBody } from '@/components/reader/DocumentArticle'
@@ -29,6 +30,7 @@ function ListColumn({ view, folderId, currentId }: { view: View; folderId: strin
   const data = useLibraryView(view, folderId)
   const contents = useLibraryStore(state => state.opened)
   const trashCount = useLibraryStore(state => state.files.filter(file => file.deletedAt).length)
+  const shared = useLibraryStore(state => state.sharedView)
   const title = view === 'folder' ? (data.folder?.name ?? 'Biblioteca') : TITLES[view]
   if (view === 'shares' || view === 'sharedWithMe') {
     return (
@@ -55,12 +57,12 @@ function ListColumn({ view, folderId, currentId }: { view: View; folderId: strin
           <button className="ibtn back-mob" onClick={() => ui.set({ columnsPane: 'nav' })} aria-label="Coleções">
             <Icon name="back" />
           </button>
-          {view === 'folder' && <UpButton folderId={folderId} />}
+          {view === 'folder' && folderId !== shared?.rootId && <UpButton folderId={folderId} />}
           <h2>{title}</h2>
           <span className="faint" style={{ fontSize: 12 }}>
             {view === 'trash' ? trashCount : data.files.length}
           </span>
-          {data.isCourse && (
+          {data.isCourse && !shared && (
             <button className="ibtn" aria-pressed={ui.reorder} onClick={() => ui.set({ reorder: !ui.reorder })} aria-label="Ordenar aulas" title="Ordenar aulas">
               <Icon name="sort" />
             </button>
@@ -72,6 +74,7 @@ function ListColumn({ view, folderId, currentId }: { view: View; folderId: strin
             <Icon name="plus" />
           </button>
         </div>
+        <SharedBadge />
         {view !== 'trash' && (
           <>
             <label className="srch2">
@@ -227,7 +230,7 @@ export function ColumnsWorkspace({ route }: { route: ViewRoute }) {
       <ColumnsShell>
         <section className="col-doc" aria-label="Compartilhado">
           <div className="scroll libwrap">
-            <SharedView shareId={route.shareId ?? ''} fileId={route.fileId} />
+            <SharedStatus unavailable={Boolean(route.unavailable)} />
           </div>
         </section>
       </ColumnsShell>

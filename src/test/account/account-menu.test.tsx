@@ -44,6 +44,16 @@ afterEach(() => {
   delete window.google
 })
 
+describe('AccountMenu position', () => {
+  it('opens right below the button that was clicked', () => {
+    useUiStore.setState({ overlay: { kind: 'account', x: 12, y: 60 } })
+    render(<AccountMenu />)
+    const menu = screen.getByRole('menu', { name: 'Conta' })
+    expect(menu.style.left).toBe('12px')
+    expect(menu.style.top).toBe('60px')
+  })
+})
+
 describe('AccountMenu sign out', () => {
   it('removes the login, the account cache and this device', async () => {
     const repo = new DriveRepository('sub-ana', async () => 'a')

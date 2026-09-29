@@ -3,8 +3,10 @@ import { currentDevice } from '@/lib/device'
 import { env } from '@/lib/env'
 import { masteryOf } from '@/lib/exam'
 import { FILE_TYPES } from '@/lib/file-types'
+import { newFileMeta, newFolderMeta } from '@/lib/defaults'
 import { newId, nowIso } from '@/lib/ids'
-import { bytesOf } from '@/lib/storage/repository'
+import { bytesOf, type StoredSize } from '@/lib/storage/repository'
+import { readingMinutes, wordCount } from '@/utils/format'
 import type { OpenedFile } from '@/stores/library'
 
 const DAY_MS = 24 * 3600 * 1000
@@ -56,7 +58,7 @@ function folderTree(folders: FolderMeta[], rootId: string): FolderMeta[] {
 export async function buildShareContent(target: ShareTarget, folders: FolderMeta[], files: FileMeta[], open: (id: string) => Promise<OpenedFile>, withExams: boolean): Promise<ShareContent> {
   const tree = target.kind === 'folder' ? folderTree(folders, target.id) : []
   const folderIds = new Set(tree.map(folder => folder.id))
-  const chosen = target.kind === 'file' ? files.filter(file => file.id === target.id) : files.filter(file => !file.deletedAt && file.status === 'ready' && file.folderId !== null && folderIds.has(file.folderId)).sort((a, b) => a.position - b.position)
+  const chosen = target.kind === 'file' ? files.filter(file => file.id === target.id) : files.filter(file => !file.deletedAt && file.folderId !== null && folderIds.has(file.folderId)).sort((a, b) => a.position - b.position)
   const sharedFolders: SharedFolder[] = tree.map(folder => ({
     id: folder.id,
     name: folder.name,
@@ -157,4 +159,39 @@ export async function importSharedItem(item: SharedItem, attempts: SharedAttempt
   }
   const rootId = item.folders.find(folder => folder.parentId === null)?.id
   return { folderId: rootId ? (folderIds.get(rootId) ?? null) : null, fileId: item.kind === 'file' ? firstFileId : null }
+}
+
+export interface SharedLibrary {
+  folders: FolderMeta[]
+  files: FileMeta[]
+  opened: Record<string, OpenedFile>
+  sizes: Record<string, StoredSize>
+}
+
+export function sharedLibrary(item: SharedItem, attempts: SharedAttempts): SharedLibrary {
+  const folders = item.folders.map(folder => ({ ...newFolderMeta({ name: folder.name, parentId: folder.parentId, position: folder.position, isCourse: folder.isCourse, description: folder.description }), id: folder.id }))
+  const opened: Record<string, OpenedFile> = {}
+  const files = item.files.map(file => {
+    const done = attempts[file.id] ?? []
+    const last = done[done.length - 1]
+    const meta: FileMeta = {
+      ...newFileMeta({ name: file.name, type: knownType(file.type), folderId: file.folderId, position: file.position, description: file.description, tags: file.tags }),
+      ...file.meta,
+      id: file.id,
+      name: file.name,
+      folderId: file.folderId,
+      favorite: false,
+      deletedAt: null,
+      origin: file.meta?.origin ?? null,
+      questionCount: file.questions.length,
+      mastery: last ? masteryOf(last.correct, last.total) : null,
+      lastReviewedAt: last?.createdAt ?? null,
+      words: wordCount(file.content),
+      readingMinutes: file.content ? readingMinutes(file.content) : 0,
+    }
+    opened[file.id] = { content: file.content, sidecar: { meta, questions: file.questions, attempts: done, highlights: file.highlights ?? [], ...(file.transcript !== undefined ? { transcript: file.transcript } : {}) } }
+    return meta
+  })
+  const sizes = Object.fromEntries(files.map(meta => [meta.id, { noteBytes: bytesOf(opened[meta.id].content) + bytesOf(JSON.stringify(opened[meta.id].sidecar)), sourceBytes: 0 }]))
+  return { folders, files, opened, sizes }
 }

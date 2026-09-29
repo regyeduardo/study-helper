@@ -8,7 +8,8 @@ import { FilterChips, SortSelect } from '@/components/library/Filters'
 import { FolderTiles } from '@/components/library/FolderTiles'
 import { SelectionBar } from '@/components/library/SelectionBar'
 import { SHARING_TITLES, SharingView } from '@/components/library/SharingLists'
-import { SharedView } from '@/pages/shared'
+import { SharedBadge } from '@/components/library/SharedBadge'
+import { SharedStatus } from '@/pages/shared'
 import { TrashList } from '@/components/library/TrashList'
 import { UpButton } from '@/components/library/Crumbs'
 import { DocumentBody } from '@/components/reader/DocumentArticle'
@@ -78,31 +79,38 @@ function Home() {
 export function Library({ route }: { route: ViewRoute }) {
   const ui = useUiStore()
   const data = useLibraryView(route.view, route.folderId)
+  const shared = useLibraryStore(state => state.sharedView)
   const q = ui.query.trim()
   const title = q ? `Resultados para “${ui.query}”` : route.view === 'folder' ? (data.folder?.name ?? 'Biblioteca') : TITLES[route.view]
   return (
     <>
       <div className="libhead">
-        {data.browsing && route.folderId && <UpButton folderId={route.folderId} />}
+        {data.browsing && route.folderId && (
+          <span style={route.folderId === shared?.rootId ? { visibility: 'hidden' } : undefined}>
+            <UpButton folderId={route.folderId} />
+          </span>
+        )}
         <h2>{title}</h2>
         {data.isCourse && <span className="crs">curso</span>}
+        {shared && <SharedBadge label />}
         <span style={{ marginLeft: 'auto', display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+          {shared && <SharedBadge button />}
           {route.view !== 'trash' && (
             <input className="input lib-search" style={{ height: 30 }} placeholder="Buscar no título e no texto" aria-label="Buscar" value={ui.query} onChange={event => ui.setQuery(event.target.value)} />
           )}
-          {data.browsing && (
+          {data.browsing && !shared && (
             <button className="btn" onClick={() => ui.open({ kind: 'new-folder', parentId: route.folderId })}>
               <Icon name="folder" />
               Nova pasta
             </button>
           )}
-          {data.isCourse && (
+          {data.isCourse && !shared && (
             <button className="btn" aria-pressed={ui.reorder} onClick={() => ui.set({ reorder: !ui.reorder })}>
               <Icon name="sort" />
               {ui.reorder ? 'Pronto' : 'Ordenar aulas'}
             </button>
           )}
-          {data.browsing && route.folderId && (
+          {data.browsing && route.folderId && !shared && (
             <button className="btn quiet" onClick={() => ui.open({ kind: 'folder-exam', folderId: route.folderId })}>
               <Icon name="exam" />
               Prova da pasta
@@ -119,7 +127,7 @@ export function Library({ route }: { route: ViewRoute }) {
             <section className="blk">
               <h3 className="blk-h">
                 <Icon name="file" />
-                Arquivos <span>{data.files.length}</span>
+                Arquivos <span>{data.isCourse ? data.courseGroups.reduce((sum, group) => sum + group.files.length, 0) : data.files.length}</span>
               </h3>
               <div className="filters" style={{ margin: 0 }}>
                 <FilterChips />
@@ -207,7 +215,7 @@ export function ReaderWorkspace({ route }: { route: ViewRoute }) {
   return (
     <ReaderShell>
       <div className="libwrap">
-        {route.view === 'home' ? <Home /> : route.view === 'shared' ? <SharedView shareId={route.shareId ?? ''} fileId={route.fileId} /> : route.view === 'shares' || route.view === 'sharedWithMe' ? <SharingView view={route.view} /> : <Library route={route} />}
+        {route.view === 'home' ? <Home /> : route.view === 'shared' ? <SharedStatus unavailable={Boolean(route.unavailable)} /> : route.view === 'shares' || route.view === 'sharedWithMe' ? <SharingView view={route.view} /> : <Library route={route} />}
       </div>
     </ReaderShell>
   )

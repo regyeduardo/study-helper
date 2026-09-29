@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 
 import type { FileMeta, HighlightColor } from '@/types/domain'
+import { SharedBadge } from '@/components/library/SharedBadge'
 import { Icon } from '@/components/ui/Icon'
 import { MasteryMeter, TypeDot } from '@/components/library/Badges'
 import { DocumentNav } from '@/components/reader/DocumentNav'
@@ -30,14 +31,18 @@ export function DocumentHead({ meta, onInfo }: { meta: FileMeta; onInfo(): void 
   const navigate = useNavigate()
   const pathName = usePathName()
   const setTag = useUiStore(state => state.setTag)
+  const shared = useLibraryStore(state => Boolean(state.sharedView))
   return (
     <div className="doc-head">
       <h1>{meta.name}</h1>
+      <SharedBadge />
       <div className="doc-meta">
         <TypeDot type={meta.type} />
-        <button onClick={() => navigate(paths.folder(meta.folderId))}>
-          <Icon name="folder" /> {pathName(meta.folderId)}
-        </button>
+        {!(shared && meta.folderId === null) && (
+          <button onClick={() => navigate(paths.folder(meta.folderId))}>
+            <Icon name="folder" /> {pathName(meta.folderId)}
+          </button>
+        )}
         {meta.readingMinutes > 0 && (
           <span>
             <Icon name="clock" /> {meta.readingMinutes} min de leitura
@@ -162,6 +167,7 @@ export function DocumentBody({ fileId, compact = false }: { fileId: string; comp
 
   if (!meta) return <div className="empty">Arquivo não encontrado.</div>
   const showInfo = () => ui.set({ inspectorTab: 'info', rightOpen: true, columnsSheet: true, focusPop: 'info' })
+  const readOnly = Boolean(useLibraryStore.getState().sharedView)
 
   return (
     <article className="article" style={compact ? { padding: 0 } : undefined}>
@@ -171,7 +177,7 @@ export function DocumentBody({ fileId, compact = false }: { fileId: string; comp
         <div className="empty" style={{ margin: '24px auto' }}>
           <Icon name="file" />
           <div>{courseOf(folders, meta.folderId) ? 'Esta aula ainda não foi escrita. O recorte do material já está guardado.' : 'A geração não terminou. O material ficou guardado para tentar de novo.'}</div>
-          <button className="btn primary" onClick={() => void generatePending(meta.id)}>
+          <button className="btn primary" hidden={readOnly} onClick={() => void generatePending(meta.id)}>
             {courseOf(folders, meta.folderId) ? 'Gerar agora' : 'Tentar de novo'}
           </button>
         </div>
@@ -192,8 +198,8 @@ export function DocumentBody({ fileId, compact = false }: { fileId: string; comp
       ) : (
         !job && meta.status === 'ready' && !opened && <div className="muted">Abrindo…</div>
       )}
-      {selection && <SelectionPopover fileId={fileId} selection={selection} onDone={() => setSelection(null)} />}
-      {heading && !selection && <HeadingExplain fileId={fileId} heading={heading} onDone={() => setHeading(null)} />}
+      {selection && !readOnly && <SelectionPopover fileId={fileId} selection={selection} onDone={() => setSelection(null)} />}
+      {heading && !selection && !readOnly && <HeadingExplain fileId={fileId} heading={heading} onDone={() => setHeading(null)} />}
       {!compact && <DocumentNav meta={meta} />}
     </article>
   )

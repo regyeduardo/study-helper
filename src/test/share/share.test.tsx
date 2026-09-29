@@ -7,12 +7,14 @@ import { MemoryRouter, Route, Routes, useParams } from 'react-router-dom'
 import type { SharedItem, SharedLink, StoredQuestion } from '@/types/domain'
 import { ShareDialog } from '@/components/dialogs/ShareDialog'
 import { Overlays } from '@/components/dialogs/Overlays'
+import { SharedBadge } from '@/components/library/SharedBadge'
 import { SharingView } from '@/components/library/SharingLists'
 import { env } from '@/lib/env'
 import { buildShareContent, importSharedItem, readSharedAttempts, saveSharedAttempt, shareBytes } from '@/lib/share'
 import { LocalRepository } from '@/lib/storage/local-repository'
 import { mergeKept } from '@/lib/sync/merge'
-import { SharedView } from '@/pages/shared'
+import { SharedStatus, useSharedRoute } from '@/pages/shared'
+import type { ViewRoute } from '@/hooks/use-view-route'
 import { type Account, LOCAL_ACCOUNT, useAccountStore } from '@/stores/account'
 import { useLibraryStore } from '@/stores/library'
 import { useUiStore } from '@/stores/ui'
@@ -201,27 +203,29 @@ function serve(item: SharedItem) {
   })
 }
 
-function SharedRoute() {
-  const { shareId = '', fileId = null } = useParams()
-  return <SharedView shareId={shareId} fileId={fileId} />
+function SharedProbe({ onRoute }: { onRoute(route: ViewRoute): void }) {
+  const { shareId = '' } = useParams()
+  const route = useSharedRoute(shareId)
+  onRoute(route)
+  return <SharedStatus unavailable={Boolean(route.unavailable)} />
 }
 
-function renderLink(id: string) {
-  return render(
-    <MemoryRouter initialEntries={[`/shared/${id}`]}>
+function renderLink(path: string) {
+  const routes: ViewRoute[] = []
+  const view = render(
+    <MemoryRouter initialEntries={[path]}>
       <Routes>
-        <Route path="/shared/:shareId" element={<SharedRoute />} />
-        <Route path="/shared/:shareId/:fileId" element={<SharedRoute />} />
-        <Route path="*" element={<div>biblioteca</div>} />
+        <Route path="/shared/:shareId" element={<SharedProbe onRoute={route => routes.push(route)} />} />
+        <Route path="/shared/:shareId/arquivo/:fileId" element={<SharedProbe onRoute={route => routes.push(route)} />} />
       </Routes>
-      <Overlays />
     </MemoryRouter>,
   )
+  return { ...view, routes }
 }
 
 describe('página do link', () => {
   it('link apagado mostra "Item indisponível"', async () => {
-    renderLink('ApagadoApagadoApagado1')
+    renderLink('/shared/ApagadoApagadoApagado1')
     expect(await screen.findByText('Item indisponível')).toBeInTheDocument()
     expect(calls[0].url).toBe('https://files.test/shared/ApagadoApagadoApagado1/share.json')
   })
@@ -229,48 +233,48 @@ describe('página do link', () => {
   it('link expirado mostra "Item indisponível" e não entra em Compartilhado comigo', async () => {
     const item = sharedItem({ expiresAt: new Date(Date.now() - 1000).toISOString() })
     serve(item)
-    renderLink(item.id)
+    renderLink(`/shared/${item.id}`)
     expect(await screen.findByText('Item indisponível')).toBeInTheDocument()
     expect(useLibraryStore.getState().index.sharedWithMe).toEqual([])
   })
-
-  it('abre sem login, entra em Compartilhado comigo, e a prova fica só no navegador com aviso', async () => {
-    const item = sharedItem()
-    serve(item)
-    renderLink(item.id)
-    expect(await screen.findByRole('heading', { name: 'Curso de frações' })).toBeInTheDocument()
-    expect(screen.getByLabelText('Compartilhado')).toHaveTextContent('compartilhado · só leitura · faltam 2 dias')
-    await waitFor(() => expect(useLibraryStore.getState().index.sharedWithMe.map(link => link.id)).toEqual([item.id]))
-    fireEvent.click(screen.getByRole('button', { name: /Aula 1/ }))
-    expect(await screen.findByRole('heading', { name: 'Aula 1' })).toBeInTheDocument()
-    expect(screen.getByText(/As notas desta prova ficam só neste navegador/)).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: /Fazer a prova \(1 questão\)/ }))
-    fireEvent.click(await screen.findByRole('button', { name: /\)\s*4$/ }))
-    fireEvent.click(screen.getByRole('button', { name: 'Entregar' }))
-    await screen.findByText('Resultado · Aula 1')
-    expect(readSharedAttempts(item.id).a).toHaveLength(1)
-    expect(useLibraryStore.getState().files).toEqual([])
-    expect(await screen.findByLabelText('Suas notas neste navegador')).toHaveTextContent('Feita 1 vez · última: 100%')
-  })
 })
 
-describe('abrir como arquivo ou pasta', () => {
-  it('um arquivo compartilhado abre direto na leitura', async () => {
-    const item = sharedItem({ kind: 'file', title: 'Aula 1', folders: [], files: [{ ...sharedItem().files[0], folderId: null }] })
-    serve(item)
-    renderLink(item.id)
-    expect(await screen.findByRole('article', { name: 'Aula 1' })).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: /Aula 2/ })).not.toBeInTheDocument()
-  })
-
-  it('uma pasta compartilhada abre na visão de pasta, com as aulas e o módulo, sem ações de edição', async () => {
+describe('abrir como a própria biblioteca, só leitura', () => {
+  it('uma pasta abre na visão de pasta com todas as aulas no lugar da biblioteca, e volta ao sair', async () => {
+    const own = await noteWithExam()
     const item = sharedItem()
     serve(item)
-    renderLink(item.id)
-    expect(await screen.findByRole('button', { name: /Aula 1/ })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /Aula 2/ })).toBeInTheDocument()
-    expect(screen.getByText('Módulo 1')).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: /Nova pasta|Renomear|Apagar/ })).not.toBeInTheDocument()
+    const { routes, unmount } = renderLink(`/shared/${item.id}`)
+    await waitFor(() => expect(useLibraryStore.getState().sharedView?.item.id).toBe(item.id))
+    expect(routes.at(-1)).toMatchObject({ view: 'folder', folderId: 'root' })
+    expect(useLibraryStore.getState().files.map(file => file.name).sort()).toEqual(['Aula 1', 'Aula 2'])
+    expect(useLibraryStore.getState().folders.map(folder => folder.name).sort()).toEqual(['Curso de frações', 'Módulo 1'])
+    expect(document.documentElement.dataset.shared).toBe('true')
+    await waitFor(() => expect(useLibraryStore.getState().index.sharedWithMe.map(link => link.id)).toEqual([item.id]))
+    unmount()
+    expect(useLibraryStore.getState().sharedView).toBeNull()
+    expect(useLibraryStore.getState().files.map(file => file.id)).toEqual([own.id])
+    expect(document.documentElement.dataset.shared).toBeUndefined()
+  })
+
+  it('um arquivo abre direto na leitura', async () => {
+    const item = sharedItem({ kind: 'file', title: 'Aula 1', folders: [], files: [{ ...sharedItem().files[0], folderId: null }] })
+    serve(item)
+    const { routes } = renderLink(`/shared/${item.id}`)
+    await waitFor(() => expect(routes.at(-1)).toMatchObject({ view: 'doc', fileId: 'a' }))
+    expect((await useLibraryStore.getState().openFile('a')).content).toBe('# Aula 1\n\nTexto da aula 1.')
+  })
+
+  it('nada se grava enquanto é compartilhado; a prova fica só no navegador', async () => {
+    const item = sharedItem()
+    serve(item)
+    renderLink(`/shared/${item.id}`)
+    await waitFor(() => expect(useLibraryStore.getState().sharedView).not.toBeNull())
+    await expect(useLibraryStore.getState().updateFile('a', { name: 'mexi' })).rejects.toThrow('só leitura')
+    await expect(useLibraryStore.getState().createFolder({ name: 'nova' })).rejects.toThrow('só leitura')
+    await useLibraryStore.getState().recordAttempt('a', { total: 1, correct: 1, answers: [] })
+    expect(readSharedAttempts(item.id).a).toHaveLength(1)
+    expect(useLibraryStore.getState().files.find(file => file.id === 'a')?.mastery).toBe(100)
   })
 })
 
@@ -297,14 +301,23 @@ describe('importar', () => {
     expect(first.origin).toMatchObject({ input: 'shared', name: 'Curso de frações', url: expect.stringContaining(`/shared/${item.id}`) })
   })
 
-  it('importa uma nota solta para a raiz e pelo botão da página', async () => {
+  it('importa uma nota solta pelo selo de compartilhado: sai do modo só leitura e vira sua', async () => {
     const item = sharedItem({ kind: 'file', title: 'Aula 1', folders: [], files: [{ ...sharedItem().files[0], folderId: null }] })
-    serve(item)
-    renderLink(item.id)
-    fireEvent.click(await screen.findByRole('button', { name: 'Importar para a minha biblioteca' }))
+    useLibraryStore.getState().enterShared(item, {})
+    render(
+      <MemoryRouter initialEntries={[`/shared/${item.id}`]}>
+        <Routes>
+          <Route path="/shared/:shareId" element={<SharedBadge />} />
+          <Route path="*" element={<div>biblioteca</div>} />
+        </Routes>
+      </MemoryRouter>,
+    )
+    expect(screen.getByLabelText('Compartilhado')).toHaveTextContent('compartilhado · só leitura · faltam 2 dias')
+    fireEvent.click(screen.getByRole('button', { name: 'Importar para a minha biblioteca' }))
     expect(await screen.findByText('biblioteca')).toBeInTheDocument()
+    expect(useLibraryStore.getState().sharedView).toBeNull()
     const [file] = useLibraryStore.getState().files
-    expect(file).toMatchObject({ name: 'Aula 1', folderId: null, questionCount: 1 })
+    expect(file).toMatchObject({ name: 'Aula 1', folderId: null, questionCount: 1, origin: { input: 'shared' } })
   })
 })
 

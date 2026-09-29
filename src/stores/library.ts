@@ -10,6 +10,7 @@ import type {
   Highlight,
   LibraryIndex,
   Settings,
+  SharedItem,
   SharedLink,
   ShareRecord,
   Snapshot,
@@ -20,7 +21,8 @@ import { isKnownProvider, providerOf } from '@/lib/ai/providers'
 import { defaultIndex, newFileMeta, newFolderMeta, newSidecar } from '@/lib/defaults'
 import { currentDevice, stamp } from '@/lib/device'
 import { masteryOf } from '@/lib/exam'
-import { activeLinks } from '@/lib/share'
+import { activeLinks, saveSharedAttempt, type SharedAttempts, sharedLibrary } from '@/lib/share'
+import { setSharedRoot } from '@/lib/paths'
 import { newId, nowIso } from '@/lib/ids'
 import { type LocalMedia, listLocalMedia, watchLocalMedia } from '@/lib/recording/media-library'
 import { openDriveLibrary } from '@/lib/storage/hidden-migration'
@@ -31,6 +33,15 @@ import { readingMinutes, wordCount } from '@/utils/format'
 
 export const TRASH_DAYS = 30
 const ACTIVITIES_KEPT = 300
+
+export const READ_ONLY_MESSAGE = 'Compartilhado: só leitura. Importe para a sua biblioteca para mexer.'
+
+export interface SharedViewState {
+  item: SharedItem
+  rootId: string | null
+}
+
+type OwnLibrary = Pick<LibraryState, 'folders' | 'files' | 'opened' | 'openedAt' | 'sizes' | 'localMedia'>
 
 export interface OpenedFile {
   content: string
@@ -51,6 +62,9 @@ interface LibraryState {
   openedAt: Record<string, number>
   sizes: Record<string, StoredSize>
   localMedia: LocalMedia[]
+  sharedView: SharedViewState | null
+  enterShared(item: SharedItem, attempts: SharedAttempts): void
+  leaveShared(): void
   connect(accountId: string, tokenProvider?: TokenProvider): Promise<void>
   applySnapshot(snapshot: Snapshot, changedFileIds?: string[]): void
   openFile(id: string): Promise<OpenedFile>
@@ -114,7 +128,10 @@ function withUsableAi(settings: Settings): Settings {
 }
 
 export const useLibraryStore = create<LibraryState>((set, get) => {
+  let own: OwnLibrary | null = null
+
   const repository = (): Repository => {
+    if (get().sharedView) throw new Error(READ_ONLY_MESSAGE)
     const repo = get().repo
     if (!repo) throw new Error('A biblioteca ainda não abriu.')
     return repo
@@ -149,7 +166,9 @@ export const useLibraryStore = create<LibraryState>((set, get) => {
 
   const saveIndex = async (index: LibraryIndex) => {
     set({ index })
-    await repository().saveIndex(index)
+    const repo = get().repo
+    if (!repo) throw new Error('A biblioteca ainda não abriu.')
+    await repo.saveIndex(index)
   }
 
   return {
@@ -166,6 +185,7 @@ export const useLibraryStore = create<LibraryState>((set, get) => {
     openedAt: {},
     sizes: {},
     localMedia: [],
+    sharedView: null,
 
     connect: async (accountId, tokenProvider) => {
       set({ repo: null, accountId, ready: false, loadError: null, hiddenPending: false, hiddenWarning: null, folders: [], files: [], opened: {}, openedAt: readOpened(accountId), sizes: {} })
@@ -201,7 +221,26 @@ export const useLibraryStore = create<LibraryState>((set, get) => {
       }
     },
 
+    enterShared: (item, attempts) => {
+      const state = get()
+      if (!state.sharedView) own = { folders: state.folders, files: state.files, opened: state.opened, openedAt: state.openedAt, sizes: state.sizes, localMedia: state.localMedia }
+      const shared = sharedLibrary(item, attempts)
+      setSharedRoot(item.id)
+      set({ sharedView: { item, rootId: item.folders.find(folder => folder.parentId === null)?.id ?? null }, ...shared, openedAt: {}, localMedia: [] })
+    },
+
+    leaveShared: () => {
+      setSharedRoot(null)
+      if (own) set({ ...own, sharedView: null })
+      own = null
+    },
+
     applySnapshot: (snapshot, changedFileIds = []) => {
+      if (get().sharedView && own) {
+        own = { ...own, folders: snapshot.folders, files: snapshot.files, opened: {} }
+        set({ index: { ...defaultIndex(), ...snapshot.index, settings: withUsableAi({ ...defaultIndex().settings, ...snapshot.index.settings }) } })
+        return
+      }
       set(state => {
         const opened = { ...state.opened }
         for (const id of changedFileIds) delete opened[id]
@@ -355,6 +394,18 @@ export const useLibraryStore = create<LibraryState>((set, get) => {
     },
 
     recordAttempt: async (id, fields) => {
+      const shared = get().sharedView
+      if (shared) {
+        const done = saveSharedAttempt(shared.item.id, id, fields)[id] ?? []
+        const last = done[done.length - 1]
+        set(state => {
+          const opened = state.opened[id]
+          if (!opened || !last) return {}
+          const meta = { ...opened.sidecar.meta, mastery: masteryOf(last.correct, last.total), lastReviewedAt: last.createdAt }
+          return { opened: { ...state.opened, [id]: { ...opened, sidecar: { ...opened.sidecar, attempts: done, meta } } }, files: state.files.map(file => (file.id === id ? meta : file)) }
+        })
+        return
+      }
       const attempt: Attempt = { ...fields, id: newId(), createdAt: nowIso(), deviceId: currentDevice().id }
       await get().updateSidecar(id, sidecar => ({
         ...sidecar,
@@ -377,6 +428,7 @@ export const useLibraryStore = create<LibraryState>((set, get) => {
     },
 
     markOpened: id => {
+      if (get().sharedView) return
       const openedAt = { ...get().openedAt, [id]: Date.now() }
       set({ openedAt })
       try {

@@ -12,6 +12,12 @@ import { useAccountStore } from '@/stores/account'
 import { useLibraryStore } from '@/stores/library'
 import { useUiStore } from '@/stores/ui'
 
+
+function anchorBelow(element: HTMLElement) {
+  const box = element.getBoundingClientRect()
+  return { x: box.left, y: box.bottom + 6 }
+}
+
 export function ColumnsShell({ children }: { children: ReactNode }) {
   const { view, fileId } = useViewRoute()
   const navigate = useNavigate()
@@ -29,7 +35,7 @@ export function ColumnsShell({ children }: { children: ReactNode }) {
   return (
     <div className={`app c2 pane-${pane}`}>
       <aside className="col-nav" aria-label="Coleções">
-        <button className="who" onClick={() => ui.open({ kind: 'account' })}>
+        <button className="who" onClick={event => ui.open({ kind: 'account', ...anchorBelow(event.currentTarget) })}>
           <Avatar />
           <div>
             <b>{account.name}</b>
@@ -82,7 +88,7 @@ export function CommandsShell({ children }: { children: ReactNode }) {
   return (
     <div className="app c3">
       <header className="top">
-        <button className="ws" onClick={() => ui.open({ kind: 'account' })}>
+        <button className="ws" onClick={event => ui.open({ kind: 'account', ...anchorBelow(event.currentTarget) })}>
           <Avatar />
           <span className="lbl">{account.name}</span>
           <Icon name="chev" />

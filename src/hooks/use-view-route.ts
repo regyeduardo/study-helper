@@ -7,6 +7,7 @@ export interface ViewRoute {
   folderId: string | null
   fileId: string | null
   shareId?: string
+  unavailable?: boolean
 }
 
 export function useViewRoute(): ViewRoute {

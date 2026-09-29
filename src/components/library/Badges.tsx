@@ -1,6 +1,7 @@
 import type { FileType } from '@/types/domain'
 import { Icon } from '@/components/ui/Icon'
 import { typeInfo } from '@/lib/file-types'
+import { useLibraryStore } from '@/stores/library'
 
 export function TypeDot({ type }: { type: FileType }) {
   const info = typeInfo(type)
@@ -42,5 +43,6 @@ export function Tags({ tags }: { tags: string[] }) {
 }
 
 export function PendingBadge({ generating }: { generating?: boolean }) {
-  return <span className="pending">{generating ? 'gerando…' : 'pendente · gerar agora'}</span>
+  const shared = useLibraryStore(state => Boolean(state.sharedView))
+  return <span className="pending">{generating ? 'gerando…' : shared ? 'pendente' : 'pendente · gerar agora'}</span>
 }

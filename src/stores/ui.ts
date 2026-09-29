@@ -11,7 +11,7 @@ export type Overlay =
   | { kind: 'settings'; tab?: SettingsTab }
   | { kind: 'exam'; fileId: string }
   | { kind: 'folder-exam'; folderId: string | null; fileIds?: string[] }
-  | { kind: 'account' }
+  | { kind: 'account'; x?: number; y?: number }
   | { kind: 'new-folder'; parentId: string | null }
   | { kind: 'rename'; target: 'file' | 'folder'; id: string }
   | { kind: 'move'; fileIds: string[]; folderIds: string[] }
