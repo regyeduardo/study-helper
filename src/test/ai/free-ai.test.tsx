@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 
 import { FreeAi } from '@/components/dialogs/FreeAi'
 import { SettingsDialog } from '@/components/dialogs/SettingsDialog'
@@ -84,10 +84,22 @@ describe('free AI (Ling-3.0-flash through the worker)', () => {
 
   it('offers "Grátis (Ling)" in the AI settings only to a Google account', () => {
     const { unmount } = render(<SettingsDialog initial="ai" />)
-    expect(screen.getByRole('button', { name: /^Grátis \(Ling\)/ })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /^Grátis\s*com login Google$/ })).toBeInTheDocument()
     unmount()
     useAccountStore.setState({ activeId: LOCAL_ACCOUNT.id })
     render(<SettingsDialog initial="ai" />)
-    expect(screen.queryByRole('button', { name: /^Grátis \(Ling\)/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /^Grátis\s*com login Google$/ })).not.toBeInTheDocument()
+  })
+
+  it('the free AI shows no key, model or free-model warning, and the test checks the login and today\'s balance', async () => {
+    render(<SettingsDialog initial="ai" />)
+    expect(screen.getByRole('note', { name: 'IA em uso' })).toHaveTextContent(/^Em uso: Grátis$/)
+    expect(screen.queryByLabelText(/Chave da API/)).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('Modelo')).not.toBeInTheDocument()
+    expect(screen.queryByText('Modelos grátis podem comprometer o resultado da geração.')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /Testar sem gastar token/ }))
+    await waitFor(() => expect(screen.getByText('Conectado · ≈ 9 aulas restantes hoje')).toBeInTheDocument())
+    expect(calls[0].url).toBe(`${WORKER}/balance`)
+    expect(new Headers(calls[0].init.headers).get('Authorization')).toBe('Bearer google-token')
   })
 })

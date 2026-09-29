@@ -20,7 +20,7 @@ export interface ProviderInfo {
 }
 
 export const PROVIDERS: ProviderInfo[] = [
-  { id: 'free', name: 'Grátis (Ling)', tag: 'com login Google', format: 'openai', baseUrl: '', needsKey: false, free: true, models: ['inclusionAI/Ling-3.0-flash'] },
+  { id: 'free', name: 'Grátis', tag: 'com login Google', format: 'openai', baseUrl: '', needsKey: false, free: true, models: ['inclusionAI/Ling-3.0-flash'] },
   { id: 'ovh', name: 'OVHcloud', tag: 'sem chave', format: 'openai', baseUrl: 'https://oai.endpoints.kepler.ai.cloud.ovh.net/v1', needsKey: false, free: true, keylessModel: 'Meta-Llama-3_3-70B-Instruct', keylessOneAtATime: true, keylessIntervalMs: 31000, models: ['Meta-Llama-3_3-70B-Instruct'] },
   { id: 'gemini', name: 'Google Gemini', tag: 'chave grátis', format: 'openai', baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai', needsKey: true, free: true, models: ['gemini-3.5-flash-lite'], keyHelpUrl: 'https://aistudio.google.com/apikey' },
   { id: 'pollinations', name: 'Pollinations', tag: 'chave grátis', format: 'openai', baseUrl: 'https://gen.pollinations.ai/v1', needsKey: true, free: true, models: ['openai'], keyHelpUrl: 'https://enter.pollinations.ai' },

@@ -5,7 +5,8 @@ import { FreeAi } from '@/components/dialogs/FreeAi'
 import { FreeMinutes } from '@/components/dialogs/FreeMinutes'
 import { IntegrationStatus } from '@/components/dialogs/IntegrationStatus'
 import { Icon } from '@/components/ui/Icon'
-import { listModelsController } from '@/controllers/ai.controller'
+import { getFreeAiBalanceController, listModelsController } from '@/controllers/ai.controller'
+import { freeAiToken, lessonsLeft, lessonsText } from '@/lib/ai/free'
 import { useFreeMinutes } from '@/hooks/use-free-minutes'
 import { isFreeChoice, modelOf, PROVIDERS, type ProviderInfo, providerOf } from '@/lib/ai/providers'
 import { DEFAULT_STORAGE_LIMIT_BYTES } from '@/lib/defaults'
@@ -94,6 +95,7 @@ function AiTab() {
   const [models, setModels] = useState<string[]>(providerOf(saved.provider).models ?? (saved.model ? [saved.model] : []))
   const [test, setTest] = useState<{ state: 'idle' | 'busy' | 'ok' | 'fail'; message?: string }>({ state: 'idle' })
   const provider = providerOf(draft.provider)
+  const offered = draft.provider === 'free'
   const changed = JSON.stringify(draft) !== JSON.stringify(saved)
 
   const pick = (id: AiProviderId) => {
@@ -105,6 +107,15 @@ function AiTab() {
   const runTest = async (): Promise<AiSettings | null> => {
     setTest({ state: 'busy' })
     try {
+      if (offered) {
+        const token = await freeAiToken()
+        if (!token) throw new Error('A IA grátis precisa do login com o Google.')
+        const balance = await getFreeAiBalanceController(token)
+        const tested = { ...draft, apiKey: '', model: '' }
+        setDraft(tested)
+        setTest({ state: 'ok', message: `Conectado · ${lessonsText(lessonsLeft(balance))}` })
+        return tested
+      }
       const found = provider.models ?? (await listModelsController(draft))
       if (provider.models) await listModelsController(draft)
       setModels(found)
@@ -132,7 +143,8 @@ function AiTab() {
       <div className="banner info" role="note" aria-label="IA em uso">
         <Icon name="check" />
         <span>
-          Em uso: <b>{savedProvider.name}</b> · {modelOf(saved) || 'sem modelo'}
+          Em uso: <b>{savedProvider.name}</b>
+          {saved.provider === 'free' ? '' : ` · ${modelOf(saved) || 'sem modelo'}`}
           {saved.provider === 'custom' && saved.baseUrl ? ` · ${saved.baseUrl}` : ''}
           {saved.apiKey ? ` · chave ••••${saved.apiKey.slice(-4)}` : savedProvider.needsKey ? ' · sem chave' : ''}
         </span>
@@ -157,32 +169,34 @@ function AiTab() {
           <input className="input" id="ai-url" placeholder={provider.baseUrl || 'https://minha-ia.exemplo.com/v1'} value={draft.baseUrl} onChange={event => setDraft({ ...draft, baseUrl: event.target.value })} />
         </div>
       )}
-      <div className="field">
-        <label htmlFor="ai-key">Chave da API{provider.needsKey ? '' : ' (opcional)'}</label>
-        <input
-          className="input"
-          id="ai-key"
-          type="password"
-          autoComplete="off"
-          placeholder={provider.needsKey ? `Cole a chave de ${provider.name}` : 'Sem chave funciona; com chave, usa o seu plano'}
-          value={draft.apiKey}
-          onChange={event => {
-            setDraft({ ...draft, apiKey: event.target.value })
-            setKeys({ ...keys, [draft.provider]: event.target.value })
-          }}
-        />
-        <span className="faint" style={{ fontSize: 12 }}>
-          Fica salva no .json das suas configurações e aparece sempre com asteriscos.
-          {provider.keyHelpUrl && (
-            <>
-              {' '}
-              Pegue a chave em{' '}
-              <a href={provider.keyHelpUrl} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--acc1)' }}>
-                {new URL(provider.keyHelpUrl).host}
-              </a>
-              .
-            </>
-          )}
+      {!offered && (
+        <>
+          <div className="field">
+            <label htmlFor="ai-key">Chave da API{provider.needsKey ? '' : ' (opcional)'}</label>
+            <input
+              className="input"
+              id="ai-key"
+              type="password"
+              autoComplete="off"
+              placeholder={provider.needsKey ? `Cole a chave de ${provider.name}` : 'Sem chave funciona; com chave, usa o seu plano'}
+              value={draft.apiKey}
+              onChange={event => {
+                setDraft({ ...draft, apiKey: event.target.value })
+                setKeys({ ...keys, [draft.provider]: event.target.value })
+              }}
+            />
+            <span className="faint" style={{ fontSize: 12 }}>
+              Fica salva no .json das suas configurações e aparece sempre com asteriscos.
+              {provider.keyHelpUrl && (
+                <>
+                  {' '}
+                  Pegue a chave em{' '}
+                  <a href={provider.keyHelpUrl} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--acc1)' }}>
+                    {new URL(provider.keyHelpUrl).host}
+                  </a>
+                  .
+        </>
+      )}
         </span>
       </div>
       <div className="field">
@@ -209,6 +223,8 @@ function AiTab() {
           Modelos grátis podem comprometer o resultado da geração.
         </div>
       )}
+      </>
+      )}
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
         <button className="btn" onClick={() => void runTest()} disabled={test.state === 'busy'}>
           <Icon name="check" />
@@ -218,7 +234,7 @@ function AiTab() {
           Testar e salvar
         </button>
         <span style={{ fontSize: 13, color: test.state === 'ok' ? 'var(--ok)' : test.state === 'fail' ? 'var(--bad)' : 'var(--fg-muted)' }} role="status">
-          {test.state === 'busy' ? 'Testando…' : (test.message ?? 'O teste só lista os modelos: não consome nada.')}
+          {test.state === 'busy' ? 'Testando…' : (test.message ?? (offered ? 'O teste confere o seu login e o saldo de hoje.' : 'O teste só lista os modelos: não consome nada.'))}
         </span>
       </div>
     </>
