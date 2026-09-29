@@ -9,6 +9,7 @@ export const paths = {
   shares: '/compartilhados',
   sharedWithMe: '/compartilhados-comigo',
   shared: (id: string) => `/shared/${id}`,
+  sharedFile: (id: string, fileId: string) => `/shared/${id}/${fileId}`,
 }
 
-export type View = 'home' | 'folder' | 'review' | 'favorites' | 'trash' | 'doc' | 'shares' | 'sharedWithMe'
+export type View = 'home' | 'folder' | 'review' | 'favorites' | 'trash' | 'doc' | 'shares' | 'sharedWithMe' | 'shared'

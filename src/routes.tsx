@@ -1,7 +1,6 @@
 import { createBrowserRouter } from 'react-router-dom'
 
 import App from '@/App'
-import SharedPage from '@/pages/shared'
 import WorkspacePage from '@/pages/workspace'
 
 export const router = createBrowserRouter(
@@ -18,7 +17,8 @@ export const router = createBrowserRouter(
         { path: '/arquivo/:fileId', element: <WorkspacePage /> },
         { path: '/compartilhados', element: <WorkspacePage /> },
         { path: '/compartilhados-comigo', element: <WorkspacePage /> },
-        { path: '/shared/:shareId', element: <SharedPage /> },
+        { path: '/shared/:shareId', element: <WorkspacePage /> },
+        { path: '/shared/:shareId/:fileId', element: <WorkspacePage /> },
         { path: '*', element: <WorkspacePage /> },
       ],
     },

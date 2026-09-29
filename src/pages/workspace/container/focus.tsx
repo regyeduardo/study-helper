@@ -9,6 +9,7 @@ import { FilterChips, SortSelect } from '@/components/library/Filters'
 import { FolderTiles } from '@/components/library/FolderTiles'
 import { SelectionBar } from '@/components/library/SelectionBar'
 import { SHARING_TITLES, SharingView } from '@/components/library/SharingLists'
+import { SharedView } from '@/pages/shared'
 import { TrashList } from '@/components/library/TrashList'
 import { useFileActions } from '@/components/library/use-file-actions'
 import { DocumentBody } from '@/components/reader/DocumentArticle'
@@ -230,7 +231,7 @@ export function FocusWorkspace({ route }: { route: ViewRoute }) {
   return (
     <FocusShell dock={isDoc ? <Dock fileId={route.fileId!} /> : undefined}>
       <div className="scroll" ref={scroller}>
-        {isDoc ? <DocumentBody fileId={route.fileId!} /> : route.view === 'home' ? <Home /> : <Library route={route} />}
+        {isDoc ? <DocumentBody fileId={route.fileId!} /> : route.view === 'shared' ? <SharedView shareId={route.shareId ?? ''} fileId={route.fileId} /> : route.view === 'home' ? <Home /> : <Library route={route} />}
       </div>
     </FocusShell>
   )

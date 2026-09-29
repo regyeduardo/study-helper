@@ -6,11 +6,13 @@ export interface ViewRoute {
   view: View
   folderId: string | null
   fileId: string | null
+  shareId?: string
 }
 
 export function useViewRoute(): ViewRoute {
-  const { folderId = null, fileId = null } = useParams()
+  const { folderId = null, fileId = null, shareId } = useParams()
   const { pathname } = useLocation()
+  if (pathname.startsWith('/shared/')) return { view: 'shared', folderId: null, fileId, shareId }
   if (pathname.startsWith('/arquivo/')) return { view: 'doc', folderId: null, fileId }
   if (pathname.startsWith('/biblioteca')) return { view: 'folder', folderId, fileId: null }
   if (pathname.startsWith('/revisar')) return { view: 'review', folderId: null, fileId: null }

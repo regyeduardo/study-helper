@@ -78,6 +78,9 @@ export async function buildShareContent(target: ShareTarget, folders: FolderMeta
       tags: file.tags,
       content: opened.content,
       questions: withExams ? opened.sidecar.questions : [],
+      highlights: opened.sidecar.highlights,
+      ...(opened.sidecar.transcript !== undefined ? { transcript: opened.sidecar.transcript } : {}),
+      meta: { ...file, mastery: null, lastReviewedAt: null },
     })
   }
   const title = target.kind === 'folder' ? (tree[0]?.name ?? '') : (chosen[0]?.name ?? '')
@@ -137,20 +140,20 @@ export async function importSharedItem(item: SharedItem, attempts: SharedAttempt
   let firstFileId: string | null = null
   for (const file of item.files) {
     const meta = await actions.createFile(
-      { name: file.name, type: knownType(file.type), folderId: file.folderId ? (folderIds.get(file.folderId) ?? null) : null, position: file.position, description: file.description, tags: file.tags, origin: { input: 'import', name: item.title, storage: 'none' } },
+      { name: file.name, type: knownType(file.type), folderId: file.folderId ? (folderIds.get(file.folderId) ?? null) : null, position: file.position, description: file.description, tags: file.tags, origin: { input: 'shared', name: item.title, url: shareUrl(item.id), storage: 'none' } },
       file.content,
     )
     firstFileId ??= meta.id
     const fileAttempts = attempts[file.id] ?? []
-    if (file.questions.length || fileAttempts.length) {
-      const last = fileAttempts[fileAttempts.length - 1]
-      await actions.updateSidecar(meta.id, sidecar => ({
-        ...sidecar,
-        questions: file.questions,
-        attempts: fileAttempts,
-        meta: { ...sidecar.meta, questionCount: file.questions.length, ...(last ? { mastery: masteryOf(last.correct, last.total), lastReviewedAt: last.createdAt } : {}) },
-      }))
-    }
+    const last = fileAttempts[fileAttempts.length - 1]
+    await actions.updateSidecar(meta.id, sidecar => ({
+      ...sidecar,
+      questions: file.questions,
+      attempts: fileAttempts,
+      highlights: file.highlights ?? [],
+      ...(file.transcript !== undefined ? { transcript: file.transcript } : {}),
+      meta: { ...sidecar.meta, questionCount: file.questions.length, ...(last ? { mastery: masteryOf(last.correct, last.total), lastReviewedAt: last.createdAt } : {}) },
+    }))
   }
   const rootId = item.folders.find(folder => folder.parentId === null)?.id
   return { folderId: rootId ? (folderIds.get(rootId) ?? null) : null, fileId: item.kind === 'file' ? firstFileId : null }

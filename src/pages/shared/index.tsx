@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { useNavigate } from 'react-router-dom'
 
 import type { SharedFile, SharedItem } from '@/types/domain'
+import { FileIcon, TypeDot } from '@/components/library/Badges'
 import { Icon } from '@/components/ui/Icon'
 import GithubMarkdownView from '@/components/reader/GithubMarkdownView'
 import { fetchSharedItemController } from '@/controllers/share.controller'
@@ -14,16 +15,6 @@ import { useLibraryStore } from '@/stores/library'
 import { useUiStore } from '@/stores/ui'
 
 type PageState = { kind: 'loading' } | { kind: 'unavailable' } | { kind: 'ready'; item: SharedItem }
-
-function folderPath(item: SharedItem, folderId: string | null): string {
-  const names: string[] = []
-  let current = item.folders.find(folder => folder.id === folderId)
-  for (let depth = 0; current && depth < 64; depth++) {
-    if (current.parentId !== null) names.unshift(current.name)
-    current = item.folders.find(folder => folder.id === current!.parentId)
-  }
-  return names.join(' › ')
-}
 
 function ExamBox({ shareId, file, attempts, onAttempts }: { shareId: string; file: SharedFile; attempts: SharedAttempts; onAttempts(next: SharedAttempts): void }) {
   const open = useUiStore(state => state.open)
@@ -46,8 +37,15 @@ function ExamBox({ shareId, file, attempts, onAttempts }: { shareId: string; fil
   )
 }
 
-export default function SharedPage() {
-  const { shareId = '' } = useParams()
+function orderedFiles(item: SharedItem): { folder: SharedItem['folders'][number] | null; files: SharedFile[] }[] {
+  const byPosition = <T extends { position: number }>(list: T[]) => [...list].sort((a, b) => a.position - b.position)
+  const walk = (parentId: string | null): { folder: SharedItem['folders'][number] | null; files: SharedFile[] }[] =>
+    byPosition(item.folders.filter(folder => folder.parentId === parentId)).flatMap(folder => [{ folder, files: byPosition(item.files.filter(file => file.folderId === folder.id)) }, ...walk(folder.id)])
+  const loose = byPosition(item.files.filter(file => !file.folderId || !item.folders.some(folder => folder.id === file.folderId)))
+  return [...(loose.length ? [{ folder: null, files: loose }] : []), ...walk(null)].filter(group => group.files.length)
+}
+
+export function SharedView({ shareId, fileId }: { shareId: string; fileId: string | null }) {
   const navigate = useNavigate()
   const toast = useUiStore(state => state.toast)
   const ownShares = useLibraryStore(state => state.index.shares)
@@ -56,7 +54,6 @@ export default function SharedPage() {
   const createFile = useLibraryStore(state => state.createFile)
   const updateSidecar = useLibraryStore(state => state.updateSidecar)
   const [state, setState] = useState<PageState>({ kind: 'loading' })
-  const [selected, setSelected] = useState<string | null>(null)
   const [attempts, setAttempts] = useState<SharedAttempts>(() => readSharedAttempts(shareId))
   const [importing, setImporting] = useState(false)
   const now = useNow()
@@ -67,20 +64,17 @@ export default function SharedPage() {
     setAttempts(readSharedAttempts(shareId))
     void fetchSharedItemController(shareId).then(item => {
       if (!alive) return
-      if (!item || !Array.isArray(item.files) || !item.files.length || isExpired(item.expiresAt)) {
+      if (!item || !item.files.length || isExpired(item.expiresAt)) {
         setState({ kind: 'unavailable' })
         return
       }
       setState({ kind: 'ready', item })
-      setSelected(item.files[0].id)
       if (!ownShares.some(share => share.id === item.id)) void rememberSharedLink({ id: item.id, kind: item.kind, title: item.title, openedAt: nowIso(), expiresAt: item.expiresAt })
     })
     return () => {
       alive = false
     }
   }, [shareId])
-
-  const unavailable = state.kind === 'unavailable' || (state.kind === 'ready' && isExpired(state.item.expiresAt, now))
 
   const importItem = async (item: SharedItem) => {
     setImporting(true)
@@ -94,74 +88,94 @@ export default function SharedPage() {
     }
   }
 
-  const item = state.kind === 'ready' ? state.item : null
-  const file = item?.files.find(entry => entry.id === selected) ?? item?.files[0] ?? null
+  if (state.kind === 'loading') {
+    return (
+      <div className="empty" role="status">
+        Abrindo o compartilhamento…
+      </div>
+    )
+  }
+  const item = state.kind === 'ready' && !isExpired(state.item.expiresAt, now) ? state.item : null
+  if (!item) {
+    return (
+      <div className="empty" role="alert">
+        <Icon name="warn" />
+        <div>
+          <b>Item indisponível</b>
+          <div className="muted">O link expirou ou quem compartilhou apagou.</div>
+        </div>
+      </div>
+    )
+  }
+
+  const file = item.kind === 'file' ? item.files[0] : (item.files.find(entry => entry.id === fileId) ?? null)
+  const badge = (
+    <span className="crs" aria-label="Compartilhado">
+      compartilhado · só leitura · faltam {daysLeftText(item.expiresAt, now)}
+    </span>
+  )
+  const importButton = (
+    <button className="btn primary" disabled={importing} onClick={() => void importItem(item)}>
+      <Icon name="download" />
+      {importing ? 'Importando…' : 'Importar para a minha biblioteca'}
+    </button>
+  )
+
+  if (file) {
+    return (
+      <article className="article" aria-label={file.name}>
+        <div className="libhead">
+          {item.kind === 'folder' && (
+            <button className="ibtn" aria-label="Voltar à pasta" onClick={() => navigate(paths.shared(item.id))}>
+              <Icon name="back" />
+            </button>
+          )}
+          <h2>{file.name}</h2>
+          {badge}
+          <span style={{ marginLeft: 'auto' }}>{importButton}</span>
+        </div>
+        {file.questions.length > 0 && <ExamBox shareId={item.id} file={file} attempts={attempts} onAttempts={setAttempts} />}
+        <GithubMarkdownView key={file.id} markdown={file.content} />
+      </article>
+    )
+  }
 
   return (
-    <div className="shared-page">
-      <header className="shared-top">
-        <span className="shared-brand">
-          <span className="mark">E</span>Estudo
-        </span>
-        <span className="spacer" />
-        <button className="btn" onClick={() => navigate(paths.home)}>
-          <Icon name="book" />
-          Minha biblioteca
-        </button>
-      </header>
-      <div className="shared-scroll">
-        {state.kind === 'loading' ? (
-          <div className="welcome" role="status">
-            <span className="muted">Abrindo o compartilhamento…</span>
-          </div>
-        ) : unavailable || !item ? (
-          <div className="welcome" role="alert">
-            <h1>Item indisponível</h1>
-            <p className="muted" style={{ margin: 0 }}>
-              O link expirou ou quem compartilhou apagou.
-            </p>
-            <button className="btn primary" onClick={() => navigate(paths.home)}>
-              Abrir minha biblioteca
-            </button>
-          </div>
-        ) : (
-          <div className="shared-body">
-            <div className="shared-head">
-              <span className="faint">
-                <Icon name={item.kind === 'folder' ? 'folder' : 'file'} /> Compartilhado com você · só leitura · faltam {daysLeftText(item.expiresAt, now)}
-              </span>
-              <h1>{item.title}</h1>
-              <div className="shared-actions">
-                <button className="btn primary" disabled={importing} onClick={() => void importItem(item)}>
-                  <Icon name="download" />
-                  {importing ? 'Importando…' : 'Importar para a minha biblioteca'}
-                </button>
-                <span className="muted">Importar faz uma cópia sua, que não expira.</span>
-              </div>
-            </div>
-            {item.kind === 'folder' && (
-              <nav className="shared-files" aria-label="Notas compartilhadas">
-                {item.files.map(entry => (
-                  <button key={entry.id} className="shared-file" aria-current={entry.id === file?.id} onClick={() => setSelected(entry.id)}>
-                    <Icon name="file" />
-                    <span>
-                      <b>{entry.name}</b>
-                      {folderPath(item, entry.folderId) && <small className="faint">{folderPath(item, entry.folderId)}</small>}
-                    </span>
-                  </button>
-                ))}
-              </nav>
-            )}
-            {file && (
-              <article className="shared-doc" aria-label={file.name}>
-                {item.kind === 'folder' && <h2>{file.name}</h2>}
-                {file.questions.length > 0 && <ExamBox shareId={item.id} file={file} attempts={attempts} onAttempts={setAttempts} />}
-                <GithubMarkdownView key={file.id} markdown={file.content} />
-              </article>
-            )}
-          </div>
-        )}
+    <>
+      <div className="libhead">
+        <h2>{item.title}</h2>
+        {badge}
+        <span style={{ marginLeft: 'auto' }}>{importButton}</span>
       </div>
-    </div>
+      <div className="libbody">
+        <div className="list">
+          {orderedFiles(item).map(group => (
+            <div key={group.folder?.id ?? 'root'}>
+              {group.folder && group.folder.parentId && (
+                <div className="grp-h gh">
+                  <Icon name="layers" /> {group.folder.name} <span className="faint">{group.files.length === 1 ? '1 aula' : `${group.files.length} aulas`}</span>
+                </div>
+              )}
+              {group.files.map(entry => (
+                <div key={entry.id} className="row" role="button" tabIndex={0} onClick={() => navigate(paths.sharedFile(item.id, entry.id))} onKeyDown={event => event.key === 'Enter' && navigate(paths.sharedFile(item.id, entry.id))}>
+                  <span />
+                  <div>
+                    <div className="title">
+                      <FileIcon type={entry.type} />
+                      {entry.name}
+                    </div>
+                    <div className="sub">
+                      <TypeDot type={entry.type} />
+                      {entry.questions.length > 0 && <span>com prova</span>}
+                    </div>
+                  </div>
+                  <div className="side" />
+                </div>
+              ))}
+            </div>
+          ))}
+        </div>
+      </div>
+    </>
   )
 }

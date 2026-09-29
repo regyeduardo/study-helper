@@ -9,6 +9,7 @@ import { FilterChips } from '@/components/library/Filters'
 import { FolderTiles } from '@/components/library/FolderTiles'
 import { SelectionBar } from '@/components/library/SelectionBar'
 import { SHARING_TITLES, SharingView } from '@/components/library/SharingLists'
+import { SharedView } from '@/pages/shared'
 import { TrashList } from '@/components/library/TrashList'
 import { useFileActions } from '@/components/library/use-file-actions'
 import { DocumentBody } from '@/components/reader/DocumentArticle'
@@ -221,6 +222,17 @@ export function ColumnsWorkspace({ route }: { route: ViewRoute }) {
   const docFolder = useLibraryStore(state => (route.fileId ? (state.files.find(file => file.id === route.fileId)?.folderId ?? null) : null))
   const view: View = route.view === 'doc' ? 'folder' : route.view === 'home' ? 'folder' : route.view
   const folderId = route.view === 'doc' ? docFolder : route.folderId
+  if (route.view === 'shared') {
+    return (
+      <ColumnsShell>
+        <section className="col-doc" aria-label="Compartilhado">
+          <div className="scroll libwrap">
+            <SharedView shareId={route.shareId ?? ''} fileId={route.fileId} />
+          </div>
+        </section>
+      </ColumnsShell>
+    )
+  }
   return (
     <ColumnsShell>
       <ListColumn view={view} folderId={folderId} currentId={route.fileId} />

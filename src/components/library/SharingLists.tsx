@@ -12,7 +12,7 @@ import { useLibraryStore } from '@/stores/library'
 import { useUiStore } from '@/stores/ui'
 import { formatBytes } from '@/utils/format'
 
-export const SHARING_TITLES = { shares: 'Compartilhados', sharedWithMe: 'Compartilhado comigo' }
+export const SHARING_TITLES = { shares: 'Compartilhados', sharedWithMe: 'Compartilhado comigo', shared: 'Compartilhado' }
 
 function ShareRow({ share }: { share: ShareRecord }) {
   const ui = useUiStore()

@@ -20,7 +20,7 @@ import { type InspectorTab, useUiStore } from '@/stores/ui'
 import { downloadBlob } from '@/utils/download'
 import { dateTime, duration, formatBytes } from '@/utils/format'
 
-const INPUT_LABEL: Record<string, string> = { file: 'Arquivo', url: 'Link', youtube: 'YouTube', topic: 'Tema', text: 'Texto', recording: 'Gravação', import: 'Importado' }
+const INPUT_LABEL: Record<string, string> = { file: 'Arquivo', url: 'Link', youtube: 'YouTube', topic: 'Tema', text: 'Texto', recording: 'Gravação', import: 'Importado', shared: 'Compartilhamento' }
 const STORAGE_LABEL: Record<string, string> = { drive: 'Google Drive', gofile: 'Gofile', litterbox: 'Litterbox', filebin: 'filebin', tmpfiles: 'tmpfiles', onlyfiles: 'OnlyFiles', none: 'Não guardada' }
 
 export function TocPanel({ onPick }: { onPick?: () => void }) {

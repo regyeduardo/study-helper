@@ -41,8 +41,11 @@ function fakeBucket() {
       objects.set(key, stored)
       return view(key, stored)
     },
-    async delete(key) {
-      objects.delete(key)
+    async delete(keys) {
+      for (const key of [keys].flat()) objects.delete(key)
+    },
+    async list({ prefix }) {
+      return { objects: [...objects.keys()].filter(key => key.startsWith(prefix)).map(key => ({ key })), truncated: false }
     },
   }
 }
@@ -131,10 +134,31 @@ describe('share worker', () => {
     expect(body.id).toMatch(/^[A-Za-z0-9_-]{22}$/)
     expect(Date.parse(body.expiresAt) - Date.parse(body.createdAt)).toBe(3 * 24 * 3600 * 1000)
     const keys = [...env.BUCKET.objects.keys()].sort()
-    expect(keys.filter(key => key.startsWith('shared/'))).toEqual([`shared/${body.id}.json`])
+    expect(keys.filter(key => key.startsWith('shared/'))).toEqual([`shared/${body.id}/Nota.json`, `shared/${body.id}/Nota.md`, `shared/${body.id}/share.json`])
     expect(keys.filter(key => key.startsWith('counters/2026-09-28/'))).toHaveLength(3)
-    const stored = JSON.parse(env.BUCKET.objects.get(`shared/${body.id}.json`).body)
-    expect(stored.files[0].content).toHaveLength(1000)
+    expect(env.BUCKET.objects.get(`shared/${body.id}/Nota.md`).body).toHaveLength(1000)
+    expect(JSON.parse(env.BUCKET.objects.get(`shared/${body.id}/share.json`).body)).toMatchObject({ id: body.id, kind: 'file', title: 'Nota', files: [{ id: 'f1', path: 'Nota' }] })
+    const bytes = keys.filter(key => key.startsWith('shared/')).reduce((sum, key) => sum + new TextEncoder().encode(env.BUCKET.objects.get(key).body).length, 0)
+    expect(body.bytes).toBe(bytes)
+  })
+
+  it('stores a folder exactly like the Drive: folders with .folder.json, <name>.md + <name>.json, questions only when sent, never attempts', async () => {
+    const lesson = (id, name, extra = {}) => ({ id, name, folderId: 'mod', type: 'class', position: 0, description: '', tags: [], content: `# ${name}`, questions: [], meta: { id, name, mastery: 80 }, highlights: [{ id: 'h1', text: 'x' }], transcript: 'fala', ...extra })
+    const folderShare = {
+      kind: 'folder',
+      title: 'Curso',
+      folders: [{ id: 'root', name: 'Curso', parentId: null, position: 0, isCourse: true, description: '' }, { id: 'mod', name: 'Módulo 1', parentId: 'root', position: 0, isCourse: false, description: '' }],
+      files: [lesson('a', 'Aula', { questions: [{ tipo: 'certo_errado', enunciado: 'q' }], attempts: [{ id: 'try' }] }), lesson('b', 'Aula')],
+    }
+    const response = await call('POST', '/shares', { token: 'token-ana', body: { turnstileToken: 'ok', share: folderShare } })
+    const { id } = await response.json()
+    const keys = [...env.BUCKET.objects.keys()].filter(key => key.startsWith(`shared/${id}/`)).map(key => key.slice(`shared/${id}/`.length)).sort()
+    expect(keys).toEqual(['Curso/.folder.json', 'Curso/Módulo 1/.folder.json', 'Curso/Módulo 1/Aula(1).json', 'Curso/Módulo 1/Aula(1).md', 'Curso/Módulo 1/Aula.json', 'Curso/Módulo 1/Aula.md', 'share.json'])
+    const first = JSON.parse(env.BUCKET.objects.get(`shared/${id}/Curso/Módulo 1/Aula.json`).body)
+    expect(first).toMatchObject({ attempts: [], highlights: [{ id: 'h1' }], transcript: 'fala', questions: [{ enunciado: 'q' }], meta: { id: 'a', mastery: null, questionCount: 1 } })
+    expect(JSON.stringify(first)).not.toContain('try')
+    expect(JSON.parse(env.BUCKET.objects.get(`shared/${id}/Curso/Módulo 1/Aula(1).json`).body).questions).toEqual([])
+    expect(JSON.parse(env.BUCKET.objects.get(`shared/${id}/Curso/.folder.json`).body)).toMatchObject({ id: 'root', name: 'Curso', isCourse: true })
   })
 
   it('accepts only text', async () => {
@@ -152,7 +176,7 @@ describe('share worker', () => {
     extra.files[0].source = 'data:application/pdf;base64,JVBERi0='
     const cleaned = await call('POST', '/shares', { token: 'token-ana', body: { turnstileToken: 'ok', share: extra } })
     const { id } = await cleaned.json()
-    expect(JSON.parse(env.BUCKET.objects.get(`shared/${id}.json`).body).files[0].source).toBeUndefined()
+    expect(JSON.stringify([...env.BUCKET.objects.entries()].filter(([key]) => key.startsWith(`shared/${id}/`)))).not.toContain('data:application/pdf')
   })
 
   it('an account with the secret code bonus shares up to 600 KB a day', async () => {
@@ -215,13 +239,13 @@ describe('share worker', () => {
 
   it('gives the KB back when deleting on the same day only', async () => {
     const bytes = await sizeOf(100 * KB)
-    const [sameDayId] = [...env.BUCKET.objects.keys()].filter(key => key.startsWith('shared/')).map(key => key.slice(7, -5))
+    const [sameDayId] = [...env.BUCKET.objects.keys()].filter(key => key.endsWith('/share.json')).map(key => key.split('/')[1])
     const stranger = await call('DELETE', `/shares/${sameDayId}`, { token: 'token-bia' })
     expect(stranger.status).toBe(403)
     const removed = await call('DELETE', `/shares/${sameDayId}`, { token: 'token-ana' })
     expect(removed.status).toBe(200)
     expect(await removed.json()).toEqual({ returned: bytes, remaining: 300 * KB })
-    expect(env.BUCKET.objects.has(`shared/${sameDayId}.json`)).toBe(false)
+    expect([...env.BUCKET.objects.keys()].some(key => key.startsWith(`shared/${sameDayId}/`))).toBe(false)
 
     const created = await post({ contentBytes: 100 * KB })
     const { id: oldId } = await created.json()
@@ -252,12 +276,13 @@ describe('share worker', () => {
 
   it('serves shared files only when the dev flag is on, and not after expiry', async () => {
     const { id } = await (await post()).json()
-    expect((await call('GET', `/shared/${id}.json`)).status).toBe(404)
+    expect((await call('GET', `/shared/${id}/share.json`)).status).toBe(404)
     env.SERVE_SHARED = 'true'
-    const served = await call('GET', `/shared/${id}.json`)
+    const served = await call('GET', `/shared/${id}/share.json`)
     expect(served.status).toBe(200)
     expect((await served.json()).id).toBe(id)
+    expect(await (await call('GET', `/shared/${id}/Nota.md`)).text()).toHaveLength(1000)
     vi.setSystemTime(new Date('2026-10-01T15:00:01Z'))
-    expect((await call('GET', `/shared/${id}.json`)).status).toBe(404)
+    expect((await call('GET', `/shared/${id}/share.json`)).status).toBe(404)
   })
 })

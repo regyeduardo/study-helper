@@ -34,6 +34,7 @@ describe('SettingsDialog AI tab', () => {
 
   it('"Testar sem gastar token" only lists models via GET and fills the model list', async () => {
     const { calls } = installFetch(() => jsonResponse({ data: [{ id: 'gpt-4o' }, { id: 'gpt-4o-mini' }] }))
+    useLibraryStore.setState({ repo: { saveIndex: async () => undefined } as never })
     render(<SettingsDialog initial="ai" />)
     fireEvent.click(screen.getByRole('button', { name: /^OpenAI/ }))
     fireEvent.change(screen.getByLabelText('Chave da API'), { target: { value: 'sk-teste' } })

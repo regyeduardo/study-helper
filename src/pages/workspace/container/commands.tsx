@@ -12,6 +12,7 @@ import { CommandsRow } from '@/components/library/FileRows'
 import { FolderTiles } from '@/components/library/FolderTiles'
 import { SelectionBar } from '@/components/library/SelectionBar'
 import { SHARING_TITLES, SharingView } from '@/components/library/SharingLists'
+import { SharedView } from '@/pages/shared'
 import { TrashList } from '@/components/library/TrashList'
 import { useFileActions } from '@/components/library/use-file-actions'
 import { DocumentBody, DocumentHead } from '@/components/reader/DocumentArticle'
@@ -363,6 +364,17 @@ export function CommandsWorkspace({ route }: { route: ViewRoute }) {
   const scroller = useScrollerRef()
   const data = useLibraryView(route.view === 'home' ? 'folder' : route.view, route.folderId)
   const effective: ViewRoute = route.view === 'home' ? { view: 'folder', folderId: null, fileId: null } : route
+  if (route.view === 'shared') {
+    return (
+      <CommandsShell>
+        <div className="body">
+          <div className="docscroll" ref={scroller}>
+            <SharedView shareId={route.shareId ?? ''} fileId={route.fileId} />
+          </div>
+        </div>
+      </CommandsShell>
+    )
+  }
   if (route.view === 'doc' && route.fileId) {
     return (
       <CommandsShell>

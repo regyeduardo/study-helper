@@ -8,6 +8,7 @@ import { FilterChips, SortSelect } from '@/components/library/Filters'
 import { FolderTiles } from '@/components/library/FolderTiles'
 import { SelectionBar } from '@/components/library/SelectionBar'
 import { SHARING_TITLES, SharingView } from '@/components/library/SharingLists'
+import { SharedView } from '@/pages/shared'
 import { TrashList } from '@/components/library/TrashList'
 import { UpButton } from '@/components/library/Crumbs'
 import { DocumentBody } from '@/components/reader/DocumentArticle'
@@ -205,7 +206,9 @@ export function ReaderWorkspace({ route }: { route: ViewRoute }) {
   }
   return (
     <ReaderShell>
-      <div className="libwrap">{route.view === 'home' ? <Home /> : route.view === 'shares' || route.view === 'sharedWithMe' ? <SharingView view={route.view} /> : <Library route={route} />}</div>
+      <div className="libwrap">
+        {route.view === 'home' ? <Home /> : route.view === 'shared' ? <SharedView shareId={route.shareId ?? ''} fileId={route.fileId} /> : route.view === 'shares' || route.view === 'sharedWithMe' ? <SharingView view={route.view} /> : <Library route={route} />}
+      </div>
     </ReaderShell>
   )
 }

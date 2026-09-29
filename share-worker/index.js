@@ -10,7 +10,9 @@ const CAS_ATTEMPTS = 10
 const SHARED_PREFIX = 'shared/'
 const SHARED_CACHE = 'public, max-age=60'
 const SHARE_PATH = /^\/shares\/([A-Za-z0-9_-]{16,64})$/
-const SHARED_FILE_PATH = /^\/shared\/([A-Za-z0-9_-]{16,64})\.json$/
+const SHARED_FILE_PATH = /^\/shared\/([A-Za-z0-9_-]{16,64})\/(.+)$/
+const MANIFEST_NAME = 'share.json'
+const FOLDER_META_NAME = '.folder.json'
 
 function allowedOrigin(origin, env) {
   if (!origin) return null
@@ -161,12 +163,22 @@ function cleanFolder(folder) {
   }
 }
 
+function plainObject(value) {
+  return value && typeof value === 'object' && !Array.isArray(value) && !hasBinary(JSON.stringify(value)) ? value : null
+}
+
 function cleanFile(file) {
   if (!file || typeof file !== 'object' || !isText(file.id) || !isText(file.name) || !isText(file.content)) return null
   if (file.questions !== undefined && !Array.isArray(file.questions)) return null
+  if (file.highlights !== undefined && !Array.isArray(file.highlights)) return null
   const questions = file.questions ?? []
-  if (questions.some(question => !question || typeof question !== 'object' || Array.isArray(question) || hasBinary(JSON.stringify(question)))) return null
+  const highlights = file.highlights ?? []
+  if ([...questions, ...highlights].some(item => !plainObject(item))) return null
+  if (file.transcript !== undefined && !isText(file.transcript)) return null
   return {
+    meta: plainObject(file.meta) ?? {},
+    highlights,
+    transcript: isText(file.transcript) ? file.transcript : undefined,
     id: file.id,
     name: file.name,
     folderId: isText(file.folderId) ? file.folderId : null,
@@ -188,6 +200,61 @@ export function cleanShare(share) {
   return { kind: share.kind, title: share.title, folders, files }
 }
 
+function safeName(name) {
+  return name.replace(/[\\/]/g, '-').replace(/^\.+/, '').trim() || 'sem nome'
+}
+
+function uniqueName(name, taken) {
+  let candidate = safeName(name)
+  for (let copy = 1; taken.has(candidate.toLowerCase()); copy++) candidate = `${safeName(name)}(${copy})`
+  taken.add(candidate.toLowerCase())
+  return candidate
+}
+
+export function shareTree(share, id, createdAt, expiresAt) {
+  const root = `${SHARED_PREFIX}${id}/`
+  const folderPaths = new Map()
+  const taken = new Map()
+  const namesIn = path => taken.get(path) ?? taken.set(path, new Set()).get(path)
+  const pathOf = folder => {
+    if (folderPaths.has(folder.id)) return folderPaths.get(folder.id)
+    const parent = share.folders.find(item => item.id === folder.parentId)
+    const base = parent ? pathOf(parent) : ''
+    const path = `${base}${uniqueName(folder.name, namesIn(base))}/`
+    folderPaths.set(folder.id, path)
+    return path
+  }
+  const objects = []
+  const folders = share.folders.map(folder => {
+    const path = pathOf(folder)
+    objects.push({ key: `${root}${path}${FOLDER_META_NAME}`, body: JSON.stringify(folder, null, 2), type: 'application/json' })
+    return { id: folder.id, path }
+  })
+  const files = share.files.map(file => {
+    const base = file.folderId ? (folderPaths.get(file.folderId) ?? '') : ''
+    const path = `${base}${uniqueName(file.name, namesIn(base))}`
+    const meta = { ...file.meta, id: file.id, name: file.name, folderId: file.folderId, type: file.type, position: file.position, description: file.description, tags: file.tags, mastery: null, lastReviewedAt: null, questionCount: file.questions.length }
+    const sidecar = { meta, questions: file.questions, attempts: [], highlights: file.highlights, ...(file.transcript !== undefined ? { transcript: file.transcript } : {}) }
+    objects.push({ key: `${root}${path}.md`, body: file.content, type: 'text/markdown' })
+    objects.push({ key: `${root}${path}.json`, body: JSON.stringify(sidecar, null, 2), type: 'application/json' })
+    return { id: file.id, path }
+  })
+  const manifest = { version: 2, id, kind: share.kind, title: share.title, createdAt, expiresAt, folders, files }
+  objects.unshift({ key: `${root}${MANIFEST_NAME}`, body: JSON.stringify(manifest, null, 2), type: 'application/json' })
+  return objects
+}
+
+async function removeShareObjects(bucket, id) {
+  const prefix = `${SHARED_PREFIX}${id}/`
+  let cursor
+  do {
+    const page = await bucket.list({ prefix, cursor })
+    const keys = page.objects.map(object => object.key)
+    if (keys.length) await bucket.delete(keys)
+    cursor = page.truncated ? page.cursor : undefined
+  } while (cursor)
+}
+
 async function createShare(request, env, headers) {
   if (!(request.headers.get('Content-Type') ?? '').toLowerCase().startsWith('application/json')) return json({ error: 'text_only' }, 415, headers)
   const input = await request.json().catch(() => null)
@@ -197,22 +264,26 @@ async function createShare(request, env, headers) {
   if (!(await turnstilePassed(input.turnstileToken, request, env))) return json({ error: 'turnstile_failed' }, 403, headers)
   const share = cleanShare(input.share)
   if (!share) return json({ error: 'text_only' }, 415, headers)
-  const bytes = bytesOf(JSON.stringify(share))
   const now = Date.now()
+  const id = newShareId()
+  const createdAt = new Date(now).toISOString()
+  const expiresAt = new Date(now + SHARE_DAYS * DAY_MS).toISOString()
+  const objects = shareTree(share, id, createdAt, expiresAt)
+  const bytes = objects.reduce((sum, object) => sum + bytesOf(object.body), 0)
   const day = dayOf(now)
   const ipKey = await ipKeyOf(request)
   const counters = countersOf(day, accountKey, ipKey, await factorOf(env.BUCKET, accountKey))
   const reserved = await reserve(env.BUCKET, counters, bytes)
   if (!reserved.ok) return json({ error: `${reserved.failed}_limit`, remaining: reserved.remaining, bytes }, 429, headers)
-  const id = newShareId()
-  const createdAt = new Date(now).toISOString()
-  const expiresAt = new Date(now + SHARE_DAYS * DAY_MS).toISOString()
   try {
-    await env.BUCKET.put(`${SHARED_PREFIX}${id}.json`, JSON.stringify({ version: 1, id, createdAt, expiresAt, ...share }), {
-      httpMetadata: { contentType: 'application/json; charset=utf-8', cacheControl: SHARED_CACHE },
-      customMetadata: { owner: accountKey, ip: ipKey, day, bytes: String(bytes), expiresAt },
-    })
+    for (const object of objects) {
+      await env.BUCKET.put(object.key, object.body, {
+        httpMetadata: { contentType: `${object.type}; charset=utf-8`, cacheControl: SHARED_CACHE },
+        customMetadata: object.key.endsWith(`/${MANIFEST_NAME}`) ? { owner: accountKey, ip: ipKey, day, bytes: String(bytes), expiresAt } : { expiresAt },
+      })
+    }
   } catch (error) {
+    await removeShareObjects(env.BUCKET, id).catch(() => undefined)
     for (const counter of counters) await adjust(env.BUCKET, counter.key, -bytes, counter.limit)
     throw error
   }
@@ -223,12 +294,11 @@ async function createShare(request, env, headers) {
 async function deleteShare(request, env, headers, id) {
   const accountKey = await identify(request, env)
   if (!accountKey) return json({ error: 'login_required' }, 401, headers)
-  const key = `${SHARED_PREFIX}${id}.json`
-  const object = await env.BUCKET.head(key)
+  const object = await env.BUCKET.head(`${SHARED_PREFIX}${id}/${MANIFEST_NAME}`)
   if (!object) return json({ error: 'not_found' }, 404, headers)
   const meta = object.customMetadata ?? {}
   if (meta.owner !== accountKey) return json({ error: 'not_owner' }, 403, headers)
-  await env.BUCKET.delete(key)
+  await removeShareObjects(env.BUCKET, id)
   const day = dayOf(Date.now())
   const bytes = Number(meta.bytes) || 0
   const sameDay = meta.day === day
@@ -244,10 +314,10 @@ async function readQuota(request, env, headers) {
   return json({ day, ...(await quotaOf(env.BUCKET, countersOf(day, accountKey, await ipKeyOf(request), await factorOf(env.BUCKET, accountKey)))) }, 200, headers)
 }
 
-async function serveShared(env, headers, id) {
-  const object = await env.BUCKET.get(`${SHARED_PREFIX}${id}.json`)
+async function serveShared(env, headers, id, path) {
+  const object = await env.BUCKET.get(`${SHARED_PREFIX}${id}/${decodeURIComponent(path)}`)
   if (!object || Date.parse(object.customMetadata?.expiresAt ?? '') <= Date.now()) return json({ error: 'not_found' }, 404, headers)
-  return new Response(object.body, { status: 200, headers: { ...headers, 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': SHARED_CACHE } })
+  return new Response(object.body, { status: 200, headers: { ...headers, 'Content-Type': object.httpMetadata?.contentType ?? 'application/json; charset=utf-8', 'Cache-Control': SHARED_CACHE } })
 }
 
 export default {
@@ -262,7 +332,7 @@ export default {
     if (path === '/quota' && request.method === 'GET') return readQuota(request, env, headers)
     if (path === '/shares' && request.method === 'POST') return createShare(request, env, headers)
     if (shareMatch && request.method === 'DELETE') return deleteShare(request, env, headers, shareMatch[1])
-    if (fileMatch && request.method === 'GET' && env.SERVE_SHARED === 'true') return serveShared(env, headers, fileMatch[1])
+    if (fileMatch && request.method === 'GET' && env.SERVE_SHARED === 'true') return serveShared(env, headers, fileMatch[1], fileMatch[2])
     return json({ error: 'not_found' }, 404, headers)
   },
 }

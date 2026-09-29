@@ -7,6 +7,7 @@ export const DEFAULT_STORAGE_LIMIT_BYTES = 1024 * 1024 * 1024
 export function defaultSettings(): Settings {
   return {
     ai: { provider: 'ovh', baseUrl: '', apiKey: '', model: '' },
+    aiCredentials: {},
     transcription: { engine: 'whisper', groqApiKey: '', language: 'pt', separateSpeakers: true },
     youtube: { reader: 'youtube-transcript', geminiApiKey: '' },
     timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/Sao_Paulo',

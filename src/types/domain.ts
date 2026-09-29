@@ -74,7 +74,7 @@ export interface Highlight {
   updatedAt: string
 }
 
-export type SourceInput = 'file' | 'url' | 'youtube' | 'topic' | 'text' | 'recording' | 'import'
+export type SourceInput = 'file' | 'url' | 'youtube' | 'topic' | 'text' | 'recording' | 'import' | 'shared'
 
 export type SourceStorage = 'none' | 'drive' | 'gofile' | 'litterbox' | 'filebin' | 'tmpfiles' | 'onlyfiles'
 
@@ -205,8 +205,11 @@ export type YoutubeReader = 'youtube-transcript' | 'gemini'
 
 export type LayoutId = 'reader' | 'columns' | 'commands' | 'focus'
 
+export type AiCredential = Pick<AiSettings, 'apiKey' | 'model' | 'baseUrl'>
+
 export interface Settings {
   ai: AiSettings
+  aiCredentials: Partial<Record<AiProviderId, AiCredential>>
   transcription: TranscriptionSettings
   youtube: { reader: YoutubeReader; geminiApiKey: string }
   timezone: string
@@ -262,6 +265,9 @@ export interface SharedFile {
   tags: string[]
   content: string
   questions: StoredQuestion[]
+  highlights: Highlight[]
+  transcript?: string
+  meta?: Partial<FileMeta>
 }
 
 export interface ShareContent {

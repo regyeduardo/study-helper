@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import 'fake-indexeddb/auto'
 
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
-import { MemoryRouter, Route, Routes } from 'react-router-dom'
+import { MemoryRouter, Route, Routes, useParams } from 'react-router-dom'
 
 import type { SharedItem, SharedLink, StoredQuestion } from '@/types/domain'
 import { ShareDialog } from '@/components/dialogs/ShareDialog'
@@ -12,7 +12,7 @@ import { env } from '@/lib/env'
 import { buildShareContent, importSharedItem, readSharedAttempts, saveSharedAttempt, shareBytes } from '@/lib/share'
 import { LocalRepository } from '@/lib/storage/local-repository'
 import { mergeKept } from '@/lib/sync/merge'
-import SharedPage from '@/pages/shared'
+import { SharedView } from '@/pages/shared'
 import { type Account, LOCAL_ACCOUNT, useAccountStore } from '@/stores/account'
 import { useLibraryStore } from '@/stores/library'
 import { useUiStore } from '@/stores/ui'
@@ -110,7 +110,7 @@ describe('diálogo de compartilhar', () => {
     expect(calls.find(call => call.url.endsWith('/quota'))?.authorization).toBe('Bearer at-1')
   })
 
-  it('sem marcar, a prova não vai; marcando, vão só as questões, sem tentativas, notas nem destaques', async () => {
+  it('sem marcar, a prova não vai; marcando, vão as questões; destaques vão, tentativas nunca', async () => {
     useGoogle()
     const note = await noteWithExam()
     replies['GET https://share.test/quota'] = () => json({ remaining: 250_000 })
@@ -136,7 +136,8 @@ describe('diálogo de compartilhar', () => {
     const sent = calls.find(call => call.method === 'POST')!.body as { share: unknown }
     expect((sent.share as { files: { questions: unknown[] }[] }).files[0].questions).toEqual([QUESTION])
     const text = JSON.stringify(sent)
-    expect(text).not.toMatch(/attempts|highlights|mastery|minha nota|certainty/)
+    expect(text).not.toMatch(/attempts|"mastery":\d|certainty/)
+    expect(text).toContain('minha nota')
     expect(useLibraryStore.getState().index.shares.map(item => item.withExams)).toEqual([true, false])
   })
 
@@ -176,18 +177,41 @@ function sharedItem(fields: Partial<SharedItem> = {}): SharedItem {
       { id: 'mod', name: 'Módulo 1', parentId: 'root', position: 0, isCourse: false, description: '' },
     ],
     files: [
-      { id: 'a', name: 'Aula 1', folderId: 'mod', type: 'class', position: 0, description: '', tags: ['mat'], content: '# Aula 1\n\nTexto da aula 1.', questions: [QUESTION] },
-      { id: 'b', name: 'Aula 2', folderId: 'root', type: 'class', position: 1, description: '', tags: [], content: '# Aula 2', questions: [] },
+      { id: 'a', name: 'Aula 1', folderId: 'mod', type: 'class', position: 0, description: '', tags: ['mat'], content: '# Aula 1\n\nTexto da aula 1.', questions: [QUESTION], highlights: [] },
+      { id: 'b', name: 'Aula 2', folderId: 'root', type: 'class', position: 1, description: '', tags: [], content: '# Aula 2', questions: [], highlights: [] },
     ],
     ...fields,
   }
+}
+
+function serve(item: SharedItem) {
+  const url = (path: string) => `GET https://files.test/shared/${item.id}/${path.split('/').map(encodeURIComponent).join('/')}`
+  const folderPaths = new Map<string, string>()
+  const pathOf = (id: string): string => {
+    const folder = item.folders.find(entry => entry.id === id)!
+    return folderPaths.get(id) ?? folderPaths.set(id, `${folder.parentId ? pathOf(folder.parentId) : ''}${folder.name}/`).get(id)!
+  }
+  const folders = item.folders.map(folder => ({ id: folder.id, path: pathOf(folder.id) }))
+  const files = item.files.map(file => ({ id: file.id, path: `${file.folderId ? pathOf(file.folderId) : ''}${file.name}` }))
+  replies[url('share.json')] = () => json({ version: 2, id: item.id, kind: item.kind, title: item.title, createdAt: item.createdAt, expiresAt: item.expiresAt, folders, files })
+  for (const folder of item.folders) replies[url(`${pathOf(folder.id)}.folder.json`)] = () => json(folder)
+  item.files.forEach((file, index) => {
+    replies[url(`${files[index].path}.md`)] = () => new Response(file.content)
+    replies[url(`${files[index].path}.json`)] = () => json({ meta: { id: file.id, name: file.name, folderId: file.folderId, type: file.type, position: file.position, description: file.description, tags: file.tags }, questions: file.questions, attempts: [], highlights: file.highlights })
+  })
+}
+
+function SharedRoute() {
+  const { shareId = '', fileId = null } = useParams()
+  return <SharedView shareId={shareId} fileId={fileId} />
 }
 
 function renderLink(id: string) {
   return render(
     <MemoryRouter initialEntries={[`/shared/${id}`]}>
       <Routes>
-        <Route path="/shared/:shareId" element={<SharedPage />} />
+        <Route path="/shared/:shareId" element={<SharedRoute />} />
+        <Route path="/shared/:shareId/:fileId" element={<SharedRoute />} />
         <Route path="*" element={<div>biblioteca</div>} />
       </Routes>
       <Overlays />
@@ -199,12 +223,12 @@ describe('página do link', () => {
   it('link apagado mostra "Item indisponível"', async () => {
     renderLink('ApagadoApagadoApagado1')
     expect(await screen.findByText('Item indisponível')).toBeInTheDocument()
-    expect(calls[0].url).toBe('https://files.test/shared/ApagadoApagadoApagado1.json')
+    expect(calls[0].url).toBe('https://files.test/shared/ApagadoApagadoApagado1/share.json')
   })
 
   it('link expirado mostra "Item indisponível" e não entra em Compartilhado comigo', async () => {
     const item = sharedItem({ expiresAt: new Date(Date.now() - 1000).toISOString() })
-    replies[`GET https://files.test/shared/${item.id}.json`] = () => json(item)
+    serve(item)
     renderLink(item.id)
     expect(await screen.findByText('Item indisponível')).toBeInTheDocument()
     expect(useLibraryStore.getState().index.sharedWithMe).toEqual([])
@@ -212,10 +236,13 @@ describe('página do link', () => {
 
   it('abre sem login, entra em Compartilhado comigo, e a prova fica só no navegador com aviso', async () => {
     const item = sharedItem()
-    replies[`GET https://files.test/shared/${item.id}.json`] = () => json(item)
+    serve(item)
     renderLink(item.id)
     expect(await screen.findByRole('heading', { name: 'Curso de frações' })).toBeInTheDocument()
+    expect(screen.getByLabelText('Compartilhado')).toHaveTextContent('compartilhado · só leitura · faltam 2 dias')
     await waitFor(() => expect(useLibraryStore.getState().index.sharedWithMe.map(link => link.id)).toEqual([item.id]))
+    fireEvent.click(screen.getByRole('button', { name: /Aula 1/ }))
+    expect(await screen.findByRole('heading', { name: 'Aula 1' })).toBeInTheDocument()
     expect(screen.getByText(/As notas desta prova ficam só neste navegador/)).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: /Fazer a prova \(1 questão\)/ }))
     fireEvent.click(await screen.findByRole('button', { name: /\)\s*4$/ }))
@@ -224,6 +251,26 @@ describe('página do link', () => {
     expect(readSharedAttempts(item.id).a).toHaveLength(1)
     expect(useLibraryStore.getState().files).toEqual([])
     expect(await screen.findByLabelText('Suas notas neste navegador')).toHaveTextContent('Feita 1 vez · última: 100%')
+  })
+})
+
+describe('abrir como arquivo ou pasta', () => {
+  it('um arquivo compartilhado abre direto na leitura', async () => {
+    const item = sharedItem({ kind: 'file', title: 'Aula 1', folders: [], files: [{ ...sharedItem().files[0], folderId: null }] })
+    serve(item)
+    renderLink(item.id)
+    expect(await screen.findByRole('article', { name: 'Aula 1' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Aula 2/ })).not.toBeInTheDocument()
+  })
+
+  it('uma pasta compartilhada abre na visão de pasta, com as aulas e o módulo, sem ações de edição', async () => {
+    const item = sharedItem()
+    serve(item)
+    renderLink(item.id)
+    expect(await screen.findByRole('button', { name: /Aula 1/ })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Aula 2/ })).toBeInTheDocument()
+    expect(screen.getByText('Módulo 1')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Nova pasta|Renomear|Apagar/ })).not.toBeInTheDocument()
   })
 })
 
@@ -247,11 +294,12 @@ describe('importar', () => {
     expect(opened.sidecar.attempts).toHaveLength(1)
     expect(opened.sidecar.meta).toMatchObject({ questionCount: 1, mastery: 0 })
     expect(first.tags).toEqual(['mat'])
+    expect(first.origin).toMatchObject({ input: 'shared', name: 'Curso de frações', url: expect.stringContaining(`/shared/${item.id}`) })
   })
 
   it('importa uma nota solta para a raiz e pelo botão da página', async () => {
     const item = sharedItem({ kind: 'file', title: 'Aula 1', folders: [], files: [{ ...sharedItem().files[0], folderId: null }] })
-    replies[`GET https://files.test/shared/${item.id}.json`] = () => json(item)
+    serve(item)
     renderLink(item.id)
     fireEvent.click(await screen.findByRole('button', { name: 'Importar para a minha biblioteca' }))
     expect(await screen.findByText('biblioteca')).toBeInTheDocument()

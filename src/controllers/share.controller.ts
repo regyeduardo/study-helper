@@ -1,4 +1,4 @@
-import type { ShareContent, SharedItem } from '@/types/domain'
+import type { FileSidecar, ShareContent, SharedFile, SharedFolder, SharedItem } from '@/types/domain'
 import type { TokenProvider } from '@/controllers/drive.controller'
 import { env } from '@/lib/env'
 import { formatBytes } from '@/utils/format'
@@ -89,8 +89,48 @@ export function deleteShareController(token: TokenProvider, id: string): Promise
   return call<DeletedShare>(token, `/shares/${encodeURIComponent(id)}`, { method: 'DELETE' })
 }
 
+interface ShareManifest {
+  version: number
+  id: string
+  kind: SharedItem['kind']
+  title: string
+  createdAt: string
+  expiresAt: string
+  folders: { id: string; path: string }[]
+  files: { id: string; path: string }[]
+}
+
+function sharedPathUrl(id: string, path: string): string {
+  return `${env.sharedFilesUrl}/shared/${encodeURIComponent(id)}/${path.split('/').map(encodeURIComponent).join('/')}`
+}
+
+async function sharedText(id: string, path: string): Promise<string | null> {
+  const response = await fetch(sharedPathUrl(id, path)).catch(() => null)
+  return response?.ok ? response.text() : null
+}
+
+async function sharedJson<T>(id: string, path: string): Promise<T | null> {
+  const text = await sharedText(id, path)
+  try {
+    return text === null ? null : (JSON.parse(text) as T)
+  } catch {
+    return null
+  }
+}
+
 export async function fetchSharedItemController(id: string): Promise<SharedItem | null> {
-  const response = await fetch(`${env.sharedFilesUrl}/shared/${encodeURIComponent(id)}.json`).catch(() => null)
-  if (!response?.ok) return null
-  return (await response.json().catch(() => null)) as SharedItem | null
+  const manifest = await sharedJson<ShareManifest>(id, 'share.json')
+  if (!manifest || !Array.isArray(manifest.files)) return null
+  const folders = await Promise.all(manifest.folders.map(entry => sharedJson<SharedFolder>(id, `${entry.path}.folder.json`)))
+  const files = await Promise.all(
+    manifest.files.map(async entry => {
+      const [content, sidecar] = await Promise.all([sharedText(id, `${entry.path}.md`), sharedJson<FileSidecar>(id, `${entry.path}.json`)])
+      if (content === null || !sidecar) return null
+      const { meta } = sidecar
+      const file: SharedFile = { id: entry.id, name: meta.name, folderId: meta.folderId, type: meta.type, position: meta.position, description: meta.description, tags: meta.tags ?? [], content, questions: sidecar.questions ?? [], highlights: sidecar.highlights ?? [], ...(sidecar.transcript !== undefined ? { transcript: sidecar.transcript } : {}), meta }
+      return file
+    }),
+  )
+  if (folders.includes(null) || files.includes(null)) return null
+  return { version: manifest.version, id: manifest.id, kind: manifest.kind, title: manifest.title, createdAt: manifest.createdAt, expiresAt: manifest.expiresAt, folders: folders as SharedFolder[], files: files as SharedFile[] }
 }

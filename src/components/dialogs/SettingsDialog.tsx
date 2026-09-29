@@ -9,7 +9,7 @@ import { getFreeAiBalanceController, listModelsController } from '@/controllers/
 import { freeAiToken, lessonsLeft, lessonsText } from '@/lib/ai/free'
 import { useFreeMinutes } from '@/hooks/use-free-minutes'
 import { isFreeChoice, modelOf, PROVIDERS, type ProviderInfo, providerOf } from '@/lib/ai/providers'
-import { DEFAULT_STORAGE_LIMIT_BYTES } from '@/lib/defaults'
+import { DEFAULT_STORAGE_LIMIT_BYTES, defaultSettings } from '@/lib/defaults'
 import { currentDevice } from '@/lib/device'
 import { deleteModel, type ModelId, storageBreakdown, type StorageBreakdown } from '@/lib/storage/installed-models'
 import { applyTheme, savedTheme, type ThemeChoice } from '@/lib/theme'
@@ -89,6 +89,7 @@ const PROVIDER_GROUPS: { label: string; includes: (provider: ProviderInfo) => bo
 function AiTab() {
   const signedIn = useAccountStore(state => state.active().kind === 'google')
   const saved = useLibraryStore(state => state.index.settings.ai)
+  const credentials = useLibraryStore(state => state.index.settings.aiCredentials)
   const updateSettings = useLibraryStore(state => state.updateSettings)
   const [draft, setDraft] = useState<AiSettings>(saved)
   const [keys, setKeys] = useState<Record<string, string>>({ [saved.provider]: saved.apiKey })
@@ -98,10 +99,23 @@ function AiTab() {
   const offered = draft.provider === 'free'
   const changed = JSON.stringify(draft) !== JSON.stringify(saved)
 
+  const known = (id: AiProviderId) => credentials[id] ?? (id === saved.provider ? { apiKey: saved.apiKey, model: saved.model, baseUrl: saved.baseUrl } : undefined)
+
   const pick = (id: AiProviderId) => {
-    setDraft({ provider: id, baseUrl: id === 'custom' ? draft.baseUrl : '', apiKey: keys[id] ?? '', model: '' })
-    setModels(providerOf(id).models ?? [])
+    const kept = known(id)
+    setDraft({ provider: id, baseUrl: id === 'custom' ? (kept?.baseUrl ?? draft.baseUrl) : '', apiKey: keys[id] ?? kept?.apiKey ?? '', model: kept?.model ?? '' })
+    setModels(providerOf(id).models ?? (kept?.model ? [kept.model] : []))
     setTest({ state: 'idle' })
+  }
+
+  const remember = (tested: AiSettings) => updateSettings({ aiCredentials: { ...credentials, [tested.provider]: { apiKey: tested.apiKey, model: tested.model, baseUrl: tested.baseUrl } } })
+
+  const forgetKey = async () => {
+    setDraft({ ...draft, apiKey: '' })
+    setKeys({ ...keys, [draft.provider]: '' })
+    const rest = Object.fromEntries(Object.entries(credentials).filter(([id]) => id !== draft.provider))
+    const inUse = saved.provider === draft.provider
+    await updateSettings({ aiCredentials: rest, ...(inUse ? { ai: provider.needsKey ? defaultSettings().ai : { ...saved, apiKey: '' } } : {}) })
   }
 
   const runTest = async (): Promise<AiSettings | null> => {
@@ -122,6 +136,7 @@ function AiTab() {
       const fallback = provider.keylessModel && !draft.apiKey && found.includes(provider.keylessModel) ? provider.keylessModel : found[0]
       const tested = { ...draft, model: draft.model || fallback || '' }
       setDraft(tested)
+      await remember(tested)
       setTest({ state: 'ok', message: `Conectado · ${found.length} ${found.length === 1 ? 'modelo disponível' : 'modelos disponíveis'}` })
       return tested
     } catch (error) {
@@ -173,18 +188,27 @@ function AiTab() {
         <>
           <div className="field">
             <label htmlFor="ai-key">Chave da API{provider.needsKey ? '' : ' (opcional)'}</label>
-            <input
-              className="input"
-              id="ai-key"
-              type="password"
-              autoComplete="off"
-              placeholder={provider.needsKey ? `Cole a chave de ${provider.name}` : 'Sem chave funciona; com chave, usa o seu plano'}
-              value={draft.apiKey}
-              onChange={event => {
-                setDraft({ ...draft, apiKey: event.target.value })
-                setKeys({ ...keys, [draft.provider]: event.target.value })
-              }}
-            />
+            <div style={{ display: 'flex', gap: 6 }}>
+              <input
+                className="input"
+                id="ai-key"
+                type="password"
+                autoComplete="off"
+                style={{ flex: 1 }}
+                placeholder={provider.needsKey ? `Cole a chave de ${provider.name}` : 'Sem chave funciona; com chave, usa o seu plano'}
+                value={draft.apiKey}
+                onChange={event => {
+                  setDraft({ ...draft, apiKey: event.target.value })
+                  setKeys({ ...keys, [draft.provider]: event.target.value })
+                }}
+              />
+              {(draft.apiKey || known(draft.provider)?.apiKey) && (
+                <button className="btn" onClick={() => void forgetKey()}>
+                  <Icon name="trash" />
+                  Apagar chave
+                </button>
+              )}
+            </div>
             <span className="faint" style={{ fontSize: 12 }}>
               Fica salva no .json das suas configurações e aparece sempre com asteriscos.
               {provider.keyHelpUrl && (
