@@ -144,7 +144,7 @@ describe('transcription worker', () => {
     expect(done.body.segments).toEqual([{ start: 0, end: 1.5, text: ' olá mundo ' }])
     expect(done.body.duration).toBe(42)
     expect(done.body.remaining_seconds).toBe(1800 - 42)
-    expect(upstream[0].url).toBe('https://api.deepinfra.com/v1/inference/openai/whisper-large-v3-turbo')
+    expect(upstream[0].url).toBe('https://api.deepinfra.com/v1/inference/openai/whisper-large-v3')
     expect(new Headers(upstream[0].init.headers).get('Authorization')).toBe(`bearer ${KEY}`)
     expect((upstream[0].init.body as FormData).get('audio')).toBeInstanceOf(Blob)
     expect((upstream[0].init.body as FormData).get('language')).toBe('pt')

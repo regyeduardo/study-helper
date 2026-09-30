@@ -1,4 +1,4 @@
-const DEEPINFRA_URL = 'https://api.deepinfra.com/v1/inference/openai/whisper-large-v3-turbo'
+const DEEPINFRA_URL = 'https://api.deepinfra.com/v1/inference/openai/whisper-large-v3'
 const GOOGLE_API_BASE = 'https://www.googleapis.com'
 const LOCAL_ORIGIN = /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/
 const TIME_ZONE = 'America/Sao_Paulo'
