@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { COMPUTER_AUDIO_NONE, discardRecording, isComputerInput, listAudioInputs, MeetingRecorder, type RecorderCallbacks, type RecordingResult, systemAudioNotice } from '@/lib/recording/recorder'
 import { useRecorderStore } from '@/stores/recorder'
-import { blobText, COMPUTER_INPUT, FakeAudioContext, MICROPHONE_INPUT, FakeMediaRecorder, installMediaEnvironment, type MediaEnvironment } from '@/test/recording/media-fakes'
+import { blobText, COMPUTER_INPUT, FakeAudioContext, MICROPHONE_INPUT, FakeMediaRecorder, FakeMediaStream, FakeTrack, installMediaEnvironment, type MediaEnvironment } from '@/test/recording/media-fakes'
 
 const UA = {
   firefox: 'Mozilla/5.0 (X11; Linux x86_64; rv:128.0) Gecko/20100101 Firefox/128.0',
@@ -302,6 +302,35 @@ describe('MeetingRecorder status', () => {
     await vi.waitFor(() => expect(handlers.onFinished).toHaveBeenCalled())
     expect(pipWindow.close).not.toHaveBeenCalled()
     style.remove()
+  })
+
+  it.each([
+    ['the tab', (recorder: MeetingRecorder) => recorder.start('tab')],
+    ['the microphone with screen video', (recorder: MeetingRecorder) => recorder.start('microphone', COMPUTER_AUDIO_NONE, { video: { fps: 5 } })],
+  ])('detaches the floating window when recording %s, although the screen picker outlasts the click', async (_, begin) => {
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation((() => ({ drawImage: vi.fn(), fillRect: vi.fn(), fillStyle: '' })) as never)
+    Object.defineProperty(HTMLCanvasElement.prototype, 'captureStream', { configurable: true, value: () => new FakeMediaStream([new FakeTrack('video', 'canvas')]) })
+    vi.spyOn(HTMLMediaElement.prototype, 'play').mockImplementation(async () => undefined)
+    let picked = false
+    const pick = env.getDisplayMedia.getMockImplementation()!
+    env.getDisplayMedia.mockImplementation(async (...args: unknown[]) => {
+      const stream = await pick(...args)
+      picked = true
+      return stream
+    })
+    const pipWindow = Object.assign(new EventTarget(), { document: document.implementation.createHTMLDocument('pip'), close: vi.fn(), focus: vi.fn() })
+    const requestWindow = vi.fn(async () => {
+      if (picked) throw new DOMException('Requires user activation', 'NotAllowedError')
+      return pipWindow
+    })
+    ;(window as { documentPictureInPicture?: unknown }).documentPictureInPicture = { requestWindow }
+    const handlers = { ...callbacks(), onFloating: vi.fn() }
+    await begin(new MeetingRecorder(handlers))
+    expect(requestWindow).toHaveBeenCalledTimes(1)
+    expect(handlers.onFloating).toHaveBeenCalledWith(pipWindow)
+    expect(pipWindow.document.body.className).toBe('floating-recorder')
+    vi.restoreAllMocks()
+    delete (HTMLCanvasElement.prototype as { captureStream?: unknown }).captureStream
   })
 
   it('closes the floating window when the recording is discarded', async () => {

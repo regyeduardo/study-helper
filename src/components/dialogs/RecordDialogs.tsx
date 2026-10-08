@@ -127,6 +127,7 @@ function ScreenAndPlace({ fps, onFps, place, onPlace }: { fps: VideoFps | null; 
             </button>
           ))}
         </div>
+        {fps && <span className="faint" style={{ fontSize: 12 }}>Escolha a janela ou a aba da reunião: a janelinha de controle não aparece no vídeo. Na tela inteira, ela aparece.</span>}
       </div>
       <div className="field">
         <span className="lab">Onde salvar</span>
@@ -556,8 +557,9 @@ function RecordingControls() {
         <Icon name="monitor" />
         <span style={{ flex: 1 }}>Gravando {what}</span>
         {!floating && (
-          <button className="ibtn" aria-label="Abrir em janela própria" title="Abrir em janela própria" onClick={() => void openFloating().then(opened => setBlocked(!opened))}>
+          <button className="btn" style={{ height: 24, padding: '0 8px', fontSize: 11.5 }} aria-label="Abrir em janela própria" title="Abrir em janela própria" onClick={() => void openFloating().then(opened => setBlocked(!opened))}>
             <Icon name="monitor" />
+            Destacar
           </button>
         )}
       </div>

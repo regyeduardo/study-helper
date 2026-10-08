@@ -115,6 +115,7 @@ export class MeetingRecorder {
   private recordedMs = 0
   private cancelled = false
   private pip: Window | null = null
+  private early: Promise<Window | null> | null = null
   private live: LiveCapture = emptyLive()
   private originalTitle = ''
   private mime = ''
@@ -209,7 +210,7 @@ export class MeetingRecorder {
   }
 
   private async share(mode: 'tab' | 'screen'): Promise<MediaStream | null> {
-    const display = await navigator.mediaDevices.getDisplayMedia({
+    const display = await this.requestDisplay({
       video: this.videoConstraint(),
       audio: true,
       preferCurrentTab: false,
@@ -350,13 +351,28 @@ export class MeetingRecorder {
     return this.fps ? { frameRate: this.fps } : true
   }
 
+  // The screen picker outlasts the click that allows the floating window, so ask for both in that same click.
+  private requestDisplay(options: DisplayMediaStreamOptions): Promise<MediaStream> {
+    const request = navigator.mediaDevices.getDisplayMedia(options)
+    const api = (window as Window & { documentPictureInPicture?: PictureInPictureApi }).documentPictureInPicture
+    if (api && !this.active && !this.pip && !this.early) {
+      this.early = api.requestWindow({ width: 340, height: 360 }).catch(() => null)
+      void this.early.then(floating => {
+        if (!floating) return
+        floating.document.title = 'Gravação'
+        floating.document.body.textContent = 'Escolha o que gravar para começar.'
+      })
+    }
+    return request
+  }
+
   private showScreen(preview: MediaStream | null): void {
     this.live = { ...this.live, preview, screenOn: preview !== null }
     this.canvas?.show(preview)
   }
 
   private async pickScreen(): Promise<void> {
-    const picked = await navigator.mediaDevices.getDisplayMedia({ video: this.videoConstraint(), audio: false })
+    const picked = await this.requestDisplay({ video: this.videoConstraint(), audio: false })
     this.dropScreen()
     this.screen = picked
     this.showScreen(new MediaStream(picked.getVideoTracks()))
@@ -434,7 +450,10 @@ export class MeetingRecorder {
     }
     const api = (window as Window & { documentPictureInPicture?: PictureInPictureApi }).documentPictureInPicture
     let floating: Window | null = null
-    if (api) floating = await api.requestWindow({ width: 340, height: 360 }).catch(() => null)
+    const early = this.early
+    this.early = null
+    if (api) floating = await (early ?? api.requestWindow({ width: 340, height: 360 })).catch(() => null)
+    if (floating?.closed) floating = null
     if (!floating) floating = window.open('', 'study-helper-gravacao', 'popup,width=360,height=420')
     if (!floating) return false
     this.pip = floating
@@ -442,6 +461,7 @@ export class MeetingRecorder {
     doc.title = 'Gravação'
     for (const sheet of document.querySelectorAll('link[rel="stylesheet"], style')) doc.head.appendChild(sheet.cloneNode(true))
     doc.documentElement.dataset.theme = document.documentElement.dataset.theme ?? ''
+    doc.body.replaceChildren()
     doc.body.className = 'floating-recorder'
     floating.addEventListener('pagehide', () => {
       if (this.pip !== floating) return
@@ -453,6 +473,8 @@ export class MeetingRecorder {
   }
 
   private async releaseDevices(): Promise<void> {
+    void this.early?.then(floating => floating?.close())
+    this.early = null
     for (const kind of ['microphone', 'source'] as const) this.plugged[kind].streams.forEach(stream => stream.getTracks().forEach(track => track.stop()))
     this.display?.getTracks().forEach(track => track.stop())
     this.display = null
