@@ -9,3 +9,6 @@ __pycache__
 backend/api/data
 e2e/test-results
 e2e/playwright-report
+volume
+desktop/target
+e2e/node_modules

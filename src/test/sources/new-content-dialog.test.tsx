@@ -51,41 +51,20 @@ beforeEach(() => {
 })
 
 describe('NewContentDialog storage choice', () => {
-  it('lists every host that fits with its expiry and defaults to OnlyFiles on Local', async () => {
+  it('offers only Google Drive and not keeping, and keeps nothing on Local by default', async () => {
     const group = await openWithFile(sizedFile('notes.txt', 20))
     const names = group.getAllByRole('radio').map(radio => radio.querySelector('b')!.textContent)
-    expect(names).toEqual(['Google Drive', 'Gofile', 'Litterbox (temporário)', 'filebin', 'tmpfiles', 'OnlyFiles', 'Não guardar'])
-    expect(group.getByText(/10 dias sem ninguém baixar/)).toBeInTheDocument()
-    expect(group.getByText(/1 h a 72 h/)).toBeInTheDocument()
-    expect(group.getByText(/fica 7 dias/i)).toBeInTheDocument()
-    expect(group.getByText(/fica 1 hora/i)).toBeInTheDocument()
-    expect(group.getByText(/Fica para sempre, mas o OnlyFiles pode apagar por falta de espaço/)).toBeInTheDocument()
-    expect(checkedName(group)).toBe('OnlyFiles')
+    expect(names).toEqual(['Google Drive', 'Não guardar'])
+    expect(checkedName(group)).toBe('Não guardar')
     expect(group.getByText('Entre com o Google para guardar no Drive.')).toBeInTheDocument()
-    expect(screen.getByText(/Serviço de terceiro, sem garantia de guardar/)).toBeInTheDocument()
+    expect(screen.queryByText(/Serviço de terceiro/)).toBeNull()
   })
 
-  it('hides hosts where the file does not fit and says which ones', async () => {
-    const group = await openWithFile(sizedFile('lecture.txt', 150 * MB))
-    const names = group.getAllByRole('radio').map(radio => radio.querySelector('b')!.textContent)
-    expect(names).not.toContain('tmpfiles')
-    expect(names).not.toContain('OnlyFiles')
-    expect(names).toContain('Litterbox (temporário)')
-    expect(screen.getByText(/Não cabem .*: tmpfiles, OnlyFiles\./)).toBeInTheDocument()
-    expect(checkedName(group)).toBe('Gofile')
-  })
-
-  it('defaults to Litterbox between 200 MB and 1 GB on Local', async () => {
-    const group = await openWithFile(sizedFile('lecture.txt', 500 * MB))
-    expect(checkedName(group)).toBe('Litterbox (temporário)')
-    expect(screen.getByLabelText('Prazo do Litterbox')).toBeInTheDocument()
-  })
-
-  it('defaults to Gofile above 1 GB on Local and hides Litterbox', async () => {
-    const group = await openWithFile(sizedFile('lecture.txt', 2 * GB))
-    const names = group.getAllByRole('radio').map(radio => radio.querySelector('b')!.textContent)
-    expect(names).not.toContain('Litterbox (temporário)')
-    expect(checkedName(group)).toBe('Gofile')
+  it('for a video, the option without cloud says it stays in Mídias, on this computer', async () => {
+    const group = await openWithFile(sizedFile('aula.mp4', 20))
+    expect(await group.findByText('Só neste computador')).toBeInTheDocument()
+    expect(group.queryByText('Não guardar')).not.toBeInTheDocument()
+    expect(group.getByText(/Fica em Mídias, neste navegador/)).toBeInTheDocument()
   })
 
   it('defaults to Drive when logged in, without the third-party warning', async () => {
@@ -95,18 +74,9 @@ describe('NewContentDialog storage choice', () => {
     expect(screen.queryByText(/Serviço de terceiro/)).toBeNull()
   })
 
-  it('passes the chosen host and Litterbox expiry to the generation', async () => {
-    const group = await openWithFile(sizedFile('lecture.txt', 20))
-    fireEvent.click(group.getByText('Litterbox (temporário)'))
-    fireEvent.change(screen.getByLabelText('Prazo do Litterbox'), { target: { value: '1h' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Gerar aula' }))
-    await waitFor(() => expect(startNewContent).toHaveBeenCalled())
-    expect(startNewContent.mock.calls[0][0]).toMatchObject({ storage: 'litterbox', litterboxTime: '1h' })
-  })
-
   it('does not let Drive be picked while logged out', async () => {
     const group = await openWithFile(sizedFile('lecture.txt', 20))
     fireEvent.click(group.getByText('Google Drive'))
-    expect(checkedName(group)).toBe('OnlyFiles')
+    expect(checkedName(group)).toBe('Não guardar')
   })
 })

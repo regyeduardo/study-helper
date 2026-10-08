@@ -53,32 +53,9 @@ afterEach(() => {
 })
 
 describe('storage options', () => {
-  it('offers Drive, Gofile, Litterbox, filebin, tmpfiles, OnlyFiles and do-not-store', () => {
-    expect(storageOptions(10, true, null).map(option => option.id)).toEqual(['drive', 'gofile', 'litterbox', 'filebin', 'tmpfiles', 'onlyfiles', 'none'])
-  })
-
-  it('caps Litterbox at 1 GB and tmpfiles at 100 MB', () => {
-    expect(HOSTS.find(host => host.id === 'litterbox')?.maxBytes).toBe(GB)
-    const fitsAt = (size: number) => Object.fromEntries(storageOptions(size, false, null).map(option => [option.id, option.fits]))
-    expect(fitsAt(100 * MB)).toMatchObject({ tmpfiles: true, litterbox: true, gofile: true, filebin: true })
-    expect(fitsAt(100 * MB + 1)).toMatchObject({ tmpfiles: false, litterbox: true })
-    expect(fitsAt(GB)).toMatchObject({ litterbox: true })
-    expect(fitsAt(GB + 1)).toMatchObject({ tmpfiles: false, litterbox: false, gofile: true, filebin: true, drive: true, none: true })
-  })
-
-  it('shows how long each host keeps the file', () => {
-    const byId = Object.fromEntries(storageOptions(10, false, null).map(option => [option.id, option]))
-    expect(byId.gofile.description).toMatch(/10 dias/)
-    expect(byId.litterbox.description).toMatch(/1 h a 72 h/)
-    expect(byId.litterbox.description).toMatch(/Até 1024 MB/)
-    expect(byId.filebin.description).toMatch(/7 dias/)
-    expect(byId.tmpfiles.description).toMatch(/1 hora/)
-    expect(byId.none.description).toMatch(/fica só o nome/)
-  })
-
-  it('flags third-party hosts as unreliable and Drive as not', () => {
-    const byId = Object.fromEntries(storageOptions(10, true, null).map(option => [option.id, option.thirdParty]))
-    expect(byId).toEqual({ drive: false, gofile: true, litterbox: true, filebin: true, tmpfiles: true, onlyfiles: true, none: false })
+  it('offers only Google Drive and this computer', () => {
+    expect(storageOptions(10, true, null).map(option => option.id)).toEqual(['drive', 'none'])
+    expect(storageOptions(10, true, null).every(option => !option.thirdParty)).toBe(true)
   })
 
   it('disables Drive without login and when it does not fit the app limit', () => {
@@ -94,39 +71,16 @@ describe('storage options', () => {
 
 describe('default storage', () => {
   it('picks Drive when logged in', () => {
-    expect(defaultStorage(5 * GB, true, storageOptions(5 * GB, true, null))).toBe('drive')
+    expect(defaultStorage(true, storageOptions(5 * GB, true, null))).toBe('drive')
   })
 
-  it('falls back to a host when Drive has no room', () => {
-    expect(defaultStorage(300 * MB, true, storageOptions(300 * MB, true, 10))).toBe('litterbox')
-  })
-
-  it.each([
-    [1, 'onlyfiles'],
-    [100 * MB, 'onlyfiles'],
-    [100 * MB + 1, 'gofile'],
-    [200 * MB, 'gofile'],
-    [200 * MB + 1, 'litterbox'],
-    [GB, 'litterbox'],
-    [GB + 1, 'gofile'],
-    [8 * GB, 'gofile'],
-  ])('on the Local profile a %i byte file goes to %s', (size, expected) => {
-    expect(defaultStorage(size, false, storageOptions(size, false, null))).toBe(expected)
+  it('keeps it on this computer when Drive has no room or there is no login', () => {
+    expect(defaultStorage(true, storageOptions(300 * MB, true, 10))).toBe('none')
+    expect(defaultStorage(false, storageOptions(10, false, null))).toBe('none')
   })
 })
 
 describe('OnlyFiles', () => {
-  it('keeps the file forever, is capped at 100 MB and warns it may still disappear', () => {
-    const onlyfiles = storageOptions(100 * MB + 1, false, null).find(option => option.id === 'onlyfiles')!
-    expect(onlyfiles.fits).toBe(false)
-    expect(onlyfiles.description).toMatch(/^Até 100 MB\. Fica para sempre, mas o OnlyFiles pode apagar por falta de espaço/)
-    expect(onlyfiles.description).toMatch(/remover no app não apaga lá/)
-  })
-
-  it('stays with Drive when logged in', () => {
-    expect(defaultStorage(10 * MB, true, storageOptions(10 * MB, true, null))).toBe('drive')
-  })
-
   it('uploads with expire=0 and keeps the full link, with no expiry date', async () => {
     fetchMock.mockResolvedValue(jsonResponse({ status: true, data: { file: { url: { full: 'https://onlyfiles.com/wswdwDwVA4DT/notes.txt', short: 'https://onlyfiles.com/wswdwDwVA4DT' } } } }))
     await expect(uploadToOnlyfilesController(textFile())).resolves.toEqual({ url: 'https://onlyfiles.com/wswdwDwVA4DT/notes.txt', expiresAt: null })

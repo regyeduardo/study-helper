@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { newFileMeta, newFolderMeta } from '@/lib/defaults'
 import { analyzeCourse, readAnalysis, sliceMaterial } from '@/lib/generation/course'
 import { courseLessonInput, courseOf, explanationName, lineageOf, selectionInput, selectionTitle } from '@/lib/generation/course-lesson'
-import { buildMinutes, minutesFileName, renderMinutes } from '@/lib/generation/minutes'
+import { buildMinutes, minutesFileName } from '@/lib/generation/minutes'
 import { PROMPTS } from '@/lib/generation/prompts.data'
 import { GenerationSession } from '@/lib/generation/session'
 import { installFetch, llm7Settings, openAiStream, systemPromptOf, userContentOf } from '@/test/ai/fake-provider'
@@ -102,76 +102,39 @@ describe('course lessons', () => {
 })
 
 describe('minutes', () => {
-  const verified = {
-    assunto: 'Planejamento',
-    resumo: 'Reunião curta.',
-    itens: [
-      { tipo: 'decisao', texto: 'Lançar em maio', citacao: '"vamos lançar em maio"' },
-      { tipo: 'decisao', texto: 'Descartada', veredito: 'descarta' },
-      { tipo: 'encaminhamento', texto: 'Enviar proposta', quem: 'Ana', quando: 'sexta', citacao: 'eu mando | até sexta' },
-      { tipo: 'encaminhamento', texto: 'Revisar' },
-      { tipo: 'pendencia', texto: 'Orçamento' },
-      { tipo: 'confirmar', texto: 'Data da feira', citacao: 'acho que é dia 3' },
-      { tipo: 'contexto', texto: 'Cliente novo' },
-    ],
-  }
-
-  it('renders the minutes sections', () => {
-    expect(renderMinutes(verified)).toBe(
-      [
-        '# Planejamento',
-        '',
-        '## Resumo',
-        'Reunião curta.',
-        '',
-        '## Decisões',
-        '- Lançar em maio\n  > "vamos lançar em maio"',
-        '',
-        '## Encaminhamentos',
-        '| O que fazer | Quem | Quando | Frase que sustenta |',
-        '|---|---|---|---|',
-        '| Enviar proposta | Ana | sexta | eu mando / até sexta |',
-        '| Revisar | sem dono | sem prazo |  |',
-        '',
-        '## Em aberto',
-        '- Orçamento',
-        '',
-        '## A confirmar',
-        '- Data da feira\n  > "acho que é dia 3"',
-        '',
-        '## Contexto',
-        '- Cliente novo',
-      ].join('\n') + '\n',
-    )
-  })
-
   it('names the file by date and subject', () => {
     expect(minutesFileName('Planejamento', new Date(2024, 0, 5, 9, 7))).toBe('2024-01-05 09-07 - Planejamento')
     expect(minutesFileName('  ', new Date(2024, 0, 5, 9, 7))).toBe('2024-01-05 09-07 - Reunião')
   })
 
-  it('extracts per chunk with overlap and verifies once', async () => {
+  it('a long transcription is written per piece, with overlap, and the pieces are joined once', async () => {
     const transcript = 'a'.repeat(12000) + 'b'.repeat(5000)
     const { calls } = installFetch(request => {
       const system = systemPromptOf(request)
-      if (system === PROMPTS.MINUTES_EXTRACT_PROMPT) return openAiStream(JSON.stringify({ itens: [{ tipo: 'decisao', texto: `d${userContentOf(request).length}` }, 'lixo'] }))
-      if (system === PROMPTS.MINUTES_VERIFY_PROMPT) return openAiStream(JSON.stringify({ ...verified, itens: JSON.parse(userContentOf(request)).itens }))
+      if (system === PROMPTS.MINUTES_EXTRACT_PROMPT) return openAiStream(JSON.stringify({ assunto: 'Planejamento', temas: [{ tema: 'Tema', pontos: [{ texto: `p${userContentOf(request).length}` }] }], passos: [] }))
+      if (system === PROMPTS.MINUTES_VERIFY_PROMPT) {
+        const { partes } = JSON.parse(userContentOf(request)) as { partes: { temas: { pontos: unknown[] }[] }[] }
+        return openAiStream(JSON.stringify({ assunto: 'Planejamento', temas: [{ tema: 'Tema', pontos: partes.flatMap(parte => parte.temas[0].pontos) }], passos: [] }))
+      }
       return new Response('x', { status: 500 })
     })
     const events: string[] = []
     const { markdown, subject } = await buildMinutes(transcript, new GenerationSession(llm7Settings()), event => events.push(event.type))
-    const extract = calls.filter(call => systemPromptOf(call) === PROMPTS.MINUTES_EXTRACT_PROMPT)
-    expect(extract.map(call => userContentOf(call).length)).toEqual([12000, 5800])
+    expect(calls.filter(call => systemPromptOf(call) === PROMPTS.MINUTES_EXTRACT_PROMPT).map(call => userContentOf(call).length)).toEqual([12000, 5800])
     expect(calls.filter(call => systemPromptOf(call) === PROMPTS.MINUTES_VERIFY_PROMPT)).toHaveLength(1)
     expect(subject).toBe('Planejamento')
-    expect(markdown).toContain('## Decisões\n- d12000\n- d5800')
+    expect(markdown).toBe('# Planejamento\n\n### Tema\n- p12000\n- p5800\n')
     expect(events).toEqual(['phase1_complete', 'lesson_complete'])
   })
 
-  it('uses the extracted candidates when verification returns no JSON', async () => {
-    installFetch(request => (systemPromptOf(request) === PROMPTS.MINUTES_EXTRACT_PROMPT ? openAiStream(JSON.stringify({ itens: [{ tipo: 'pendencia', texto: 'algo' }] })) : openAiStream('sem json')))
+  it('when joining gives no JSON, the pieces are put together as they came; with no JSON at all only the title is left', async () => {
+    installFetch(request =>
+      systemPromptOf(request) === PROMPTS.MINUTES_EXTRACT_PROMPT ? openAiStream(JSON.stringify({ assunto: 'Plano', temas: [{ tema: 'T', pontos: [{ texto: 'algo' }] }], passos: [{ texto: 'fazer' }] })) : openAiStream('sem json'),
+    )
+    expect((await buildMinutes('a'.repeat(13000), new GenerationSession(llm7Settings()))).markdown).toBe('# Plano\n\n### T\n- algo\n\n### T\n- algo\n\n**Próximos passos**\n- [ ] fazer — sem dono · sem prazo\n- [ ] fazer — sem dono · sem prazo\n')
+    installFetch(() => openAiStream('sem json'))
     const { markdown, subject } = await buildMinutes('fala curta', new GenerationSession(llm7Settings()))
     expect(subject).toBe('Reunião')
-    expect(markdown).toBe('# Reunião\n\n## Em aberto\n- algo\n')
+    expect(markdown).toBe('# Reunião\n')
   })
 })

@@ -52,7 +52,7 @@ describe('each AI keeps its own key, model and address', () => {
     useProvider(/^OpenAI/, 'sk-open-2222')
     await waitFor(() => expect(settings().ai.provider).toBe('openai'))
     fireEvent.click(screen.getByRole('button', { name: /Apagar chave/ }))
-    await waitFor(() => expect(settings().ai.provider).toBe('ovh'))
+    await waitFor(() => expect(settings().ai.provider).toBe('gemini'))
     expect(settings().aiCredentials.openai).toBeUndefined()
     expect(screen.getByLabelText(/Chave da API/)).toHaveValue('')
   })

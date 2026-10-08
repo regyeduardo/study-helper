@@ -6,9 +6,10 @@ export const DEFAULT_STORAGE_LIMIT_BYTES = 1024 * 1024 * 1024
 
 export function defaultSettings(): Settings {
   return {
-    ai: { provider: 'ovh', baseUrl: '', apiKey: '', model: '' },
+    ai: { provider: 'gemini', baseUrl: '', apiKey: '', model: '' },
     aiCredentials: {},
-    transcription: { engine: 'whisper', groqApiKey: '', language: 'pt', separateSpeakers: true },
+    vision: { provider: '', model: '' },
+    transcription: { engine: 'gemini', language: 'pt', credentials: {}, speakersEngine: '' },
     youtube: { reader: 'youtube-transcript', geminiApiKey: '' },
     timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/Sao_Paulo',
     githubToken: '',
@@ -23,8 +24,7 @@ export function defaultIndex(): LibraryIndex {
 }
 
 export function newAccountIndex(): LibraryIndex {
-  const index = defaultIndex()
-  return { ...index, settings: { ...index.settings, ai: { ...index.settings.ai, provider: 'free' }, transcription: { ...index.settings.transcription, engine: 'free' } } }
+  return defaultIndex()
 }
 
 export function newFileMeta(fields: Partial<FileMeta> & { name: string; type: FileType }): FileMeta {

@@ -1,19 +1,18 @@
 import { useEffect, useMemo, useState } from 'react'
 
-import type { AiProviderId, AiSettings, LayoutId, Settings, TranscriptionEngine } from '@/types/domain'
-import { FreeAi } from '@/components/dialogs/FreeAi'
-import { FreeMinutes } from '@/components/dialogs/FreeMinutes'
+import type { AiProviderId, AiSettings, LayoutId, ProviderEngine, Settings, SpeakersEngine, TranscriptionCredential, TranscriptionEngine } from '@/types/domain'
 import { IntegrationStatus } from '@/components/dialogs/IntegrationStatus'
 import { Icon } from '@/components/ui/Icon'
-import { getFreeAiBalanceController, listModelsController } from '@/controllers/ai.controller'
-import { freeAiToken, lessonsLeft, lessonsText } from '@/lib/ai/free'
-import { useFreeMinutes } from '@/hooks/use-free-minutes'
-import { isFreeChoice, modelOf, PROVIDERS, type ProviderInfo, providerOf } from '@/lib/ai/providers'
+import { listModelsController } from '@/controllers/ai.controller'
+import { isFreeChoice, isKnownProvider, modelOf, PROVIDER_LEFT, PROVIDERS, type ProviderInfo, providerOf } from '@/lib/ai/providers'
 import { DEFAULT_STORAGE_LIMIT_BYTES, defaultSettings } from '@/lib/defaults'
 import { currentDevice } from '@/lib/device'
-import { deleteModel, type ModelId, storageBreakdown, type StorageBreakdown } from '@/lib/storage/installed-models'
+import { storageBreakdown, type StorageBreakdown } from '@/lib/storage/storage-usage'
 import { applyTheme, savedTheme, type ThemeChoice } from '@/lib/theme'
 import { ENGINES } from '@/lib/transcription'
+import { DEEPINFRA_MODEL } from '@/lib/transcription/providers/deepinfra'
+import { GEMINI_MODEL } from '@/lib/transcription/providers/gemini'
+import { OPENAI_MODEL } from '@/lib/transcription/providers/openai'
 import { useAccountStore } from '@/stores/account'
 import { useLibraryStore } from '@/stores/library'
 import { isOnline, useSyncStore } from '@/stores/sync'
@@ -81,13 +80,11 @@ function AppearanceTab() {
 }
 
 const PROVIDER_GROUPS: { label: string; includes: (provider: ProviderInfo) => boolean }[] = [
-  { label: 'Grátis na nuvem · sem chave', includes: provider => provider.free && !provider.needsKey },
-  { label: 'Grátis na nuvem · chave grátis', includes: provider => provider.free && provider.needsKey },
+  { label: 'Com chave grátis', includes: provider => provider.free },
   { label: 'Pagas e personalizado', includes: provider => !provider.free },
 ]
 
 function AiTab() {
-  const signedIn = useAccountStore(state => state.active().kind === 'google')
   const saved = useLibraryStore(state => state.index.settings.ai)
   const credentials = useLibraryStore(state => state.index.settings.aiCredentials)
   const updateSettings = useLibraryStore(state => state.updateSettings)
@@ -96,7 +93,6 @@ function AiTab() {
   const [models, setModels] = useState<string[]>(providerOf(saved.provider).models ?? (saved.model ? [saved.model] : []))
   const [test, setTest] = useState<{ state: 'idle' | 'busy' | 'ok' | 'fail'; message?: string }>({ state: 'idle' })
   const provider = providerOf(draft.provider)
-  const offered = draft.provider === 'free'
   const changed = JSON.stringify(draft) !== JSON.stringify(saved)
 
   const known = (id: AiProviderId) => credentials[id] ?? (id === saved.provider ? { apiKey: saved.apiKey, model: saved.model, baseUrl: saved.baseUrl } : undefined)
@@ -121,15 +117,6 @@ function AiTab() {
   const runTest = async (): Promise<AiSettings | null> => {
     setTest({ state: 'busy' })
     try {
-      if (offered) {
-        const token = await freeAiToken()
-        if (!token) throw new Error('A IA grátis precisa do login com o Google.')
-        const balance = await getFreeAiBalanceController(token)
-        const tested = { ...draft, apiKey: '', model: '' }
-        setDraft(tested)
-        setTest({ state: 'ok', message: `Conectado · ${lessonsText(lessonsLeft(balance))}` })
-        return tested
-      }
       const found = provider.models ?? (await listModelsController(draft))
       if (provider.models) await listModelsController(draft)
       setModels(found)
@@ -159,17 +146,22 @@ function AiTab() {
         <Icon name="check" />
         <span>
           Em uso: <b>{savedProvider.name}</b>
-          {saved.provider === 'free' ? '' : ` · ${modelOf(saved) || 'sem modelo'}`}
+          {` · ${modelOf(saved) || 'sem modelo'}`}
           {saved.provider === 'custom' && saved.baseUrl ? ` · ${saved.baseUrl}` : ''}
           {saved.apiKey ? ` · chave ••••${saved.apiKey.slice(-4)}` : savedProvider.needsKey ? ' · sem chave' : ''}
         </span>
       </div>
-      <FreeAi />
+      {!isKnownProvider(saved.provider) && (
+        <div className="freewarn" role="alert">
+          <Icon name="warn" />
+          {PROVIDER_LEFT}
+        </div>
+      )}
       {PROVIDER_GROUPS.map(group => (
         <div className="field" key={group.label}>
           <span className="lab">{group.label}</span>
           <div className="prov">
-            {PROVIDERS.filter(group.includes).filter(item => item.id !== 'free' || signedIn).map(item => (
+            {PROVIDERS.filter(group.includes).map(item => (
               <button key={item.id} aria-pressed={draft.provider === item.id} onClick={() => pick(item.id)}>
                 <b>{item.name}</b>
                 <small className={item.free ? 'free' : ''}>{item.tag}</small>
@@ -184,8 +176,7 @@ function AiTab() {
           <input className="input" id="ai-url" placeholder={provider.baseUrl || 'https://minha-ia.exemplo.com/v1'} value={draft.baseUrl} onChange={event => setDraft({ ...draft, baseUrl: event.target.value })} />
         </div>
       )}
-      {!offered && (
-        <>
+      <>
           <div className="field">
             <label htmlFor="ai-key">Chave da API{provider.needsKey ? '' : ' (opcional)'}</label>
             <div style={{ display: 'flex', gap: 6 }}>
@@ -248,7 +239,6 @@ function AiTab() {
         </div>
       )}
       </>
-      )}
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
         <button className="btn" onClick={() => void runTest()} disabled={test.state === 'busy'}>
           <Icon name="check" />
@@ -258,11 +248,63 @@ function AiTab() {
           Testar e salvar
         </button>
         <span style={{ fontSize: 13, color: test.state === 'ok' ? 'var(--ok)' : test.state === 'fail' ? 'var(--bad)' : 'var(--fg-muted)' }} role="status">
-          {test.state === 'busy' ? 'Testando…' : (test.message ?? (offered ? 'O teste confere o seu login e o saldo de hoje.' : 'O teste só lista os modelos: não consome nada.'))}
+          {test.state === 'busy' ? 'Testando…' : (test.message ?? 'O teste só lista os modelos: não consome nada.')}
         </span>
       </div>
     </>
   )
+}
+
+const EMPTY_CREDENTIAL: TranscriptionCredential = { apiKey: '', baseUrl: '', model: '', extra: '' }
+
+const PROVIDER_FORM: Record<ProviderEngine, { keyHint: string; model: string }> = {
+  openai: { keyHint: 'sk-…', model: OPENAI_MODEL },
+  deepinfra: { keyHint: 'chave da DeepInfra', model: DEEPINFRA_MODEL },
+  gemini: { keyHint: 'chave do Google AI Studio', model: GEMINI_MODEL },
+  custom: { keyHint: 'chave do serviço', model: '' },
+}
+
+const SPEAKER_ENGINES: Exclude<SpeakersEngine, ''>[] = ['deepinfra', 'openai', 'custom']
+const ENGINE_NAMES: Record<Exclude<SpeakersEngine, ''>, string> = { deepinfra: 'DeepInfra (Nemotron)', openai: 'OpenAI', custom: 'Personalizado' }
+const ENGINE_OF: Record<Exclude<SpeakersEngine, ''>, string> = { deepinfra: 'da DeepInfra', openai: 'da OpenAI', custom: 'do provedor personalizado' }
+
+const VISION_PROVIDERS: AiProviderId[] = ['openai', 'anthropic', 'gemini', 'xai', 'custom']
+
+function VisionModel() {
+  const settings = useLibraryStore(state => state.index.settings)
+  const updateSettings = useLibraryStore(state => state.updateSettings)
+  const vision = settings.vision ?? { provider: '', model: '' }
+  const set = (patch: Partial<typeof vision>) => void updateSettings({ vision: { ...vision, ...patch } })
+  const keyless = vision.provider && providerOf(vision.provider).needsKey && !settings.aiCredentials[vision.provider]?.apiKey && settings.ai.provider !== vision.provider
+  return (
+    <div className="field">
+      <span className="lab">Modelo de visão</span>
+      <div className="row2">
+        <select className="input" aria-label="Provedor do modelo de visão" value={vision.provider} onChange={event => set({ provider: event.target.value as AiProviderId | '' })}>
+          <option value="">Nenhum (não olha a tela gravada)</option>
+          {VISION_PROVIDERS.map(id => (
+            <option key={id} value={id}>
+              {providerOf(id).name}
+            </option>
+          ))}
+        </select>
+        <input className="input" aria-label="Modelo de visão" autoComplete="off" disabled={!vision.provider} value={vision.model} onChange={event => set({ model: event.target.value })} placeholder="ex.: gpt-4.1-mini" />
+      </div>
+      <span className={keyless ? 'lim-line' : 'muted'} style={{ fontSize: 12.5 }}>
+        {keyless ? 'Este provedor ainda não tem chave: cadastre a chave dele acima.' : 'Lê nomes e slides da tela gravada. Usa a chave do provedor cadastrada acima.'}
+      </span>
+    </div>
+  )
+}
+
+function validExtra(extra: string): boolean {
+  if (!extra.trim()) return true
+  try {
+    const parsed: unknown = JSON.parse(extra)
+    return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)
+  } catch {
+    return false
+  }
 }
 
 function TranscriptionTab() {
@@ -270,31 +312,84 @@ function TranscriptionTab() {
   const updateSettings = useLibraryStore(state => state.updateSettings)
   const transcription = settings.transcription
   const set = (patch: Partial<typeof transcription>) => void updateSettings({ transcription: { ...transcription, ...patch } })
-  const freeMinutes = useFreeMinutes(null)
+  const credentials = transcription.credentials ?? {}
+  const form = transcription.engine in PROVIDER_FORM ? PROVIDER_FORM[transcription.engine as ProviderEngine] : null
+  const credential = credentials[transcription.engine as ProviderEngine] ?? EMPTY_CREDENTIAL
+  const second = form && transcription.speakersEngine !== transcription.engine ? (transcription.speakersEngine ?? '') : ''
+  const chosen = ENGINES.find(engine => engine.id === transcription.engine) ?? null
+  const setCredential = (engine: ProviderEngine, patch: Partial<TranscriptionCredential>) => set({ credentials: { ...credentials, [engine]: { ...EMPTY_CREDENTIAL, ...credentials[engine], ...patch } } })
   return (
     <>
       <div className="field">
         <span className="lab">Transcrição de áudio e vídeo</span>
-        <div className="opts" role="radiogroup">
-          {ENGINES.filter(engine => engine.id !== 'free' || freeMinutes.kind !== 'invite').map(engine => (
+        <div className="opts cols2" role="radiogroup">
+          {ENGINES.map(engine => (
             <button key={engine.id} className="opt" role="radio" aria-checked={transcription.engine === engine.id} onClick={() => set({ engine: engine.id as TranscriptionEngine })}>
               <span className="radio" />
               <span>
                 <b>{engine.name}</b>
-                <span>
-                  {engine.where}. <span className="lim">{engine.limits}</span>
-                </span>
+                <span>{engine.where}</span>
               </span>
             </button>
           ))}
         </div>
+        {chosen && <span className="lim-line">{chosen.limits}</span>}
       </div>
-      <FreeMinutes check={freeMinutes} />
-      {transcription.engine === 'groq' && (
-        <div className="field">
-          <label htmlFor="groq-key">Chave da Groq</label>
-          <input className="input" id="groq-key" type="password" autoComplete="off" value={transcription.groqApiKey} onChange={event => set({ groqApiKey: event.target.value })} placeholder="gsk_…" />
-        </div>
+      {form && (
+        <>
+          {transcription.engine === 'custom' && (
+            <div className="field">
+              <label htmlFor="tr-base">Endereço (URL base)</label>
+              <input className="input" id="tr-base" autoComplete="off" value={credential.baseUrl} onChange={event => setCredential(transcription.engine as ProviderEngine, { baseUrl: event.target.value })} placeholder="https://…/v1" />
+            </div>
+          )}
+          <div className="row2">
+            <div className="field">
+              <label htmlFor="tr-key">Chave da API</label>
+              <input className="input" id="tr-key" type="password" autoComplete="off" value={credential.apiKey} onChange={event => setCredential(transcription.engine as ProviderEngine, { apiKey: event.target.value })} placeholder={form.keyHint} />
+            </div>
+            <div className="field">
+              <label htmlFor="tr-model">Modelo</label>
+              <input className="input" id="tr-model" autoComplete="off" value={credential.model} onChange={event => setCredential(transcription.engine as ProviderEngine, { model: event.target.value })} placeholder={form.model || 'nome do modelo no serviço'} />
+            </div>
+          </div>
+          {transcription.engine === 'custom' && (
+            <details className="field">
+              <summary className="lab" style={{ cursor: 'pointer' }}>
+                Avançado
+              </summary>
+              <label htmlFor="tr-extra" style={{ marginTop: 6 }}>
+                Opções extras (JSON)
+              </label>
+              <textarea className="input" id="tr-extra" spellCheck={false} value={credential.extra} onChange={event => setCredential('custom', { extra: event.target.value })} placeholder={'{"timestamp_granularities": ["word"], "diarize": true}'} />
+              <span className="muted" style={{ fontSize: 12.5 }}>
+                {validExtra(credential.extra) ? 'Cada campo vai junto com o áudio no pedido. Use para ligar tempos por palavra e falantes no seu serviço.' : 'Isto não é um JSON válido: as opções extras não serão enviadas.'}
+              </span>
+            </details>
+          )}
+          <div className="row2">
+            {transcription.engine !== 'gemini' && (
+              <div className="field">
+                <label htmlFor="tr-speakers">Quem fala (segundo provedor)</label>
+                <select className="input" id="tr-speakers" value={second} onChange={event => set({ speakersEngine: event.target.value as SpeakersEngine })}>
+                  <option value="">Só o provedor acima</option>
+                  {SPEAKER_ENGINES.filter(id => id !== transcription.engine).map(id => (
+                    <option key={id} value={id}>
+                      {ENGINE_NAMES[id]}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+            {second && (
+              <div className="field">
+                <label htmlFor="tr-second-key">Chave {ENGINE_OF[second]}</label>
+                <input className="input" id="tr-second-key" type="password" autoComplete="off" value={credentials[second]?.apiKey ?? ''} onChange={event => setCredential(second, { apiKey: event.target.value })} placeholder={PROVIDER_FORM[second].keyHint} />
+              </div>
+            )}
+          </div>
+          {transcription.engine !== 'gemini' && <span className="muted" style={{ fontSize: 12.5, marginTop: -6 }}>O segundo provedor só é usado quando o de cima devolve o texto sem dizer quem falou.</span>}
+        </>
       )}
       <div className="field">
         <label htmlFor="tr-lang">Idioma falado</label>
@@ -306,13 +401,6 @@ function TranscriptionTab() {
           ))}
         </select>
       </div>
-      <button className="opt" role="checkbox" aria-checked={transcription.separateSpeakers} onClick={() => set({ separateSpeakers: !transcription.separateSpeakers })}>
-        <span className="radio" style={{ borderRadius: 5 }} />
-        <span>
-          <b>Separar quem fala</b>
-          <span>Marca "Falante 1", "Falante 2"… na transcrição. Baixa ~35 MB na primeira vez e roda no navegador.</span>
-        </span>
-      </button>
       <div className="field">
         <span className="lab">Link do YouTube</span>
         <div className="opts" role="radiogroup">
@@ -533,65 +621,22 @@ function SettingsImport() {
 
 function OthersTab() {
   const [breakdown, setBreakdown] = useState<StorageBreakdown | null>(null)
-  const [confirming, setConfirming] = useState<ModelId | null>(null)
-  const [busy, setBusy] = useState(false)
-  const load = () =>
-    storageBreakdown()
-      .then(setBreakdown)
-      .catch(() => setBreakdown({ models: [], mediaBytes: 0, appBytes: 0, totalBytes: null }))
   useEffect(() => {
-    void load()
+    void storageBreakdown()
+      .then(setBreakdown)
+      .catch(() => setBreakdown({ mediaBytes: 0, appBytes: 0, totalBytes: 0 }))
   }, [])
-  const remove = async (id: ModelId) => {
-    setBusy(true)
-    await deleteModel(id).catch(() => undefined)
-    setConfirming(null)
-    await load()
-    setBusy(false)
-  }
   const parts: [string, number][] = breakdown
-    ? [...breakdown.models.map(model => [model.name, model.bytes] as [string, number]), ['Gravações em Mídias', breakdown.mediaBytes], ['Dados do app (notas, cache e configurações)', breakdown.appBytes]]
+    ? [
+        ['Gravações em Mídias', breakdown.mediaBytes],
+        ['Dados do app (notas, cache e configurações)', breakdown.appBytes],
+      ]
     : []
   return (
     <>
       <div className="field">
         <span className="lab">Integração no computador</span>
         <IntegrationStatus />
-      </div>
-      <div className="field">
-        <span className="lab">Modelos de transcrição instalados</span>
-        {breakdown === null ? (
-          <span className="faint">Medindo…</span>
-        ) : breakdown.models.length === 0 ? (
-          <span className="faint">Nenhum modelo baixado neste navegador. Eles baixam na primeira transcrição.</span>
-        ) : (
-          breakdown.models.map(model => (
-            <div key={model.id} role="group" aria-label={model.name} style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-              <span style={{ flex: 1 }}>
-                <b>{model.name}</b> · {formatBytes(model.bytes)}
-              </span>
-              {confirming === model.id ? (
-                <span className="inline-confirm">
-                  Apagar o {model.name}?
-                  <button className="btn danger" onClick={() => void remove(model.id)} disabled={busy}>
-                    Apagar
-                  </button>
-                  <button className="btn quiet" onClick={() => setConfirming(null)}>
-                    Voltar
-                  </button>
-                </span>
-              ) : (
-                <button className="btn quiet" onClick={() => setConfirming(model.id)}>
-                  <Icon name="trash" />
-                  Apagar
-                </button>
-              )}
-            </div>
-          ))
-        )}
-        <span className="faint" style={{ fontSize: 12 }}>
-          Apagado, o modelo é baixado de novo na próxima vez que for usado.
-        </span>
       </div>
       <div className="field">
         <span className="lab">Quanto o app ocupa neste navegador</span>
@@ -607,7 +652,7 @@ function OthersTab() {
             ))}
             <span className="usage" style={{ display: 'flex', justifyContent: 'space-between', gap: 8, fontWeight: 600 }}>
               <span>Total</span>
-              <span>{breakdown.totalBytes === null ? 'o navegador não informa' : formatBytes(breakdown.totalBytes)}</span>
+              <span>{formatBytes(breakdown.totalBytes)}</span>
             </span>
           </>
         )}
@@ -654,7 +699,12 @@ export function SettingsDialog({ initial = 'appearance' }: { initial?: SettingsT
           </nav>
           <div className="set-body">
             {tab === 'appearance' && <AppearanceTab />}
-            {tab === 'ai' && <AiTab />}
+            {tab === 'ai' && (
+            <>
+              <AiTab />
+              <VisionModel />
+            </>
+          )}
             {tab === 'transcription' && <TranscriptionTab />}
             {tab === 'storage' && <StorageTab />}
             {tab === 'devices' && <DevicesTab />}

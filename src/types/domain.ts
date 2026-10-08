@@ -135,12 +135,48 @@ export interface FileMeta {
   questionCount: number
 }
 
+export interface TranscriptBlock {
+  speaker: string
+  start: number
+  end: number
+  text: string
+  original?: string
+}
+
+export interface RecordingSpeaker {
+  id: string
+  name: string
+  suggested: boolean
+}
+
+export interface RecordingMark {
+  id: string
+  kind: 'mark' | 'note'
+  at: number
+  text: string
+}
+
+export interface ScreenFrame {
+  at: number
+  image: string
+  text: string
+}
+
+export interface RecordingData {
+  blocks: TranscriptBlock[]
+  speakers: RecordingSpeaker[]
+  marks: RecordingMark[]
+  warning?: string
+  frames?: ScreenFrame[]
+}
+
 export interface FileSidecar {
   meta: FileMeta
   questions: StoredQuestion[]
   attempts: Attempt[]
   highlights: Highlight[]
   transcript?: string
+  recording?: RecordingData
 }
 
 export interface FolderMeta {
@@ -175,14 +211,10 @@ export interface Activity {
 }
 
 export type AiProviderId =
-  | 'free'
   | 'anthropic'
   | 'openai'
   | 'gemini'
   | 'xai'
-  | 'pollinations'
-  | 'llm7'
-  | 'ovh'
   | 'custom'
 
 export interface AiSettings {
@@ -192,13 +224,24 @@ export interface AiSettings {
   model: string
 }
 
-export type TranscriptionEngine = 'free' | 'whisper' | 'parakeet' | 'groq' | 'puter'
+export type ProviderEngine = 'openai' | 'deepinfra' | 'gemini' | 'custom'
+
+export type TranscriptionEngine = ProviderEngine
+
+export type SpeakersEngine = '' | Exclude<ProviderEngine, 'gemini'>
+
+export interface TranscriptionCredential {
+  apiKey: string
+  baseUrl: string
+  model: string
+  extra: string
+}
 
 export interface TranscriptionSettings {
   engine: TranscriptionEngine
-  groqApiKey: string
   language: string
-  separateSpeakers: boolean
+  credentials: Partial<Record<ProviderEngine, TranscriptionCredential>>
+  speakersEngine: SpeakersEngine
 }
 
 export type YoutubeReader = 'youtube-transcript' | 'gemini'
@@ -207,9 +250,15 @@ export type LayoutId = 'reader' | 'columns' | 'commands' | 'focus'
 
 export type AiCredential = Pick<AiSettings, 'apiKey' | 'model' | 'baseUrl'>
 
+export interface VisionSettings {
+  provider: AiProviderId | ''
+  model: string
+}
+
 export interface Settings {
   ai: AiSettings
   aiCredentials: Partial<Record<AiProviderId, AiCredential>>
+  vision?: VisionSettings
   transcription: TranscriptionSettings
   youtube: { reader: YoutubeReader; geminiApiKey: string }
   timezone: string
@@ -267,6 +316,7 @@ export interface SharedFile {
   questions: StoredQuestion[]
   highlights: Highlight[]
   transcript?: string
+  recording?: RecordingData
   meta?: Partial<FileMeta>
 }
 

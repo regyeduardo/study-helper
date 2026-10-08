@@ -56,7 +56,7 @@ export function mountMiniplayer(container: HTMLElement, source: MiniplayerSource
   const doc = container.ownerDocument
   const view = doc.defaultView ?? window
   const frame = doc.createElement('div')
-  frame.style.cssText = `position:relative;width:100%;height:100%;min-height:120px;background:${BACKGROUND};overflow:hidden`
+  frame.style.cssText = `position:relative;width:100%;height:100%;min-height:44px;background:${BACKGROUND};overflow:hidden`
   frame.dataset.miniplayer = ''
   const canvas = doc.createElement('canvas')
   canvas.style.cssText = 'position:absolute;inset:0;width:100%;height:100%'

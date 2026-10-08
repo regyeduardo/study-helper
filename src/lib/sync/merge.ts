@@ -177,12 +177,15 @@ export function mergeSidecar(base: FileSidecar, mine: FileSidecar, theirs: FileS
   }
   if (theirs.meta.updated.at > mine.meta.updated.at && conflicts.length === 0) meta.updated = theirs.meta.updated
 
+  const recording = JSON.stringify(mine.recording) === JSON.stringify(base.recording) ? (theirs.recording ?? mine.recording) : mine.recording
+
   return {
     merged: {
       meta,
       questions: mergeById(base.questions, mine.questions, theirs.questions, item => item.storedId, 'questions', item => `Questão: ${item.enunciado.slice(0, 60)}`, conflicts),
       attempts: mergeById(base.attempts, mine.attempts, theirs.attempts, item => item.id, 'attempts', item => `Prova de ${item.createdAt}`, conflicts),
       highlights: mergeById(base.highlights, mine.highlights, theirs.highlights, item => item.id, 'highlights', item => `Destaque: ${item.quote.slice(0, 60)}`, conflicts),
+      ...(recording ? { recording } : {}),
     },
     conflicts,
   }

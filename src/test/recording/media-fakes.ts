@@ -41,10 +41,15 @@ export class FakeAudioContext {
   readonly destination: { stream: FakeMediaStream; channelCount?: number; channelCountMode?: string } = { stream: new FakeMediaStream([this.mixTrack]) }
   readonly sources: { stream: FakeMediaStream; connect: ReturnType<typeof vi.fn>; disconnect: ReturnType<typeof vi.fn> }[] = []
   readonly gains: { gain: { value: number }; connect: ReturnType<typeof vi.fn>; disconnect: ReturnType<typeof vi.fn> }[] = []
+  readonly merger = { connect: vi.fn() }
   readonly close = vi.fn(async () => undefined)
 
   constructor() {
     FakeAudioContext.instances.push(this)
+  }
+
+  createChannelMerger() {
+    return this.merger
   }
 
   createMediaStreamDestination() {

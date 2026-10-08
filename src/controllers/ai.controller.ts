@@ -1,7 +1,5 @@
 import type { AiSettings } from '@/types/domain'
-import { FREE_AI_EXHAUSTED, type FreeAiBalance, freeAiToken } from '@/lib/ai/free'
 import { baseUrlOf, intervalOf, missingSetup, modelOf, oneAtATimeOf, providerOf } from '@/lib/ai/providers'
-import { env } from '@/lib/env'
 
 export const MAX_TOKENS = 16384
 export const LONG_REPLY_MAX_TOKENS = 32768
@@ -21,12 +19,6 @@ export interface ChatReply {
 }
 
 export class AiError extends Error {}
-
-export class FreeAiExhaustedError extends AiError {
-  constructor() {
-    super(`${FREE_AI_EXHAUSTED} Em Configurações › IA, use a OVH (grátis, lenta) ou o Gemini grátis.`)
-  }
-}
 
 export class Cancelled extends Error {
   constructor() {
@@ -92,7 +84,7 @@ async function send(settings: AiSettings, url: string, init: RequestInit, signal
       if (signal?.aborted) throw new Cancelled()
       throw new AiError(`Não consegui falar com a IA (${providerOf(settings.provider).name}). Confira a internet e o endereço.`)
     }
-    if ((response.status === 429 || response.status === 503) && attempt < RATE_LIMIT_RETRIES && settings.provider !== 'free') {
+    if ((response.status === 429 || response.status === 503) && attempt < RATE_LIMIT_RETRIES) {
       await sleep(retryDelay(response, attempt), signal)
       continue
     }
@@ -215,7 +207,6 @@ async function openAiChat(settings: AiSettings, content: string, systemPrompt: s
         continue
       }
     }
-    if (response.status === 429 && settings.provider === 'free') throw new FreeAiExhaustedError()
     if (!response.ok) {
       const detail = await errorText(response)
       throw new AiError(`A IA (${providerOf(settings.provider).name}) recusou o pedido (${response.status}): ${detail}`)
@@ -247,11 +238,6 @@ export async function chatController(
 ): Promise<ChatReply> {
   const problem = missingSetup(settings)
   if (problem) throw new AiError(problem)
-  if (settings.provider === 'free') {
-    const token = await freeAiToken()
-    if (!token) throw new AiError('A IA grátis precisa do login com o Google.')
-    settings = { ...settings, apiKey: token }
-  }
   return oneAtATime(settings, () =>
     providerOf(settings.provider).format === 'anthropic'
       ? anthropicChat(settings, content, systemPrompt, maxTokens, signal)
@@ -281,18 +267,36 @@ export async function listModelsController(settings: AiSettings): Promise<string
   return [...new Set(ids.map(id => id.replace(/^models\//, '')))].sort()
 }
 
-export async function getFreeAiBalanceController(token: string): Promise<FreeAiBalance> {
-  if (!env.transcriptionWorkerUrl) throw new AiError('A IA grátis não está configurada neste app.')
-  const response = await fetch(`${env.transcriptionWorkerUrl}/balance`, { headers: { Authorization: `Bearer ${token}` } }).catch(() => null)
-  if (!response) throw new AiError('O serviço da IA grátis não respondeu.')
-  if (response.status === 401) throw new AiError('O Google não confirmou o seu login; entre de novo para usar a IA grátis.')
-  if (!response.ok) throw new AiError(`Não consegui ver a IA grátis de hoje (${response.status}).`)
-  const body = (await response.json()) as { input_tokens_remaining?: number; output_tokens_remaining?: number }
-  return { inputTokens: Number(body.input_tokens_remaining) || 0, outputTokens: Number(body.output_tokens_remaining) || 0 }
+const VISION_MAX_TOKENS = 1024
+
+function imageParts(images: string[]): { mediaType: string; data: string; url: string }[] {
+  return images.map(url => {
+    const [head, data = ''] = url.split(',')
+    return { mediaType: /data:([^;]+)/.exec(head)?.[1] ?? 'image/jpeg', data, url }
+  })
 }
 
-export async function unlockBonusController(token: string, code: string): Promise<boolean> {
-  if (!env.transcriptionWorkerUrl) return false
-  const response = await fetch(`${env.transcriptionWorkerUrl}/unlock`, { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ code }) }).catch(() => null)
-  return Boolean(response?.ok)
+export async function visionController(settings: AiSettings, images: string[], prompt: string, signal?: AbortSignal): Promise<string> {
+  const problem = missingSetup(settings)
+  if (problem) throw new AiError(problem)
+  const parts = imageParts(images)
+  const anthropic = providerOf(settings.provider).format === 'anthropic'
+  const headers: Record<string, string> = anthropic
+    ? { 'content-type': 'application/json', 'x-api-key': settings.apiKey, 'anthropic-version': ANTHROPIC_VERSION, 'anthropic-dangerous-direct-browser-access': 'true' }
+    : { 'content-type': 'application/json', ...(settings.apiKey ? { authorization: `Bearer ${settings.apiKey}` } : {}) }
+  const body = anthropic
+    ? {
+        model: modelOf(settings),
+        max_tokens: VISION_MAX_TOKENS,
+        messages: [{ role: 'user', content: [...parts.map(part => ({ type: 'image', source: { type: 'base64', media_type: part.mediaType, data: part.data } })), { type: 'text', text: prompt }] }],
+      }
+    : {
+        model: modelOf(settings),
+        max_tokens: VISION_MAX_TOKENS,
+        messages: [{ role: 'user', content: [...parts.map(part => ({ type: 'image_url', image_url: { url: part.url } })), { type: 'text', text: prompt }] }],
+      }
+  const response = await send(settings, anthropic ? `${baseUrlOf(settings)}/v1/messages` : `${baseUrlOf(settings)}/chat/completions`, { method: 'POST', headers, body: JSON.stringify(body) }, signal)
+  if (!response.ok) throw new AiError(`O modelo de visão (${providerOf(settings.provider).name}) recusou o pedido (${response.status}): ${await errorText(response)}`)
+  const reply = (await response.json()) as { content?: { text?: string }[]; choices?: { message?: { content?: string } }[] }
+  return anthropic ? (reply.content ?? []).map(part => part.text ?? '').join('') : (reply.choices?.[0]?.message?.content ?? '')
 }

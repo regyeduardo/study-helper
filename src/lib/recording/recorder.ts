@@ -1,8 +1,13 @@
+import type { RecordingMark, SourceStorage } from '@/types/domain'
 import type { IntegrationCapture } from '@/lib/recording/integration'
 import { integrationSourceKey, type IntegrationSourceChoice } from '@/lib/recording/integration'
 import type { Meters } from '@/lib/recording/miniplayer'
+import { ScreenCanvas } from '@/lib/recording/frame-grab'
+import { makeSeekable } from '@/lib/recording/seekable'
 
 export type CaptureMode = 'tab' | 'screen' | 'microphone' | 'integration'
+
+export type VideoFps = 5 | 30
 
 export const COMPUTER_AUDIO_AUTO = 'auto'
 export const COMPUTER_AUDIO_NONE = 'none'
@@ -24,11 +29,14 @@ export interface LiveCapture {
   microphoneId: string | null
   sourceChoice: string
   paused: boolean
+  screenOn: boolean
 }
 
 export interface StartOptions {
   microphoneOn?: boolean
   microphoneId?: string | null
+  video?: { fps: VideoFps } | null
+  destination?: SourceStorage
 }
 
 export interface RecordingResult {
@@ -36,6 +44,8 @@ export interface RecordingResult {
   mime: string
   durationSeconds: number
   storedName: string
+  marks?: RecordingMark[]
+  destination?: SourceStorage
 }
 
 export interface RecorderCallbacks {
@@ -48,6 +58,8 @@ export interface RecorderCallbacks {
 }
 
 const MIME_OPTIONS = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4;codecs=opus']
+const VIDEO_MIME_OPTIONS = ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm', 'video/mp4']
+const VIDEO_BITS_PER_SECOND: Record<VideoFps, number> = { 5: 600_000, 30: 2_500_000 }
 const RECORDING_TITLE = '● Gravando — '
 const COMPUTER_INPUT = /monitor|stereo mix|mixagem|what u hear|loopback|blackhole|soundflower|vb-audio|cable output/i
 const CHUNK_MS = 1000
@@ -79,8 +91,8 @@ export async function listAudioInputs(askPermission = false): Promise<AudioInput
     .map(device => ({ deviceId: device.deviceId, label: device.label, computer: isComputerInput(device.label) }))
 }
 
-function supportedMime(): string {
-  return MIME_OPTIONS.find(mime => MediaRecorder.isTypeSupported(mime)) ?? ''
+function supportedMime(video: boolean): string {
+  return (video ? VIDEO_MIME_OPTIONS : MIME_OPTIONS).find(mime => MediaRecorder.isTypeSupported(mime)) ?? ''
 }
 
 function extensionOf(mime: string): string {
@@ -88,7 +100,7 @@ function extensionOf(mime: string): string {
 }
 
 function emptyLive(): LiveCapture {
-  return { preview: null, meters: { microphone: null, computer: null }, computerAudio: '', hasMicrophone: false, hasSource: false, microphoneOn: true, sourceOn: true, microphoneId: null, sourceChoice: '', paused: false }
+  return { preview: null, meters: { microphone: null, computer: null }, computerAudio: '', hasMicrophone: false, hasSource: false, microphoneOn: true, sourceOn: true, microphoneId: null, sourceChoice: '', paused: false, screenOn: false }
 }
 
 export class MeetingRecorder {
@@ -99,6 +111,8 @@ export class MeetingRecorder {
   private handle: FileSystemFileHandle | null = null
   private timer = 0
   private seconds = 0
+  private runningSince: number | null = null
+  private recordedMs = 0
   private cancelled = false
   private pip: Window | null = null
   private live: LiveCapture = emptyLive()
@@ -107,6 +121,9 @@ export class MeetingRecorder {
   private writing: Promise<void> = Promise.resolve()
   private mode: CaptureMode = 'microphone'
   private display: MediaStream | null = null
+  private screen: MediaStream | null = null
+  private fps: VideoFps | null = null
+  private canvas: ScreenCanvas | null = null
   private gains: Record<'microphone' | 'source', GainNode | null> = { microphone: null, source: null }
   private analysers: Record<'microphone' | 'source', AnalyserNode | null> = { microphone: null, source: null }
   private plugged: Record<'microphone' | 'source', { nodes: AudioNode[]; streams: MediaStream[] }> = { microphone: { nodes: [], streams: [] }, source: { nodes: [], streams: [] } }
@@ -131,12 +148,15 @@ export class MeetingRecorder {
       this.mode = 'integration'
       this.integration = capture
       this.audioContext = capture.context
+      this.fps = options.video?.fps ?? null
+      if (this.fps) this.canvas = new ScreenCanvas(this.fps)
       const mix = this.prepare(capture.context)
       capture.microphone.connect(this.gains.microphone!)
       capture.source.connect(this.gains.source!)
       this.live = { ...this.live, computerAudio: capture.label, hasMicrophone: true, hasSource: capture.choice.source.kind !== 'none', microphoneId: capture.choice.microphone, sourceChoice: integrationSourceKey(capture.choice.source) }
       this.applyMeters()
       this.setEnabled('microphone', options.microphoneOn !== false)
+      if (this.fps) await this.pickScreen()
       await this.record(mix)
     } catch (error) {
       await this.releaseDevices()
@@ -146,11 +166,13 @@ export class MeetingRecorder {
 
   private prepare(context: AudioContext): MediaStreamAudioDestinationNode {
     const mix = context.createMediaStreamDestination()
-    mix.channelCount = 1
+    mix.channelCount = 2
     mix.channelCountMode = 'explicit'
-    for (const kind of ['microphone', 'source'] as const) {
+    const sides = context.createChannelMerger(2)
+    sides.connect(mix)
+    for (const [side, kind] of (['microphone', 'source'] as const).entries()) {
       const gain = context.createGain()
-      gain.connect(mix)
+      gain.connect(sides, 0, side)
       const analyser = context.createAnalyser()
       analyser.fftSize = 1024
       gain.connect(analyser)
@@ -188,7 +210,7 @@ export class MeetingRecorder {
 
   private async share(mode: 'tab' | 'screen'): Promise<MediaStream | null> {
     const display = await navigator.mediaDevices.getDisplayMedia({
-      video: true,
+      video: this.videoConstraint(),
       audio: true,
       preferCurrentTab: false,
       selfBrowserSurface: 'exclude',
@@ -199,7 +221,9 @@ export class MeetingRecorder {
     const previous = this.display
     this.display = display
     previous?.getTracks().forEach(track => track.stop())
-    this.live = { ...this.live, preview: display.getVideoTracks().length ? new MediaStream(display.getVideoTracks()) : null }
+    this.screen?.getTracks().forEach(track => track.stop())
+    this.screen = null
+    this.showScreen(display.getVideoTracks().length ? new MediaStream(display.getVideoTracks()) : null)
     display.getVideoTracks()[0]?.addEventListener('ended', () => this.display === display && this.finish())
     return display.getAudioTracks().length ? new MediaStream(display.getAudioTracks()) : null
   }
@@ -222,6 +246,8 @@ export class MeetingRecorder {
 
   private async begin(mode: CaptureMode, computerAudio: string, options: StartOptions): Promise<void> {
     this.mode = mode
+    this.fps = options.video?.fps ?? null
+    if (this.fps) this.canvas = new ScreenCanvas(this.fps)
     this.audioContext = new AudioContext()
     const mix = this.prepare(this.audioContext)
     const displayAudio = mode === 'tab' || mode === 'screen' ? await this.share(mode) : null
@@ -245,6 +271,7 @@ export class MeetingRecorder {
       this.live = { ...this.live, computerAudio: input?.label ?? '', sourceChoice: input ? computerAudio : COMPUTER_AUDIO_NONE }
     }
     if (!this.live.hasMicrophone && !this.live.hasSource) throw new Error('Não há som para gravar: ligue o microfone ou escolha o som do computador.')
+    if (this.fps && !this.live.screenOn) await this.pickScreen()
     this.setEnabled('microphone', options.microphoneOn !== false)
     await this.record(mix)
   }
@@ -258,12 +285,13 @@ export class MeetingRecorder {
   }
 
   private async record(mix: MediaStreamAudioDestinationNode): Promise<void> {
-    this.mime = supportedMime()
+    this.mime = supportedMime(this.canvas !== null)
     const root = await navigator.storage.getDirectory()
     this.handle = await root.getFileHandle(`gravacao-${Date.now()}.${extensionOf(this.mime)}`, { create: true })
     this.writable = await this.handle.createWritable()
 
-    this.recorder = new MediaRecorder(new MediaStream(mix.stream.getAudioTracks()), { ...(this.mime ? { mimeType: this.mime } : {}), audioBitsPerSecond: AUDIO_BITS_PER_SECOND })
+    const tracks = [...(this.canvas ? [this.canvas.track] : []), ...mix.stream.getAudioTracks()]
+    this.recorder = new MediaRecorder(new MediaStream(tracks), { ...(this.mime ? { mimeType: this.mime } : {}), audioBitsPerSecond: AUDIO_BITS_PER_SECOND, ...(this.fps ? { videoBitsPerSecond: VIDEO_BITS_PER_SECOND[this.fps] } : {}) })
     this.recorder.ondataavailable = event => {
       if (!event.data.size || !this.writable) return
       const writable = this.writable
@@ -271,6 +299,8 @@ export class MeetingRecorder {
     }
     this.recorder.onstop = () => void this.close()
     this.recorder.start(CHUNK_MS)
+    this.recordedMs = 0
+    this.runningSince = Date.now()
     this.emit()
 
     this.originalTitle = document.title
@@ -289,6 +319,8 @@ export class MeetingRecorder {
   pause(): void {
     if (this.recorder?.state !== 'recording') return
     this.recorder.pause()
+    this.recordedMs = this.position() * 1000
+    this.runningSince = null
     window.clearInterval(this.timer)
     this.live = { ...this.live, paused: true }
     this.emit()
@@ -297,8 +329,52 @@ export class MeetingRecorder {
   resume(): void {
     if (this.recorder?.state !== 'paused') return
     this.recorder.resume()
+    this.runningSince = Date.now()
     this.startTimer()
     this.live = { ...this.live, paused: false }
+    this.emit()
+  }
+
+  position(): number {
+    return (this.recordedMs + (this.runningSince === null ? 0 : Date.now() - this.runningSince)) / 1000
+  }
+
+  private dropScreen(): void {
+    this.screen?.getVideoTracks().forEach(track => track.stop())
+    this.screen = null
+    this.display?.getVideoTracks().forEach(track => track.stop())
+    this.showScreen(null)
+  }
+
+  private videoConstraint(): MediaTrackConstraints | true {
+    return this.fps ? { frameRate: this.fps } : true
+  }
+
+  private showScreen(preview: MediaStream | null): void {
+    this.live = { ...this.live, preview, screenOn: preview !== null }
+    this.canvas?.show(preview)
+  }
+
+  private async pickScreen(): Promise<void> {
+    const picked = await navigator.mediaDevices.getDisplayMedia({ video: this.videoConstraint(), audio: false })
+    this.dropScreen()
+    this.screen = picked
+    this.showScreen(new MediaStream(picked.getVideoTracks()))
+    picked.getVideoTracks()[0]?.addEventListener('ended', () => {
+      if (this.screen !== picked) return
+      this.dropScreen()
+      this.emit()
+    })
+  }
+
+  async setScreen(on: boolean): Promise<void> {
+    if (on) await this.pickScreen()
+    else this.dropScreen()
+    this.emit()
+  }
+
+  async switchScreen(): Promise<void> {
+    await this.pickScreen()
     this.emit()
   }
 
@@ -380,8 +456,24 @@ export class MeetingRecorder {
     for (const kind of ['microphone', 'source'] as const) this.plugged[kind].streams.forEach(stream => stream.getTracks().forEach(track => track.stop()))
     this.display?.getTracks().forEach(track => track.stop())
     this.display = null
+    this.screen?.getTracks().forEach(track => track.stop())
+    this.screen = null
+    this.canvas?.stop()
+    this.canvas = null
     if (this.integration) await this.integration.stop()
     else await this.audioContext?.close().catch(() => undefined)
+  }
+
+  private async seekableCopy(root: FileSystemDirectoryHandle, handle: FileSystemFileHandle): Promise<{ file: File; name: string }> {
+    const raw = await handle.getFile()
+    const seekable = await makeSeekable(raw)
+    if (seekable === raw) return { file: raw, name: handle.name }
+    const copy = await root.getFileHandle(`s-${handle.name}`, { create: true })
+    const writable = await copy.createWritable()
+    await writable.write(seekable)
+    await writable.close()
+    await root.removeEntry(handle.name).catch(() => undefined)
+    return { file: await copy.getFile(), name: copy.name }
   }
 
   private async close(): Promise<void> {
@@ -402,9 +494,9 @@ export class MeetingRecorder {
         this.callbacks.onCancelled()
         return
       }
-      const stored = await handle.getFile()
+      const saved = await this.seekableCopy(root, handle)
       const name = `Reunião ${new Date().toLocaleString('pt-BR').replace(/[/:]/g, '-')}.${extensionOf(this.mime)}`
-      this.callbacks.onFinished({ file: new File([stored], name, { type: this.mime || stored.type }), mime: this.mime, durationSeconds: this.seconds, storedName: handle.name })
+      this.callbacks.onFinished({ file: new File([saved.file], name, { type: this.mime || saved.file.type }), mime: this.mime, durationSeconds: this.seconds, storedName: saved.name })
     } catch (error) {
       this.callbacks.onError(error instanceof Error ? error.message : 'A gravação não pôde ser salva.')
     } finally {

@@ -83,8 +83,7 @@ function provider(courseReply: unknown = { is_course: false, modules: [] }) {
     if (system === PROMPTS.COURSE_ANALYSIS_PROMPT) return openAiStream(JSON.stringify(courseReply))
     if (system === PROMPTS.DIAGRAM_PROMPT) return openAiStream(JSON.stringify({ nodes: [{ id: 'L', text: 'Luz' }, { id: 'G', text: 'Glicose' }], links: [{ from: 'L', to: 'G' }] }), 2, { prompt_tokens: 30, completion_tokens: 10 })
     if (system === PROMPTS.LESSON_PROMPT) return openAiStream(JSON.stringify(LESSON), 3, { prompt_tokens: 200, completion_tokens: 80 })
-    if (system === PROMPTS.MINUTES_EXTRACT_PROMPT) return openAiStream(JSON.stringify({ itens: [{ tipo: 'decisao', texto: 'Lançar em maio', citacao: 'vamos lançar em maio' }] }), 2, { prompt_tokens: 50, completion_tokens: 20 })
-    if (system === PROMPTS.MINUTES_VERIFY_PROMPT) return openAiStream(JSON.stringify({ assunto: 'Lançamento', resumo: 'Data definida.', itens: [{ tipo: 'decisao', texto: 'Lançar em maio', citacao: 'vamos lançar em maio' }] }), 2, { prompt_tokens: 40, completion_tokens: 30 })
+    if (system === PROMPTS.MINUTES_EXTRACT_PROMPT) return openAiStream(JSON.stringify({ assunto: 'Lançamento', temas: [{ tema: 'Data', pontos: [{ texto: 'Lançar em maio', citacao: 'vamos lançar em maio' }] }], passos: [] }), 2, { prompt_tokens: 90, completion_tokens: 50 })
     return new Response(`unexpected ${request.url}`, { status: 500 })
   }
 }
@@ -103,7 +102,7 @@ let memory: ReturnType<typeof memoryRepository>
 beforeEach(() => {
   memory = memoryRepository()
   const index = defaultIndex()
-  index.settings.ai = { provider: 'llm7', baseUrl: '', apiKey: 'llm7-test-key', model: 'default' }
+  index.settings.ai = { provider: 'custom', baseUrl: 'https://api.llm7.io/v1', apiKey: 'llm7-test-key', model: 'default' }
   useLibraryStore.setState({ repo: memory.repo, accountId: 'local', ready: true, folders: [], files: [], index, opened: {}, openedAt: {} })
   useJobsStore.setState({ jobs: [], live: {}, proposals: [] })
 })
@@ -126,7 +125,7 @@ describe('generation fills metadata', () => {
     expect(meta.origin).toEqual({ input: 'url', name: 'Fotossíntese explicada', url: 'https://exemplo.com/fotossintese', storage: 'none' })
 
     const generation = meta.generation!
-    expect(generation.provider).toBe('llm7')
+    expect(generation.provider).toBe('custom')
     expect(generation.model).toBe('default')
     expect(Date.parse(generation.startedAt)).toBeGreaterThanOrEqual(before - 1000)
     expect(generation.durationMs).toBeGreaterThanOrEqual(0)
@@ -160,8 +159,8 @@ describe('generation fills metadata', () => {
     expect(meta.type).toBe('meeting')
     expect(meta.name).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}-\d{2} - Lançamento$/)
     expect(meta.origin).toEqual({ input: 'recording', name: 'reuniao.webm', sizeBytes: 2048, mime: 'audio/webm', durationSeconds: 125, storage: 'drive', storedFileId: `drive-${id}`, expiresAt: null })
-    expect(meta.generation).toMatchObject({ provider: 'llm7', model: 'default', inputTokens: 90, outputTokens: 50, estimatedTokens: false, transcriptionEngine: 'groq', language: 'pt' })
-    expect(memory.contents.get(id!)).toContain('## Decisões\n- Lançar em maio')
+    expect(meta.generation).toMatchObject({ provider: 'custom', model: 'default', inputTokens: 90, outputTokens: 50, estimatedTokens: false, transcriptionEngine: 'groq', language: 'pt' })
+    expect(memory.contents.get(id!)).toContain('### Data\n- Lançar em maio')
   })
 
   it('keeps the meeting transcription next to the note and offers it for download in the note panel', async () => {
@@ -297,7 +296,7 @@ describe('Inspector info panel', () => {
     expect(within(originSection).getByText('Não guardada')).toBeInTheDocument()
 
     const generationSection = screen.getByRole('heading', { name: 'Geração' }).parentElement!
-    expect(within(generationSection).getByText('LLM7 · default')).toBeInTheDocument()
+    expect(within(generationSection).getByText('Personalizado · default')).toBeInTheDocument()
     expect(within(generationSection).getByText(/320 \(230 de entrada, 90 de saída\)/)).toBeInTheDocument()
     expect(within(generationSection).getByText('o do material')).toBeInTheDocument()
 

@@ -1,17 +1,21 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 
-import type { FileMeta, HighlightColor } from '@/types/domain'
+import type { FileMeta, FileSidecar, FileType, HighlightColor, RecordingMark } from '@/types/domain'
 import { SharedBadge } from '@/components/library/SharedBadge'
 import { Icon } from '@/components/ui/Icon'
 import { MasteryMeter, TypeDot } from '@/components/library/Badges'
 import { DocumentNav } from '@/components/reader/DocumentNav'
 import GithubMarkdownView, { type PaintedQuote, type ReaderSelection } from '@/components/reader/GithubMarkdownView'
+import { useMeetingMedia } from '@/components/reader/MediaPlayer'
+import { MeetingTabs } from '@/components/reader/MeetingTabs'
 import { useDocument } from '@/hooks/use-document'
 import { courseOf } from '@/lib/generation/course-lesson'
 import { usePathName } from '@/hooks/use-library-view'
 import { newId, nowIso } from '@/lib/ids'
 import { paths } from '@/lib/paths'
+import { transcriptText } from '@/lib/transcription/export'
+import { renameInText, renameSpeaker } from '@/lib/transcription/turns'
 import { useDocumentStore } from '@/stores/document'
 import { useJobsStore } from '@/stores/jobs'
 import { useLibraryStore } from '@/stores/library'
@@ -26,6 +30,8 @@ const ORIGIN_LABEL: Record<string, string> = {
   recording: 'Gravação',
   import: 'Importado',
 }
+
+const SECOND_TAB: Partial<Record<FileType, string>> = { meeting: 'Ata', class: 'Aula' }
 
 export function DocumentHead({ meta, onInfo }: { meta: FileMeta; onInfo(): void }) {
   const navigate = useNavigate()
@@ -140,6 +146,10 @@ export function DocumentBody({ fileId, compact = false }: { fileId: string; comp
   const job = useJobsStore(state => state.jobs.find(item => item.fileId === fileId && item.status === 'running'))
   const cancel = useJobsStore(state => state.cancel)
   const generatePending = useJobsStore(state => state.generatePending)
+  const generateSecondTab = useJobsStore(state => state.generateSecondTab)
+  const updateSidecar = useLibraryStore(state => state.updateSidecar)
+  const saveContent = useLibraryStore(state => state.saveContent)
+  const media = useMeetingMedia(meta)
   const files = useLibraryStore(state => state.files)
   const setHeadings = useDocumentStore(state => state.setHeadings)
   const folders = useLibraryStore(state => state.folders)
@@ -169,6 +179,28 @@ export function DocumentBody({ fileId, compact = false }: { fileId: string; comp
   const showInfo = () => ui.set({ inspectorTab: 'info', rightOpen: true, columnsSheet: true, focusPop: 'info' })
   const readOnly = Boolean(useLibraryStore.getState().sharedView)
 
+  const recording = opened?.sidecar.recording
+  const secondLabel = meta.type === 'reading' || !(live || meta.status === 'ready') ? undefined : SECOND_TAB[meta.type]
+  const viewer = live ? (
+    <GithubMarkdownView markdown={live} live />
+  ) : opened && opened.content && !(recording && meta.type === 'reading') ? (
+    <GithubMarkdownView markdown={opened.content} quotes={quotes} onSelection={setSelection} onQuoteClick={onQuoteClick} onHeadings={onHeadings} onHeading={setHeading} />
+  ) : null
+  const rename = async (speakerId: string, name: string) => {
+    if (!recording || !opened) return
+    const renamed = renameSpeaker(recording, speakerId, name)
+    const before = recording.speakers.find(speaker => speaker.id === speakerId)?.name
+    await updateSidecar(fileId, sidecar => ({ ...sidecar, recording: renamed }))
+    const content = meta.type === 'reading' ? transcriptText(renamed).trim() : before ? renameInText(opened.content, before, name) : opened.content
+    if (content !== opened.content) await saveContent(fileId, content)
+  }
+
+  const saveMarks = (marks: RecordingMark[]) => {
+    const withMarks = (sidecar: FileSidecar): FileSidecar => (sidecar.recording ? { ...sidecar, recording: { ...sidecar.recording, marks } } : sidecar)
+    useLibraryStore.setState(state => (state.opened[fileId] ? { opened: { ...state.opened, [fileId]: { ...state.opened[fileId], sidecar: withMarks(state.opened[fileId].sidecar) } } } : {}))
+    void updateSidecar(fileId, withMarks)
+  }
+
   return (
     <article className="article" style={compact ? { padding: 0 } : undefined}>
       <DocumentHead meta={meta} onInfo={showInfo} />
@@ -191,12 +223,20 @@ export function DocumentBody({ fileId, compact = false }: { fileId: string; comp
           </button>
         </div>
       )}
-      {live ? (
-        <GithubMarkdownView markdown={live} live />
-      ) : opened && opened.content ? (
-        <GithubMarkdownView markdown={opened.content} quotes={quotes} onSelection={setSelection} onQuoteClick={onQuoteClick} onHeadings={onHeadings} onHeading={setHeading} />
+      {recording ? (
+        <MeetingTabs
+          key={fileId}
+          recording={recording}
+          media={media}
+          name={meta.name}
+          second={secondLabel && viewer ? { label: secondLabel, node: viewer } : undefined}
+          onRename={readOnly ? undefined : (speakerId, name) => void rename(speakerId, name)}
+          onMarks={readOnly ? undefined : saveMarks}
+          onGenerate={readOnly || job || meta.status !== 'ready' || meta.type !== 'reading' ? undefined : agent => void generateSecondTab(meta.id, agent)}
+          onRedo={readOnly || job || meta.status !== 'ready' || (meta.type !== 'meeting' && meta.type !== 'class') ? undefined : () => void generateSecondTab(meta.id, meta.type === 'meeting' ? 'meeting' : 'lesson')}
+        />
       ) : (
-        !job && meta.status === 'ready' && !opened && <div className="muted">Abrindo…</div>
+        (viewer ?? (!job && meta.status === 'ready' && !opened && <div className="muted">Abrindo…</div>))
       )}
       {selection && !readOnly && <SelectionPopover fileId={fileId} selection={selection} onDone={() => setSelection(null)} />}
       {heading && !selection && !readOnly && <HeadingExplain fileId={fileId} heading={heading} onDone={() => setHeading(null)} />}

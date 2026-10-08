@@ -77,7 +77,7 @@ describe('generateContent (lesson pipeline)', () => {
     for (const block of blocks) await expect(mermaid.parse(block)).resolves.toBeTruthy()
 
     const usage = session.usage()
-    expect(usage).toMatchObject({ provider: 'llm7', model: 'default', inputTokens: 120, outputTokens: 60, estimated: false, calls: 3 })
+    expect(usage).toMatchObject({ provider: 'custom', model: 'default', inputTokens: 120, outputTokens: 60, estimated: false, calls: 3 })
   })
 
   it('retries phase one with an auto-correction prompt when the JSON is invalid', async () => {

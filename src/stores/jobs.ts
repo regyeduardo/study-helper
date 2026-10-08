@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 
-import type { CourseAnalysis, FileMeta, FileType, GenerationMeta, SourceMeta, SourceStorage, StoredQuestion } from '@/types/domain'
+import type { CourseAnalysis, FileMeta, FileType, GenerationMeta, RecordingData, RecordingMark, SourceMeta, SourceStorage, StoredQuestion } from '@/types/domain'
 import { Cancelled } from '@/controllers/ai.controller'
 import type { LitterboxTime } from '@/controllers/hosting.controller'
 import { storedFromRaw } from '@/lib/exam'
@@ -11,12 +11,20 @@ import { buildMinutes, minutesFileName } from '@/lib/generation/minutes'
 import { generateContent, type GenerationEvent } from '@/lib/generation/pipeline'
 import { PROMPTS } from '@/lib/generation/prompts.data'
 import { generateQuestions, generateReadingExam, type WrongQuestion } from '@/lib/generation/questions'
+import { lookAtScreen, visionSettingsOf } from '@/lib/generation/frames'
+import { reviewTranscript } from '@/lib/generation/reviewer'
 import { GenerationSession } from '@/lib/generation/session'
+import { suggestSpeakerNames } from '@/lib/generation/speaker-names'
 import { newId } from '@/lib/ids'
 import { storeSource } from '@/lib/storage/source-storage'
+import { keepLocalMedia } from '@/lib/recording/media-library'
+import { transcribe } from '@/lib/transcription'
+import { transcriptText } from '@/lib/transcription/export'
 import { useLibraryStore } from '@/stores/library'
 
 export type Agent = 'lesson' | 'explanation' | 'meeting' | 'reading'
+
+export type SecondTabAgent = 'meeting' | 'lesson'
 
 export type JobStatus = 'running' | 'done' | 'error' | 'cancelled'
 
@@ -41,6 +49,7 @@ export interface NewContentRequest {
   prompt: string
   storage: SourceStorage
   litterboxTime: LitterboxTime
+  marks?: RecordingMark[]
 }
 
 export interface CourseProposal {
@@ -57,6 +66,7 @@ interface JobsState {
   acceptCourse(proposal: CourseProposal, folderId: string | null): Promise<string>
   declineCourse(proposal: CourseProposal): Promise<string>
   generatePending(fileId: string): Promise<void>
+  generateSecondTab(fileId: string, agent: SecondTabAgent): Promise<void>
   generateRemaining(folderId: string): Promise<void>
   regenerate(fileId: string): Promise<void>
   explainSelection(fileId: string, excerpt: string, prompt: string, mode: 'concept' | 'context'): Promise<string>
@@ -86,6 +96,8 @@ const GAP_INSTRUCTION = 'Explique o que faltou aprender em cada tema, usando as 
 const FILE_TYPE: Record<Agent, FileType> = { lesson: 'class', explanation: 'explanation', meeting: 'meeting', reading: 'reading' }
 
 const AGENT_LABEL: Record<Agent, string> = { lesson: 'Aula', explanation: 'Explicação', meeting: 'Ata', reading: 'Leitura' }
+
+const CONTENT_HEADER = '# Conteúdo\n\n'
 
 function library() {
   return useLibraryStore.getState()
@@ -149,10 +161,11 @@ export const useJobsStore = create<JobsState>((set, get) => {
     session: GenerationSession,
     jobId: string,
     systemPrompt?: string,
+    recording?: RecordingData,
   ): Promise<{ markdown: string; name?: string }> => {
     if (agent === 'meeting' && !systemPrompt) {
       patchJob(jobId, { message: 'Escrevendo a ata (duas passadas)' })
-      const { markdown, subject } = await buildMinutes(content, session, liveEmit(fileId))
+      const { markdown, subject } = await buildMinutes(content, session, liveEmit(fileId), recording)
       return { markdown, name: minutesFileName(subject) }
     }
     patchJob(jobId, { message: agent === 'lesson' ? 'Escrevendo a aula' : 'Escrevendo a explicação' })
@@ -177,7 +190,8 @@ export const useJobsStore = create<JobsState>((set, get) => {
     await library().updateFile(meta.id, { status: 'generating' })
     const session = new GenerationSession(library().index.settings.ai, controller.signal)
     try {
-      const { markdown, name } = await writeDocument(meta.id, agent, content, session, job.id, systemPrompt)
+      const recording = resolved?.transcription?.recording ?? (await library().openFile(meta.id).catch(() => null))?.sidecar.recording
+      const { markdown, name } = await writeDocument(meta.id, agent, content, session, job.id, systemPrompt, recording)
       patchJob(job.id, { message: 'Salvando' })
       await library().saveContent(meta.id, markdown, { status: 'ready', pendingExcerpt: null, generation: generationMeta(session, resolved), ...(name ? { name } : {}) })
       closeJob(job.id, 'done', 'Pronta e salva na Biblioteca.')
@@ -206,11 +220,12 @@ export const useJobsStore = create<JobsState>((set, get) => {
       agent === 'reading' ? resolved.content.replace(/^# Conteúdo\n\n/, '') : '',
     )
     if (resolved.transcription) {
-      const transcript = resolved.transcription.text
+      const { text: transcript, recording } = resolved.transcription
       await library()
-        .updateSidecar(meta.id, sidecar => ({ ...sidecar, transcript }))
+        .updateSidecar(meta.id, sidecar => ({ ...sidecar, transcript, ...(recording ? { recording } : {}) }))
         .catch(() => undefined)
     }
+    if (request.input.kind === 'file' && resolved.transcription) await keepLocalMedia(request.input.file, meta.id, resolved.transcription.durationSeconds).catch(() => undefined)
     if (request.input.kind === 'file' || request.input.kind === 'recording') {
       try {
         const stored = await storeSource(request.input.file, request.storage, meta.id, library().repo!, request.litterboxTime)
@@ -221,6 +236,33 @@ export const useJobsStore = create<JobsState>((set, get) => {
       }
     }
     return meta
+  }
+
+  const resolveRecording = async (file: File, progress: (message: string, fraction?: number) => void, signal: AbortSignal): Promise<ResolvedInput> => {
+    progress('Transcrevendo a gravação')
+    const transcription = await transcribe(file, library().index.settings.transcription, progress, signal, { microphoneOnLeft: true })
+    return {
+      content: `${CONTENT_HEADER}${transcription.text}`,
+      title: file.name,
+      description: file.name,
+      origin: { input: 'recording', name: file.name, sizeBytes: file.size, mime: file.type || 'application/octet-stream', durationSeconds: transcription.durationSeconds, storage: 'none' },
+      transcription,
+    }
+  }
+
+  const polished = async (resolved: ResolvedInput, marks: RecordingMark[], progress: (message: string) => void, signal: AbortSignal, source: File | null): Promise<ResolvedInput> => {
+    const heard = resolved.transcription?.recording
+    if (!resolved.transcription || !heard) return resolved
+    const session = new GenerationSession(library().index.settings.ai, signal)
+    progress('Descobrindo o nome de quem fala')
+    const named = await suggestSpeakerNames(heard, session)
+    const video = source?.type.startsWith('video/') ? source : null
+    if (video) progress('Olhando a tela gravada')
+    const seen = await lookAtScreen(named, video, visionSettingsOf(library().index.settings), session)
+    progress('Revisando a transcrição')
+    const recording = { ...(await reviewTranscript(seen, session)), marks }
+    const text = transcriptText(recording).trim()
+    return { ...resolved, content: `${CONTENT_HEADER}${text}`, transcription: { ...resolved.transcription, text, recording } }
   }
 
   return {
@@ -234,7 +276,9 @@ export const useJobsStore = create<JobsState>((set, get) => {
       onJob?.(job.id)
       let resolved: ResolvedInput
       try {
-        resolved = await resolveInput(request.input, library().index.settings, request.prompt, (message, fraction) => patchJob(job.id, { message, fraction: fraction ?? null }), controller.signal)
+        const progress = (message: string, fraction?: number) => patchJob(job.id, { message, fraction: fraction ?? null })
+        const read = request.input.kind === 'recording' ? await resolveRecording(request.input.file, progress, controller.signal) : await resolveInput(request.input, library().index.settings, request.prompt, progress, controller.signal)
+        resolved = await polished(read, request.marks ?? [], progress, controller.signal, request.input.kind === 'recording' || request.input.kind === 'file' ? request.input.file : null)
       } catch (error) {
         const cancelled = controller.signal.aborted
         closeJob(job.id, cancelled ? 'cancelled' : 'error', cancelled ? 'Cancelado por você.' : 'Não deu pra ler o material.', cancelled ? null : failureText(error))
@@ -319,6 +363,15 @@ export const useJobsStore = create<JobsState>((set, get) => {
       }
       const agent: Agent = meta.type === 'explanation' ? 'explanation' : meta.type === 'meeting' ? 'meeting' : 'lesson'
       await runOnFile(meta, agent, meta.pendingExcerpt ?? `# ${meta.name}`, null, 'Nova tentativa', meta.origin?.url ?? meta.origin?.name ?? meta.name)
+    },
+
+    generateSecondTab: async (fileId, agent) => {
+      const meta = library().files.find(file => file.id === fileId)
+      if (!meta || get().jobs.some(job => job.fileId === fileId && job.status === 'running')) return
+      const recording = (await library().openFile(fileId)).sidecar.recording
+      if (!recording) return
+      await library().updateFile(fileId, { type: FILE_TYPE[agent] })
+      await runOnFile({ ...meta, type: FILE_TYPE[agent] }, agent, `${CONTENT_HEADER}${transcriptText(recording)}`, null, AGENT_LABEL[agent], meta.origin?.name ?? meta.name)
     },
 
     generateRemaining: async folderId => {

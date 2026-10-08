@@ -127,7 +127,7 @@ export async function fetchSharedItemController(id: string): Promise<SharedItem 
       const [content, sidecar] = await Promise.all([sharedText(id, `${entry.path}.md`), sharedJson<FileSidecar>(id, `${entry.path}.json`)])
       if (content === null || !sidecar) return null
       const { meta } = sidecar
-      const file: SharedFile = { id: entry.id, name: meta.name, folderId: meta.folderId, type: meta.type, position: meta.position, description: meta.description, tags: meta.tags ?? [], content, questions: sidecar.questions ?? [], highlights: sidecar.highlights ?? [], ...(sidecar.transcript !== undefined ? { transcript: sidecar.transcript } : {}), meta }
+      const file: SharedFile = { id: entry.id, name: meta.name, folderId: meta.folderId, type: meta.type, position: meta.position, description: meta.description, tags: meta.tags ?? [], content, questions: sidecar.questions ?? [], highlights: sidecar.highlights ?? [], ...(sidecar.transcript !== undefined ? { transcript: sidecar.transcript } : {}), ...(sidecar.recording ? { recording: sidecar.recording } : {}), meta }
       return file
     }),
   )

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { installFetch, jsonResponse, llm7Settings, openAiStream, ovhSettings, sseResponse, systemPromptOf, userContentOf } from '@/test/ai/fake-provider'
+import { installFetch, jsonResponse, llm7Settings, openAiStream, sseResponse, systemPromptOf, userContentOf } from '@/test/ai/fake-provider'
 import type { AiSettings } from '@/types/domain'
 
 async function controller() {
@@ -37,25 +37,10 @@ describe('listModelsController (connection test)', () => {
     expect(calls[0].headers['anthropic-dangerous-direct-browser-access']).toBe('true')
   })
 
-  it('OVHcloud without key lists models without an authorization header', async () => {
-    const { listModelsController } = await controller()
-    const { calls } = installFetch(() => jsonResponse({ data: [{ id: 'gpt-oss-120b' }, { id: 'Meta-Llama-3_3-70B-Instruct' }] }))
-    expect(await listModelsController(ovhSettings())).toEqual(['Meta-Llama-3_3-70B-Instruct', 'gpt-oss-120b'])
-    expect(calls[0].url).toBe('https://oai.endpoints.kepler.ai.cloud.ovh.net/v1/models')
-    expect(calls[0].headers.authorization).toBeUndefined()
-  })
-
   it('accepts a models[] body shape with names', async () => {
     const { listModelsController } = await controller()
     installFetch(() => jsonResponse({ models: [{ name: 'llama3' }, { id: 'qwen' }] }))
     expect(await listModelsController({ provider: 'custom', baseUrl: 'http://localhost:11434/v1', apiKey: '', model: '' })).toEqual(['llama3', 'qwen'])
-  })
-
-  it('Pollinations without key refuses the test and makes no request', async () => {
-    const { listModelsController } = await controller()
-    const { calls } = installFetch(() => jsonResponse({ data: [] }))
-    await expect(listModelsController({ provider: 'pollinations', baseUrl: '', apiKey: '', model: '' })).rejects.toThrow('Falta a chave.')
-    expect(calls).toHaveLength(0)
   })
 
   it('never calls a completion endpoint for any provider', async () => {
@@ -66,9 +51,6 @@ describe('listModelsController (connection test)', () => {
       { provider: 'openai', baseUrl: '', apiKey: 'k', model: '' },
       { provider: 'gemini', baseUrl: '', apiKey: 'k', model: '' },
       { provider: 'xai', baseUrl: '', apiKey: 'k', model: '' },
-      { provider: 'ovh', baseUrl: '', apiKey: '', model: '' },
-      { provider: 'llm7', baseUrl: '', apiKey: 'k', model: '' },
-      { provider: 'pollinations', baseUrl: '', apiKey: 'k', model: '' },
       { provider: 'custom', baseUrl: 'https://my.example/v1', apiKey: '', model: '' },
     ]
     for (const item of all) await listModelsController(item)
@@ -90,13 +72,13 @@ describe('listModelsController (connection test)', () => {
   it('refuses to test a keyed provider without key and makes no request', async () => {
     const { listModelsController } = await controller()
     const { calls } = installFetch(() => jsonResponse({}))
-    await expect(listModelsController({ provider: 'llm7', baseUrl: '', apiKey: '', model: '' })).rejects.toThrow('Falta a chave.')
+    await expect(listModelsController({ provider: 'openai', baseUrl: '', apiKey: '', model: '' })).rejects.toThrow('Falta a chave.')
     expect(calls).toHaveLength(0)
   })
 })
 
 describe('chatController streaming', () => {
-  it('LLM7 streams from api.llm7.io/v1/chat/completions with the key and joins the deltas', async () => {
+  it('an OpenAI-format provider streams from <base>/chat/completions with the key and joins the deltas', async () => {
     const { chatController } = await controller()
     const { calls } = installFetch(() => openAiStream('Olá, mundo! Tudo certo por aqui.', 5, { prompt_tokens: 11, completion_tokens: 7 }))
     const reply = await chatController(llm7Settings(), 'conteúdo', 'sistema')
@@ -193,23 +175,6 @@ describe('chatController streaming', () => {
   })
 })
 
-describe('Pollinations needs a key', () => {
-  it('with key posts to gen.pollinations.ai/v1 with the bearer key', async () => {
-    const { chatController } = await controller()
-    const { calls } = installFetch(() => openAiStream('ok'))
-    await chatController({ provider: 'pollinations', baseUrl: '', apiKey: 'sk', model: 'openai' }, 'c', 's')
-    expect(calls[0].url).toBe('https://gen.pollinations.ai/v1/chat/completions')
-    expect(calls[0].headers.authorization).toBe('Bearer sk')
-  })
-
-  it('without key refuses before any request', async () => {
-    const { chatController } = await controller()
-    const { calls } = installFetch(() => openAiStream('ok'))
-    await expect(chatController({ provider: 'pollinations', baseUrl: '', apiKey: '', model: 'openai' }, 'c', 's')).rejects.toThrow(/Falta a chave de Pollinations/)
-    expect(calls).toHaveLength(0)
-  })
-})
-
 describe('rate limit handling', () => {
   it('waits the Retry-After seconds on 429 and retries', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] })
@@ -240,15 +205,4 @@ describe('rate limit handling', () => {
     expect(calls).toHaveLength(6)
   })
 
-  it('cancels a request waiting in the OVHcloud line when aborted', async () => {
-    const { chatController, Cancelled } = await controller()
-    installFetch(() => openAiStream('ok'))
-    const first = chatController(ovhSettings(), 'a', 's')
-    const abort = new AbortController()
-    const queued = chatController(ovhSettings(), 'b', 's', undefined, abort.signal)
-    const assertion = expect(queued).rejects.toBeInstanceOf(Cancelled)
-    abort.abort()
-    await first
-    await assertion
-  })
 })

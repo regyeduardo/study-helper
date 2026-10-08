@@ -18,7 +18,7 @@ let drive: FakeDrive
 
 const chosen: Partial<Settings> = {
   ai: { provider: 'openai', baseUrl: '', apiKey: 'sk-live-123456', model: 'gpt-x' },
-  transcription: { engine: 'groq', groqApiKey: 'gsk_abcdef', language: 'pt', separateSpeakers: false },
+  transcription: { engine: 'deepinfra', language: 'pt', credentials: { deepinfra: { apiKey: 'di_abcdef', baseUrl: '', model: '', extra: '' } }, speakersEngine: '' },
   timezone: 'America/Manaus',
   githubToken: 'ghp_token987',
 }
@@ -53,7 +53,7 @@ describe('configurações no study-helper.json da pasta', () => {
     await useLibraryStore.getState().updateSettings(chosen)
     const raw = drive.one('index').content!
     expect(raw).toContain('"apiKey": "sk-live-123456"')
-    expect(raw).toContain('"groqApiKey": "gsk_abcdef"')
+    expect(raw).toContain('"apiKey": "di_abcdef"')
     expect(raw).toContain('"githubToken": "ghp_token987"')
   })
 
@@ -100,11 +100,11 @@ describe('a tela mascara as chaves', () => {
     expect(document.body.textContent).not.toContain('sk-live-123456')
   })
 
-  it('chaves da Groq e do Gemini aparecem como senha', () => {
+  it('chaves da DeepInfra e do Gemini aparecem como senha', () => {
     render(<SettingsDialog initial="transcription" />)
-    expect(screen.getByLabelText('Chave da Groq')).toHaveAttribute('type', 'password')
+    expect(screen.getByLabelText('Chave da API')).toHaveAttribute('type', 'password')
     expect(screen.getByLabelText('Chave do Gemini')).toHaveAttribute('type', 'password')
-    expect(document.body.textContent).not.toContain('gsk_abcdef')
+    expect(document.body.textContent).not.toContain('di_abcdef')
     expect(document.body.textContent).not.toContain('AIza-secret')
   })
 

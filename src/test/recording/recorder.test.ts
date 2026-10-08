@@ -43,8 +43,8 @@ describe('MeetingRecorder capture', () => {
     expect(context.sources[1].stream).toBe(env.microphoneStream)
     expect(context.sources[0].connect).toHaveBeenCalledWith(context.sourceGain)
     expect(context.sources[1].connect).toHaveBeenCalledWith(context.microphoneGain)
-    expect(context.microphoneGain.connect).toHaveBeenCalledWith(context.destination)
-    expect(context.sourceGain.connect).toHaveBeenCalledWith(context.destination)
+    expect(context.microphoneGain.connect).toHaveBeenCalledWith(context.merger, 0, 0)
+    expect(context.sourceGain.connect).toHaveBeenCalledWith(context.merger, 0, 1)
     const recorded = lastRecorder().stream.getTracks().map(track => track.label)
     expect(recorded).toEqual(['mix'])
   })
@@ -155,10 +155,10 @@ describe('MeetingRecorder through the integration', () => {
 })
 
 describe('MeetingRecorder format', () => {
-  it('records light mono audio, about 14 MB an hour', async () => {
+  it('records light audio in two channels, about 14 MB an hour', async () => {
     await new MeetingRecorder(callbacks()).start('tab')
     expect(lastRecorder().options?.audioBitsPerSecond).toBe(32000)
-    expect(FakeAudioContext.instances[0].destination).toMatchObject({ channelCount: 1, channelCountMode: 'explicit' })
+    expect(FakeAudioContext.instances[0].destination).toMatchObject({ channelCount: 2, channelCountMode: 'explicit' })
   })
 
   it('records only the audio when sharing a tab or the screen', async () => {

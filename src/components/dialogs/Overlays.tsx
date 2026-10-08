@@ -6,7 +6,6 @@ import { ConflictDialog } from '@/components/dialogs/ConflictDialog'
 import { ExamDialog, ExamRun, FolderExamDialog } from '@/components/dialogs/ExamDialog'
 import { JobsPanel } from '@/components/dialogs/JobsPanel'
 import { MediaDialog } from '@/components/dialogs/MediaDialog'
-import { ModelDownloadDialog } from '@/components/dialogs/ModelDownloadDialog'
 import { ActivityDialog, CourseProposalDialog, ExplainDialog, ImportDialog, OrderDialog, SendLocalDialog, StorageLimitDialog } from '@/components/dialogs/MoreDialogs'
 import { NewContentDialog } from '@/components/dialogs/NewContentDialog'
 import { RecordDialog, RecordingDoneDialog, RecordingWindow } from '@/components/dialogs/RecordDialogs'
@@ -61,7 +60,6 @@ export function Overlays() {
       <RecordingWindow />
       <RecordingDoneDialog />
       <JobsPanel />
-      <ModelDownloadDialog />
     </>
   )
 }

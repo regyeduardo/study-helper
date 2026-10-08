@@ -4,14 +4,10 @@ import { useNavigate } from 'react-router-dom'
 import type { SourceStorage, TranscriptionEngine } from '@/types/domain'
 import { Dialog } from '@/components/ui/Dialog'
 import { Icon } from '@/components/ui/Icon'
-import { FreeMinutes } from '@/components/dialogs/FreeMinutes'
-import { FreeAi } from '@/components/dialogs/FreeAi'
-import { LimitedAiNotice } from '@/components/dialogs/LimitedAiNotice'
 import { FolderPicker } from '@/components/dialogs/SimpleDialogs'
 import { SourceStoragePicker } from '@/components/dialogs/SourceStoragePicker'
 import type { LitterboxTime } from '@/controllers/hosting.controller'
 import { youtubeId } from '@/controllers/sources.controller'
-import { useFreeMinutes } from '@/hooks/use-free-minutes'
 import { isFreeChoice, modelOf, providerOf } from '@/lib/ai/providers'
 import type { ContentInput } from '@/lib/generation/inputs'
 import { detectKind } from '@/lib/generation/uploads'
@@ -108,12 +104,11 @@ export function NewContentDialog({ folderId: initialFolder }: { folderId?: strin
   const [folderId, setFolderId] = useState<string | null>(initialFolder ?? null)
   const [jobId, setJobId] = useState<string | null>(null)
   const input = useRef<HTMLInputElement>(null)
-  const freeMinutes = useFreeMinutes(file && isMedia ? file : null)
 
   const driveAvailable = account.kind === 'google'
   const room = usage && settings.storageLimitBytes ? settings.storageLimitBytes - usage.appBytes : null
   const options = useMemo(() => (file ? storageOptions(file.size, driveAvailable, room) : []), [file, driveAvailable, room])
-  const chosen = file ? (storage && options.find(option => option.id === storage && option.fits && option.enabled) ? storage : defaultStorage(file.size, driveAvailable, options)) : 'none'
+  const chosen = file ? (storage && options.find(option => option.id === storage && option.fits && option.enabled) ? storage : defaultStorage(driveAvailable, options)) : 'none'
   const provider = providerOf(settings.ai.provider)
   const isYoutube = Boolean(youtubeId(url))
 
@@ -148,7 +143,7 @@ export function NewContentDialog({ folderId: initialFolder }: { folderId?: strin
 
   if (jobId) return <GenerationProgress jobId={jobId} onHide={ui.close} />
 
-  const canGo = Boolean(contentInput()) && !(tab === 'file' && freeMinutes.kind === 'ready' && freeMinutes.short)
+  const canGo = Boolean(contentInput())
   const tabButton = (id: Tab, icon: Parameters<typeof Icon>[0]['name'], label: string) => (
     <button aria-pressed={tab === id} onClick={() => setTab(id)}>
       <Icon name={icon} />
@@ -194,8 +189,6 @@ export function NewContentDialog({ folderId: initialFolder }: { folderId?: strin
         </button>
       </div>
       <div className="db" style={{ paddingTop: 14 }}>
-        <LimitedAiNotice />
-        <FreeAi />
         {tab === 'link' && (
           <>
             <div className="field">
@@ -238,13 +231,14 @@ export function NewContentDialog({ folderId: initialFolder }: { folderId?: strin
                 onChoose={setStorage}
                 litterboxTime={litterboxTime}
                 onLitterboxTime={setLitterboxTime}
+                names={isMedia ? { none: { name: 'Só neste computador', description: 'Fica em Mídias, neste navegador. A nota toca o vídeo ou o áudio daqui.' } } : undefined}
               />
             )}
             {file && isMedia && (
               <div className="field">
                 <span className="lab">Transcrição</span>
                 <div className="opts" role="radiogroup">
-                  {ENGINES.filter(engine => engine.id !== 'free' || freeMinutes.kind !== 'invite').map(engine => (
+                  {ENGINES.map(engine => (
                     <button key={engine.id} className="opt" role="radio" aria-checked={settings.transcription.engine === engine.id} onClick={() => void updateSettings({ transcription: { ...settings.transcription, engine: engine.id as TranscriptionEngine } })}>
                       <span className="radio" />
                       <span>
@@ -256,7 +250,6 @@ export function NewContentDialog({ folderId: initialFolder }: { folderId?: strin
                     </button>
                   ))}
                 </div>
-                <FreeMinutes check={freeMinutes} />
               </div>
             )}
           </>

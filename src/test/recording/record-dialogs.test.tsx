@@ -77,7 +77,7 @@ describe('RecordDialog', () => {
     await waitFor(() => expect(captures[0].stop).toHaveBeenCalled())
     await waitFor(() => expect(screen.getByRole('button', { name: 'Começar a gravar' })).toBeEnabled())
     fireEvent.click(screen.getByRole('button', { name: 'Começar a gravar' }))
-    await waitFor(() => expect(startIntegration).toHaveBeenCalledWith(captures.at(-1), { microphoneOn: true, microphoneId: null }))
+    await waitFor(() => expect(startIntegration).toHaveBeenCalledWith(captures.at(-1), { microphoneOn: true, microphoneId: null, video: null, destination: 'none' }))
     expect(captures.at(-1)!.stop).not.toHaveBeenCalled()
   })
 
@@ -145,7 +145,7 @@ describe('RecordDialog', () => {
     await screen.findByRole('option', { name: `${COMPUTER_INPUT.label} · som do computador` })
     fireEvent.change(screen.getByLabelText('Som do computador'), { target: { value: COMPUTER_INPUT.deviceId } })
     fireEvent.click(screen.getByRole('button', { name: /Começar a gravar/ }))
-    await waitFor(() => expect(start).toHaveBeenCalledWith('tab', COMPUTER_INPUT.deviceId, { microphoneOn: true, microphoneId: null }))
+    await waitFor(() => expect(start).toHaveBeenCalledWith('tab', COMPUTER_INPUT.deviceId, { microphoneOn: true, microphoneId: null, video: null, destination: 'none' }))
   })
 
   it('starts recording the selected mode', async () => {
@@ -154,7 +154,7 @@ describe('RecordDialog', () => {
     render(<RecordDialog />)
     fireEvent.click(await screen.findByRole('radio', { name: /Sem compartilhar a tela/ }))
     fireEvent.click(screen.getByRole('button', { name: /Começar a gravar/ }))
-    await waitFor(() => expect(start).toHaveBeenCalledWith('microphone', 'auto', { microphoneOn: true, microphoneId: null }))
+    await waitFor(() => expect(start).toHaveBeenCalledWith('microphone', 'auto', { microphoneOn: true, microphoneId: null, video: null, destination: 'none' }))
   })
 
   it('has a separate microphone check and does not start with nothing to record', async () => {
@@ -168,7 +168,7 @@ describe('RecordDialog', () => {
     expect(screen.getByText('Ligue o microfone ou escolha um som do computador.')).toBeInTheDocument()
     fireEvent.change(screen.getByLabelText('Som do computador'), { target: { value: 'auto' } })
     fireEvent.click(screen.getByRole('button', { name: /Começar a gravar/ }))
-    await waitFor(() => expect(start).toHaveBeenCalledWith('microphone', 'auto', { microphoneOn: false, microphoneId: null }))
+    await waitFor(() => expect(start).toHaveBeenCalledWith('microphone', 'auto', { microphoneOn: false, microphoneId: null, video: null, destination: 'none' }))
   })
 
   it('explains a denied permission', async () => {
@@ -179,7 +179,7 @@ describe('RecordDialog', () => {
   })
 })
 
-const LIVE = { preview: null, meters: { microphone: null, computer: null }, computerAudio: 'som da aba', hasMicrophone: true, hasSource: true, microphoneOn: true, sourceOn: true, microphoneId: null, sourceChoice: 'display', paused: false }
+const LIVE = { preview: null, meters: { microphone: null, computer: null }, computerAudio: 'som da aba', hasMicrophone: true, hasSource: true, microphoneOn: true, sourceOn: true, microphoneId: null, sourceChoice: 'display', paused: false, screenOn: true }
 
 describe('RecordingWindow', () => {
   it('pauses and turns each sound off and on while recording', () => {
@@ -193,7 +193,7 @@ describe('RecordingWindow', () => {
     expect(setEnabled).toHaveBeenCalledWith('microphone', false)
     fireEvent.click(screen.getByRole('button', { name: 'Desligar o som do computador' }))
     expect(setEnabled).toHaveBeenCalledWith('source', false)
-    expect(screen.getByRole('button', { name: 'Trocar a aba' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Trocar tela' })).toBeInTheDocument()
   })
 
   it('shows Continuar while paused', () => {
@@ -265,16 +265,16 @@ describe('RecordingDoneDialog', () => {
 
   const checked = () => screen.getAllByRole('radio').filter(radio => radio.getAttribute('aria-checked') === 'true').map(radio => radio.textContent)
 
-  it('asks where else to keep it, suggests OnlyFiles for a small recording on the Local profile, and closes right away', async () => {
+  it('asks where else to keep it, keeps it only on this computer on the Local profile, and closes right away', async () => {
     useRecorderStore.setState({ result: recordingOf(50 * MB) })
     renderDone()
     expect(screen.getByText('Guardar também na nuvem?')).toBeInTheDocument()
-    expect(checked().some(text => text?.startsWith('OnlyFiles'))).toBe(true)
+    expect(checked().some(text => text?.startsWith('Não, só neste computador'))).toBe(true)
     expect(screen.getByRole('radio', { name: /Não, só neste computador/ })).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Transcrever e gerar' }))
     expect(useRecorderStore.getState().result).toBeNull()
     await waitFor(() => expect(startNewContent).toHaveBeenCalled())
-    expect(startNewContent.mock.calls[0][0]).toMatchObject({ agent: 'meeting', storage: 'onlyfiles', input: { kind: 'recording' } })
+    expect(startNewContent.mock.calls[0][0]).toMatchObject({ agent: 'meeting', storage: 'none', input: { kind: 'recording' } })
   })
 
   it('sends the place the person picked', async () => {
@@ -284,12 +284,6 @@ describe('RecordingDoneDialog', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Transcrever e gerar' }))
     await waitFor(() => expect(startNewContent).toHaveBeenCalled())
     expect(startNewContent.mock.calls[0][0]).toMatchObject({ storage: 'none' })
-  })
-
-  it('suggests Litterbox for a medium recording on the Local profile', () => {
-    useRecorderStore.setState({ result: recordingOf(500 * MB) })
-    renderDone()
-    expect(checked().some(text => text?.startsWith('Litterbox'))).toBe(true)
   })
 
   it('"Só salvar" keeps the recording in the browser without generating', async () => {

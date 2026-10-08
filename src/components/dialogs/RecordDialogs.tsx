@@ -1,17 +1,13 @@
-import { useEffect, useRef, useState } from 'react'
+import { type ReactNode, useEffect, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 
 import type { SourceStorage } from '@/types/domain'
 import { Dialog } from '@/components/ui/Dialog'
 import { Icon } from '@/components/ui/Icon'
-import { FreeMinutes } from '@/components/dialogs/FreeMinutes'
 import { IntegrationStatus } from '@/components/dialogs/IntegrationStatus'
-import { FreeAi } from '@/components/dialogs/FreeAi'
-import { LimitedAiNotice } from '@/components/dialogs/LimitedAiNotice'
 import { FolderPicker } from '@/components/dialogs/SimpleDialogs'
 import { SourceStoragePicker } from '@/components/dialogs/SourceStoragePicker'
 import type { LitterboxTime } from '@/controllers/hosting.controller'
-import { useFreeMinutes } from '@/hooks/use-free-minutes'
 import {
   IntegrationCapture,
   type IntegrationDevice,
@@ -23,7 +19,7 @@ import {
 } from '@/lib/recording/integration'
 import { linkLocalMedia } from '@/lib/recording/media-library'
 import { mountMiniplayer } from '@/lib/recording/miniplayer'
-import { type AudioInput, type CaptureMode, COMPUTER_AUDIO_AUTO, COMPUTER_AUDIO_NONE, listAudioInputs, type LiveCapture, systemAudioNotice } from '@/lib/recording/recorder'
+import { type AudioInput, type CaptureMode, COMPUTER_AUDIO_AUTO, COMPUTER_AUDIO_NONE, listAudioInputs, type LiveCapture, systemAudioNotice, type VideoFps } from '@/lib/recording/recorder'
 import { defaultStorage, storageOptions } from '@/lib/storage/source-storage'
 import { useAccountStore } from '@/stores/account'
 import { useLibraryStore } from '@/stores/library'
@@ -102,6 +98,59 @@ function IntegrationSourceOptions({ windows, listing }: { windows: IntegrationWi
   )
 }
 
+function useDestination(place: SourceStorage | null): SourceStorage {
+  const driveAvailable = useAccountStore(state => state.active().kind === 'google')
+  return place ?? (driveAvailable ? 'drive' : 'none')
+}
+
+function ScreenAndPlace({ fps, onFps, place, onPlace }: { fps: VideoFps | null; onFps(fps: VideoFps | null): void; place: SourceStorage | null; onPlace(place: SourceStorage): void }) {
+  const driveAvailable = useAccountStore(state => state.active().kind === 'google')
+  const destination = useDestination(place)
+  return (
+    <div className="row2">
+      <div className="field">
+        <span className="lab">Gravar a tela</span>
+        <div className="opts" role="radiogroup">
+          {(
+            [
+              [null, 'Não', 'Só o som'],
+              [5, '5 fps', 'Modo leitura: slides e documentos, arquivo leve'],
+              [30, '30 fps', 'Movimento fluido, arquivo bem maior'],
+            ] as [VideoFps | null, string, string][]
+          ).map(([value, label, hint]) => (
+            <button key={label} className="opt" role="radio" aria-checked={fps === value} onClick={() => onFps(value)}>
+              <span className="radio" />
+              <span>
+                <b>{label}</b>
+                <span>{hint}</span>
+              </span>
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="field">
+        <span className="lab">Onde salvar</span>
+        <div className="opts" role="radiogroup">
+          <button className="opt" role="radio" aria-checked={destination === 'none'} onClick={() => onPlace('none')}>
+            <span className="radio" />
+            <span>
+              <b>Neste computador</b>
+              <span>Fica em Mídias, neste navegador.</span>
+            </span>
+          </button>
+          <button className="opt" role="radio" aria-checked={destination === 'drive'} aria-disabled={!driveAvailable} onClick={() => driveAvailable && onPlace('drive')}>
+            <span className="radio" />
+            <span>
+              <b>Google Drive</b>
+              <span>{driveAvailable ? 'Também vai para o seu Drive. Dá para trocar no fim.' : 'Entre com o Google para guardar no Drive.'}</span>
+            </span>
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function IntegrationRecord() {
   const ui = useUiStore()
   const startIntegration = useRecorderStore(state => state.startIntegration)
@@ -112,6 +161,9 @@ function IntegrationRecord() {
   const [microphoneOn, setMicrophoneOn] = useState(true)
   const [microphoneId, setMicrophoneId] = useState('')
   const [capture, setCapture] = useState<IntegrationCapture | null>(null)
+  const [fps, setFps] = useState<VideoFps | null>(null)
+  const [place, setPlace] = useState<SourceStorage | null>(null)
+  const destination = useDestination(place)
   const [error, setError] = useState<string | null>(null)
   const handed = useRef(false)
   const player = useRef<HTMLDivElement>(null)
@@ -168,7 +220,7 @@ function IntegrationRecord() {
     if (!capture || nothing) return
     handed.current = true
     try {
-      await startIntegration(capture, { microphoneOn, microphoneId: microphoneId || null })
+      await startIntegration(capture, { microphoneOn, microphoneId: microphoneId || null, video: fps ? { fps } : null, destination })
       ui.close()
     } catch (failure) {
       handed.current = false
@@ -210,6 +262,7 @@ function IntegrationRecord() {
           </span>
         </div>
         <MicrophoneField on={microphoneOn} onToggle={() => setMicrophoneOn(!microphoneOn)} id={microphoneId} onId={setMicrophoneId} devices={microphones} />
+        <ScreenAndPlace fps={fps} onFps={setFps} place={place} onPlace={setPlace} />
         <div className="field">
           <span className="lab">Confira antes de gravar</span>
           <div className="player" ref={player} aria-label="Ondas antes de gravar" style={{ height: 140, borderRadius: 8, overflow: 'hidden' }} />
@@ -236,9 +289,12 @@ export function RecordDialog() {
   const [computerAudio, setComputerAudio] = useState(COMPUTER_AUDIO_AUTO)
   const [microphoneOn, setMicrophoneOn] = useState(true)
   const [microphoneId, setMicrophoneId] = useState('')
+  const [fps, setFps] = useState<VideoFps | null>(null)
+  const [place, setPlace] = useState<SourceStorage | null>(null)
   const [inputs, setInputs] = useState<AudioInput[]>([])
   const [error, setError] = useState<string | null>(null)
   const [allowed, setAllowed] = useState(false)
+  const destination = useDestination(place)
   const supported = Boolean(navigator.mediaDevices?.getDisplayMedia) && typeof MediaRecorder !== 'undefined'
   useEffect(() => {
     if (recorder.active) {
@@ -285,7 +341,7 @@ export function RecordDialog() {
   const start = async () => {
     setError(null)
     try {
-      await recorder.start(mode, computerAudio, { microphoneOn, microphoneId: microphoneId || null })
+      await recorder.start(mode, computerAudio, { microphoneOn, microphoneId: microphoneId || null, video: fps ? { fps } : null, destination })
       ui.close()
     } catch (failure) {
       setError(failure instanceof Error && failure.name === 'NotAllowedError' ? 'Você não deu permissão para gravar.' : failure instanceof Error ? failure.message : 'Não deu para começar a gravar.')
@@ -373,6 +429,7 @@ export function RecordDialog() {
         </div>
         <MicrophoneField on={microphoneOn} onToggle={() => setMicrophoneOn(!microphoneOn)} id={microphoneId} onId={setMicrophoneId} devices={microphonesOf(inputs)} />
         {nothing && <span className="faint">Ligue o microfone ou escolha um som do computador.</span>}
+        <ScreenAndPlace fps={fps} onFps={setFps} place={place} onPlace={setPlace} />
         <div className="banner info">
           <Icon name="info" />
           <span>Um miniplayer mostra o que está sendo gravado, com as ondas do microfone e do som do computador, o tempo, e deixa pausar, ligar e desligar cada som e trocar as fontes. O arquivo é gravado em pedaços no navegador, então reunião longa não pesa. Parar pela barra do navegador também termina.</span>
@@ -395,7 +452,7 @@ export function RecordDialog() {
 function Miniplayer({ live }: { live: LiveCapture | null }) {
   const container = useRef<HTMLDivElement>(null)
   useEffect(() => (live && container.current ? mountMiniplayer(container.current, live) : undefined), [live])
-  return <div className="player" ref={container} />
+  return <div className={live?.preview ? 'player screen' : 'player'} ref={container} />
 }
 
 function useSwitchOptions(mode: CaptureMode | null) {
@@ -435,14 +492,64 @@ function useSwitchOptions(mode: CaptureMode | null) {
   return { microphones, windows, listing, inputs }
 }
 
+const GLYPHS = {
+  speaker: <path d="M4 9.5v5h3.5L12 18V6L7.5 9.5zM15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11" />,
+  window: <path d="M4 6.5a1.5 1.5 0 0 1 1.5-1.5h13A1.5 1.5 0 0 1 20 6.5v11a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 17.5zM4 9.5h16M7 7.3h.01M9.5 7.3h.01" />,
+  flag: <path d="M6 21V4.5M6 5h11l-2 3.5 2 3.5H6" />,
+  play: <path d="M8 5.5v13l10.5-6.5z" />,
+}
+
+interface TileProps {
+  label: string
+  name: string
+  icon: ReactNode
+  pressed?: boolean
+  expanded?: boolean
+  disabled?: boolean
+  onClick(): void
+}
+
+function Tile({ label, name, icon, pressed, expanded, disabled, onClick }: TileProps) {
+  return (
+    <button className="tile" aria-label={name} title={name} aria-pressed={pressed} aria-expanded={expanded} disabled={disabled} onClick={onClick}>
+      {icon}
+      <span>{label}</span>
+    </button>
+  )
+}
+
+function Glyph({ name }: { name: keyof typeof GLYPHS }) {
+  return (
+    <svg className="ic" viewBox="0 0 24 24" aria-hidden="true">
+      {GLYPHS[name]}
+    </svg>
+  )
+}
+
+function counted(count: number, one: string, many: string): string {
+  return `${count} ${count === 1 ? one : many}`
+}
+
 function RecordingControls() {
-  const { seconds, mode, live, floating, finish, cancel, pause, resume, setEnabled, switchMicrophone, switchComputerInput, reshare, switchIntegrationSource, openFloating } = useRecorderStore()
+  const { seconds, mode, live, floating, marks, finish, cancel, pause, resume, setEnabled, setScreen, switchScreen, mark, annotate, switchMicrophone, switchComputerInput, reshare, switchIntegrationSource, openFloating } = useRecorderStore()
   const toast = useUiStore(state => state.toast)
   const [confirming, setConfirming] = useState(false)
   const [blocked, setBlocked] = useState(false)
+  const [panel, setPanel] = useState<'sources' | 'note' | null>(null)
+  const [note, setNote] = useState('')
   const options = useSwitchOptions(mode)
   const attempt = (action: () => Promise<void>) => void action().catch(failure => toast(failure instanceof Error ? failure.message : 'Não deu para trocar.'))
   const what = mode === 'tab' ? 'a aba' : mode === 'screen' ? 'a tela' : mode === 'integration' && live?.computerAudio ? live.computerAudio : 'o microfone'
+  const microphoneOn = live?.microphoneOn ?? true
+  const sourceOn = Boolean(live?.hasSource && live.sourceOn)
+  const screenOn = Boolean(live?.screenOn)
+  const flags = marks.filter(item => item.kind === 'mark').length
+  const notes = marks.length - flags
+  const keepNote = () => {
+    if (note.trim()) annotate(note.trim())
+    setNote('')
+    setPanel(null)
+  }
   return (
     <>
       <div className="bar-top">
@@ -455,75 +562,87 @@ function RecordingControls() {
         )}
       </div>
       {blocked && !floating && <div className="source">O navegador bloqueou a janela: libere as janelas deste site e tente de novo.</div>}
-      <Miniplayer live={live} />
-      {live?.computerAudio && <div className="source">Som do computador: {live.computerAudio}</div>}
       <div className="body">
-        <div className="timer">
-          {clock(seconds)}
-          {live?.paused ? <span className="faint" style={{ fontSize: 13 }}>pausado</span> : null}
+        <div className="mini-head">
+          <div className="timer">
+            {clock(seconds)}
+            {live?.paused ? <span className="faint" style={{ fontSize: 13 }}>pausado</span> : null}
+          </div>
+          <Miniplayer live={live} />
         </div>
-        <div className="toggles" style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-          <button className="btn" aria-pressed={live?.microphoneOn ?? true} onClick={() => setEnabled('microphone', !(live?.microphoneOn ?? true))}>
-            <Icon name="mic" />
-            {live?.microphoneOn === false ? 'Ligar o microfone' : 'Desligar o microfone'}
-          </button>
-          {live?.hasSource && (
-            <button className="btn" aria-pressed={live.sourceOn} onClick={() => setEnabled('source', !live.sourceOn)}>
-              <Icon name="monitor" />
-              {live.sourceOn ? 'Desligar o som do computador' : 'Ligar o som do computador'}
-            </button>
-          )}
-          <button className="btn" onClick={() => (live?.paused ? resume() : pause())}>
-            <Icon name={live?.paused ? 'rec' : 'clock'} />
-            {live?.paused ? 'Continuar' : 'Pausar'}
-          </button>
+        <div className="tiles">
+          <Tile label="Microfone" name={microphoneOn ? 'Desligar o microfone' : 'Ligar o microfone'} icon={<Icon name="mic" />} pressed={microphoneOn} onClick={() => setEnabled('microphone', !microphoneOn)} />
+          <Tile label="Som do PC" name={sourceOn ? 'Desligar o som do computador' : 'Ligar o som do computador'} icon={<Glyph name="speaker" />} pressed={sourceOn} disabled={!live?.hasSource} onClick={() => setEnabled('source', !sourceOn)} />
+          <Tile label={live?.paused ? 'Continuar' : 'Pausar'} name={live?.paused ? 'Continuar' : 'Pausar'} icon={live?.paused ? <Glyph name="play" /> : <Icon name="pause" />} onClick={() => (live?.paused ? resume() : pause())} />
+          <Tile label="Gravar tela" name={screenOn ? 'Desligar a gravação de tela' : 'Ligar a gravação de tela'} icon={<Icon name="monitor" />} pressed={screenOn} onClick={() => attempt(() => setScreen(!screenOn))} />
+          <Tile label="Trocar janela" name="Trocar janela" icon={<Glyph name="window" />} expanded={panel === 'sources'} onClick={() => setPanel(panel === 'sources' ? null : 'sources')} />
+          <Tile label="Trocar tela" name="Trocar tela" icon={<Icon name="swap" />} disabled={!screenOn} onClick={() => attempt(switchScreen)} />
+          <Tile label="Marcar" name="Marcar momento" icon={<Glyph name="flag" />} onClick={mark} />
+          <Tile label="Anotar" name="Anotar" icon={<Icon name="pen" />} expanded={panel === 'note'} onClick={() => setPanel(panel === 'note' ? null : 'note')} />
         </div>
-        <label className="lab" htmlFor="live-microphone">
-          Microfone
-        </label>
-        <select className="input" id="live-microphone" value={live?.microphoneId ?? ''} onChange={event => attempt(() => switchMicrophone(event.target.value || null))}>
-          <option value="">Padrão do sistema</option>
-          {options.microphones.map(device => (
-            <option key={device.id} value={device.id}>
-              {device.label}
-            </option>
-          ))}
-        </select>
-        <label className="lab" htmlFor="live-source">
-          Som do computador
-        </label>
-        {mode === 'integration' ? (
-          <select
+        {panel === 'note' && (
+          <input
             className="input"
-            id="live-source"
-            value={live?.sourceChoice ?? 'system'}
-            onChange={event => {
-              const key = event.target.value
-              attempt(() => switchIntegrationSource({ source: integrationSourceOf(key), label: sourceLabel(key, options.windows) }))
+            aria-label="Anotação"
+            placeholder="Anotação deste momento · Enter guarda"
+            autoFocus
+            value={note}
+            onChange={event => setNote(event.target.value)}
+            onKeyDown={event => {
+              if (event.key === 'Enter') keepNote()
+              if (event.key === 'Escape') setPanel(null)
             }}
-          >
-            <IntegrationSourceOptions windows={options.windows} listing={options.listing} />
-          </select>
-        ) : (
-          <>
-            <select className="input" id="live-source" value={live?.sourceChoice === 'display' ? 'display' : (live?.sourceChoice ?? COMPUTER_AUDIO_NONE)} onChange={event => attempt(() => (event.target.value === 'display' ? reshare() : switchComputerInput(event.target.value)))}>
-              {(mode === 'tab' || mode === 'screen') && <option value="display">{mode === 'tab' ? 'Som da aba compartilhada' : 'Som da tela compartilhada'}</option>}
-              <option value={COMPUTER_AUDIO_AUTO}>Automático · entradas de som do computador</option>
-              {options.inputs
-                .filter(input => input.computer)
-                .map(input => (
-                  <option key={input.deviceId} value={input.deviceId}>
-                    {input.label}
-                  </option>
-                ))}
-              <option value={COMPUTER_AUDIO_NONE}>Nenhum som do computador</option>
+          />
+        )}
+        {panel === 'sources' && (
+          <div className="mini-panel">
+            <label className="lab" htmlFor="live-microphone">
+              Microfone
+            </label>
+            <select className="input" id="live-microphone" value={live?.microphoneId ?? ''} onChange={event => attempt(() => switchMicrophone(event.target.value || null))}>
+              <option value="">Padrão do sistema</option>
+              {options.microphones.map(device => (
+                <option key={device.id} value={device.id}>
+                  {device.label}
+                </option>
+              ))}
             </select>
-            {(mode === 'tab' || mode === 'screen') && (
-              <button className="btn quiet" style={{ justifySelf: 'start' }} onClick={() => attempt(reshare)}>
-                {mode === 'tab' ? 'Trocar a aba' : 'Trocar a tela'}
-              </button>
+            <label className="lab" htmlFor="live-source">
+              Som do computador
+            </label>
+            {mode === 'integration' ? (
+              <select
+                className="input"
+                id="live-source"
+                value={live?.sourceChoice ?? 'system'}
+                onChange={event => {
+                  const key = event.target.value
+                  attempt(() => switchIntegrationSource({ source: integrationSourceOf(key), label: sourceLabel(key, options.windows) }))
+                }}
+              >
+                <IntegrationSourceOptions windows={options.windows} listing={options.listing} />
+              </select>
+            ) : (
+              <select className="input" id="live-source" value={live?.sourceChoice === 'display' ? 'display' : (live?.sourceChoice ?? COMPUTER_AUDIO_NONE)} onChange={event => attempt(() => (event.target.value === 'display' ? reshare() : switchComputerInput(event.target.value)))}>
+                {(mode === 'tab' || mode === 'screen') && <option value="display">{mode === 'tab' ? 'Som da aba compartilhada' : 'Som da tela compartilhada'}</option>}
+                <option value={COMPUTER_AUDIO_AUTO}>Automático · entradas de som do computador</option>
+                {options.inputs
+                  .filter(input => input.computer)
+                  .map(input => (
+                    <option key={input.deviceId} value={input.deviceId}>
+                      {input.label}
+                    </option>
+                  ))}
+                <option value={COMPUTER_AUDIO_NONE}>Nenhum som do computador</option>
+              </select>
             )}
-          </>
+          </div>
+        )}
+        {!panel && (live?.computerAudio || marks.length > 0) && (
+          <div className="mini-info">
+            {live?.computerAudio && <span>Som do computador: {live.computerAudio}</span>}
+            {marks.length > 0 && <span>{[flags && counted(flags, 'marcação', 'marcações'), notes && counted(notes, 'anotação', 'anotações')].filter(Boolean).join(' · ')}</span>}
+          </div>
         )}
         <div className="acts">
           <button className="btn danger" onClick={() => setConfirming(true)}>
@@ -560,21 +679,21 @@ function RecordingDoneOptions({ place }: { place: 'dialog' | 'window' }) {
   const [folderId, setFolderId] = useState<string | null>(null)
   const [storage, setStorage] = useState<SourceStorage | null>(null)
   const [litterboxTime, setLitterboxTime] = useState<LitterboxTime>('72h')
-  const freeMinutes = useFreeMinutes(result?.file ?? null)
   if (!result) return null
   const driveAvailable = account.kind === 'google'
   const room = usage && limit ? limit - usage.appBytes : null
   const options = storageOptions(result.file.size, driveAvailable, room)
-  const chosen: SourceStorage = storage && options.some(option => option.id === storage && option.fits && option.enabled) ? storage : defaultStorage(result.file.size, driveAvailable, options)
+  const preferred = storage ?? result.destination ?? null
+  const chosen: SourceStorage = preferred && options.some(option => option.id === preferred && option.fits && option.enabled) ? preferred : defaultStorage(driveAvailable, options)
   const later = () => {
     clearResult()
     toast('A gravação ficou salva em Mídias')
   }
   const go = () => {
-    const { file, storedName } = result
+    const { file, storedName, marks } = result
     clearResult()
     setStorage(null)
-    void startNewContent({ agent, input: { kind: 'recording', file }, name: '', description: '', folderId, prompt: '', storage: chosen, litterboxTime }).then(fileId => {
+    void startNewContent({ agent, input: { kind: 'recording', file }, name: '', description: '', folderId, prompt: '', storage: chosen, litterboxTime, marks }).then(fileId => {
       if (fileId) void linkLocalMedia(storedName, fileId)
     })
   }
@@ -583,7 +702,7 @@ function RecordingDoneOptions({ place }: { place: 'dialog' | 'window' }) {
       <button className="btn quiet" onClick={later}>
         Só salvar
       </button>
-      <button className="btn primary" disabled={freeMinutes.kind === 'ready' && freeMinutes.short} onClick={go}>
+      <button className="btn primary" onClick={go}>
         Transcrever e gerar
       </button>
     </>
@@ -597,9 +716,6 @@ function RecordingDoneOptions({ place }: { place: 'dialog' | 'window' }) {
         <Icon name="check" />
         <span>A gravação já está guardada neste computador, em Mídias, e só sai de lá quando você apagar.</span>
       </div>
-      <FreeMinutes check={freeMinutes} />
-      <LimitedAiNotice />
-      <FreeAi />
       <div className="field">
         <span className="lab">O que gerar</span>
         <div className="opts" role="radiogroup">

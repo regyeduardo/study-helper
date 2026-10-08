@@ -1,3 +1,5 @@
+import { newId } from '@/lib/ids'
+
 export interface LocalMedia {
   storedName: string
   name: string
@@ -57,6 +59,14 @@ export function linkLocalMedia(storedName: string, fileId: string): Promise<void
   return serialized(async () =>
     writeIndex((await readIndex()).map(entry => (entry.storedName === storedName && !entry.fileIds.includes(fileId) ? { ...entry, fileIds: [...entry.fileIds, fileId] } : entry))),
   )
+}
+
+export async function keepLocalMedia(file: File, fileId: string, durationSeconds: number): Promise<void> {
+  const storedName = `envio-${newId()}`
+  const writable = await (await (await root()).getFileHandle(storedName, { create: true })).createWritable()
+  await writable.write(file)
+  await writable.close()
+  await addLocalMedia({ storedName, name: file.name, mime: file.type, durationSeconds, size: file.size, createdAt: new Date().toISOString(), fileIds: [fileId] })
 }
 
 export async function readLocalMedia(item: LocalMedia): Promise<File> {

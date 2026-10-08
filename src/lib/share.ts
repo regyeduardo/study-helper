@@ -82,6 +82,7 @@ export async function buildShareContent(target: ShareTarget, folders: FolderMeta
       questions: withExams ? opened.sidecar.questions : [],
       highlights: opened.sidecar.highlights,
       ...(opened.sidecar.transcript !== undefined ? { transcript: opened.sidecar.transcript } : {}),
+      ...(opened.sidecar.recording ? { recording: opened.sidecar.recording } : {}),
       meta: { ...file, mastery: null, lastReviewedAt: null },
     })
   }
@@ -154,6 +155,7 @@ export async function importSharedItem(item: SharedItem, attempts: SharedAttempt
       attempts: fileAttempts,
       highlights: file.highlights ?? [],
       ...(file.transcript !== undefined ? { transcript: file.transcript } : {}),
+      ...(file.recording ? { recording: file.recording } : {}),
       meta: { ...sidecar.meta, questionCount: file.questions.length, ...(last ? { mastery: masteryOf(last.correct, last.total), lastReviewedAt: last.createdAt } : {}) },
     }))
   }
@@ -189,7 +191,7 @@ export function sharedLibrary(item: SharedItem, attempts: SharedAttempts): Share
       words: wordCount(file.content),
       readingMinutes: file.content ? readingMinutes(file.content) : 0,
     }
-    opened[file.id] = { content: file.content, sidecar: { meta, questions: file.questions, attempts: done, highlights: file.highlights ?? [], ...(file.transcript !== undefined ? { transcript: file.transcript } : {}) } }
+    opened[file.id] = { content: file.content, sidecar: { meta, questions: file.questions, attempts: done, highlights: file.highlights ?? [], ...(file.transcript !== undefined ? { transcript: file.transcript } : {}), ...(file.recording ? { recording: file.recording } : {}) } }
     return meta
   })
   const sizes = Object.fromEntries(files.map(meta => [meta.id, { noteBytes: bytesOf(opened[meta.id].content) + bytesOf(JSON.stringify(opened[meta.id].sidecar)), sourceBytes: 0 }]))

@@ -1,14 +1,15 @@
-import type { TranscriptionEngine, TranscriptionSettings } from '@/types/domain'
-import { transcribeWithFreeController, transcribeWithGroqController } from '@/controllers/transcription.controller'
-import { decodeToMono16k, durationOf, encodeWav, splitSamples, withoutSilence } from '@/lib/transcription/audio'
-import { confirmModelDownloads, modelsNeeded } from '@/lib/transcription/consent'
-import { freeBalanceSeconds, freeMinutesToken, NotEnoughFreeMinutesError } from '@/lib/transcription/free'
-import { runOffThread } from '@/lib/transcription/offload'
-import { transcribeWithPuter } from '@/lib/transcription/puter'
-import { withSpeakers } from '@/lib/transcription/speakers'
-import type { Progress, Segment } from '@/lib/transcription/types'
+import type { ProviderEngine, RecordingData, SpeakersEngine, TranscriptionCredential, TranscriptionEngine, TranscriptionSettings } from '@/types/domain'
+import { decodeChannels16k, durationOf, encodeWav, mixedDown, splitSamples } from '@/lib/transcription/audio'
+import { transcriptText } from '@/lib/transcription/export'
+import { transcribeWithCustom } from '@/lib/transcription/providers/custom'
+import { deepInfraTurns, transcribeWithDeepInfra } from '@/lib/transcription/providers/deepinfra'
+import { transcribeWithGemini } from '@/lib/transcription/providers/gemini'
+import { transcribeWithOpenAi } from '@/lib/transcription/providers/openai'
+import { blocksFromWords, microphoneWords, speakersOf } from '@/lib/transcription/turns'
+import type { Progress, ProviderJob, ProviderResult, SpeakerTurn } from '@/lib/transcription/types'
 
-const REMOTE_CHUNK_SECONDS = 600
+const PROVIDER_PART_SECONDS = 300
+const CHOOSE_ENGINE = 'Escolha um provedor de transcrição em Configurações › Transcrição.'
 
 export interface EngineInfo {
   id: TranscriptionEngine
@@ -18,11 +19,10 @@ export interface EngineInfo {
 }
 
 export const ENGINES: EngineInfo[] = [
-  { id: 'free', name: 'Grátis (30 min/dia)', where: 'serviço grátis do app, com login do Google', limits: '30 min de fala por dia por conta; o silêncio não conta; o áudio vai para a DeepInfra' },
-  { id: 'whisper', name: 'Whisper (no navegador)', where: 'roda neste navegador', limits: 'baixa ~510 MB na primeira vez; lento sem placa de vídeo (WebGPU); nada sai do seu computador' },
-  { id: 'parakeet', name: 'Parakeet (no navegador)', where: 'roda neste navegador', limits: 'baixa ~670 MB na primeira vez (pt-BR ~930 MB; com placa de vídeo até ~2,5 GB); mais rápido e preciso em português; precisa de memória' },
-  { id: 'groq', name: 'Groq Whisper', where: 'serviço grátis com chave', limits: 'chave grátis; 20 pedidos/min, 2.000/dia, 8 h de áudio/dia; o áudio vai para a Groq' },
-  { id: 'puter', name: 'Puter', where: 'serviço com conta Puter', limits: 'você entra numa conta Puter, que paga ou limita o uso; o áudio vai para o Puter' },
+  { id: 'openai', name: 'OpenAI', where: 'serviço pago, com a sua chave', limits: 'separa quem fala (gpt-4o-transcribe-diarize); o áudio vai para a OpenAI' },
+  { id: 'deepinfra', name: 'DeepInfra', where: 'serviço pago, com a sua chave', limits: 'separa quem fala (Nemotron) e transcreve com tempo por palavra (Whisper); o áudio vai para a DeepInfra' },
+  { id: 'gemini', name: 'Google Gemini', where: 'serviço do Google, com a sua chave', limits: 'separa quem fala; os tempos são aproximados; o áudio vai para o Google' },
+  { id: 'custom', name: 'Personalizado', where: 'qualquer serviço no formato da OpenAI', limits: 'você informa endereço, chave e modelo; os falantes aparecem se o serviço devolver' },
 ]
 
 export interface TranscriptionOutcome {
@@ -31,51 +31,58 @@ export interface TranscriptionOutcome {
   language: string
   durationSeconds: number
   speakers: number
+  recording?: RecordingData
 }
 
-async function groqSegments(samples: Float32Array, settings: TranscriptionSettings, progress: Progress, signal?: AbortSignal): Promise<Segment[]> {
-  const parts = splitSamples(samples, REMOTE_CHUNK_SECONDS)
-  const segments: Segment[] = []
-  for (const [index, part] of parts.entries()) {
-    progress('Transcrevendo pela Groq', index / parts.length)
-    segments.push(...(await transcribeWithGroqController(encodeWav(part), settings.groqApiKey, settings.language, index * REMOTE_CHUNK_SECONDS, signal)))
+export interface TranscribeOptions {
+  microphoneOnLeft?: boolean
+}
+
+const PROVIDERS: Record<ProviderEngine, (job: ProviderJob) => Promise<ProviderResult>> = {
+  openai: transcribeWithOpenAi,
+  deepinfra: transcribeWithDeepInfra,
+  gemini: transcribeWithGemini,
+  custom: transcribeWithCustom,
+}
+
+const NO_SPEAKERS = 'Este provedor não separa quem fala. Para ver os falantes, escolha em Configurações › Transcrição um segundo provedor só para isso.'
+const EMPTY_CREDENTIAL: TranscriptionCredential = { apiKey: '', baseUrl: '', model: '', extra: '' }
+
+function isProvider(engine: TranscriptionEngine): engine is ProviderEngine {
+  return engine in PROVIDERS
+}
+
+async function otherSpeakers(engine: Exclude<SpeakersEngine, ''>, job: ProviderJob): Promise<SpeakerTurn[]> {
+  job.progress('Separando quem fala')
+  return engine === 'deepinfra' ? deepInfraTurns(job) : (await PROVIDERS[engine](job)).turns
+}
+
+async function transcribeWithProvider(engine: ProviderEngine, audio: Blob, settings: TranscriptionSettings, progress: Progress, signal: AbortSignal | undefined, options: TranscribeOptions): Promise<TranscriptionOutcome> {
+  const channels = await decodeChannels16k(audio)
+  const samples = mixedDown(channels)
+  const credentials = settings.credentials ?? {}
+  const job: ProviderJob = { audio, parts: splitSamples(samples, PROVIDER_PART_SECONDS).map(part => encodeWav(part)), partSeconds: PROVIDER_PART_SECONDS, language: settings.language, credential: credentials[engine] ?? EMPTY_CREDENTIAL, progress, signal }
+  const heard = await PROVIDERS[engine](job)
+  let turns = heard.turns
+  let warning = ''
+  const second = settings.speakersEngine
+  if (!turns.length && second && second !== engine) {
+    try {
+      turns = await otherSpeakers(second, { ...job, credential: credentials[second] ?? EMPTY_CREDENTIAL })
+    } catch (error) {
+      if (signal?.aborted) throw error
+      warning = `Os falantes não foram separados: ${error instanceof Error ? error.message : String(error)}`
+    }
   }
-  return segments
+  if (!turns.length && !warning) warning = NO_SPEAKERS
+  const blocks = blocksFromWords(heard.words, turns, options.microphoneOnLeft && channels.length === 2 ? microphoneWords({ microphone: channels[0], computer: channels[1] }) : undefined)
+  const speakers = speakersOf(blocks)
+  const recording: RecordingData = { blocks, speakers, marks: [], ...(warning ? { warning } : {}) }
+  return { text: transcriptText(recording).trim(), engine, language: settings.language, durationSeconds: durationOf(samples), speakers: speakers.length, recording }
 }
 
-async function freeSegments(samples: Float32Array, settings: TranscriptionSettings, progress: Progress, signal?: AbortSignal): Promise<Segment[]> {
-  const remaining = await freeBalanceSeconds()
-  const speech = durationOf(samples)
-  if (speech > remaining) throw new NotEnoughFreeMinutesError(remaining, speech)
-  const parts = splitSamples(samples, REMOTE_CHUNK_SECONDS)
-  const segments: Segment[] = []
-  for (const [index, part] of parts.entries()) {
-    progress('Transcrevendo com os minutos grátis', index / parts.length)
-    segments.push(...(await transcribeWithFreeController(encodeWav(part), await freeMinutesToken(), settings.language, index * REMOTE_CHUNK_SECONDS, signal)))
-  }
-  return segments
-}
-
-export async function transcribe(audio: Blob, settings: TranscriptionSettings, progress: Progress = () => {}, signal?: AbortSignal): Promise<TranscriptionOutcome> {
+export async function transcribe(audio: Blob, settings: TranscriptionSettings, progress: Progress = () => {}, signal?: AbortSignal, options: TranscribeOptions = {}): Promise<TranscriptionOutcome> {
+  if (!isProvider(settings.engine)) throw new Error(CHOOSE_ENGINE)
   progress('Lendo o áudio')
-  const decoded = await decodeToMono16k(audio)
-  const samples = withoutSilence(decoded)
-  const durationSeconds = durationOf(decoded)
-
-  let remote: Segment[] | null = null
-  if (settings.engine === 'free') remote = await freeSegments(samples, settings, progress, signal)
-  else if (settings.engine === 'groq') remote = await groqSegments(samples, settings, progress, signal)
-  else if (settings.engine === 'puter') remote = await transcribeWithPuter(encodeWav(samples), settings.language, durationOf(samples), progress)
-  const engine = remote ? null : settings.engine === 'parakeet' ? 'parakeet' : 'whisper'
-  if (engine || settings.separateSpeakers) await confirmModelDownloads(modelsNeeded(engine, settings.language, settings.separateSpeakers))
-  const local = engine || settings.separateSpeakers ? await runOffThread({ engine, language: settings.language, separateSpeakers: settings.separateSpeakers, samples }, progress) : { segments: null, turns: [] }
-  const segments = remote ?? local.segments ?? []
-  const turns = local.turns
-  return {
-    text: withSpeakers(segments, turns),
-    engine: settings.engine,
-    language: settings.language,
-    durationSeconds,
-    speakers: new Set(turns.map(turn => turn.speaker)).size,
-  }
+  return transcribeWithProvider(settings.engine, audio, settings, progress, signal, options)
 }
