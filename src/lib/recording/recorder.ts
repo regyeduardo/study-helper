@@ -37,6 +37,7 @@ export interface StartOptions {
   microphoneId?: string | null
   video?: { fps: VideoFps } | null
   destination?: SourceStorage
+  display?: MediaStream | null
 }
 
 export interface RecordingResult {
@@ -99,6 +100,208 @@ function extensionOf(mime: string): string {
   return mime.includes('mp4') ? 'mp4' : 'webm'
 }
 
+function openMicrophone(id: string | null): Promise<MediaStream> {
+  return navigator.mediaDevices.getUserMedia({ audio: { ...(id ? { deviceId: { exact: id } } : {}), echoCancellation: true, noiseSuppression: true } })
+}
+
+async function openComputerInputs(choice: string): Promise<{ streams: MediaStream[]; label: string; refused: string[] }> {
+  if (choice === COMPUTER_AUDIO_NONE) return { streams: [], label: '', refused: [] }
+  const inputs = await listAudioInputs().catch(() => [])
+  const picked = choice === COMPUTER_AUDIO_AUTO ? inputs.filter(item => item.computer) : inputs.filter(item => item.deviceId === choice)
+  const opened = await Promise.all(
+    picked.map(input =>
+      navigator.mediaDevices
+        .getUserMedia({ audio: { deviceId: { exact: input.deviceId }, echoCancellation: false, noiseSuppression: false, autoGainControl: false } })
+        .then(stream => ({ stream, label: input.label }))
+        .catch(() => null),
+    ),
+  )
+  const found = opened.filter(item => item !== null)
+  return { streams: found.map(item => item.stream), label: found.map(item => item.label).join(' + '), refused: picked.filter((_, index) => !opened[index]).map(input => input.label) }
+}
+
+const TEST_SOUND_VOLUME = 0.1
+const TEST_SOUND_MS = 1500
+const TEST_SOUND_STEP_MS = 100
+export const SOUND_LEVEL = 0.01
+export const VOICE_LEVEL = 0.02
+
+export function hears(analyser: AnalyserNode, level: number): boolean {
+  const samples = new Uint8Array(analyser.fftSize)
+  analyser.getByteTimeDomainData(samples)
+  let sum = 0
+  for (const sample of samples) sum += ((sample - 128) / 128) ** 2
+  return Math.sqrt(sum / samples.length) > level
+}
+
+export async function playTestSound(context: AudioContext, analyser: AnalyserNode): Promise<boolean> {
+  await context.resume()
+  const tone = context.createOscillator()
+  tone.frequency.value = 660
+  const volume = context.createGain()
+  volume.gain.value = TEST_SOUND_VOLUME
+  tone.connect(volume)
+  volume.connect(context.destination)
+  tone.start()
+  let heard = false
+  for (let waited = 0; waited < TEST_SOUND_MS && !heard; waited += TEST_SOUND_STEP_MS) {
+    await new Promise(resolve => setTimeout(resolve, TEST_SOUND_STEP_MS))
+    heard = hears(analyser, SOUND_LEVEL)
+  }
+  tone.stop()
+  volume.disconnect()
+  return heard
+}
+
+export interface CheckChoice {
+  microphoneOn: boolean
+  microphoneId: string | null
+  computerAudio: string
+}
+
+export interface CheckStatus {
+  preview: MediaStream | null
+  meters: Meters
+  microphone: 'off' | 'open' | 'refused'
+  computerAudio: string
+  refused: string[]
+  fromDisplay: boolean
+}
+
+type CheckSide = 'microphone' | 'computer'
+
+function displayRequest(mode: CaptureMode, fps: VideoFps | null): DisplayMediaStreamOptions {
+  const video = fps ? { frameRate: fps } : true
+  if (mode !== 'tab' && mode !== 'screen') return { video, audio: false }
+  return {
+    video,
+    audio: true,
+    preferCurrentTab: false,
+    selfBrowserSurface: 'exclude',
+    systemAudio: 'include',
+    surfaceSwitching: 'include',
+    monitorTypeSurfaces: mode === 'screen' ? 'include' : 'exclude',
+  } as DisplayMediaStreamOptions
+}
+
+function displayAudioLabel(mode: CaptureMode): string {
+  return mode === 'tab' ? 'som da aba' : 'som da tela'
+}
+
+export class CaptureCheck {
+  private context: AudioContext | null = null
+  private analysers: Record<CheckSide, AnalyserNode> | null = null
+  private plugged: Record<CheckSide, { nodes: AudioNode[]; streams: MediaStream[] }> = { microphone: { nodes: [], streams: [] }, computer: { nodes: [], streams: [] } }
+  private turn = 0
+  private choice: CheckChoice = { microphoneOn: false, microphoneId: null, computerAudio: COMPUTER_AUDIO_NONE }
+  private display: MediaStream | null = null
+  private displayMode: CaptureMode = 'tab'
+  private handed = false
+  private status: CheckStatus = { preview: null, meters: { microphone: null, computer: null }, microphone: 'off', computerAudio: '', refused: [], fromDisplay: false }
+
+  constructor(private readonly onChange: (status: CheckStatus) => void) {}
+
+  async listen(choice: CheckChoice): Promise<void> {
+    const turn = ++this.turn
+    this.choice = choice
+    const microphone = choice.microphoneOn ? await openMicrophone(choice.microphoneId).catch(() => null) : null
+    const shared = this.display?.getAudioTracks().length && choice.computerAudio === COMPUTER_AUDIO_AUTO ? this.display : null
+    const computer = shared ? { streams: [new MediaStream(shared.getAudioTracks())], label: displayAudioLabel(this.displayMode), refused: [] } : await openComputerInputs(choice.computerAudio)
+    if (turn !== this.turn) {
+      this.release([...(microphone ? [microphone] : []), ...computer.streams])
+      return
+    }
+    this.plug('microphone', microphone ? [microphone] : [])
+    this.plug('computer', computer.streams)
+    this.status = { ...this.status, microphone: !choice.microphoneOn ? 'off' : microphone ? 'open' : 'refused', computerAudio: computer.label, refused: computer.refused, fromDisplay: shared !== null }
+    this.emit()
+  }
+
+  async pickDisplay(mode: CaptureMode, fps: VideoFps | null): Promise<void> {
+    const display = await navigator.mediaDevices.getDisplayMedia(displayRequest(mode, fps))
+    this.dropDisplay()
+    this.display = display
+    this.displayMode = mode
+    this.status = { ...this.status, preview: display.getVideoTracks().length ? new MediaStream(display.getVideoTracks()) : null }
+    display.getVideoTracks()[0]?.addEventListener('ended', () => {
+      if (this.display !== display) return
+      this.dropDisplay()
+      void this.listen(this.choice)
+    })
+    await this.listen(this.choice)
+  }
+
+  dropDisplay(): void {
+    const display = this.display
+    this.display = null
+    display?.getTracks().forEach(track => track.stop())
+    this.status = { ...this.status, preview: null }
+  }
+
+  handDisplay(): MediaStream | null {
+    this.handed = this.display !== null
+    return this.display
+  }
+
+  async testSound(): Promise<boolean> {
+    const analyser = this.status.meters.computer
+    return this.context && analyser ? playTestSound(this.context, analyser) : false
+  }
+
+  async stop(): Promise<void> {
+    this.turn++
+    this.plug('microphone', [])
+    this.plug('computer', [])
+    if (this.handed) this.display = null
+    else this.dropDisplay()
+    this.handed = false
+    this.status = { ...this.status, preview: null }
+    await this.context?.close().catch(() => undefined)
+    this.context = null
+    this.analysers = null
+  }
+
+  private release(streams: MediaStream[]): void {
+    const shared = this.display?.getTracks() ?? []
+    for (const stream of streams) stream.getTracks().filter(track => !shared.includes(track)).forEach(track => track.stop())
+  }
+
+  private sides(): Record<CheckSide, AnalyserNode> {
+    this.context ??= new AudioContext()
+    if (!this.analysers) {
+      const microphone = this.context.createAnalyser()
+      const computer = this.context.createAnalyser()
+      microphone.fftSize = computer.fftSize = 1024
+      this.analysers = { microphone, computer }
+    }
+    return this.analysers
+  }
+
+  private plug(side: CheckSide, streams: MediaStream[]): void {
+    const previous = this.plugged[side]
+    previous.nodes.forEach(node => node.disconnect())
+    this.release(previous.streams)
+    if (!streams.length) {
+      this.plugged[side] = { nodes: [], streams: [] }
+      return
+    }
+    const analyser = this.sides()[side]
+    const context = this.context!
+    const nodes = streams.map(stream => {
+      const node = context.createMediaStreamSource(stream)
+      node.connect(analyser)
+      return node
+    })
+    this.plugged[side] = { nodes, streams }
+  }
+
+  private emit(): void {
+    const on = (side: CheckSide) => (this.plugged[side].streams.length ? (this.analysers?.[side] ?? null) : null)
+    this.status = { ...this.status, meters: { microphone: on('microphone'), computer: on('computer') } }
+    this.onChange({ ...this.status })
+  }
+}
+
 function emptyLive(): LiveCapture {
   return { preview: null, meters: { microphone: null, computer: null }, computerAudio: '', hasMicrophone: false, hasSource: false, microphoneOn: true, sourceOn: true, microphoneId: null, sourceChoice: '', paused: false, screenOn: false }
 }
@@ -122,6 +325,7 @@ export class MeetingRecorder {
   private writing: Promise<void> = Promise.resolve()
   private mode: CaptureMode = 'microphone'
   private display: MediaStream | null = null
+  private handed: MediaStream | null = null
   private screen: MediaStream | null = null
   private fps: VideoFps | null = null
   private canvas: ScreenCanvas | null = null
@@ -206,19 +410,11 @@ export class MeetingRecorder {
   }
 
   private openMicrophone(id: string | null): Promise<MediaStream> {
-    return navigator.mediaDevices.getUserMedia({ audio: { ...(id ? { deviceId: { exact: id } } : {}), echoCancellation: true, noiseSuppression: true } })
+    return openMicrophone(id)
   }
 
   private async share(mode: 'tab' | 'screen'): Promise<MediaStream | null> {
-    const display = await this.requestDisplay({
-      video: this.videoConstraint(),
-      audio: true,
-      preferCurrentTab: false,
-      selfBrowserSurface: 'exclude',
-      systemAudio: 'include',
-      surfaceSwitching: 'include',
-      monitorTypeSurfaces: mode === 'screen' ? 'include' : 'exclude',
-    } as DisplayMediaStreamOptions)
+    const display = await this.requestDisplay(displayRequest(mode, this.fps))
     const previous = this.display
     this.display = display
     previous?.getTracks().forEach(track => track.stop())
@@ -230,24 +426,14 @@ export class MeetingRecorder {
   }
 
   private async computerInput(choice: string): Promise<{ streams: MediaStream[]; label: string } | null> {
-    if (choice === COMPUTER_AUDIO_NONE) return null
-    const inputs = await listAudioInputs().catch(() => [])
-    const picked = choice === COMPUTER_AUDIO_AUTO ? inputs.filter(item => item.computer) : inputs.filter(item => item.deviceId === choice)
-    const opened = await Promise.all(
-      picked.map(input =>
-        navigator.mediaDevices
-          .getUserMedia({ audio: { deviceId: { exact: input.deviceId }, echoCancellation: false, noiseSuppression: false, autoGainControl: false } })
-          .then(stream => ({ stream, label: input.label }))
-          .catch(() => null),
-      ),
-    )
-    const found = opened.filter(item => item !== null)
-    return found.length ? { streams: found.map(item => item.stream), label: found.map(item => item.label).join(' + ') } : null
+    const opened = await openComputerInputs(choice)
+    return opened.streams.length ? opened : null
   }
 
   private async begin(mode: CaptureMode, computerAudio: string, options: StartOptions): Promise<void> {
     this.mode = mode
     this.fps = options.video?.fps ?? null
+    this.handed = options.display ?? null
     if (this.fps) this.canvas = new ScreenCanvas(this.fps)
     this.audioContext = new AudioContext()
     const mix = this.prepare(this.audioContext)
@@ -353,6 +539,11 @@ export class MeetingRecorder {
 
   // The screen picker outlasts the click that allows the floating window, so ask for both in that same click.
   private requestDisplay(options: DisplayMediaStreamOptions): Promise<MediaStream> {
+    if (this.handed) {
+      const handed = this.handed
+      this.handed = null
+      return Promise.resolve(handed)
+    }
     const request = navigator.mediaDevices.getDisplayMedia(options)
     const api = (window as Window & { documentPictureInPicture?: PictureInPictureApi }).documentPictureInPicture
     if (api && !this.active && !this.pip && !this.early) {
@@ -478,6 +669,8 @@ export class MeetingRecorder {
     for (const kind of ['microphone', 'source'] as const) this.plugged[kind].streams.forEach(stream => stream.getTracks().forEach(track => track.stop()))
     this.display?.getTracks().forEach(track => track.stop())
     this.display = null
+    this.handed?.getTracks().forEach(track => track.stop())
+    this.handed = null
     this.screen?.getTracks().forEach(track => track.stop())
     this.screen = null
     this.canvas?.stop()

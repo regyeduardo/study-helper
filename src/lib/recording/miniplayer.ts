@@ -15,8 +15,11 @@ const WAVES: { key: keyof Meters; color: string; fill: string; label: string }[]
   { key: 'microphone', color: '#60a5fa', fill: 'rgba(96, 165, 250, 0.16)', label: 'Microfone' },
 ]
 
-function drawWave(context: CanvasRenderingContext2D, analyser: AnalyserNode | null, samples: Uint8Array<ArrayBuffer>, width: number, height: number, color: string, fill: string): void {
-  const middle = height / 2
+const QUIET_BOOST = 0.4
+
+function drawWave(context: CanvasRenderingContext2D, analyser: AnalyserNode | null, samples: Uint8Array<ArrayBuffer>, width: number, top: number, height: number, color: string, fill: string): void {
+  const reach = height / 2
+  const middle = top + reach
   if (analyser) analyser.getByteTimeDomainData(samples)
   else samples.fill(128)
   const step = Math.max(1, Math.floor(samples.length / width))
@@ -24,7 +27,7 @@ function drawWave(context: CanvasRenderingContext2D, analyser: AnalyserNode | nu
   context.moveTo(0, middle)
   for (let x = 0; x < width; x++) {
     const value = (samples[Math.min(samples.length - 1, x * step)] - 128) / 128
-    context.lineTo(x, middle + value * middle * 0.9)
+    context.lineTo(x, middle + Math.sign(value) * Math.abs(value) ** QUIET_BOOST * reach * 0.9)
   }
   context.lineTo(width, middle)
   context.closePath()
@@ -87,7 +90,8 @@ export function mountMiniplayer(container: HTMLElement, source: MiniplayerSource
     }
     context.fillStyle = BACKGROUND
     context.fillRect(0, 0, width, height)
-    for (const wave of WAVES) drawWave(context, source.meters[wave.key], samples, width, height, wave.color, wave.fill)
+    const lane = height / WAVES.length
+    for (const [index, wave] of WAVES.entries()) drawWave(context, source.meters[wave.key], samples, width, index * lane, lane, wave.color, wave.fill)
     drawLegend(context, source, height)
     handle = view.requestAnimationFrame(paint)
   }

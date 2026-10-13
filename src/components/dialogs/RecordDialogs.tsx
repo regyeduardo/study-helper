@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect, useRef, useState } from 'react'
+import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 
 import type { SourceStorage } from '@/types/domain'
@@ -19,7 +19,7 @@ import {
 } from '@/lib/recording/integration'
 import { linkLocalMedia } from '@/lib/recording/media-library'
 import { mountMiniplayer } from '@/lib/recording/miniplayer'
-import { type AudioInput, type CaptureMode, COMPUTER_AUDIO_AUTO, COMPUTER_AUDIO_NONE, listAudioInputs, type LiveCapture, systemAudioNotice, type VideoFps } from '@/lib/recording/recorder'
+import { type AudioInput, CaptureCheck, type CaptureMode, type CheckStatus, COMPUTER_AUDIO_AUTO, COMPUTER_AUDIO_NONE, hears, listAudioInputs, type LiveCapture, playTestSound, SOUND_LEVEL, systemAudioNotice, type VideoFps, VOICE_LEVEL } from '@/lib/recording/recorder'
 import { defaultStorage, storageOptions } from '@/lib/storage/source-storage'
 import { useAccountStore } from '@/stores/account'
 import { useLibraryStore } from '@/stores/library'
@@ -152,6 +152,105 @@ function ScreenAndPlace({ fps, onFps, place, onPlace }: { fps: VideoFps | null; 
   )
 }
 
+const NOTHING_CHECKED: CheckStatus = { preview: null, meters: { microphone: null, computer: null }, microphone: 'off', computerAudio: '', refused: [], fromDisplay: false }
+
+function useHeard(analyser: AnalyserNode | null, level: number): boolean {
+  const [heard, setHeard] = useState(false)
+  useEffect(() => {
+    setHeard(false)
+    if (!analyser) return
+    const timer = window.setInterval(() => setHeard(before => before || hears(analyser, level)), 200)
+    return () => window.clearInterval(timer)
+  }, [analyser, level])
+  return heard
+}
+
+function CheckLine({ ok, children }: { ok: boolean; children: ReactNode }) {
+  return (
+    <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start', fontSize: 12.5 }}>
+      <Icon name={ok ? 'check' : 'info'} />
+      <div style={{ display: 'flex', gap: '6px 8px', alignItems: 'center', flexWrap: 'wrap', flex: 1, minWidth: 0 }}>{children}</div>
+    </div>
+  )
+}
+
+interface CaptureCheckFieldProps {
+  status: CheckStatus
+  mode: CaptureMode
+  fps: VideoFps | null
+  computerOff: boolean
+  soundHint: string | null
+  onPick(): void
+  onTestSound(): Promise<boolean>
+}
+
+function CaptureCheckField({ status, mode, fps, computerOff, soundHint, onPick, onTestSound }: CaptureCheckFieldProps) {
+  const player = useRef<HTMLDivElement>(null)
+  const [sound, setSound] = useState<'idle' | 'playing' | 'heard' | 'silent'>('idle')
+  const microphoneHeard = useHeard(status.meters.microphone, VOICE_LEVEL)
+  const computerHeard = useHeard(status.meters.computer, SOUND_LEVEL)
+  useEffect(() => (player.current ? mountMiniplayer(player.current, status) : undefined), [status])
+  useEffect(() => setSound('idle'), [status.meters.computer, status.computerAudio])
+  const shares = mode === 'tab' || mode === 'screen'
+  const surface = mode === 'tab' ? 'aba' : mode === 'screen' ? 'tela' : 'janela'
+  const chosen = mode === 'tab' ? 'Aba escolhida' : mode === 'screen' ? 'Tela escolhida' : 'Janela escolhida'
+  const play = async () => {
+    setSound('playing')
+    setSound((await onTestSound()) ? 'heard' : 'silent')
+  }
+  return (
+    <div className="field" role="group" aria-label="Confira antes de gravar">
+      <span className="lab">Confira antes de gravar</span>
+      <div className="player" ref={player} aria-label="Ondas antes de gravar" style={{ height: 140, borderRadius: 8, overflow: 'hidden' }} />
+      <CheckLine ok={microphoneHeard}>
+        <span>
+          {status.microphone === 'off' ? 'Microfone desligado.' : status.microphone === 'refused' ? 'O navegador não liberou o microfone.' : microphoneHeard ? 'Microfone captando.' : 'Fale algo: ainda não ouvi o microfone.'}
+        </span>
+      </CheckLine>
+      <CheckLine ok={computerHeard || sound === 'heard'}>
+        <span>
+          {status.meters.computer
+            ? `Som do computador: ${status.computerAudio}${computerHeard ? ' · chegando som.' : ''}`
+            : computerOff
+              ? 'Som do computador desligado.'
+              : shares
+                ? `Aqui o som do computador vem junto com a ${surface}: escolha a ${surface} abaixo para conferir agora.`
+                : 'Nenhuma entrada de som do computador abriu.'}
+        </span>
+        {status.meters.computer && !soundHint && (
+          <button className="btn" style={{ height: 26, padding: '0 10px' }} disabled={sound === 'playing'} onClick={() => void play()}>
+            <Glyph name="play" />
+            Tocar som de teste
+          </button>
+        )}
+      </CheckLine>
+      {status.meters.computer && soundHint && <span className="faint" style={{ fontSize: 12 }}>{soundHint}</span>}
+      {sound === 'heard' && <span style={{ fontSize: 12.5 }}>O som de teste foi capturado.</span>}
+      {sound === 'silent' && (
+        <div className="banner" role="alert">
+          <Icon name="warn" />
+          <span>O som de teste não chegou no som do computador. Escolha outra entrada em "Som do computador" acima e toque de novo.</span>
+        </div>
+      )}
+      {status.refused.length > 0 && (
+        <div className="banner" role="alert">
+          <Icon name="warn" />
+          <span>O navegador não abriu: {status.refused.join(', ')}.</span>
+        </div>
+      )}
+      {(shares || fps !== null) && (
+        <CheckLine ok={status.preview !== null}>
+          {status.preview && <span>{chosen}: é ela que vai ser gravada.</span>}
+          <button className="btn" style={{ height: 26, padding: '0 10px' }} onClick={onPick}>
+            <Icon name="monitor" />
+            {status.preview ? `Trocar a ${surface}` : `Escolher a ${surface} agora`}
+          </button>
+        </CheckLine>
+      )}
+    </div>
+  )
+}
+
 function IntegrationRecord() {
   const ui = useUiStore()
   const startIntegration = useRecorderStore(state => state.startIntegration)
@@ -167,7 +266,6 @@ function IntegrationRecord() {
   const destination = useDestination(place)
   const [error, setError] = useState<string | null>(null)
   const handed = useRef(false)
-  const player = useRef<HTMLDivElement>(null)
   const refresh = async () => {
     const link = await IntegrationLink.open()
     if (!link) {
@@ -209,11 +307,16 @@ function IntegrationRecord() {
       if (current && !handed.current) void current.stop()
     }
   }, [choice, microphoneId])
-  useEffect(
+  const status = useMemo<CheckStatus | null>(
     () =>
-      capture && player.current
-        ? mountMiniplayer(player.current, { preview: null, meters: { microphone: microphoneOn ? capture.meters.microphone : null, computer: choice === 'none' ? null : capture.meters.computer }, computerAudio: capture.label })
-        : undefined,
+      capture && {
+        preview: null,
+        meters: { microphone: microphoneOn ? capture.meters.microphone : null, computer: choice === 'none' ? null : capture.meters.computer },
+        microphone: microphoneOn ? 'open' : 'off',
+        computerAudio: capture.label,
+        refused: [],
+        fromDisplay: false,
+      },
     [capture, microphoneOn, choice],
   )
   const nothing = !microphoneOn && choice === 'none'
@@ -264,13 +367,23 @@ function IntegrationRecord() {
         </div>
         <MicrophoneField on={microphoneOn} onToggle={() => setMicrophoneOn(!microphoneOn)} id={microphoneId} onId={setMicrophoneId} devices={microphones} />
         <ScreenAndPlace fps={fps} onFps={setFps} place={place} onPlace={setPlace} />
-        <div className="field">
-          <span className="lab">Confira antes de gravar</span>
-          <div className="player" ref={player} aria-label="Ondas antes de gravar" style={{ height: 140, borderRadius: 8, overflow: 'hidden' }} />
-          <span className="faint" style={{ fontSize: 12 }}>
-            {nothing ? 'Ligue o microfone ou escolha um som do computador.' : capture ? 'Fale e deixe o som tocar: as ondas mostram o que vai ser gravado.' : error ? '' : 'Ligando o som…'}
-          </span>
-        </div>
+        {status && capture ? (
+          <CaptureCheckField
+            status={status}
+            mode="integration"
+            fps={null}
+            computerOff={choice === 'none'}
+            soundHint={choice.startsWith('pid:') ? 'Faça som na janela escolhida: a onda verde e o aviso "chegando som" mostram o que chega.' : null}
+            onPick={() => undefined}
+            onTestSound={() => playTestSound(capture.context, capture.meters.computer!)}
+          />
+        ) : (
+          <div className="field">
+            <span className="lab">Confira antes de gravar</span>
+            <span className="faint" style={{ fontSize: 12 }}>{error ? '' : 'Ligando o som…'}</span>
+          </div>
+        )}
+        {nothing && <span className="faint" style={{ fontSize: 12 }}>Ligue o microfone ou escolha um som do computador.</span>}
         {error && (
           <div className="banner" role="alert">
             <Icon name="warn" />
@@ -320,6 +433,21 @@ export function RecordDialog() {
       alive = false
     }
   }, [])
+  const check = useRef<CaptureCheck | null>(null)
+  const [status, setStatus] = useState<CheckStatus>(NOTHING_CHECKED)
+  const checking = allowed && !recorder.active && integration !== 'connected'
+  const listening = { microphoneOn, microphoneId: microphoneId || null, computerAudio }
+  useEffect(() => {
+    if (!checking) return
+    check.current ??= new CaptureCheck(setStatus)
+    void check.current.listen(listening)
+  }, [checking, microphoneOn, microphoneId, computerAudio])
+  useEffect(() => {
+    if (!check.current || !checking) return
+    check.current.dropDisplay()
+    void check.current.listen(listening)
+  }, [mode, fps])
+  useEffect(() => () => void check.current?.stop(), [])
   const named = inputs.some(input => input.label)
   const detected = inputs.filter(input => input.computer)
   const findInputs = async () => {
@@ -341,13 +469,17 @@ export function RecordDialog() {
   const nothing = !microphoneOn && mode === 'microphone' && computerAudio === COMPUTER_AUDIO_NONE
   const start = async () => {
     setError(null)
+    const display = check.current?.handDisplay() ?? null
+    await check.current?.stop()
     try {
-      await recorder.start(mode, computerAudio, { microphoneOn, microphoneId: microphoneId || null, video: fps ? { fps } : null, destination })
+      await recorder.start(mode, computerAudio, { microphoneOn, microphoneId: microphoneId || null, video: fps ? { fps } : null, destination, ...(display ? { display } : {}) })
       ui.close()
     } catch (failure) {
       setError(failure instanceof Error && failure.name === 'NotAllowedError' ? 'Você não deu permissão para gravar.' : failure instanceof Error ? failure.message : 'Não deu para começar a gravar.')
+      void check.current?.listen(listening)
     }
   }
+  const pick = () => void check.current?.pickDisplay(mode, fps).catch(() => undefined)
   return (
     <Dialog
       title="Gravar reunião"
@@ -431,6 +563,7 @@ export function RecordDialog() {
         <MicrophoneField on={microphoneOn} onToggle={() => setMicrophoneOn(!microphoneOn)} id={microphoneId} onId={setMicrophoneId} devices={microphonesOf(inputs)} />
         {nothing && <span className="faint">Ligue o microfone ou escolha um som do computador.</span>}
         <ScreenAndPlace fps={fps} onFps={setFps} place={place} onPlace={setPlace} />
+        <CaptureCheckField status={status} mode={mode} fps={fps} computerOff={computerAudio === COMPUTER_AUDIO_NONE} soundHint={status.fromDisplay && mode === 'tab' ? 'Faça som na aba escolhida: a onda verde e o aviso "chegando som" mostram o que chega.' : null} onPick={pick} onTestSound={() => check.current?.testSound() ?? Promise.resolve(false)} />
         <div className="banner info">
           <Icon name="info" />
           <span>Um miniplayer mostra o que está sendo gravado, com as ondas do microfone e do som do computador, o tempo, e deixa pausar, ligar e desligar cada som e trocar as fontes. O arquivo é gravado em pedaços no navegador, então reunião longa não pesa. Parar pela barra do navegador também termina.</span>

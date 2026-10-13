@@ -41,8 +41,11 @@ export class FakeAudioContext {
   readonly destination: { stream: FakeMediaStream; channelCount?: number; channelCountMode?: string } = { stream: new FakeMediaStream([this.mixTrack]) }
   readonly sources: { stream: FakeMediaStream; connect: ReturnType<typeof vi.fn>; disconnect: ReturnType<typeof vi.fn> }[] = []
   readonly gains: { gain: { value: number }; connect: ReturnType<typeof vi.fn>; disconnect: ReturnType<typeof vi.fn> }[] = []
+  readonly analysers: { fftSize: number; level: number; getByteTimeDomainData: ReturnType<typeof vi.fn> }[] = []
+  readonly oscillators: { frequency: { value: number }; connect: ReturnType<typeof vi.fn>; start: ReturnType<typeof vi.fn>; stop: ReturnType<typeof vi.fn> }[] = []
   readonly merger = { connect: vi.fn() }
   readonly close = vi.fn(async () => undefined)
+  readonly resume = vi.fn(async () => undefined)
 
   constructor() {
     FakeAudioContext.instances.push(this)
@@ -77,7 +80,15 @@ export class FakeAudioContext {
   }
 
   createAnalyser() {
-    return { fftSize: 2048, getByteTimeDomainData: vi.fn() }
+    const analyser = { fftSize: 2048, level: 0, getByteTimeDomainData: vi.fn((samples: Uint8Array) => void samples.fill(128 + Math.round(analyser.level * 127))) }
+    this.analysers.push(analyser)
+    return analyser
+  }
+
+  createOscillator() {
+    const oscillator = { frequency: { value: 440 }, connect: vi.fn(), start: vi.fn(), stop: vi.fn() }
+    this.oscillators.push(oscillator)
+    return oscillator
   }
 }
 
