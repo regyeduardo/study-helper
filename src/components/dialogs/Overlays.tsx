@@ -1,7 +1,10 @@
 import { useEffect } from 'react'
 
 import { AccountMenu } from '@/components/dialogs/AccountMenu'
+import { CardsDialog } from '@/components/dialogs/CardsDialog'
 import { CommandPalette } from '@/components/dialogs/CommandPalette'
+import { MindMapDialog } from '@/components/dialogs/MindMapDialog'
+import { TutorDialog } from '@/components/dialogs/TutorDialog'
 import { ConflictDialog } from '@/components/dialogs/ConflictDialog'
 import { ExamDialog, ExamRun, FolderExamDialog } from '@/components/dialogs/ExamDialog'
 import { JobsPanel } from '@/components/dialogs/JobsPanel'
@@ -38,6 +41,9 @@ export function Overlays() {
   else if (overlay?.kind === 'media') content = <MediaDialog />
   else if (overlay?.kind === 'settings') content = <SettingsDialog initial={overlay.tab} />
   else if (overlay?.kind === 'exam') content = <ExamDialog fileId={overlay.fileId} />
+  else if (overlay?.kind === 'cards') content = <CardsDialog fileId={overlay.fileId} />
+  else if (overlay?.kind === 'mindmap') content = <MindMapDialog fileId={overlay.fileId} />
+  else if (overlay?.kind === 'tutor') content = <TutorDialog fileId={overlay.fileId} />
   else if (overlay?.kind === 'folder-exam') content = <FolderExamDialog folderId={overlay.folderId} fileIds={overlay.fileIds} />
   else if (overlay?.kind === 'account') content = <AccountMenu />
   else if (overlay?.kind === 'new-folder') content = <NewFolderDialog parentId={overlay.parentId} />

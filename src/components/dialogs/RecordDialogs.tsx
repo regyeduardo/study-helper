@@ -17,13 +17,15 @@ import {
   type IntegrationWindow,
   useIntegrationStore,
 } from '@/lib/recording/integration'
-import { linkLocalMedia } from '@/lib/recording/media-library'
+import { MEDIA_LABEL } from '@/lib/file-types'
+import { paths } from '@/lib/paths'
+import { removeLocalMedia } from '@/lib/recording/media-library'
 import { mountMiniplayer } from '@/lib/recording/miniplayer'
 import { type AudioInput, CaptureCheck, type CaptureMode, type CheckStatus, COMPUTER_AUDIO_AUTO, COMPUTER_AUDIO_NONE, hears, listAudioInputs, type LiveCapture, playTestSound, SOUND_LEVEL, systemAudioNotice, type VideoFps, VOICE_LEVEL } from '@/lib/recording/recorder'
 import { defaultStorage, storageOptions } from '@/lib/storage/source-storage'
 import { useAccountStore } from '@/stores/account'
 import { useLibraryStore } from '@/stores/library'
-import { type Agent, useJobsStore } from '@/stores/jobs'
+import { useJobsStore } from '@/stores/jobs'
 import { useRecorderStore } from '@/stores/recorder'
 import { useSyncStore } from '@/stores/sync'
 import { useUiStore } from '@/stores/ui'
@@ -803,14 +805,19 @@ function RecordingControls() {
   )
 }
 
+function openNote(fileId: string) {
+  void import('@/routes').then(({ router }) => router.navigate(paths.file(fileId)))
+}
+
 function RecordingDoneOptions({ place }: { place: 'dialog' | 'window' }) {
   const { result, clearResult } = useRecorderStore()
   const account = useAccountStore(state => state.active())
   const limit = useLibraryStore(state => state.index.settings.storageLimitBytes)
   const usage = useSyncStore(state => state.usage)
-  const startNewContent = useJobsStore(state => state.startNewContent)
+  const saveRecording = useJobsStore(state => state.saveRecording)
   const toast = useUiStore(state => state.toast)
-  const [agent, setAgent] = useState<Agent>('meeting')
+  const [transcribing, setTranscribing] = useState(true)
+  const [discarding, setDiscarding] = useState(false)
   const [folderId, setFolderId] = useState<string | null>(null)
   const [storage, setStorage] = useState<SourceStorage | null>(null)
   const [litterboxTime, setLitterboxTime] = useState<LitterboxTime>('72h')
@@ -824,47 +831,57 @@ function RecordingDoneOptions({ place }: { place: 'dialog' | 'window' }) {
     clearResult()
     toast('A gravação ficou salva em Mídias')
   }
-  const go = () => {
-    const { file, storedName, marks } = result
+  const discard = () => {
+    const { storedName } = result
+    clearResult()
+    void removeLocalMedia(storedName)
+    toast('Gravação descartada')
+  }
+  const save = () => {
+    const { file, storedName, marks, durationSeconds } = result
     clearResult()
     setStorage(null)
-    void startNewContent({ agent, input: { kind: 'recording', file }, name: '', description: '', folderId, prompt: '', storage: chosen, litterboxTime, marks }).then(fileId => {
-      if (fileId) void linkLocalMedia(storedName, fileId)
-    })
+    void saveRecording({ file, storedName, durationSeconds, folderId, storage: chosen, litterboxTime, marks: marks ?? [], transcribe: transcribing }).then(fileId => openNote(fileId))
   }
-  const actions = (
-    <>
-      <button className="btn quiet" onClick={later}>
-        Só salvar
+  const actions = discarding ? (
+    <div className="inline-confirm">
+      Descartar a gravação?
+      <button className="btn danger" onClick={discard}>
+        Descartar
       </button>
-      <button className="btn primary" onClick={go}>
-        Transcrever e gerar
+      <button className="btn quiet" onClick={() => setDiscarding(false)}>
+        Voltar
+      </button>
+    </div>
+  ) : (
+    <>
+      <button className="btn quiet" onClick={() => setDiscarding(true)}>
+        Descartar
+      </button>
+      <button className="btn primary" onClick={save}>
+        Salvar
       </button>
     </>
   )
   const body = (
     <div className="db">
       <span className="muted">
-        {duration(result.durationSeconds)} · {formatBytes(result.file.size)} · {result.mime || result.file.type}
+        {MEDIA_LABEL[result.file.type.startsWith('video/') ? 'video' : 'audio']} · {duration(result.durationSeconds)} · {formatBytes(result.file.size)}
       </span>
-      <div className="banner info">
-        <Icon name="check" />
-        <span>A gravação já está guardada neste computador, em Mídias, e só sai de lá quando você apagar.</span>
-      </div>
       <div className="field">
-        <span className="lab">O que gerar</span>
-        <div className="opts" role="radiogroup">
+        <span className="lab">Quer a transcrição?</span>
+        <div className="opts" role="radiogroup" aria-label="Quer a transcrição?">
           {(
             [
-              ['meeting', 'Ata de reunião'],
-              ['lesson', 'Aula'],
-              ['reading', 'Só a transcrição'],
-            ] as [Agent, string][]
-          ).map(([id, label]) => (
-            <button key={id} className="opt" role="radio" aria-checked={agent === id} onClick={() => setAgent(id)}>
+              [true, 'Sim, transcrever', 'A busca acha o que foi falado e dá para gerar Ata, Aula, Mapa mental, Cartões, Tutor e Prova.'],
+              [false, 'Não, só a mídia', 'Guarda a gravação como está. Dá para transcrever depois, na própria nota.'],
+            ] as [boolean, string, string][]
+          ).map(([value, label, hint]) => (
+            <button key={label} className="opt" role="radio" aria-checked={transcribing === value} onClick={() => setTranscribing(value)}>
               <span className="radio" />
               <span>
                 <b>{label}</b>
+                <span>{hint}</span>
               </span>
             </button>
           ))}

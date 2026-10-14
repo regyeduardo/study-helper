@@ -38,6 +38,11 @@ interface ClusterStart {
   time: number
 }
 
+interface SizePatch {
+  at: number
+  bytes: number[]
+}
+
 function readElement(bytes: Uint8Array, at: number, limit: number): Element | null {
   if (at >= limit) return null
   const idLength = Math.clz32(bytes[at]) - 23
@@ -125,6 +130,7 @@ function rebuilt(source: Blob, bytes: Uint8Array): Blob {
 
   const before: Element[] = []
   const clusters: ClusterStart[] = []
+  const patches: SizePatch[] = []
   let last = 0
   let previous = 0
   let blocks = 0
@@ -150,6 +156,8 @@ function rebuilt(source: Blob, bytes: Uint8Array): Blob {
       else if (child.id === BLOCK_GROUP) for (const inner of childrenOf(bytes, child)) if (inner.id === BLOCK) seen(blockTime(bytes, inner, time))
       at = child.end
     }
+    const sizeAt = element.start + Math.clz32(bytes[element.start]) - 23
+    if (element.data - sizeAt === 8 && bytes.subarray(sizeAt, element.data).every((byte, index) => byte === (index ? 0xff : 0x01))) patches.push({ at: sizeAt, bytes: [0x01, ...bigEndian(at - element.data, 7)] })
     element = readElement(bytes, at, segment.end)
   }
   const oldInfo = before.find(element => element.id === INFO)
@@ -207,7 +215,14 @@ function rebuilt(source: Blob, bytes: Uint8Array): Blob {
     ...cuesAt(clustersAt),
   ]
   const segmentSize = clustersAt + bytes.length - first
-  return new Blob([bytes.subarray(0, header.end), new Uint8Array([...idBytes(SEGMENT), 0x01, ...bigEndian(segmentSize, 7), ...head]), source.slice(first)], { type: source.type })
+  const body: BlobPart[] = []
+  let copied = first
+  for (const patch of patches) {
+    body.push(source.slice(copied, patch.at), new Uint8Array(patch.bytes))
+    copied = patch.at + patch.bytes.length
+  }
+  body.push(source.slice(copied))
+  return new Blob([bytes.subarray(0, header.end), new Uint8Array([...idBytes(SEGMENT), 0x01, ...bigEndian(segmentSize, 7), ...head]), ...body], { type: source.type })
 }
 
 export async function makeSeekable(source: Blob): Promise<Blob> {

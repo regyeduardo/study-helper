@@ -3,6 +3,8 @@ import { useNavigate } from 'react-router-dom'
 
 import type { FileMeta, Highlight } from '@/types/domain'
 import { Icon } from '@/components/ui/Icon'
+import { NoteParts } from '@/components/reader/Details'
+import { dueCount } from '@/lib/generation/cards'
 import { scrollToHeading } from '@/components/reader/GithubMarkdownView'
 import { providerOf } from '@/lib/ai/providers'
 import { lineageOf } from '@/lib/generation/course-lesson'
@@ -255,6 +257,7 @@ export function InfoPanel({ fileId }: { fileId: string }) {
 
   return (
     <>
+      <NoteParts meta={meta} />
       <div className="sec">
         <h4>De onde veio</h4>
         <div className="chain">
@@ -296,7 +299,7 @@ export function InfoPanel({ fileId }: { fileId: string }) {
       </div>
       {children.length > 0 && (
         <div className="sec">
-          <h4>Explicações feitas daqui ({children.length})</h4>
+          <h4>Notas ligadas ({children.length})</h4>
           <div className="chain">
             {children.map(child => (
               <div key={child.id}>
@@ -451,14 +454,65 @@ function TagEditor({ meta }: { meta: FileMeta }) {
   )
 }
 
-export function InspectorTabs({ tab, onTab, onClose }: { tab: InspectorTab; onTab(tab: InspectorTab): void; onClose?: () => void }) {
+function ThisNote({ fileId }: { fileId: string }) {
+  const meta = useLibraryStore(state => state.files.find(file => file.id === fileId))
+  const open = useUiStore(state => state.open)
+  if (!meta) return null
+  const cards = meta.cardDue ?? []
+  return (
+    <>
+      {cards.length > 0 && (
+        <div className="sec">
+          <h4>Cartões</h4>
+          <button className="btn" onClick={() => open({ kind: 'cards', fileId })}>
+            <Icon name="note" />
+            {cards.length} cartões · {dueCount(cards)} para hoje
+          </button>
+        </div>
+      )}
+      {meta.hasMindmap && (
+        <div className="sec">
+          <h4>Mapa mental</h4>
+          <button className="btn" onClick={() => open({ kind: 'mindmap', fileId })}>
+            <Icon name="layers" />
+            Abrir o mapa
+          </button>
+        </div>
+      )}
+      {meta.questionCount > 0 && (
+        <div className="sec">
+          <h4>Prova</h4>
+          <div className="parts">
+            <button className="btn" onClick={() => open({ kind: 'exam', fileId })}>
+              <Icon name="exam" />
+              Fazer de novo · {meta.questionCount} questões
+            </button>
+            {meta.mastery !== null && (
+              <span className="muted">
+                Domínio: {meta.mastery}%{meta.lastReviewedAt ? ` · última em ${new Date(meta.lastReviewedAt).toLocaleDateString('pt-BR')}` : ''}
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+    </>
+  )
+}
+
+export function hasGenerated(meta: FileMeta | undefined): boolean {
+  return Boolean(meta && (meta.questionCount > 0 || (meta.cardDue?.length ?? 0) > 0 || meta.hasMindmap))
+}
+
+export function InspectorTabs({ tab, onTab, onClose, fileId }: { tab: InspectorTab; onTab(tab: InspectorTab): void; onClose?: () => void; fileId?: string }) {
+  const generated = useLibraryStore(state => hasGenerated(state.files.find(file => file.id === fileId)))
   return (
     <div className="insp-tabs" role="tablist">
       {(
         [
+          ...(generated ? ([['mine', 'Desta nota']] as const) : []),
           ['toc', 'Índice'],
           ['notes', 'Notas'],
-          ['info', 'Informações'],
+          ['info', 'Detalhes'],
         ] as const
       ).map(([id, label]) => (
         <button key={id} role="tab" aria-selected={tab === id} aria-pressed={tab === id} onClick={() => onTab(id)}>
@@ -477,6 +531,7 @@ export function InspectorTabs({ tab, onTab, onClose }: { tab: InspectorTab; onTa
 export function InspectorBody({ fileId, tab, onPick }: { fileId: string; tab: InspectorTab; onPick?: () => void }) {
   if (tab === 'toc') return <TocPanel onPick={onPick} />
   if (tab === 'notes') return <NotesPanel fileId={fileId} />
+  if (tab === 'mine') return <ThisNote fileId={fileId} />
   return <InfoPanel fileId={fileId} />
 }
 
@@ -485,7 +540,7 @@ export function Inspector({ fileId }: { fileId: string }) {
   const set = useUiStore(state => state.set)
   return (
     <>
-      <InspectorTabs tab={tab} onTab={next => set({ inspectorTab: next })} onClose={() => set({ rightOpen: false })} />
+      <InspectorTabs fileId={fileId} tab={tab} onTab={next => set({ inspectorTab: next })} onClose={() => set({ rightOpen: false, panelAsked: false })} />
       <div className="insp-body">
         <InspectorBody fileId={fileId} tab={tab} onPick={() => isNarrowScreen() && set({ rightOpen: false })} />
       </div>

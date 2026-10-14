@@ -2,10 +2,11 @@ import type { ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
 
 import { Icon } from '@/components/ui/Icon'
-import { AvatarButton, RecentList, SyncPill, UsageLine } from '@/components/layout/Chrome'
+import { AvatarButton, SyncPill, UsageLine } from '@/components/layout/Chrome'
 import { Crumbs } from '@/components/library/Crumbs'
+import { FolderTree } from '@/components/library/FolderTree'
 import { SHARING_TITLES } from '@/components/library/SharingLists'
-import { useLiveLibrary } from '@/hooks/use-library-view'
+import { folderHitCounts, useLiveLibrary, useSearchHits } from '@/hooks/use-library-view'
 import { useViewRoute } from '@/hooks/use-view-route'
 import { REVIEW_BELOW } from '@/lib/file-types'
 import { paths, type View } from '@/lib/paths'
@@ -35,6 +36,12 @@ export function ReaderShell({ children, docActions }: { children: ReactNode; doc
   const ui = useUiStore()
   const counts = useCounts()
   const doc = useLibraryStore(state => (fileId ? state.files.find(file => file.id === fileId) : undefined))
+  const { files, folders } = useLiveLibrary()
+  const hits = useSearchHits(ui.query)
+  const hitCounts = folderHitCounts(hits, files, folders)
+  const tagCounts = new Map<string, number>()
+  for (const file of files) for (const tag of file.tags) tagCounts.set(tag, (tagCounts.get(tag) ?? 0) + 1)
+  const tags = [...tagCounts].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], 'pt-BR'))
 
   const nav = (target: View, icon: Parameters<typeof Icon>[0]['name'], label: string, to: string, count?: number) => (
     <button className="nv" aria-current={view === target} onClick={() => (navigate(to), ui.set({ drawer: false }))}>
@@ -53,29 +60,48 @@ export function ReaderShell({ children, docActions }: { children: ReactNode; doc
             <Icon name="sidebar" />
           </button>
         </div>
-        <button className="srch" onClick={() => ui.open({ kind: 'palette' })}>
-          <Icon name="search" />
-          <span className="t">Buscar ou fazer algo</span>
-          <span className="kbd">Ctrl K</span>
-        </button>
         <nav className="nav">
           {nav('home', 'home', 'Início', paths.home)}
-          {nav('folder', 'book', 'Biblioteca', paths.library, counts.library)}
           {nav('review', 'warn', 'Para revisar', paths.review, counts.review)}
-          {nav('favorites', 'star', 'Favoritos', paths.favorites, counts.favorites)}
-          {nav('trash', 'trash', 'Lixeira', paths.trash, counts.trash)}
-          {nav('shares', 'link', SHARING_TITLES.shares, paths.shares, counts.shares)}
-          {nav('sharedWithMe', 'user', SHARING_TITLES.sharedWithMe, paths.sharedWithMe, counts.sharedWithMe)}
-          <button className="nv" onClick={() => ui.open({ kind: 'media' })}>
-            <Icon name="mic" />
-            Mídias
-          </button>
-          <button className="nv" onClick={() => ui.open({ kind: 'settings' })}>
-            <Icon name="gear" />
-            Configurações
-          </button>
-          <div className="nh">Recentes</div>
-          <RecentList currentId={fileId} />
+          <div className="nh">Pastas</div>
+          <FolderTree folders={folders} current={view === 'folder' ? folderId : view === 'doc' ? (doc?.folderId ?? null) : undefined} hits={hitCounts} onGo={() => ui.set({ drawer: false })} />
+          {tags.length > 0 && (
+            <>
+              <div className="nh">Etiquetas</div>
+              <ul className="tag-nav" aria-label="Etiquetas">
+                {tags.map(([tag, count]) => (
+                  <li key={tag}>
+                    <button
+                      className="nv"
+                      aria-pressed={ui.tag === tag}
+                      onClick={() => {
+                        if (ui.tag !== tag) ui.setTag(tag)
+                        navigate(paths.library)
+                        ui.set({ drawer: false })
+                      }}
+                    >
+                      {tag}
+                      <span className="n">{count}</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+          <div className="nav-end">
+            {nav('favorites', 'star', 'Favoritos', paths.favorites, counts.favorites)}
+            {nav('shares', 'link', SHARING_TITLES.shares, paths.shares, counts.shares)}
+            {nav('sharedWithMe', 'user', SHARING_TITLES.sharedWithMe, paths.sharedWithMe, counts.sharedWithMe)}
+            <button className="nv" onClick={() => ui.open({ kind: 'media' })}>
+              <Icon name="mic" />
+              Mídias
+            </button>
+            {nav('trash', 'trash', 'Lixeira', paths.trash, counts.trash)}
+            <button className="nv" onClick={() => ui.open({ kind: 'settings' })}>
+              <Icon name="gear" />
+              Configurações
+            </button>
+          </div>
         </nav>
         <div className="foot">
           <SyncPill />

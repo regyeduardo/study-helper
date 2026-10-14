@@ -6,8 +6,10 @@ const { startNewContent } = vi.hoisted(() => ({ startNewContent: vi.fn(async (..
 
 vi.mock('@/stores/jobs', async () => {
   const { create } = await import('zustand')
-  return { useJobsStore: create(() => ({ jobs: [], startNewContent })) }
+  return { useJobsStore: create(() => ({ jobs: [], saveRecording: startNewContent })) }
 })
+
+vi.mock('@/routes', () => ({ router: { navigate: vi.fn() } }))
 
 import { RecordDialog, RecordingDoneDialog } from '@/components/dialogs/RecordDialogs'
 import { LOCAL_ACCOUNT, useAccountStore } from '@/stores/account'
@@ -83,7 +85,7 @@ describe('where the recording goes, chosen before recording', () => {
     expect(checked().some(text => text.startsWith('Não, só neste computador'))).toBe(true)
     expect(screen.queryByText(OTHERS)).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('radio', { name: /Google Drive/ }))
-    fireEvent.click(screen.getByRole('button', { name: 'Transcrever e gerar' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Salvar' }))
     await waitFor(() => expect(startNewContent).toHaveBeenCalled())
     expect(startNewContent.mock.calls[0][0]).toMatchObject({ storage: 'drive' })
   })

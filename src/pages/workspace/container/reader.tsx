@@ -1,8 +1,11 @@
 import { useEffect } from 'react'
+import { useNavigate } from 'react-router-dom'
 
+import type { FileMeta } from '@/types/domain'
 import { Icon } from '@/components/ui/Icon'
 import { ReaderShell } from '@/components/layout/ReaderShell'
 import { EmptyList } from '@/components/library/EmptyList'
+import { Explorer } from '@/components/library/Explorer'
 import { ReaderRow } from '@/components/library/FileRows'
 import { FilterChips, SortSelect } from '@/components/library/Filters'
 import { FolderTiles } from '@/components/library/FolderTiles'
@@ -13,10 +16,12 @@ import { SharedStatus } from '@/pages/shared'
 import { TrashList } from '@/components/library/TrashList'
 import { UpButton } from '@/components/library/Crumbs'
 import { DocumentBody } from '@/components/reader/DocumentArticle'
-import { Inspector } from '@/components/reader/Inspector'
+import { hasGenerated, Inspector } from '@/components/reader/Inspector'
 import { useLibraryView } from '@/hooks/use-library-view'
 import type { ViewRoute } from '@/hooks/use-view-route'
 import { isNarrowScreen } from '@/hooks/use-is-narrow'
+import { MEDIA_LABEL, mediaLength, mediaOf, REVIEW_BELOW } from '@/lib/file-types'
+import { paths } from '@/lib/paths'
 import { useLibraryStore } from '@/stores/library'
 import { useUiStore } from '@/stores/ui'
 import { formatBytes } from '@/utils/format'
@@ -24,10 +29,36 @@ import { ContinueCard, greeting, QuickActions, reviewSentence, todayText, useHom
 
 const TITLES = { folder: 'Biblioteca', review: 'Para revisar', favorites: 'Favoritos', trash: 'Lixeira', home: 'Início', doc: '', ...SHARING_TITLES }
 
+function HomeBlock({ title, hint, children }: { title: string; hint?: string; children: React.ReactNode }) {
+  return (
+    <section className="home-block" aria-label={title}>
+      <h3>
+        {title}
+        {hint && <span className="faint">{hint}</span>}
+      </h3>
+      <div className="home-items">{children}</div>
+    </section>
+  )
+}
+
+function HomeItem({ file, side, onOpen }: { file: FileMeta; side: string; onOpen(): void }) {
+  return (
+    <button className="home-item" onClick={onOpen}>
+      <span>{file.name}</span>
+      <span className="faint">{side}</span>
+    </button>
+  )
+}
+
 function Home() {
   const data = useHomeData()
   const timeZone = useLibraryStore(state => state.index.settings.timezone)
+  const navigate = useNavigate()
+  const open = useUiStore(state => state.open)
   if (data.empty) return <WelcomeEmpty />
+  const go = (file: FileMeta) => () => navigate(paths.file(file.id))
+  const totalCards = data.cards.reduce((sum, item) => sum + item.due, 0)
+  const mediaSide = (file: FileMeta) => [MEDIA_LABEL[mediaOf(file)], mediaLength(file.origin?.durationSeconds)].filter(Boolean).join(' · ')
   return (
     <div className="homegrid">
       <div>
@@ -35,7 +66,7 @@ function Home() {
           {todayText(timeZone)}
         </div>
         <h2 style={{ margin: '4px 0 0', fontSize: 24, fontWeight: 600, letterSpacing: '-.01em' }}>
-          {greeting()}. {reviewSentence(data.review.length)}
+          {greeting()}. {reviewSentence(data.review.length + totalCards)}
         </h2>
       </div>
       <QuickActions fileForExam={data.continueReading} />
@@ -47,30 +78,33 @@ function Home() {
           <ContinueCard file={data.continueReading} />
         </div>
       )}
-      {data.review.length > 0 && (
-        <div>
-          <div className="nh" style={{ paddingLeft: 0 }}>
-            Para revisar{' '}
-            <span className="faint" style={{ marginLeft: 6, textTransform: 'none', letterSpacing: 0, fontWeight: 400 }}>
-              domínio abaixo de 70%
-            </span>
-          </div>
-          <div className="list">
-            {data.review.map(file => (
-              <ReaderRow key={file.id} file={file} showWhere />
+      <div className="home-blocks">
+        {data.cards.length > 0 && (
+          <HomeBlock title="Cartões para hoje" hint={`${totalCards} ${totalCards === 1 ? 'cartão' : 'cartões'} em ${data.cards.length} ${data.cards.length === 1 ? 'nota' : 'notas'}`}>
+            {data.cards.map(item => (
+              <HomeItem key={item.file.id} file={item.file} side={String(item.due)} onOpen={() => open({ kind: 'cards', fileId: item.file.id })} />
             ))}
-          </div>
-        </div>
-      )}
-      <div>
-        <div className="nh" style={{ paddingLeft: 0 }}>
-          Mexidos por último
-        </div>
-        <div className="list">
-          {data.recent.map(file => (
-            <ReaderRow key={file.id} file={file} showWhere />
+          </HomeBlock>
+        )}
+        {data.review.length > 0 && (
+          <HomeBlock title="Para revisar" hint={`domínio abaixo de ${REVIEW_BELOW}%`}>
+            {data.review.map(file => (
+              <HomeItem key={file.id} file={file} side={`${file.mastery}%`} onOpen={go(file)} />
+            ))}
+          </HomeBlock>
+        )}
+        {data.untranscribed.length > 0 && (
+          <HomeBlock title="Gravações sem transcrição">
+            {data.untranscribed.map(file => (
+              <HomeItem key={file.id} file={file} side={mediaSide(file)} onOpen={go(file)} />
+            ))}
+          </HomeBlock>
+        )}
+        <HomeBlock title="Últimas notas">
+          {data.latest.map(file => (
+            <HomeItem key={file.id} file={file} side={mediaSide(file)} onOpen={go(file)} />
           ))}
-        </div>
+        </HomeBlock>
       </div>
     </div>
   )
@@ -81,7 +115,8 @@ export function Library({ route }: { route: ViewRoute }) {
   const data = useLibraryView(route.view, route.folderId)
   const shared = useLibraryStore(state => state.sharedView)
   const q = ui.query.trim()
-  const title = q ? `Resultados para “${ui.query}”` : route.view === 'folder' ? (data.folder?.name ?? 'Biblioteca') : TITLES[route.view]
+  const explorer = !data.isCourse && (route.view === 'folder' || route.view === 'review' || route.view === 'favorites')
+  const title = q && !explorer ? `Resultados para “${ui.query}”` : route.view === 'folder' ? (data.folder?.name ?? 'Biblioteca') : TITLES[route.view]
   return (
     <>
       <div className="libhead">
@@ -95,10 +130,10 @@ export function Library({ route }: { route: ViewRoute }) {
         {shared && <SharedBadge label />}
         <span style={{ marginLeft: 'auto', display: 'flex', gap: 6, flexWrap: 'wrap' }}>
           {shared && <SharedBadge button />}
-          {route.view !== 'trash' && (
+          {route.view !== 'trash' && !explorer && (
             <input className="input lib-search" style={{ height: 30 }} placeholder="Buscar no título e no texto" aria-label="Buscar" value={ui.query} onChange={event => ui.setQuery(event.target.value)} />
           )}
-          {data.browsing && !shared && (
+          {data.browsing && !shared && !explorer && (
             <button className="btn" onClick={() => ui.open({ kind: 'new-folder', parentId: route.folderId })}>
               <Icon name="folder" />
               Nova pasta
@@ -110,7 +145,7 @@ export function Library({ route }: { route: ViewRoute }) {
               {ui.reorder ? 'Pronto' : 'Ordenar aulas'}
             </button>
           )}
-          {data.browsing && route.folderId && !shared && (
+          {data.browsing && route.folderId && !shared && !explorer && (
             <button className="btn quiet" onClick={() => ui.open({ kind: 'folder-exam', folderId: route.folderId })}>
               <Icon name="exam" />
               Prova da pasta
@@ -120,6 +155,8 @@ export function Library({ route }: { route: ViewRoute }) {
       </div>
       {route.view === 'trash' ? (
         <TrashList />
+      ) : explorer ? (
+        <Explorer view={route.view} folderId={route.folderId} />
       ) : (
         <div className="libbody">
           <FolderTiles tiles={data.tiles} />
@@ -184,7 +221,7 @@ function DocActions({ fileId }: { fileId: string }) {
       >
         <Icon name="dots" />
       </button>
-      <button className="ibtn" aria-pressed={ui.rightOpen} onClick={() => ui.set({ rightOpen: !ui.rightOpen })} aria-label="Painel da direita" title="Índice, notas e informações ( ] )">
+      <button className="ibtn" aria-pressed={ui.rightOpen && ui.panelAsked} onClick={() => ui.set(ui.rightOpen && ui.panelAsked ? { panelAsked: false } : { rightOpen: true, panelAsked: true })} aria-label="Painel da direita" title="Índice, notas e detalhes ( ] )">
         <Icon name="panel" />
       </button>
     </>
@@ -193,18 +230,27 @@ function DocActions({ fileId }: { fileId: string }) {
 
 export function ReaderWorkspace({ route }: { route: ViewRoute }) {
   const rightOpen = useUiStore(state => state.rightOpen)
+  const panelAsked = useUiStore(state => state.panelAsked)
   const setUi = useUiStore(state => state.set)
+  const generated = useLibraryStore(state => hasGenerated(state.files.find(file => file.id === route.fileId)))
   const scroller = useScrollerRef()
   useEffect(() => {
     if (isNarrowScreen()) setUi({ rightOpen: false, drawer: false })
   }, [route.fileId, route.folderId, route.view])
+  useEffect(() => {
+    if (!useUiStore.getState().panelAsked || useUiStore.getState().inspectorTab !== 'info') setUi({ panelAsked: false })
+  }, [route.fileId])
+  useEffect(() => {
+    if (generated) setUi({ inspectorTab: 'mine' })
+    else if (useUiStore.getState().inspectorTab === 'mine') setUi({ inspectorTab: 'toc' })
+  }, [route.fileId, generated])
   if (route.view === 'doc' && route.fileId) {
     return (
       <ReaderShell docActions={<DocActions fileId={route.fileId} />}>
         <div className="docscroll" ref={scroller}>
           <DocumentBody fileId={route.fileId} />
         </div>
-        {rightOpen && (
+        {rightOpen && (generated || panelAsked) && (
           <aside className="insp" aria-label="Painel do documento">
             <Inspector fileId={route.fileId} />
           </aside>

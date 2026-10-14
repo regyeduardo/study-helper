@@ -25,7 +25,6 @@ type Tab = 'link' | 'file' | 'text' | 'topic'
 
 const AGENTS: { id: Agent; label: string; hint: string }[] = [
   { id: 'lesson', label: 'Aula', hint: 'Vira uma aula estruturada; se render mais de uma, o app propõe um curso.' },
-  { id: 'explanation', label: 'Explicação', hint: 'Explica o assunto a fundo.' },
   { id: 'meeting', label: 'Ata de reunião', hint: 'Transcrição de reunião vira ata com decisões e encaminhamentos.' },
   { id: 'reading', label: 'Só guardar para ler', hint: 'Guarda o texto como veio, sem IA.' },
 ]

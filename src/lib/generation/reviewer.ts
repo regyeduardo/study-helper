@@ -5,11 +5,12 @@ import { CHUNK_CHARS } from '@/lib/generation/minutes'
 import { PROMPTS } from '@/lib/generation/prompts.data'
 import type { GenerationSession } from '@/lib/generation/session'
 import { speakerName } from '@/lib/transcription/export'
+import { termsHint } from '@/lib/transcription/types'
 
 const HEARD_WORDS_LIMIT = 6
 const ADDED_WORDS_LIMIT = 2
 
-interface Correction {
+export interface Correction {
   speech: number
   heard: string
   meant: string
@@ -25,7 +26,7 @@ function onlyRemoves(heard: string[], meant: string[]): boolean {
   return at === meant.length && meant.length < heard.length
 }
 
-function correctionsIn(raw: string): Correction[] {
+export function correctionsIn(raw: string): Correction[] {
   const list = extractJson(raw)?.correcoes
   if (!Array.isArray(list)) return []
   return list
@@ -40,7 +41,7 @@ function accepted(correction: Correction, block: TranscriptBlock | undefined): b
   return heard.length <= HEARD_WORDS_LIMIT && meant.length <= heard.length + ADDED_WORDS_LIMIT && !onlyRemoves(heard, meant)
 }
 
-function batches(lines: string[]): string[][] {
+export function batches(lines: string[]): string[][] {
   const out: string[][] = [[]]
   let size = 0
   for (const line of lines) {
@@ -54,9 +55,60 @@ function batches(lines: string[]): string[][] {
   return out
 }
 
-export async function reviewTranscript(recording: RecordingData, session: GenerationSession): Promise<RecordingData> {
+interface Reassignment {
+  speech: number
+  who: string
+}
+
+function reassignmentsIn(raw: string): Reassignment[] {
+  const list = extractJson(raw)?.falantes
+  if (!Array.isArray(list)) return []
+  return list
+    .filter((item): item is Record<string, unknown> => typeof item === 'object' && item !== null)
+    .map(item => ({ speech: Number(item.fala), who: typeof item.quem === 'string' ? item.quem.trim() : '' }))
+    .filter(item => item.who)
+}
+
+export async function redoTranscript(recording: RecordingData, instruction: string, session: GenerationSession, terms = ''): Promise<RecordingData> {
+  if (!recording.blocks.length || !instruction.trim()) return recording
+  const hint = termsHint(terms)
+  const context =
+    `O que está errado, segundo quem gravou: ${instruction.trim()}\n\n` +
+    (hint ? `${hint}\n\n` : '') +
+    (recording.speakers.length ? `Participantes: ${recording.speakers.map(speaker => speaker.name).join(', ')}\n\n` : '') +
+    (recording.frames?.length ? `Escrito na tela durante a reunião: ${recording.frames.map(frame => frame.text).join(' | ')}\n\n` : '')
+  const lines = recording.blocks.map((block, index) => `${index + 1} | ${block.speaker ? `${speakerName(recording, block.speaker)}: ` : ''}${block.text}`)
+  const corrections: Correction[] = []
+  const reassignments: Reassignment[] = []
+  for (const batch of batches(lines)) {
+    const answer = await session.chat(context + batch.join('\n'), PROMPTS.TRANSCRIPT_REDO_PROMPT)
+    corrections.push(...correctionsIn(answer))
+    reassignments.push(...reassignmentsIn(answer))
+  }
+  const blocks = [...recording.blocks]
+  for (const correction of corrections) {
+    const block = blocks[correction.speech - 1]
+    if (!block || !correction.heard || !correction.meant.trim() || !block.text.includes(correction.heard)) continue
+    blocks[correction.speech - 1] = { ...block, text: block.text.replace(correction.heard, () => correction.meant), original: block.original ?? block.text }
+  }
+  const speakers = [...recording.speakers]
+  for (const { speech, who } of reassignments) {
+    const block = blocks[speech - 1]
+    if (!block) continue
+    let speaker = speakers.find(item => item.name.toLowerCase() === who.toLowerCase())
+    if (!speaker) {
+      speaker = { id: `named_${speakers.length}`, name: who, suggested: false }
+      speakers.push(speaker)
+    }
+    blocks[speech - 1] = { ...block, speaker: speaker.id }
+  }
+  return { ...recording, blocks, speakers }
+}
+
+export async function reviewTranscript(recording: RecordingData, session: GenerationSession, terms = ''): Promise<RecordingData> {
   if (!recording.blocks.length) return recording
-  const people = recording.speakers.length ? `Participantes: ${recording.speakers.map(speaker => speaker.name).join(', ')}\n\n` : ''
+  const hint = termsHint(terms)
+  const people = (hint ? `${hint}\n\n` : '') + (recording.speakers.length ? `Participantes: ${recording.speakers.map(speaker => speaker.name).join(', ')}\n\n` : '')
   const screen = recording.frames?.length ? `Escrito na tela durante a reunião: ${recording.frames.map(frame => frame.text).join(' | ')}\n\n` : ''
   const lines = recording.blocks.map((block, index) => `${index + 1} | ${block.speaker ? `${speakerName(recording, block.speaker)}: ` : ''}${block.text}`)
   const corrections: Correction[] = []
@@ -66,6 +118,10 @@ export async function reviewTranscript(recording: RecordingData, session: Genera
     if (error instanceof Cancelled) throw error
     return recording
   }
+  return withCorrections(recording, corrections)
+}
+
+export function withCorrections(recording: RecordingData, corrections: Correction[]): RecordingData {
   const blocks = [...recording.blocks]
   for (const correction of corrections) {
     const block = blocks[correction.speech - 1]

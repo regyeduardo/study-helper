@@ -1,7 +1,7 @@
 import { postAudioController, type ServiceName, TranscriptionError } from '@/controllers/transcription.controller'
 import { base64Of, wavClip } from '@/lib/transcription/audio'
 import { timedWords, turnsOf } from '@/lib/transcription/providers/custom'
-import type { ProviderJob, ProviderResult, SpeakerTurn, Word } from '@/lib/transcription/types'
+import { type ProviderJob, type ProviderResult, type SpeakerTurn, withTerms, type Word } from '@/lib/transcription/types'
 
 const TRANSCRIPTION_URL = 'https://api.openai.com/v1/audio/transcriptions'
 const OPENAI: ServiceName = { the: 'A OpenAI', of: 'da OpenAI' }
@@ -40,9 +40,12 @@ export async function transcribeWithOpenAi(job: ProviderJob): Promise<ProviderRe
         form.append('known_speaker_names[]', name)
         form.append('known_speaker_references[]', sample)
       }
-    } else if (model.includes('whisper')) {
-      form.append('response_format', 'verbose_json')
-      form.append('timestamp_granularities[]', 'word')
+    } else {
+      withTerms(form, job)
+      if (model.includes('whisper')) {
+        form.append('response_format', 'verbose_json')
+        form.append('timestamp_granularities[]', 'word')
+      }
     }
     const body = await postAudioController(TRANSCRIPTION_URL, job.credential.apiKey, form, OPENAI, job.signal)
     words.push(...timedWords(body, index * job.partSeconds))

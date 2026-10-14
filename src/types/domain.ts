@@ -126,6 +126,9 @@ export interface FileMeta {
   position: number
   favorite: boolean
   tags: string[]
+  suggestedTags?: string[]
+  cardDue?: string[]
+  hasMindmap?: boolean
   parentFileId: string | null
   sourceExcerpt: string | null
   pendingExcerpt: string | null
@@ -183,6 +186,21 @@ export interface FileSidecar {
   highlights: Highlight[]
   transcript?: string
   recording?: RecordingData
+  cards?: StudyCard[]
+  mindmap?: MindNode
+}
+
+export interface StudyCard {
+  id: string
+  front: string
+  back: string
+  box: number
+  due: string
+}
+
+export interface MindNode {
+  title: string
+  children: MindNode[]
 }
 
 export interface FolderMeta {
@@ -248,6 +266,7 @@ export interface TranscriptionSettings {
   language: string
   credentials: Partial<Record<ProviderEngine, TranscriptionCredential>>
   speakersEngine: SpeakersEngine
+  terms?: string
 }
 
 export type YoutubeReader = 'youtube-transcript' | 'gemini'

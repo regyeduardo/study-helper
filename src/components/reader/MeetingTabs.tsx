@@ -21,16 +21,22 @@ interface MeetingTabsProps {
   onRename?(speakerId: string, name: string): void
   onGenerate?(agent: SecondTabAgent): void
   onRedo?(): void
+  onRedoTranscript?(instruction: string): void
   onMarks?(marks: RecordingMark[]): void
+  startAt?: number
 }
 
 type TabId = 'transcript' | 'second'
 
-export function MeetingTabs({ recording, media, name, second, onRename, onGenerate, onRedo, onMarks }: MeetingTabsProps) {
+export function MeetingTabs({ recording, media, name, second, onRename, onGenerate, onRedo, onRedoTranscript, onMarks, startAt }: MeetingTabsProps) {
   const player = useRef<HTMLMediaElement | null>(null)
-  const [tab, setTab] = useState<TabId>(second ? 'second' : 'transcript')
-  const [time, setTime] = useState<number | null>(null)
-  const [waiting, setWaiting] = useState<number | null>(null)
+  const [tab, setTab] = useState<TabId>(second && startAt === undefined ? 'second' : 'transcript')
+  const [time, setTime] = useState<number | null>(startAt ?? null)
+  const [waiting, setWaiting] = useState<number | null>(startAt ?? null)
+
+  useEffect(() => {
+    if (startAt !== undefined && !media.url) void media.request()
+  }, [])
   const shown: TabId = second ? tab : 'transcript'
   const hasSecond = Boolean(second)
 
@@ -97,7 +103,7 @@ export function MeetingTabs({ recording, media, name, second, onRename, onGenera
       {shown === 'second' && second ? (
         <MinutesTab frames={recording.frames} onMoment={playFrom}>{second.node}</MinutesTab>
       ) : (
-        <TranscriptTab recording={recording} name={name} time={time} onPlay={media.available ? playFrom : undefined} onRename={onRename} onMarks={onMarks} />
+        <TranscriptTab recording={recording} name={name} time={time} onPlay={media.available ? playFrom : undefined} onRename={onRename} onMarks={onMarks} onRedo={onRedoTranscript} />
       )}
       {media.available && (
         <div className="meeting-dock">

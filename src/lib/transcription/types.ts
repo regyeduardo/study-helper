@@ -40,11 +40,35 @@ export type Progress = (message: string, fraction?: number) => void
 export interface ProviderJob {
   audio: Blob
   parts: Blob[]
+  partStarts?: number[]
   partSeconds: number
   language: string
+  terms?: string
   credential: TranscriptionCredential
   progress: Progress
   signal?: AbortSignal
+}
+
+export function termsHint(terms: string): string {
+  const list = terms
+    .split(/[\n,;]/)
+    .map(term => term.trim())
+    .filter(Boolean)
+  return list.length ? `Termos que aparecem nesta gravação: ${list.join(', ')}.` : ''
+}
+
+export function withTerms(form: FormData, job: ProviderJob): FormData {
+  const hint = termsHint(job.terms ?? '')
+  if (hint) form.append('prompt', hint)
+  return form
+}
+
+export function partStart(job: ProviderJob, index: number): number {
+  return job.partStarts?.[index] ?? index * job.partSeconds
+}
+
+export function partName(part: Blob): string {
+  return part.type.includes('webm') ? 'trecho.webm' : 'trecho.wav'
 }
 
 export async function sendParts<T>(job: ProviderJob, label: string, send: (part: Blob, index: number) => Promise<T>): Promise<T[]> {

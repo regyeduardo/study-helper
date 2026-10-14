@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { Icon } from '@/components/ui/Icon'
 import { Popover } from '@/components/ui/Popover'
 import { exportFileAsMarkdown, exportFileAsZip } from '@/lib/exports/library-export'
+import { mediaOf } from '@/lib/file-types'
 import { printMarkdownAsPdf } from '@/lib/exports/pdf'
 import { paths } from '@/lib/paths'
 import { useJobsStore } from '@/stores/jobs'
@@ -85,38 +86,60 @@ export function ItemMenu() {
 
   const file = library.files.find(item => item.id === menu.id)
   if (!file) return null
+  const hasText = mediaOf(file) === 'text' || file.words > 0
+  const needs = hasText ? undefined : 'transcrever antes'
+  const generate = (agent: 'meeting' | 'lesson') =>
+    act(async () => {
+      const id = await jobs.generateFromNote(file.id, agent)
+      if (id) navigate(paths.file(id))
+    })
+  const tools: [string, Parameters<typeof Icon>[0]['name'], (() => void) | null][] = [
+    ['Mapa mental', 'layers', act(() => ui.open({ kind: 'mindmap', fileId: file.id }))],
+    ['Cartões', 'note', act(() => ui.open({ kind: 'cards', fileId: file.id }))],
+    ['Tutor', 'bulb', act(() => ui.open({ kind: 'tutor', fileId: file.id }))],
+    ['Prova', 'exam', act(() => ui.open({ kind: 'exam', fileId: file.id }))],
+    ['Ata', 'file', generate('meeting')],
+    ['Aula', 'book', generate('lesson')],
+  ]
   return (
     <Popover x={menu.x} y={menu.y} onClose={close} label={`Opções de ${file.name}`}>
       <div className="mh">{file.name}</div>
-      <button className="mi" onClick={act(() => navigate(paths.file(file.id)))}>
-        <Icon name="book" />
-        Abrir
+      <div className="mg" role="presentation">
+        Gerar{needs ? ' (precisa de transcrição)' : ''}
+      </div>
+      {tools.map(([label, icon, run]) => (
+        <button key={label} className="mi" disabled={Boolean(needs) || !run} onClick={run ?? undefined}>
+          <Icon name={icon} />
+          {label}
+          {(needs || !run) && <span className="mi-hint">{needs ?? 'em breve'}</span>}
+        </button>
+      ))}
+      <div className="sep" />
+      <button className="mi" disabled={!hasText} onClick={act(() => jobs.suggestTags(file.id))}>
+        <Icon name="bulb" />
+        Sugerir etiquetas
+      </button>
+      <button
+        className="mi"
+        onClick={act(() => {
+          ui.set({ inspectorTab: 'info', rightOpen: true, panelAsked: true, columnsSheet: true, focusPop: 'info' })
+          navigate(paths.file(file.id))
+        })}
+      >
+        <Icon name="info" />
+        Detalhes
+      </button>
+      <button className="mi" onClick={act(() => ui.open({ kind: 'move', fileIds: [file.id], folderIds: [] }))}>
+        <Icon name="move" />
+        Mover
       </button>
       <button className="mi" onClick={act(() => ui.open({ kind: 'rename', target: 'file', id: file.id }))}>
         <Icon name="pen" />
         Renomear
       </button>
-      <button className="mi" onClick={act(() => ui.open({ kind: 'move', fileIds: [file.id], folderIds: [] }))}>
-        <Icon name="move" />
-        Mover para…
-      </button>
       <button className="mi" onClick={act(() => library.updateFile(file.id, { favorite: !file.favorite }))}>
         <Icon name="star" />
         {file.favorite ? 'Tirar dos favoritos' : 'Favoritar'}
-      </button>
-      <button className="mi" onClick={act(() => ui.open({ kind: 'exam', fileId: file.id }))}>
-        <Icon name="exam" />
-        Fazer a prova
-      </button>
-      <button
-        className="mi"
-        onClick={act(() => {
-          ui.set({ inspectorTab: 'info', rightOpen: true, columnsSheet: true, focusPop: 'info' })
-          navigate(paths.file(file.id))
-        })}
-      >
-        <Icon name="info" />
-        Informações
       </button>
       <button className="mi" onClick={act(() => ui.open({ kind: 'share', target: 'file', id: file.id }))}>
         <Icon name="link" />
@@ -150,7 +173,7 @@ export function ItemMenu() {
         })}
       >
         <Icon name="trash" />
-        Mandar para a lixeira
+        Apagar
       </button>
     </Popover>
   )

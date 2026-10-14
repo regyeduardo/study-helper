@@ -163,11 +163,26 @@ describe('makeSeekable', () => {
     expect(jumpTo(bytes, 1)).toBe(0)
   })
 
-  it('keeps every recorded stretch byte for byte', async () => {
+  it('keeps every recorded stretch byte for byte, only the size of each stretch is written', async () => {
     const original = new Uint8Array(browserRecording())
     const bytes = await bytesOf(await makeSeekable(new Blob([original], { type: 'audio/webm' })))
     const firstCluster = original.findIndex((_, at) => CLUSTER.every((byte, offset) => original[at + offset] === byte))
-    expect([...bytes.subarray(bytes.length - (original.length - firstCluster))]).toEqual([...original.subarray(firstCluster)])
+    const withoutSizes = (stretch: Uint8Array) => {
+      const copy = [...stretch]
+      for (let at = 0; at < copy.length; at++) if (CLUSTER.every((byte, offset) => copy[at + offset] === byte)) copy.fill(0, at + 4, at + 12)
+      return copy
+    }
+    expect(withoutSizes(bytes.subarray(bytes.length - (original.length - firstCluster)))).toEqual(withoutSizes(original.subarray(firstCluster)))
+  })
+
+  it('no stretch keeps an unknown size inside the segment of known size', async () => {
+    const original = new Uint8Array(browserRecording())
+    const bytes = await bytesOf(await makeSeekable(new Blob([original], { type: 'audio/webm' })))
+    const { segment, cues } = inspect(bytes)
+    const stretches = children(bytes, segment.data + cues[0].position, segment.end)
+    expect(stretches.map(stretch => stretch.id)).toEqual([hex(CLUSTER), hex(CLUSTER), hex(CLUSTER)])
+    expect(stretches.at(-1)!.end).toBe(bytes.length)
+    expect(stretches.map(stretch => number(bytes, read(bytes, stretch.data)))).toEqual([0, 5000, 10000])
   })
 
   it('leaves alone a file that is not a WebM recording', async () => {

@@ -7,7 +7,8 @@ import { useFileActions } from '@/components/library/use-file-actions'
 import { useLiveLibrary } from '@/hooks/use-library-view'
 import { useReadingProgress, useTrackReading } from '@/hooks/use-reading-progress'
 import { useViewRoute } from '@/hooks/use-view-route'
-import { REVIEW_BELOW } from '@/lib/file-types'
+import { mediaOf, REVIEW_BELOW } from '@/lib/file-types'
+import { dueCount } from '@/lib/generation/cards'
 import { useAccountStore } from '@/stores/account'
 import { useDocumentStore } from '@/stores/document'
 import { useLibraryStore } from '@/stores/library'
@@ -36,7 +37,13 @@ export function useHomeData() {
   const review = files.filter(file => file.mastery !== null && file.mastery < REVIEW_BELOW)
   const recent = [...files].sort((a, b) => b.updated.at.localeCompare(a.updated.at)).slice(0, 3)
   const pending = files.filter(file => file.status === 'pending')
-  return { continueReading, review, recent, pending, empty: files.length === 0 }
+  const cards = files
+    .map(file => ({ file, due: dueCount(file.cardDue) }))
+    .filter(item => item.due > 0)
+    .sort((a, b) => b.due - a.due)
+  const untranscribed = ready.filter(file => mediaOf(file) !== 'text' && file.words === 0)
+  const latest = [...files].sort((a, b) => b.updated.at.localeCompare(a.updated.at)).slice(0, 5)
+  return { continueReading, review, recent, pending, cards, untranscribed, latest, empty: files.length === 0 }
 }
 
 export function todayText(timeZone: string): string {

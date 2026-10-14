@@ -25,7 +25,7 @@ const vision = { provider: 'openai' as const, baseUrl: '', apiKey: 'sk-teste', m
 describe('which moments of the screen are looked at', () => {
   it('the speech that asks for the screen gives t, t+2s and t+5s, and each speaker gives 1 frame of the first turn', () => {
     const moments = screenMoments(recording, [31])
-    expect(moments.filter(moment => moment.kind === 'tela').map(moment => moment.at)).toEqual([31, 33, 36])
+    expect(moments.filter(moment => moment.kind === 'tela' && moment.from === 31).map(moment => moment.at)).toEqual([31, 33, 36])
     expect(moments.filter(moment => moment.kind === 'falante').map(moment => moment.speaker)).toEqual(['speaker_0', 'speaker_1', 'speaker_2'])
     expect(moments.some(moment => moment.speaker === 'mic')).toBe(false)
   })
@@ -48,7 +48,8 @@ describe('which moments of the screen are looked at', () => {
     const seen = await lookAtScreen(recording, new Blob(['v'], { type: 'video/webm' }), vision, session, { grab, see })
     const asked = grab.mock.calls[0][1] as number[]
     expect(asked).toEqual(expect.arrayContaining([31, 33, 36]))
-    expect(asked).toHaveLength(6)
+    expect(asked).toEqual(expect.arrayContaining([0, 60]))
+    expect(asked).toHaveLength(8)
     const screenCall = see.mock.calls[0]
     expect(screenCall[1]).toEqual(['img-31'])
     expect(seen.frames).toEqual([{ at: 31, image: 'img-31', text: 'Gráfico de vendas do trimestre' }])

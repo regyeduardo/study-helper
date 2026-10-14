@@ -17,6 +17,7 @@ interface TranscriptTabProps {
   onPlay?(seconds: number): void
   onRename?(speakerId: string, name: string): void
   onMarks?(marks: RecordingMark[]): void
+  onRedo?(instruction: string): void
 }
 
 const apart = (event: MouseEvent) => event.stopPropagation()
@@ -104,8 +105,41 @@ function Who({ speaker, onRename }: { speaker: RecordingSpeaker; onRename?(speak
   )
 }
 
-export function TranscriptTab({ recording, name = 'reunião', time = null, onPlay, onRename, onMarks }: TranscriptTabProps) {
+function RedoBox({ onRedo, onClose }: { onRedo(instruction: string): void; onClose(): void }) {
+  const [instruction, setInstruction] = useState('')
+  return (
+    <div className="tr-redo" style={{ marginTop: 10 }}>
+      <textarea
+        className="input"
+        aria-label="O que está errado na transcrição"
+        placeholder="Ex.: o nome certo é João Vitor; é PIX, não pics; a fala das 02:10 é minha"
+        rows={3}
+        autoFocus
+        value={instruction}
+        onChange={event => setInstruction(event.target.value)}
+      />
+      <div className="tr-tools">
+        <button
+          className="btn primary"
+          disabled={!instruction.trim()}
+          onClick={() => {
+            onRedo(instruction.trim())
+            onClose()
+          }}
+        >
+          Refazer
+        </button>
+        <button className="btn" onClick={onClose}>
+          Cancelar
+        </button>
+      </div>
+    </div>
+  )
+}
+
+export function TranscriptTab({ recording, name = 'reunião', time = null, onPlay, onRename, onMarks, onRedo }: TranscriptTabProps) {
   const [editing, setEditing] = useState<string | null>(null)
+  const [redoing, setRedoing] = useState(false)
   const ids = recording.speakers.map(speaker => speaker.id)
   const playing = time === null ? -1 : recording.blocks.findLastIndex(block => block.start <= time)
   const marked = new Map<number, RecordingMark[]>()
@@ -143,7 +177,14 @@ export function TranscriptTab({ recording, name = 'reunião', time = null, onPla
           <Icon name="download" />
           Exportar .srt
         </button>
+        {onRedo && (
+          <button className="btn" aria-expanded={redoing} onClick={() => setRedoing(open => !open)}>
+            <Icon name="sync" />
+            Refazer a transcrição
+          </button>
+        )}
       </div>
+      {redoing && onRedo && <RedoBox onRedo={onRedo} onClose={() => setRedoing(false)} />}
       {recording.warning && (
         <div className="banner" role="status" style={{ marginTop: 10 }}>
           {recording.warning}

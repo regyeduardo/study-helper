@@ -11,6 +11,7 @@ import { MICROPHONE } from '@/lib/transcription/turns'
 
 const LOOK_AFTER = [0, 2, 5]
 const SAME_SCREEN = 8
+const SAMPLE_SECONDS = 60
 const NO_VISION = 'A tela gravada não foi usada: escolha um Modelo de visão em Configurações › IA para o agente ler os nomes e os slides.'
 
 export interface ScreenMoment {
@@ -45,6 +46,7 @@ function seconds(clock: string): number | null {
 export function screenMoments(recording: RecordingData, asked: number[]): ScreenMoment[] {
   const end = Math.max(0, ...recording.blocks.map(block => block.end))
   const moments: ScreenMoment[] = asked.flatMap(start => LOOK_AFTER.map(after => ({ at: Math.min(start + after, end), kind: 'tela' as const, from: start })))
+  for (let at = 0; at <= end; at += SAMPLE_SECONDS) if (!asked.includes(at)) moments.push({ at, kind: 'tela', from: at })
   const seen = new Set<string>()
   for (const block of recording.blocks) {
     if (!block.speaker || block.speaker === MICROPHONE || seen.has(block.speaker)) continue
@@ -97,9 +99,13 @@ export async function lookAtScreen(recording: RecordingData, video: Blob | null,
     const times = [...new Set(moments.map(moment => moment.at))].sort((a, b) => a - b)
     const grabbed = new Map((await tools.grab(video, times)).map(frame => [frame.at, frame]))
     const frames: ScreenFrame[] = []
-    for (const start of asked) {
-      const shots = distinctFrames(moments.filter(moment => moment.from === start).map(moment => grabbed.get(moment.at)).filter((frame): frame is GrabbedFrame => Boolean(frame)))
+    const read: GrabbedFrame[] = []
+    for (const start of new Set(moments.filter(moment => moment.kind === 'tela').map(moment => moment.from ?? moment.at))) {
+      const shots = distinctFrames(moments.filter(moment => moment.from === start).map(moment => grabbed.get(moment.at)).filter((frame): frame is GrabbedFrame => Boolean(frame))).filter(
+        shot => !read.some(other => difference(other.signature, shot.signature) < SAME_SCREEN),
+      )
       if (!shots.length) continue
+      read.push(...shots)
       const text = field(await tools.see(vision, shots.map(shot => shot.image), PROMPTS.SCREEN_TEXT_PROMPT), 'texto')
       if (text) frames.push({ at: start, image: shots[shots.length - 1].image, text })
     }
@@ -111,6 +117,7 @@ export async function lookAtScreen(recording: RecordingData, video: Blob | null,
       const name = field(await tools.see(vision, [shot.image], PROMPTS.SCREEN_NAME_PROMPT.replace('{nome}', speakers[index].name)), 'nome')
       if (name) speakers[index] = { ...speakers[index], name, suggested: false }
     }
+    frames.sort((a, b) => a.at - b.at)
     return { ...recording, speakers, ...(frames.length ? { frames } : {}) }
   } catch (error) {
     if (error instanceof Cancelled) throw error

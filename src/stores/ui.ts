@@ -2,6 +2,7 @@ import { create } from 'zustand'
 
 import type { Attempt, FileType, ShareKind, StoredQuestion } from '@/types/domain'
 import { isNarrowScreen } from '@/hooks/use-is-narrow'
+import type { NoteMedia } from '@/lib/file-types'
 
 export type Overlay =
   | { kind: 'palette' }
@@ -10,6 +11,9 @@ export type Overlay =
   | { kind: 'media' }
   | { kind: 'settings'; tab?: SettingsTab }
   | { kind: 'exam'; fileId: string }
+  | { kind: 'cards'; fileId: string }
+  | { kind: 'mindmap'; fileId: string }
+  | { kind: 'tutor'; fileId: string }
   | { kind: 'folder-exam'; folderId: string | null; fileIds?: string[] }
   | { kind: 'account'; x?: number; y?: number }
   | { kind: 'new-folder'; parentId: string | null }
@@ -29,7 +33,7 @@ export type SettingsTab = 'appearance' | 'ai' | 'transcription' | 'storage' | 'd
 
 export type SortKey = 'recent' | 'title' | 'mastery'
 export type GroupKey = 'none' | 'type' | 'folder'
-export type InspectorTab = 'toc' | 'notes' | 'info'
+export type InspectorTab = 'mine' | 'toc' | 'notes' | 'info'
 
 export interface ItemMenu {
   kind: 'file' | 'folder'
@@ -52,6 +56,7 @@ interface UiState {
   types: Set<FileType>
   lowMastery: boolean
   tag: string | null
+  media: NoteMedia | null
   sort: SortKey
   group: GroupKey
   leftOpen: boolean
@@ -64,6 +69,7 @@ interface UiState {
   focusPop: InspectorTab | null
   handoffFileId: string | null
   reorder: boolean
+  panelAsked: boolean
   open(overlay: Overlay): void
   close(): void
   openMenu(menu: ItemMenu | null): void
@@ -75,10 +81,11 @@ interface UiState {
   toggleType(type: FileType): void
   toggleLowMastery(): void
   setTag(tag: string | null): void
+  setMedia(media: NoteMedia | null): void
   clearFilters(): void
   setSort(sort: SortKey): void
   setGroup(group: GroupKey): void
-  set(patch: Partial<Pick<UiState, 'leftOpen' | 'rightOpen' | 'drawer' | 'inspectorTab' | 'peekId' | 'columnsPane' | 'columnsSheet' | 'focusPop' | 'reorder' | 'handoffFileId'>>): void
+  set(patch: Partial<Pick<UiState, 'leftOpen' | 'rightOpen' | 'drawer' | 'inspectorTab' | 'peekId' | 'columnsPane' | 'columnsSheet' | 'focusPop' | 'reorder' | 'handoffFileId' | 'panelAsked'>>): void
 }
 
 let toastSeq = 0
@@ -93,6 +100,7 @@ export const useUiStore = create<UiState>((set, get) => ({
   types: new Set(),
   lowMastery: false,
   tag: null,
+  media: null,
   sort: 'recent',
   group: 'none',
   leftOpen: true,
@@ -105,6 +113,7 @@ export const useUiStore = create<UiState>((set, get) => ({
   focusPop: null,
   handoffFileId: null,
   reorder: false,
+  panelAsked: false,
 
   open: overlay => set({ overlay, menu: null }),
   close: () => set({ overlay: null }),
@@ -133,7 +142,8 @@ export const useUiStore = create<UiState>((set, get) => ({
     }),
   toggleLowMastery: () => set(state => ({ lowMastery: !state.lowMastery })),
   setTag: tag => set({ tag: tag && get().tag !== tag ? tag : null }),
-  clearFilters: () => set({ types: new Set(), lowMastery: false, tag: null, query: '' }),
+  setMedia: media => set({ media }),
+  clearFilters: () => set({ types: new Set(), lowMastery: false, tag: null, media: null, query: '' }),
   setSort: sort => set({ sort }),
   setGroup: group => set({ group }),
   set: patch => set(patch),

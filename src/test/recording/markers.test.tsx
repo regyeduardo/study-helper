@@ -6,8 +6,10 @@ const { startNewContent } = vi.hoisted(() => ({ startNewContent: vi.fn(async (..
 
 vi.mock('@/stores/jobs', async () => {
   const { create } = await import('zustand')
-  return { useJobsStore: create(() => ({ jobs: [], startNewContent })) }
+  return { useJobsStore: create(() => ({ jobs: [], saveRecording: startNewContent })) }
 })
+
+vi.mock('@/routes', () => ({ router: { navigate: vi.fn() } }))
 
 import { RecordingDoneDialog } from '@/components/dialogs/RecordDialogs'
 import { TranscriptTab } from '@/components/reader/TranscriptTab'
@@ -80,7 +82,7 @@ describe('marking while recording', () => {
         <RecordingDoneDialog />
       </MemoryRouter>,
     )
-    fireEvent.click(screen.getByRole('button', { name: 'Transcrever e gerar' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Salvar' }))
     await waitFor(() => expect(startNewContent).toHaveBeenCalled())
     const request = startNewContent.mock.calls[0][0] as { marks: { kind: string; at: number }[] }
     expect(request.marks).toHaveLength(1)

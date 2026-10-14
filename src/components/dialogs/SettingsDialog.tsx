@@ -392,6 +392,11 @@ function TranscriptionTab() {
         </>
       )}
       <div className="field">
+        <label htmlFor="tr-terms">Siglas, nomes e termos que costumam sair errados</label>
+        <textarea className="input" id="tr-terms" rows={3} placeholder="Um por linha. Ex.: API, Kubernetes, Ana Paula" value={transcription.terms ?? ''} onChange={event => set({ terms: event.target.value })} />
+        <span className="muted" style={{ fontSize: 12.5 }}>Vão junto com cada transcrição e com a revisão por IA, para o texto sair com a escrita certa.</span>
+      </div>
+      <div className="field">
         <label htmlFor="tr-lang">Idioma falado</label>
         <select className="input" id="tr-lang" value={transcription.language} onChange={event => set({ language: event.target.value })}>
           {LANGUAGES.map(([value, label]) => (

@@ -1,7 +1,8 @@
-import { useMemo } from 'react'
+import { useEffect, useMemo } from 'react'
 
 import type { FileMeta, FolderMeta } from '@/types/domain'
 import { LOW_MASTERY_BELOW, REVIEW_BELOW } from '@/lib/file-types'
+import { type SearchHit, searchFile, searchWords } from '@/lib/library-search'
 import type { View } from '@/lib/paths'
 import { fileBytes, folderBytes } from '@/lib/storage/file-sizes'
 import { liveFiles, liveFolders, useLibraryStore } from '@/stores/library'
@@ -64,6 +65,54 @@ export function usePathName() {
       return names.length ? names.join(' › ') : 'Biblioteca'
     }
   }, [folders])
+}
+
+const LOAD_AT_ONCE = 4
+const loading = new Set<string>()
+
+export function useSearchHits(query: string): Map<string, SearchHit> {
+  const { files } = useLiveLibrary()
+  const opened = useLibraryStore(state => state.opened)
+  const openFile = useLibraryStore(state => state.openFile)
+  const searching = searchWords(query).length > 0
+  useEffect(() => {
+    if (!searching) return
+    const missing = files.filter(file => !useLibraryStore.getState().opened[file.id] && !loading.has(file.id))
+    let next = 0
+    let alive = true
+    const load = async () => {
+      while (alive && next < missing.length) {
+        const id = missing[next++].id
+        loading.add(id)
+        await openFile(id)
+          .catch(() => undefined)
+          .finally(() => loading.delete(id))
+      }
+    }
+    void Promise.all(Array.from({ length: LOAD_AT_ONCE }, load))
+    return () => {
+      alive = false
+    }
+  }, [searching, files, openFile])
+  return useMemo(() => {
+    const hits = new Map<string, SearchHit>()
+    if (!searching) return hits
+    for (const file of files) {
+      const hit = searchFile(file, opened[file.id], query)
+      if (hit) hits.set(file.id, hit)
+    }
+    return hits
+  }, [searching, files, opened, query])
+}
+
+export function folderHitCounts(hits: Map<string, SearchHit>, files: FileMeta[], folders: FolderMeta[]): Map<string, number> {
+  const parentOf = new Map(folders.map(folder => [folder.id, folder.parentId]))
+  const counts = new Map<string, number>()
+  for (const file of files) {
+    if (!hits.has(file.id)) continue
+    for (let id = file.folderId, steps = 0; id && steps < 64; id = parentOf.get(id) ?? null, steps++) counts.set(id, (counts.get(id) ?? 0) + 1)
+  }
+  return counts
 }
 
 export function useLibraryView(view: View, folderId: string | null) {

@@ -6,8 +6,10 @@ const { startNewContent } = vi.hoisted(() => ({ startNewContent: vi.fn(async (..
 
 vi.mock('@/stores/jobs', async () => {
   const { create } = await import('zustand')
-  return { useJobsStore: create(() => ({ jobs: [], startNewContent })) }
+  return { useJobsStore: create(() => ({ jobs: [], saveRecording: startNewContent })) }
 })
+
+vi.mock('@/routes', () => ({ router: { navigate: vi.fn() } }))
 
 import { RecordDialog, RecordingDoneDialog, RecordingWindow } from '@/components/dialogs/RecordDialogs'
 import { LOCAL_ACCOUNT, useAccountStore } from '@/stores/account'
@@ -217,8 +219,8 @@ describe('RecordingWindow', () => {
     const window = screen.getByRole('dialog', { name: 'Gravação pronta' })
     expect(window).toHaveClass('mini-rec')
     expect(screen.getAllByRole('dialog')).toHaveLength(1)
-    expect(screen.getByRole('button', { name: 'Só salvar' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Transcrever e gerar' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Descartar' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Salvar' })).toBeInTheDocument()
   })
 
   it('draws the controls and then the choices inside the floating window', async () => {
@@ -229,8 +231,8 @@ describe('RecordingWindow', () => {
     await waitFor(() => expect(floating.document.body.textContent).toContain('Terminar'))
     expect(floating.document.body.textContent).toContain('00:07')
     act(() => useRecorderStore.setState({ active: false, result: recordingOf(5 * MB), resultPlace: 'window' }))
-    await waitFor(() => expect(floating.document.body.textContent).toContain('Transcrever e gerar'))
-    expect(screen.queryByRole('button', { name: 'Transcrever e gerar' })).not.toBeInTheDocument()
+    await waitFor(() => expect(floating.document.body.textContent).toContain('Quer a transcrição?'))
+    expect(screen.queryByRole('button', { name: 'Salvar' })).not.toBeInTheDocument()
   })
 
   it('shows the elapsed time and finishes on Terminar', () => {
@@ -271,30 +273,31 @@ describe('RecordingDoneDialog', () => {
     expect(screen.getByText('Guardar também na nuvem?')).toBeInTheDocument()
     expect(checked().some(text => text?.startsWith('Não, só neste computador'))).toBe(true)
     expect(screen.getByRole('radio', { name: /Não, só neste computador/ })).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: 'Transcrever e gerar' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Salvar' }))
     expect(useRecorderStore.getState().result).toBeNull()
     await waitFor(() => expect(startNewContent).toHaveBeenCalled())
-    expect(startNewContent.mock.calls[0][0]).toMatchObject({ agent: 'meeting', storage: 'none', input: { kind: 'recording' } })
+    expect(startNewContent.mock.calls[0][0]).toMatchObject({ storage: 'none', transcribe: true, storedName: 'gravacao-1.mp4' })
   })
 
   it('sends the place the person picked', async () => {
     useRecorderStore.setState({ result: recordingOf(50 * MB) })
     renderDone()
     fireEvent.click(screen.getByRole('radio', { name: /Não, só neste computador/ }))
-    fireEvent.click(screen.getByRole('button', { name: 'Transcrever e gerar' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Salvar' }))
     await waitFor(() => expect(startNewContent).toHaveBeenCalled())
     expect(startNewContent.mock.calls[0][0]).toMatchObject({ storage: 'none' })
   })
 
-  it('"Só salvar" keeps the recording in the browser without generating', async () => {
+  it('closing the window keeps the recording in Mídias without making a note', async () => {
     const removeEntry = vi.fn(async () => undefined)
     Object.defineProperty(navigator, 'storage', { configurable: true, value: { getDirectory: async () => ({ removeEntry }) } })
     useRecorderStore.setState({ result: recordingOf(5 * MB) })
     renderDone()
-    fireEvent.click(screen.getByRole('button', { name: 'Só salvar' }))
+    fireEvent.click(screen.getByRole('button', { name: /Fechar/ }))
     expect(useRecorderStore.getState().result).toBeNull()
     await new Promise(resolve => setTimeout(resolve, 20))
     expect(removeEntry).not.toHaveBeenCalled()
+    expect(startNewContent).not.toHaveBeenCalled()
   })
 
   it('suggests Drive when logged in', () => {

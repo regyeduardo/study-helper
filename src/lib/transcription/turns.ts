@@ -41,6 +41,27 @@ export function microphoneWords(channels: RecordingChannels): WordTest {
   }
 }
 
+export function computerWords(channels: RecordingChannels): WordTest {
+  if (!channels.computer.some(sample => Math.abs(sample) >= AUDIBLE_LEVEL)) return () => false
+  return word => {
+    const computer = loudness(channels.computer, word.start, word.end)
+    return computer >= AUDIBLE_LEVEL && computer > loudness(channels.microphone, word.start, word.end)
+  }
+}
+
+function microphoneSpeakers(words: Word[], turns: SpeakerTurn[], fromMicrophone: WordTest, fromComputer: WordTest): Set<string> {
+  const count = new Map<string, { microphone: number; mine: number; theirs: number }>()
+  for (const word of words) {
+    const speaker = speakerOf(word, turns)
+    const tally = count.get(speaker) ?? { microphone: 0, mine: 0, theirs: 0 }
+    if (fromMicrophone(word)) tally.microphone++
+    if (fromComputer(word)) tally.theirs++
+    else tally.mine++
+    count.set(speaker, tally)
+  }
+  return new Set([...count].filter(([, tally]) => tally.microphone > 0 && tally.mine > tally.theirs).map(([speaker]) => speaker))
+}
+
 export function speakersOf(blocks: TranscriptBlock[]): RecordingSpeaker[] {
   const ids = [...new Set(blocks.map(block => block.speaker).filter(Boolean))]
   return ids.map((id, index) => ({
@@ -50,12 +71,21 @@ export function speakersOf(blocks: TranscriptBlock[]): RecordingSpeaker[] {
   }))
 }
 
-export function blocksFromWords(words: Word[], turns: SpeakerTurn[], fromMicrophone: WordTest = () => false): TranscriptBlock[] {
+export function blocksFromWords(words: Word[], turns: SpeakerTurn[], fromMicrophone: WordTest = () => false, fromComputer: WordTest = () => false): TranscriptBlock[] {
+  const yours = microphoneSpeakers(words, turns, fromMicrophone, fromComputer)
+  const theirs = turns.filter(turn => !yours.has(turn.speaker))
+  const sideOf = (word: Word): string => {
+    if (fromMicrophone(word)) return MICROPHONE
+    const speaker = speakerOf(word, turns)
+    if (!yours.has(speaker)) return speaker
+    if (!fromComputer(word)) return MICROPHONE
+    return theirs.length ? speakerOf(word, theirs) : speaker
+  }
   const blocks: TranscriptBlock[] = []
   for (const word of words) {
     const text = word.text.trim()
     if (!text) continue
-    const speaker = fromMicrophone(word) ? MICROPHONE : speakerOf(word, turns)
+    const speaker = sideOf(word)
     const last = blocks[blocks.length - 1]
     const sameParagraph = last && !(/[.!?…]$/.test(last.text) && (word.start - last.end >= PARAGRAPH_PAUSE_SECONDS || last.end - last.start >= PARAGRAPH_SECONDS))
     if (last && last.speaker === speaker && sameParagraph) {

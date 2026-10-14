@@ -64,6 +64,7 @@ function memoryRepository() {
 
 function provider(request: CapturedRequest): Response {
   const system = systemPromptOf(request)
+  if (system === PROMPTS.POLISH_PROMPT) return openAiStream(JSON.stringify({ titulo: '', nomes: [{ falante: 'Falante 2', nome: 'Bruno', citacao: 'Valeu, Bruno.' }], correcoes: [{ fala: 2, de: 'Mariana', para: 'Marina' }] }))
   if (system === PROMPTS.SPEAKER_NAMES_PROMPT) return openAiStream(JSON.stringify({ nomes: [{ falante: 'Falante 2', nome: 'Bruno', citacao: 'Valeu, Bruno.' }] }))
   if (system === PROMPTS.TRANSCRIPT_REVIEW_PROMPT) return openAiStream(JSON.stringify({ correcoes: [{ fala: 2, de: 'Mariana', para: 'Marina' }] }))
   if (system === PROMPTS.MINUTES_EXTRACT_PROMPT) return openAiStream(JSON.stringify({ assunto: 'Lançamento', temas: [{ tema: 'Data', pontos: [{ texto: 'Lançar em maio', citacao: 'Vamos lançar em maio, eu mando', hora: '00:04' }] }], passos: [] }))
@@ -120,19 +121,17 @@ describe('"O que gerar" chooses only the second tab', () => {
     expect(screen.queryByTestId('markdown')).not.toBeInTheDocument()
   })
 
-  it('asking for the Ata later, in the note, makes the Ata tab appear', async () => {
+  it('asking for the Ata later, in the note, makes a new text note with the Ata, linked to the recording', async () => {
     const id = await noteFrom('reading')
     open(id)
     fireEvent.click(await screen.findByRole('button', { name: 'Gerar a Ata' }))
-    await waitFor(() => expect(tabs()).toEqual(['Transcrição', 'Ata*']))
-    await waitFor(() => expect(useLibraryStore.getState().files.find(file => file.id === id)?.status).toBe('ready'))
-    expect(screen.getByTestId('markdown')).toHaveTextContent('### Data - Lançar em maio')
-    expect(memory.contents.get(id)).toContain('- Lançar em maio [▸ 00:04](#t=4)')
-    expect(useLibraryStore.getState().files.find(file => file.id === id)?.type).toBe('meeting')
+    await waitFor(() => expect(useLibraryStore.getState().files).toHaveLength(2))
+    const ata = useLibraryStore.getState().files.find(file => file.id !== id)!
+    await waitFor(() => expect(useLibraryStore.getState().files.find(file => file.id === ata.id)?.status).toBe('ready'))
+    expect(memory.contents.get(ata.id)).toContain('- Lançar em maio [▸ 00:04](#t=4)')
+    expect(useLibraryStore.getState().files.find(file => file.id === ata.id)).toMatchObject({ type: 'meeting', parentFileId: id })
+    expect(useLibraryStore.getState().files.find(file => file.id === id)?.type).toBe('reading')
     expect(memory.sidecars.get(id)!.recording?.blocks).toHaveLength(3)
-    expect(screen.queryByRole('button', { name: 'Gerar a Ata' })).not.toBeInTheDocument()
-    fireEvent.click(screen.getByRole('tab', { name: 'Transcrição' }))
-    expect(screen.getAllByRole('listitem')).toHaveLength(3)
   })
 
   it('"Ata de reunião" gives the two tabs at once, the Ata pointing to the speech', async () => {

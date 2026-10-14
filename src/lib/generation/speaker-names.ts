@@ -7,7 +7,7 @@ import type { GenerationSession } from '@/lib/generation/session'
 import { transcriptText } from '@/lib/transcription/export'
 import { MICROPHONE } from '@/lib/transcription/turns'
 
-interface Suggestion {
+export interface Suggestion {
   speaker: string
   name: string
 }
@@ -16,13 +16,13 @@ function text(value: unknown): string {
   return typeof value === 'string' ? value.trim() : ''
 }
 
-function suggestionsIn(raw: string): Suggestion[] {
+export function suggestionsIn(raw: string): Suggestion[] {
   const names = extractJson(raw)?.nomes
   if (!Array.isArray(names)) return []
   return names.filter((item): item is Record<string, unknown> => typeof item === 'object' && item !== null).map(item => ({ speaker: text(item.falante), name: text(item.nome) }))
 }
 
-function applied(speakers: RecordingSpeaker[], suggestions: Suggestion[], transcript: string): RecordingSpeaker[] {
+export function applied(speakers: RecordingSpeaker[], suggestions: Suggestion[], transcript: string): RecordingSpeaker[] {
   const said = transcript.toLocaleLowerCase('pt-BR')
   const taken = new Set(speakers.map(speaker => speaker.name.toLocaleLowerCase('pt-BR')))
   return speakers.map(speaker => {

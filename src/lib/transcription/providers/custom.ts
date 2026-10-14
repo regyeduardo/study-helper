@@ -1,5 +1,5 @@
 import { postAudioController, type ServiceName, TranscriptionError } from '@/controllers/transcription.controller'
-import { type ProviderJob, type ProviderResult, sendParts, type SpeakerTurn, type Word } from '@/lib/transcription/types'
+import { partName, partStart, type ProviderJob, type ProviderResult, sendParts, type SpeakerTurn, withTerms, type Word } from '@/lib/transcription/types'
 
 const ENDPOINT = '/audio/transcriptions'
 const CUSTOM: ServiceName = { the: 'O provedor personalizado', of: 'do provedor personalizado' }
@@ -58,13 +58,14 @@ export async function transcribeWithCustom(job: ProviderJob): Promise<ProviderRe
   const replaced = new Set(extra.map(([key]) => key.replace(/\[\]$/, '')))
   const heard = await sendParts(job, 'Transcrevendo pelo provedor personalizado', async (part, index) => {
     const form = new FormData()
-    form.append('file', part, 'trecho.wav')
+    form.append('file', part, partName(part))
     form.append('model', job.credential.model.trim())
     if (job.language && !replaced.has('language')) form.append('language', job.language)
     if (!replaced.has('response_format')) form.append('response_format', 'verbose_json')
     for (const [key, value] of extra) if (value !== '') form.append(key, value)
+    if (!replaced.has('prompt')) withTerms(form, job)
     const body = await postAudioController(endpointOf(job.credential.baseUrl), job.credential.apiKey, form, CUSTOM, job.signal)
-    const offset = index * job.partSeconds
+    const offset = partStart(job, index)
     const found = [body.speaker_segments, body.segments, body.words].map(list => turnsOf(list, offset)).find(list => list.length)
     return { words: timedWords(body, offset), turns: found ?? [] }
   })

@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useLocation, useNavigate } from 'react-router-dom'
 
 import type { FileMeta, FileSidecar, FileType, HighlightColor, RecordingMark } from '@/types/domain'
 import { SharedBadge } from '@/components/library/SharedBadge'
@@ -7,11 +7,14 @@ import { Icon } from '@/components/ui/Icon'
 import { MasteryMeter, TypeDot } from '@/components/library/Badges'
 import { DocumentNav } from '@/components/reader/DocumentNav'
 import GithubMarkdownView, { type PaintedQuote, type ReaderSelection } from '@/components/reader/GithubMarkdownView'
-import { useMeetingMedia } from '@/components/reader/MediaPlayer'
+import { MediaPlayer, type MeetingMedia, useMeetingMedia } from '@/components/reader/MediaPlayer'
 import { MeetingTabs } from '@/components/reader/MeetingTabs'
+import { MinutesTab } from '@/components/reader/MinutesTab'
+import { TagSuggestion } from '@/components/reader/TagSuggestion'
 import { useDocument } from '@/hooks/use-document'
 import { courseOf } from '@/lib/generation/course-lesson'
 import { usePathName } from '@/hooks/use-library-view'
+import { MEDIA_LABEL, mediaOf } from '@/lib/file-types'
 import { newId, nowIso } from '@/lib/ids'
 import { paths } from '@/lib/paths'
 import { transcriptText } from '@/lib/transcription/export'
@@ -33,15 +36,61 @@ const ORIGIN_LABEL: Record<string, string> = {
 
 const SECOND_TAB: Partial<Record<FileType, string>> = { meeting: 'Ata', class: 'Aula' }
 
-export function DocumentHead({ meta, onInfo }: { meta: FileMeta; onInfo(): void }) {
+function MediaOnly({ media, onTranscribe }: { media: MeetingMedia; onTranscribe?(): void }) {
+  const player = useRef<HTMLMediaElement | null>(null)
+  const play = (seconds: number) => {
+    const element = player.current
+    if (!media.url || !element) return void media.request()
+    element.currentTime = seconds
+    void Promise.resolve(element.play()).catch(() => undefined)
+  }
+  return (
+    <div className="media-only">
+      {media.available ? <MediaPlayer player={player} media={media} onTime={() => undefined} onPlayFrom={play} /> : <div className="banner">A mídia desta nota não está mais guardada.</div>}
+      {onTranscribe && media.available && (
+        <div className="media-only-act">
+          <button className="btn primary" onClick={onTranscribe}>
+            <Icon name="mic" />
+            Transcrever agora
+          </button>
+          <span className="muted">necessário para gerar Ata e Aula e para a busca achar o que foi dito</span>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function shortLength(seconds: number): string {
+  const minutes = Math.round(seconds / 60)
+  if (seconds < 60) return `${Math.round(seconds)} s`
+  return minutes >= 60 ? `${Math.floor(minutes / 60)} h ${String(minutes % 60).padStart(2, '0')}` : `${minutes} min`
+}
+
+function mediaLine(meta: FileMeta, transcribed: boolean, timeZone: string): string {
+  const media = mediaOf(meta)
+  const seconds = meta.origin?.durationSeconds
+  const when = new Date(meta.created.at).toLocaleString('pt-BR', { timeZone, day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }).replace(',', ' às')
+  return [MEDIA_LABEL[media], seconds ? shortLength(seconds) : '', `${meta.origin?.input === 'recording' ? 'gravado' : 'enviado'} em ${when}`, transcribed ? 'com transcrição' : 'sem transcrição'].filter(Boolean).join(' · ')
+}
+
+export function DocumentHead({ meta, onInfo, transcribed = false }: { meta: FileMeta; onInfo(): void; transcribed?: boolean }) {
   const navigate = useNavigate()
   const pathName = usePathName()
   const setTag = useUiStore(state => state.setTag)
   const shared = useLibraryStore(state => Boolean(state.sharedView))
+  const timeZone = useLibraryStore(state => state.index.settings.timezone)
+  const source = useLibraryStore(state => (meta.parentFileId ? state.files.find(file => file.id === meta.parentFileId && !file.deletedAt) : undefined))
   return (
     <div className="doc-head">
       <h1>{meta.name}</h1>
       <SharedBadge />
+      {mediaOf(meta) !== 'text' && <div className="doc-media muted">{mediaLine(meta, transcribed, timeZone)}</div>}
+      {source && SECOND_TAB[meta.type] && (
+        <div className="doc-media muted">
+          Texto · modelo {SECOND_TAB[meta.type]} · gerado de <button onClick={() => navigate(paths.file(source.id))}>{source.name}</button>
+          {meta.readingMinutes > 0 ? ` · ${meta.readingMinutes} min de leitura` : ''}
+        </div>
+      )}
       <div className="doc-meta">
         <TypeDot type={meta.type} />
         {!(shared && meta.folderId === null) && (
@@ -147,6 +196,11 @@ export function DocumentBody({ fileId, compact = false }: { fileId: string; comp
   const cancel = useJobsStore(state => state.cancel)
   const generatePending = useJobsStore(state => state.generatePending)
   const generateSecondTab = useJobsStore(state => state.generateSecondTab)
+  const generateFromNote = useJobsStore(state => state.generateFromNote)
+  const asked = Number(new URLSearchParams(useLocation().search).get('t'))
+  const startAt = Number.isFinite(asked) && asked > 0 ? asked : undefined
+  const redoTranscript = useJobsStore(state => state.redoTranscript)
+  const transcribeNote = useJobsStore(state => state.transcribeNote)
   const updateSidecar = useLibraryStore(state => state.updateSidecar)
   const saveContent = useLibraryStore(state => state.saveContent)
   const media = useMeetingMedia(meta)
@@ -176,10 +230,12 @@ export function DocumentBody({ fileId, compact = false }: { fileId: string; comp
   const onQuoteClick = useCallback((targetId: string) => navigate(paths.file(targetId)), [navigate])
 
   if (!meta) return <div className="empty">Arquivo não encontrado.</div>
-  const showInfo = () => ui.set({ inspectorTab: 'info', rightOpen: true, columnsSheet: true, focusPop: 'info' })
+  const showInfo = () => ui.set({ inspectorTab: 'info', rightOpen: true, panelAsked: true, columnsSheet: true, focusPop: 'info' })
   const readOnly = Boolean(useLibraryStore.getState().sharedView)
 
   const recording = opened?.sidecar.recording
+  const transcribed = Boolean(recording?.blocks.length)
+  const mediaNote = mediaOf(meta) !== 'text'
   const secondLabel = meta.type === 'reading' || !(live || meta.status === 'ready') ? undefined : SECOND_TAB[meta.type]
   const viewer = live ? (
     <GithubMarkdownView markdown={live} live />
@@ -203,7 +259,8 @@ export function DocumentBody({ fileId, compact = false }: { fileId: string; comp
 
   return (
     <article className="article" style={compact ? { padding: 0 } : undefined}>
-      <DocumentHead meta={meta} onInfo={showInfo} />
+      {!readOnly && <TagSuggestion meta={meta} />}
+      <DocumentHead meta={meta} onInfo={showInfo} transcribed={transcribed} />
       {error && <div className="banner">{error}</div>}
       {meta.status !== 'ready' && !job && (
         <div className="empty" style={{ margin: '24px auto' }}>
@@ -223,7 +280,9 @@ export function DocumentBody({ fileId, compact = false }: { fileId: string; comp
           </button>
         </div>
       )}
-      {recording ? (
+      {mediaNote && !transcribed && !live && !opened?.content ? (
+        <MediaOnly media={media} onTranscribe={readOnly || job ? undefined : () => void transcribeNote(meta.id)} />
+      ) : recording && transcribed ? (
         <MeetingTabs
           key={fileId}
           recording={recording}
@@ -232,9 +291,13 @@ export function DocumentBody({ fileId, compact = false }: { fileId: string; comp
           second={secondLabel && viewer ? { label: secondLabel, node: viewer } : undefined}
           onRename={readOnly ? undefined : (speakerId, name) => void rename(speakerId, name)}
           onMarks={readOnly ? undefined : saveMarks}
-          onGenerate={readOnly || job || meta.status !== 'ready' || meta.type !== 'reading' ? undefined : agent => void generateSecondTab(meta.id, agent)}
+          startAt={startAt}
+          onGenerate={readOnly || job || meta.status !== 'ready' || meta.type !== 'reading' ? undefined : agent => void generateFromNote(meta.id, agent).then(id => id && navigate(paths.file(id)))}
+          onRedoTranscript={readOnly || job ? undefined : instruction => void redoTranscript(meta.id, instruction)}
           onRedo={readOnly || job || meta.status !== 'ready' || (meta.type !== 'meeting' && meta.type !== 'class') ? undefined : () => void generateSecondTab(meta.id, meta.type === 'meeting' ? 'meeting' : 'lesson')}
         />
+      ) : meta.parentFileId && SECOND_TAB[meta.type] && viewer ? (
+        <MinutesTab onMoment={seconds => navigate(`${paths.file(meta.parentFileId!)}?t=${seconds}`)}>{viewer}</MinutesTab>
       ) : (
         (viewer ?? (!job && meta.status === 'ready' && !opened && <div className="muted">Abrindo…</div>))
       )}
