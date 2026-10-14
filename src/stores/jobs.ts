@@ -522,6 +522,10 @@ export const useJobsStore = create<JobsState>((set, get) => {
       if (!source) return null
       const { content, sidecar } = await library().openFile(fileId)
       const recording = sidecar.recording?.blocks.length ? sidecar.recording : undefined
+      if (recording) {
+        void get().generateSecondTab(fileId, agent)
+        return fileId
+      }
       const material = `${CONTENT_HEADER}${recording ? transcriptText(recording) : content}`
       if (!material.replace(CONTENT_HEADER, '').trim()) return null
       const meta = await library().createFile(

@@ -101,8 +101,11 @@ describe('a tela mascara as chaves', () => {
   })
 
   it('chaves da DeepInfra e do Gemini aparecem como senha', () => {
-    render(<SettingsDialog initial="transcription" />)
+    const { unmount } = render(<SettingsDialog initial="transcription" />)
     expect(screen.getByLabelText('Chave da API')).toHaveAttribute('type', 'password')
+    expect(document.body.textContent).not.toContain('di_abcdef')
+    unmount()
+    render(<SettingsDialog initial="links" />)
     expect(screen.getByLabelText('Chave do Gemini')).toHaveAttribute('type', 'password')
     expect(document.body.textContent).not.toContain('di_abcdef')
     expect(document.body.textContent).not.toContain('AIza-secret')

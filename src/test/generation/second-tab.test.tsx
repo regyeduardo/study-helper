@@ -121,16 +121,16 @@ describe('"O que gerar" chooses only the second tab', () => {
     expect(screen.queryByTestId('markdown')).not.toBeInTheDocument()
   })
 
-  it('asking for the Ata later, in the note, makes a new text note with the Ata, linked to the recording', async () => {
+  it('asking for the Ata later, in the note, makes the Ata tab appear', async () => {
     const id = await noteFrom('reading')
     open(id)
     fireEvent.click(await screen.findByRole('button', { name: 'Gerar a Ata' }))
-    await waitFor(() => expect(useLibraryStore.getState().files).toHaveLength(2))
-    const ata = useLibraryStore.getState().files.find(file => file.id !== id)!
-    await waitFor(() => expect(useLibraryStore.getState().files.find(file => file.id === ata.id)?.status).toBe('ready'))
-    expect(memory.contents.get(ata.id)).toContain('- Lançar em maio [▸ 00:04](#t=4)')
-    expect(useLibraryStore.getState().files.find(file => file.id === ata.id)).toMatchObject({ type: 'meeting', parentFileId: id })
-    expect(useLibraryStore.getState().files.find(file => file.id === id)?.type).toBe('reading')
+    await waitFor(() => expect(tabs()).toEqual(['Transcrição', 'Ata*']))
+    await waitFor(() => expect(useLibraryStore.getState().files.find(file => file.id === id)?.status).toBe('ready'))
+    expect(screen.getByTestId('markdown')).toHaveTextContent('### Data - Lançar em maio')
+    expect(memory.contents.get(id)).toContain('- Lançar em maio [▸ 00:04](#t=4)')
+    expect(useLibraryStore.getState().files).toHaveLength(1)
+    expect(useLibraryStore.getState().files.find(file => file.id === id)?.type).toBe('meeting')
     expect(memory.sidecars.get(id)!.recording?.blocks).toHaveLength(3)
   })
 

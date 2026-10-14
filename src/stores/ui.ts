@@ -29,7 +29,7 @@ export type Overlay =
   | { kind: 'share'; target: ShareKind; id: string }
   | { kind: 'shared-exam'; title: string; questions: StoredQuestion[]; onRecord: (fields: Omit<Attempt, 'id' | 'createdAt' | 'deviceId'>) => void }
 
-export type SettingsTab = 'appearance' | 'ai' | 'transcription' | 'storage' | 'devices' | 'general' | 'others'
+export type SettingsTab = 'appearance' | 'ai' | 'transcription' | 'links' | 'storage' | 'devices' | 'general' | 'others'
 
 export type SortKey = 'recent' | 'title' | 'mastery'
 export type GroupKey = 'none' | 'type' | 'folder'

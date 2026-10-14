@@ -270,30 +270,115 @@ const ENGINE_OF: Record<Exclude<SpeakersEngine, ''>, string> = { deepinfra: 'da 
 
 const VISION_PROVIDERS: AiProviderId[] = ['openai', 'anthropic', 'gemini', 'xai', 'custom']
 
-function VisionModel() {
+function VisionTab() {
   const settings = useLibraryStore(state => state.index.settings)
   const updateSettings = useLibraryStore(state => state.updateSettings)
+  const [test, setTest] = useState<{ state: 'idle' | 'busy' | 'ok' | 'fail'; message?: string }>({ state: 'idle' })
   const vision = settings.vision ?? { provider: '', model: '' }
-  const set = (patch: Partial<typeof vision>) => void updateSettings({ vision: { ...vision, ...patch } })
-  const keyless = vision.provider && providerOf(vision.provider).needsKey && !settings.aiCredentials[vision.provider]?.apiKey && settings.ai.provider !== vision.provider
+  const chosen = vision.provider || null
+  const known = (id: AiProviderId) => settings.aiCredentials[id] ?? (settings.ai.provider === id ? { apiKey: settings.ai.apiKey, model: settings.ai.model, baseUrl: settings.ai.baseUrl } : undefined)
+  const credential = chosen ? known(chosen) : undefined
+  const provider = chosen ? providerOf(chosen) : null
+  const setVision = (patch: Partial<typeof vision>) => void updateSettings({ vision: { ...vision, ...patch } })
+  const setCredential = (patch: { apiKey?: string; baseUrl?: string }) => {
+    if (!chosen) return
+    void updateSettings({ aiCredentials: { ...settings.aiCredentials, [chosen]: { apiKey: '', model: '', baseUrl: '', ...credential, ...patch } } })
+    setTest({ state: 'idle' })
+  }
+  const runTest = async () => {
+    if (!chosen) return
+    setTest({ state: 'busy' })
+    try {
+      const found = await listModelsController({ provider: chosen, baseUrl: credential?.baseUrl ?? '', apiKey: credential?.apiKey ?? '', model: vision.model })
+      setTest({ state: 'ok', message: `Conectado · ${found.length} ${found.length === 1 ? 'modelo disponível' : 'modelos disponíveis'}` })
+    } catch (error) {
+      setTest({ state: 'fail', message: error instanceof Error ? error.message : 'Não respondeu.' })
+    }
+  }
   return (
-    <div className="field">
-      <span className="lab">Modelo de visão</span>
-      <div className="row2">
-        <select className="input" aria-label="Provedor do modelo de visão" value={vision.provider} onChange={event => set({ provider: event.target.value as AiProviderId | '' })}>
-          <option value="">Nenhum (não olha a tela gravada)</option>
+    <>
+      <div className="field">
+        <span className="lab">Provedor da visão</span>
+        <div className="prov">
+          <button aria-pressed={!chosen} onClick={() => setVision({ provider: '', model: '' })}>
+            <b>Nenhum</b>
+            <small>não olha a tela gravada</small>
+          </button>
           {VISION_PROVIDERS.map(id => (
-            <option key={id} value={id}>
-              {providerOf(id).name}
-            </option>
+            <button key={id} aria-pressed={chosen === id} onClick={() => (setVision({ provider: id, model: chosen === id ? vision.model : (providerOf(id).models?.[0] ?? '') }), setTest({ state: 'idle' }))}>
+              <b>{providerOf(id).name}</b>
+              <small className={providerOf(id).free ? 'free' : ''}>{providerOf(id).tag}</small>
+            </button>
           ))}
-        </select>
-        <input className="input" aria-label="Modelo de visão" autoComplete="off" disabled={!vision.provider} value={vision.model} onChange={event => set({ model: event.target.value })} placeholder="ex.: gpt-4.1-mini" />
+        </div>
       </div>
-      <span className={keyless ? 'lim-line' : 'muted'} style={{ fontSize: 12.5 }}>
-        {keyless ? 'Este provedor ainda não tem chave: cadastre a chave dele acima.' : 'Lê nomes e slides da tela gravada. Usa a chave do provedor cadastrada acima.'}
-      </span>
-    </div>
+      {chosen && provider && (
+        <>
+          {chosen === 'custom' && (
+            <div className="field">
+              <label htmlFor="vision-url">URL base da visão</label>
+              <input className="input" id="vision-url" placeholder="https://minha-ia.exemplo.com/v1" value={credential?.baseUrl ?? ''} onChange={event => setCredential({ baseUrl: event.target.value })} />
+            </div>
+          )}
+          <div className="field">
+            <label htmlFor="vision-key">Chave do {provider.name}</label>
+            <input className="input" id="vision-key" type="password" autoComplete="off" placeholder={`Cole a chave de ${provider.name}`} value={credential?.apiKey ?? ''} onChange={event => setCredential({ apiKey: event.target.value })} />
+            <span className="faint" style={{ fontSize: 12 }}>
+              {settings.ai.provider === chosen ? 'É a mesma chave da aba Geral: mudar aqui muda lá também.' : 'Fica salva só para este provedor; não mexe na IA de texto.'}
+              {provider.keyHelpUrl && (
+                <>
+                  {' '}
+                  Pegue a chave em{' '}
+                  <a href={provider.keyHelpUrl} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--acc1)' }}>
+                    {new URL(provider.keyHelpUrl).host}
+                  </a>
+                  .
+                </>
+              )}
+            </span>
+          </div>
+          <div className="field">
+            <label htmlFor="vision-model">Modelo de visão</label>
+            <input className="input" id="vision-model" autoComplete="off" value={vision.model} onChange={event => setVision({ model: event.target.value })} placeholder="um modelo que lê imagem, ex.: gemini-3.5-flash-lite" />
+          </div>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            <button className="btn" onClick={() => void runTest()} disabled={test.state === 'busy'}>
+              <Icon name="check" />
+              Testar a visão
+            </button>
+            <span style={{ fontSize: 13, color: test.state === 'ok' ? 'var(--ok)' : test.state === 'fail' ? 'var(--bad)' : 'var(--fg-muted)' }} role="status">
+              {test.state === 'busy' ? 'Testando…' : (test.message ?? 'Lê nomes e slides da tela gravada.')}
+            </span>
+          </div>
+        </>
+      )}
+    </>
+  )
+}
+
+type AiSection = 'general' | 'transcription' | 'vision'
+
+const AI_SECTIONS: [AiSection, string][] = [
+  ['general', 'Geral'],
+  ['transcription', 'Transcrição'],
+  ['vision', 'Visão'],
+]
+
+function AiArea({ initial }: { initial: AiSection }) {
+  const [section, setSection] = useState<AiSection>(initial)
+  return (
+    <>
+      <div className="ai-tabs" role="tablist" aria-label="Partes da inteligência artificial">
+        {AI_SECTIONS.map(([id, label]) => (
+          <button key={id} role="tab" aria-selected={section === id} className="chip" aria-pressed={section === id} onClick={() => setSection(id)}>
+            {label}
+          </button>
+        ))}
+      </div>
+      {section === 'general' && <AiTab />}
+      {section === 'transcription' && <TranscriptionTab />}
+      {section === 'vision' && <VisionTab />}
+    </>
   )
 }
 
@@ -406,6 +491,15 @@ function TranscriptionTab() {
           ))}
         </select>
       </div>
+    </>
+  )
+}
+
+function LinksTab() {
+  const settings = useLibraryStore(state => state.index.settings)
+  const updateSettings = useLibraryStore(state => state.updateSettings)
+  return (
+    <>
       <div className="field">
         <span className="lab">Link do YouTube</span>
         <div className="opts" role="radiogroup">
@@ -669,7 +763,7 @@ function OthersTab() {
 const TABS: [SettingsTab, string][] = [
   ['appearance', 'Aparência'],
   ['ai', 'Inteligência artificial'],
-  ['transcription', 'Transcrição e links'],
+  ['links', 'Links'],
   ['storage', 'Armazenamento'],
   ['devices', 'Dispositivos'],
   ['general', 'Geral'],
@@ -697,20 +791,15 @@ export function SettingsDialog({ initial = 'appearance' }: { initial?: SettingsT
         <div className="set-grid">
           <nav className="set-nav">
             {TABS.map(([id, label]) => (
-              <button key={id} aria-pressed={tab === id} onClick={() => setTab(id)}>
+              <button key={id} aria-pressed={tab === id || (id === 'ai' && tab === 'transcription')} onClick={() => setTab(id)}>
                 {label}
               </button>
             ))}
           </nav>
           <div className="set-body">
             {tab === 'appearance' && <AppearanceTab />}
-            {tab === 'ai' && (
-            <>
-              <AiTab />
-              <VisionModel />
-            </>
-          )}
-            {tab === 'transcription' && <TranscriptionTab />}
+            {(tab === 'ai' || tab === 'transcription') && <AiArea key={tab} initial={tab === 'transcription' ? 'transcription' : 'general'} />}
+            {tab === 'links' && <LinksTab />}
             {tab === 'storage' && <StorageTab />}
             {tab === 'devices' && <DevicesTab />}
             {tab === 'general' && <GeneralTab />}

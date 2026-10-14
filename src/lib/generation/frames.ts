@@ -32,9 +32,10 @@ export function visionSettingsOf(settings: Settings): AiSettings | null {
   const vision = settings.vision
   if (!vision?.provider || !vision.model) return null
   const credential = settings.aiCredentials[vision.provider]
-  const apiKey = credential?.apiKey ?? (settings.ai.provider === vision.provider ? settings.ai.apiKey : '')
+  const same = settings.ai.provider === vision.provider
+  const apiKey = credential?.apiKey || (same ? settings.ai.apiKey : '')
   if (providerOf(vision.provider).needsKey && !apiKey) return null
-  return { provider: vision.provider, model: vision.model, apiKey, baseUrl: credential?.baseUrl ?? '' }
+  return { provider: vision.provider, model: vision.model, apiKey, baseUrl: credential?.baseUrl || (same ? settings.ai.baseUrl : '') }
 }
 
 function seconds(clock: string): number | null {

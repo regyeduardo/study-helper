@@ -112,17 +112,23 @@ describe('the ellipsis menu of a note', () => {
     expect(items(menu)).toEqual(expect.arrayContaining(['Atatranscrever antes [off]', 'Aulatranscrever antes [off]', 'Provatranscrever antes [off]', 'Sugerir etiquetas [off]']))
   })
 
-  it('Ata makes a new text note, model Ata, linked to the recording, that opens; the recording stays the same', async () => {
+  it('Ata of a transcribed recording becomes its own Ata tab, each point linked to the moment of the media', async () => {
     const id = await note('Monitoria', true)
     const menu = openMenu(id)
     fireEvent.click(within(menu).getByRole('button', { name: 'Ata' }))
-    await waitFor(() => expect(useLibraryStore.getState().files).toHaveLength(2))
-    const ata = useLibraryStore.getState().files.find(file => file.id !== id)!
-    expect(ata).toMatchObject({ type: 'meeting', parentFileId: id, description: 'gerado de Monitoria' })
-    await waitFor(() => expect(screen.getByTestId('where')).toHaveTextContent(`/arquivo/${ata.id}`))
-    await waitFor(() => expect(useLibraryStore.getState().files.find(file => file.id === ata.id)?.status).toBe('ready'))
-    expect(memory.contents.get(ata.id)).toContain('Lançar em maio [▸ 00:04](#t=4)')
-    expect(useLibraryStore.getState().files.find(file => file.id === id)).toMatchObject({ type: 'reading', name: 'Monitoria' })
+    await waitFor(() => expect(useLibraryStore.getState().files.find(file => file.id === id)?.type).toBe('meeting'))
+    await waitFor(() => expect(useLibraryStore.getState().files.find(file => file.id === id)?.status).toBe('ready'))
+    expect(useLibraryStore.getState().files).toHaveLength(1)
+    expect(memory.contents.get(id)).toContain('Lançar em maio [▸ 00:04](#t=4)')
     expect(memory.sidecars.get(id)?.recording?.blocks).toHaveLength(2)
+    await waitFor(() => expect(screen.getByTestId('where')).toHaveTextContent(`/arquivo/${id}`))
+  })
+
+  it('a note with text only still makes a new note with the Ata', async () => {
+    const meta = await useLibraryStore.getState().createFile({ name: 'Pauta', type: 'reading', status: 'ready', folderId: null }, 'Vamos lançar em maio, eu mando a proposta.')
+    const menu = openMenu(meta.id)
+    fireEvent.click(within(menu).getByRole('button', { name: 'Ata' }))
+    await waitFor(() => expect(useLibraryStore.getState().files).toHaveLength(2))
+    expect(useLibraryStore.getState().files.find(file => file.id !== meta.id)).toMatchObject({ type: 'meeting', parentFileId: meta.id })
   })
 })

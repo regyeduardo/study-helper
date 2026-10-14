@@ -83,7 +83,7 @@ describe('SettingsDialog restore from a study-helper.json', () => {
 
 describe('SettingsDialog links limits', () => {
   it('shows the Jina, youtube-transcript.ai and Gemini limits', () => {
-    render(<SettingsDialog initial="transcription" />)
+    render(<SettingsDialog initial="links" />)
     expect(screen.getByText('Link de site é lido pelo Jina Reader (grátis, 20 pedidos por minuto).')).toBeInTheDocument()
     expect(screen.getByText('youtube-transcript.ai')).toBeInTheDocument()
     expect(screen.getByText('Uso justo, sem garantia: pode ficar lento ou fora do ar.')).toBeInTheDocument()
