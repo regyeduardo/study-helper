@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 
+import { FEED_RING_SOURCE } from '@/lib/recording/feed'
 import type { Meters } from '@/lib/recording/miniplayer'
 
 export const INTEGRATION_URL = 'ws://127.0.0.1:47811'
@@ -159,35 +160,24 @@ export const useIntegrationStore = create<IntegrationState>((set, get) => ({
   },
 }))
 
+const FEED_SIZE = INTEGRATION_SAMPLE_RATE * 2
+const FEED_RESERVE = INTEGRATION_SAMPLE_RATE / 4
+
 const FEED_PROCESSOR = `
+${FEED_RING_SOURCE}
 class StudyHelperFeed extends AudioWorkletProcessor {
   constructor() {
     super()
-    this.size = ${INTEGRATION_SAMPLE_RATE * 2}
-    this.rings = [new Float32Array(this.size), new Float32Array(this.size)]
-    this.write = [0, 0]
-    this.read = [0, 0]
+    this.rings = [new FeedRing(${FEED_SIZE}, ${FEED_RESERVE}), new FeedRing(${FEED_SIZE}, ${FEED_RESERVE})]
     this.port.onmessage = event => {
-      const { channel, samples } = event.data
-      const ring = this.rings[channel]
-      if (!ring) return
-      for (let i = 0; i < samples.length; i++) {
-        ring[this.write[channel] % this.size] = samples[i]
-        this.write[channel]++
-      }
-      if (this.write[channel] - this.read[channel] > this.size) this.read[channel] = this.write[channel] - this.size
+      const ring = this.rings[event.data.channel]
+      if (ring) ring.push(event.data.samples)
     }
   }
   process(inputs, outputs) {
     for (let channel = 0; channel < 2; channel++) {
       const out = outputs[channel] && outputs[channel][0]
-      if (!out) continue
-      for (let i = 0; i < out.length; i++) {
-        if (this.read[channel] < this.write[channel]) {
-          out[i] = this.rings[channel][this.read[channel] % this.size]
-          this.read[channel]++
-        } else out[i] = 0
-      }
+      if (out) this.rings[channel].pull(out)
     }
     return true
   }

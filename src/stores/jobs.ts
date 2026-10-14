@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 
-import type { CourseAnalysis, FileMeta, FileType, GenerationMeta, RecordingData, RecordingMark, SourceMeta, SourceStorage, StoredQuestion } from '@/types/domain'
+import type { CourseAnalysis, FileMeta, FileType, GenerationMeta, RecordingData, RecordingMark, SourceMeta, SourceStorage, StageTime, StoredQuestion } from '@/types/domain'
 import { Cancelled } from '@/controllers/ai.controller'
 import type { LitterboxTime } from '@/controllers/hosting.controller'
 import { storedFromRaw } from '@/lib/exam'
@@ -19,6 +19,7 @@ import { newId } from '@/lib/ids'
 import { storeSource } from '@/lib/storage/source-storage'
 import { keepLocalMedia } from '@/lib/recording/media-library'
 import { transcribe } from '@/lib/transcription'
+import { StageClock } from '@/lib/transcription/types'
 import { transcriptText } from '@/lib/transcription/export'
 import { useLibraryStore } from '@/stores/library'
 
@@ -98,14 +99,16 @@ const FILE_TYPE: Record<Agent, FileType> = { lesson: 'class', explanation: 'expl
 const AGENT_LABEL: Record<Agent, string> = { lesson: 'Aula', explanation: 'Explicação', meeting: 'Ata', reading: 'Leitura' }
 
 const CONTENT_HEADER = '# Conteúdo\n\n'
+const polishSessions = new WeakMap<object, GenerationSession>()
 
 function library() {
   return useLibraryStore.getState()
 }
 
-function generationMeta(session: GenerationSession, resolved: ResolvedInput | null): GenerationMeta {
+function generationMeta(session: GenerationSession, resolved: ResolvedInput | null, stages: StageTime[] = []): GenerationMeta {
   const usage = session.usage()
   return {
+    ...(stages.length ? { stages } : {}),
     provider: usage.provider,
     model: usage.model,
     startedAt: usage.startedAt,
@@ -191,9 +194,11 @@ export const useJobsStore = create<JobsState>((set, get) => {
     const session = new GenerationSession(library().index.settings.ai, controller.signal)
     try {
       const recording = resolved?.transcription?.recording ?? (await library().openFile(meta.id).catch(() => null))?.sidecar.recording
-      const { markdown, name } = await writeDocument(meta.id, agent, content, session, job.id, systemPrompt, recording)
+      const clock = new StageClock()
+      clock.add(resolved?.transcription?.stages)
+      const { markdown, name } = await clock.run('Escrever', () => writeDocument(meta.id, agent, content, session, job.id, systemPrompt, recording))
       patchJob(job.id, { message: 'Salvando' })
-      await library().saveContent(meta.id, markdown, { status: 'ready', pendingExcerpt: null, generation: generationMeta(session, resolved), ...(name ? { name } : {}) })
+      await library().saveContent(meta.id, markdown, { status: 'ready', pendingExcerpt: null, generation: generationMeta(session, resolved, clock.stages), ...(name ? { name } : {}) })
       closeJob(job.id, 'done', 'Pronta e salva na Biblioteca.')
       await library().finishActivity(activityId, 'done', 'Pronta e salva na Biblioteca.')
     } catch (error) {
@@ -228,7 +233,10 @@ export const useJobsStore = create<JobsState>((set, get) => {
     if (request.input.kind === 'file' && resolved.transcription) await keepLocalMedia(request.input.file, meta.id, resolved.transcription.durationSeconds).catch(() => undefined)
     if (request.input.kind === 'file' || request.input.kind === 'recording') {
       try {
-        const stored = await storeSource(request.input.file, request.storage, meta.id, library().repo!, request.litterboxTime)
+        const keeping = new StageClock()
+        const file = request.input.file
+        const stored = await keeping.run('Guardar a mídia', () => storeSource(file, request.storage, meta.id, library().repo!, request.litterboxTime))
+        resolved.transcription?.stages?.push(...keeping.stages)
         await library().updateFile(meta.id, { origin: { ...resolved.origin, ...stored } as SourceMeta })
       } catch (error) {
         await library().updateFile(meta.id, { status: 'pending', origin: { ...resolved.origin, storage: 'none' } })
@@ -255,14 +263,19 @@ export const useJobsStore = create<JobsState>((set, get) => {
     if (!resolved.transcription || !heard) return resolved
     const session = new GenerationSession(library().index.settings.ai, signal)
     progress('Descobrindo o nome de quem fala')
-    const named = await suggestSpeakerNames(heard, session)
+    const clock = new StageClock()
+    clock.add(resolved.transcription.stages)
+    const named = await clock.run('Descobrir o nome de quem fala', () => suggestSpeakerNames(heard, session))
     const video = source?.type.startsWith('video/') ? source : null
     if (video) progress('Olhando a tela gravada')
-    const seen = await lookAtScreen(named, video, visionSettingsOf(library().index.settings), session)
+    const look = () => lookAtScreen(named, video, visionSettingsOf(library().index.settings), session)
+    const seen = await (video ? clock.run('Olhar a tela gravada', look) : look())
     progress('Revisando a transcrição')
-    const recording = { ...(await reviewTranscript(seen, session)), marks }
+    const recording = { ...(await clock.run('Revisar a transcrição', () => reviewTranscript(seen, session))), marks }
     const text = transcriptText(recording).trim()
-    return { ...resolved, content: `${CONTENT_HEADER}${text}`, transcription: { ...resolved.transcription, text, recording } }
+    const transcription = { ...resolved.transcription, text, recording, stages: clock.stages }
+    polishSessions.set(transcription, session)
+    return { ...resolved, content: `${CONTENT_HEADER}${text}`, transcription }
   }
 
   return {
@@ -311,7 +324,11 @@ export const useJobsStore = create<JobsState>((set, get) => {
         return null
       }
       closeJob(job.id, 'done', 'Material lido.')
-      if (agent === 'reading') return meta.id
+      if (agent === 'reading') {
+        const polishing = resolved.transcription && polishSessions.get(resolved.transcription)
+        if (polishing) await library().updateFile(meta.id, { generation: generationMeta(polishing, resolved, resolved.transcription?.stages) })
+        return meta.id
+      }
       void runOnFile(meta, agent, resolved.content, resolved, AGENT_LABEL[agent], resolved.origin.url ?? resolved.origin.name)
       return meta.id
     },

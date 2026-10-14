@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { Fragment, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 
 import type { FileMeta, Highlight } from '@/types/domain'
@@ -378,6 +378,19 @@ export function InfoPanel({ fileId }: { fileId: string }) {
           </dl>
         </div>
       )}
+      {generation?.stages?.length ? (
+        <div className="sec">
+          <h4>Tempos</h4>
+          <dl className="kv" aria-label="Tempo de cada etapa">
+            {generation.stages.map((item, index) => (
+              <Fragment key={index}>
+                <dt>{item.stage}</dt>
+                <dd>{(item.ms / 1000).toLocaleString('pt-BR', { maximumFractionDigits: 1 })} s</dd>
+              </Fragment>
+            ))}
+          </dl>
+        </div>
+      ) : null}
       <div className="sec">
         <h4>Nota</h4>
         <dl className="kv">

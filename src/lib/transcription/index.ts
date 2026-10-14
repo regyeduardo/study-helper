@@ -1,4 +1,4 @@
-import type { ProviderEngine, RecordingData, SpeakersEngine, TranscriptionCredential, TranscriptionEngine, TranscriptionSettings } from '@/types/domain'
+import type { ProviderEngine, RecordingData, SpeakersEngine, StageTime,TranscriptionCredential, TranscriptionEngine, TranscriptionSettings } from '@/types/domain'
 import { decodeChannels16k, durationOf, encodeWav, mixedDown, splitSamples } from '@/lib/transcription/audio'
 import { transcriptText } from '@/lib/transcription/export'
 import { transcribeWithCustom } from '@/lib/transcription/providers/custom'
@@ -6,7 +6,7 @@ import { deepInfraTurns, transcribeWithDeepInfra } from '@/lib/transcription/pro
 import { transcribeWithGemini } from '@/lib/transcription/providers/gemini'
 import { transcribeWithOpenAi } from '@/lib/transcription/providers/openai'
 import { blocksFromWords, microphoneWords, speakersOf } from '@/lib/transcription/turns'
-import type { Progress, ProviderJob, ProviderResult, SpeakerTurn } from '@/lib/transcription/types'
+import { type Progress, type ProviderJob, type ProviderResult, type SpeakerTurn, StageClock } from '@/lib/transcription/types'
 
 const PROVIDER_PART_SECONDS = 300
 const CHOOSE_ENGINE = 'Escolha um provedor de transcrição em Configurações › Transcrição.'
@@ -32,6 +32,7 @@ export interface TranscriptionOutcome {
   durationSeconds: number
   speakers: number
   recording?: RecordingData
+  stages?: StageTime[]
 }
 
 export interface TranscribeOptions {
@@ -58,11 +59,15 @@ async function otherSpeakers(engine: Exclude<SpeakersEngine, ''>, job: ProviderJ
 }
 
 async function transcribeWithProvider(engine: ProviderEngine, audio: Blob, settings: TranscriptionSettings, progress: Progress, signal: AbortSignal | undefined, options: TranscribeOptions): Promise<TranscriptionOutcome> {
-  const channels = await decodeChannels16k(audio)
-  const samples = mixedDown(channels)
+  const clock = new StageClock()
+  const { channels, samples, parts } = await clock.run('Preparar o áudio', async () => {
+    const channels = await decodeChannels16k(audio)
+    const samples = mixedDown(channels)
+    return { channels, samples, parts: splitSamples(samples, PROVIDER_PART_SECONDS).map(part => encodeWav(part)) }
+  })
   const credentials = settings.credentials ?? {}
-  const job: ProviderJob = { audio, parts: splitSamples(samples, PROVIDER_PART_SECONDS).map(part => encodeWav(part)), partSeconds: PROVIDER_PART_SECONDS, language: settings.language, credential: credentials[engine] ?? EMPTY_CREDENTIAL, progress, signal }
-  const heard = await PROVIDERS[engine](job)
+  const job: ProviderJob = { audio, parts, partSeconds: PROVIDER_PART_SECONDS, language: settings.language, credential: credentials[engine] ?? EMPTY_CREDENTIAL, progress, signal }
+  const heard = await clock.run('Enviar e transcrever', () => PROVIDERS[engine](job))
   let turns = heard.turns
   let warning = ''
   const second = settings.speakersEngine
@@ -78,7 +83,7 @@ async function transcribeWithProvider(engine: ProviderEngine, audio: Blob, setti
   const blocks = blocksFromWords(heard.words, turns, options.microphoneOnLeft && channels.length === 2 ? microphoneWords({ microphone: channels[0], computer: channels[1] }) : undefined)
   const speakers = speakersOf(blocks)
   const recording: RecordingData = { blocks, speakers, marks: [], ...(warning ? { warning } : {}) }
-  return { text: transcriptText(recording).trim(), engine, language: settings.language, durationSeconds: durationOf(samples), speakers: speakers.length, recording }
+  return { text: transcriptText(recording).trim(), engine, language: settings.language, durationSeconds: durationOf(samples), speakers: speakers.length, recording, stages: clock.stages }
 }
 
 export async function transcribe(audio: Blob, settings: TranscriptionSettings, progress: Progress = () => {}, signal?: AbortSignal, options: TranscribeOptions = {}): Promise<TranscriptionOutcome> {

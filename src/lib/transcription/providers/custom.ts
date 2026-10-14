@@ -1,5 +1,5 @@
 import { postAudioController, type ServiceName, TranscriptionError } from '@/controllers/transcription.controller'
-import type { ProviderJob, ProviderResult, SpeakerTurn, Word } from '@/lib/transcription/types'
+import { type ProviderJob, type ProviderResult, sendParts, type SpeakerTurn, type Word } from '@/lib/transcription/types'
 
 const ENDPOINT = '/audio/transcriptions'
 const CUSTOM: ServiceName = { the: 'O provedor personalizado', of: 'do provedor personalizado' }
@@ -56,10 +56,7 @@ export async function transcribeWithCustom(job: ProviderJob): Promise<ProviderRe
   if (!job.credential.model.trim()) throw new TranscriptionError('Falta o modelo do provedor personalizado nas Configurações.')
   const extra = extraOptions(job.credential.extra)
   const replaced = new Set(extra.map(([key]) => key.replace(/\[\]$/, '')))
-  const words: Word[] = []
-  const turns: SpeakerTurn[] = []
-  for (const [index, part] of job.parts.entries()) {
-    job.progress('Transcrevendo pelo provedor personalizado', index / job.parts.length)
+  const heard = await sendParts(job, 'Transcrevendo pelo provedor personalizado', async (part, index) => {
     const form = new FormData()
     form.append('file', part, 'trecho.wav')
     form.append('model', job.credential.model.trim())
@@ -68,9 +65,8 @@ export async function transcribeWithCustom(job: ProviderJob): Promise<ProviderRe
     for (const [key, value] of extra) if (value !== '') form.append(key, value)
     const body = await postAudioController(endpointOf(job.credential.baseUrl), job.credential.apiKey, form, CUSTOM, job.signal)
     const offset = index * job.partSeconds
-    words.push(...timedWords(body, offset))
     const found = [body.speaker_segments, body.segments, body.words].map(list => turnsOf(list, offset)).find(list => list.length)
-    turns.push(...(found ?? []))
-  }
-  return { words, turns }
+    return { words: timedWords(body, offset), turns: found ?? [] }
+  })
+  return { words: heard.flatMap(part => part.words), turns: heard.flatMap(part => part.turns) }
 }

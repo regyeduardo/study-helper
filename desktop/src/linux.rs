@@ -162,6 +162,20 @@ fn binary_of(pid: u32) -> Option<String> {
     path.file_name().map(|name| name.to_string_lossy().into_owned())
 }
 
+fn catch_up(pulse: &mut Pulse) -> bool {
+    loop {
+        match pulse.mainloop.iterate(false) {
+            IterateResult::Success(0) => return true,
+            IterateResult::Success(_) => {}
+            IterateResult::Quit(_) | IterateResult::Err(_) => return false,
+        }
+    }
+}
+
+fn silence(bytes: usize) -> Vec<f32> {
+    vec![0.0; bytes / std::mem::size_of::<f32>()]
+}
+
 fn record(
     pulse: &Pulse,
     name: &str,
@@ -184,7 +198,7 @@ fn record(
         loop {
             let samples = match stream.peek() {
                 Ok(PeekResult::Data(bytes)) => decode_samples(bytes),
-                Ok(PeekResult::Hole(_)) => Vec::new(),
+                Ok(PeekResult::Hole(bytes)) => silence(bytes),
                 _ => break,
             };
             lanes.borrow_mut()[channel as usize].push(lane, &samples);
@@ -253,7 +267,7 @@ pub fn run(source: Source, microphone: Option<String>, frames: Sender<Vec<u8>>, 
     }
     let _ = ready.send(Ok(()));
     while !stop.load(Ordering::SeqCst) {
-        if matches!(pulse.mainloop.iterate(false), IterateResult::Quit(_) | IterateResult::Err(_)) {
+        if !catch_up(&mut pulse) {
             break;
         }
         let noted: Vec<(bool, u32)> = changes.borrow_mut().drain(..).collect();
@@ -408,6 +422,12 @@ pub fn list_sources() -> (Listing, Vec<WindowEntry>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_hole_in_the_stream_becomes_silence_of_the_same_length() {
+        assert_eq!(silence(4 * 960), vec![0.0f32; 960]);
+        assert!(silence(0).is_empty());
+    }
 
     #[test]
     fn the_process_tree_holds_the_process_and_its_children() {

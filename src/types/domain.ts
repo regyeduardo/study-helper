@@ -92,7 +92,13 @@ export interface SourceMeta {
   removedAt?: string | null
 }
 
+export interface StageTime {
+  stage: string
+  ms: number
+}
+
 export interface GenerationMeta {
+  stages?: StageTime[]
   provider: string
   model: string
   startedAt: string
