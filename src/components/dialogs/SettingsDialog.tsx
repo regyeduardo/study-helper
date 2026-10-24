@@ -657,10 +657,6 @@ function GeneralTab() {
           <option value="one">Uma questão por vez</option>
         </select>
       </div>
-      <div className="field">
-        <label htmlFor="gh">Token do GitHub (leitor de markdown)</label>
-        <input className="input" id="gh" type="password" autoComplete="off" value={settings.githubToken} onChange={event => void updateSettings({ githubToken: event.target.value })} placeholder="Opcional: sem token, o GitHub deixa 60 documentos por hora" />
-      </div>
       <SettingsImport />
     </>
   )

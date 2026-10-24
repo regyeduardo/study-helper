@@ -158,7 +158,7 @@ export function ItemMenu() {
         className="mi"
         onClick={act(async () => {
           const { content } = await library.openFile(file.id)
-          await printMarkdownAsPdf(content, file.name, library.index.settings.githubToken)
+          await printMarkdownAsPdf(content, file.name)
         })}
       >
         <Icon name="download" />

@@ -58,9 +58,9 @@ describe('pdf export', () => {
     renderMarkdown.mockResolvedValue(`<h2>Flow</h2>${MERMAID_BLOCK}<p>After diagram</p>`)
     mermaidRender.mockResolvedValue({ svg: '<svg id="rendered-diagram"><g><text>A</text></g></svg>' })
 
-    await printMarkdownAsPdf('## Flow\n\n```mermaid\ngraph TD\nA-->B\n```\n\nAfter diagram', 'Lesson <One>', 'gh-token')
+    await printMarkdownAsPdf('## Flow\n\n```mermaid\ngraph TD\nA-->B\n```\n\nAfter diagram', 'Lesson <One>')
 
-    expect(renderMarkdown).toHaveBeenCalledWith(expect.stringContaining('```mermaid'), 'gh-token')
+    expect(renderMarkdown).toHaveBeenCalledWith(expect.stringContaining('```mermaid'))
     expect(mermaidRender).toHaveBeenCalledTimes(1)
     expect(mermaidRender.mock.calls[0][1]).toBe('graph TD\nA-->B')
     expect(frames).toHaveLength(1)
@@ -78,7 +78,7 @@ describe('pdf export', () => {
     renderMarkdown.mockResolvedValue(`${MERMAID_BLOCK}${MERMAID_BLOCK}`)
     mermaidRender.mockRejectedValueOnce(new Error('bad syntax')).mockResolvedValueOnce({ svg: '<svg id="second"></svg>' })
 
-    await printMarkdownAsPdf('x', 'T', '')
+    await printMarkdownAsPdf('x', 'T')
 
     const doc = new DOMParser().parseFromString(frames[0].srcdoc, 'text/html')
     expect(doc.querySelectorAll('.highlight-source-mermaid')).toHaveLength(1)
@@ -87,7 +87,7 @@ describe('pdf export', () => {
 
   it('does not load mermaid when there is no diagram', async () => {
     renderMarkdown.mockResolvedValue('<p>Plain</p>')
-    await printMarkdownAsPdf('Plain', 'Plain title', '')
+    await printMarkdownAsPdf('Plain', 'Plain title')
     expect(mermaidInitialize).not.toHaveBeenCalled()
     expect(frames[0].srcdoc).toContain('<p>Plain</p>')
   })

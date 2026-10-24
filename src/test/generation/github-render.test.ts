@@ -105,24 +105,26 @@ describe('mountDiagrams', () => {
 })
 
 describe('renderMarkdownController', () => {
-  it('posts to the GitHub markdown API, post-processes and caches the result', async () => {
+  it('desenha o documento sem tocar na rede e guarda o resultado', async () => {
     const { renderMarkdownController } = await import('@/controllers/github.controller')
-    const { calls } = installFetch(() => new Response('<blockquote>\n<p>[!NOTE]\nolha</p>\n</blockquote><ul>\n<li>[ ] tarefa</li>\n</ul>'))
+    const { calls } = installFetch(() => new Response('nao deve ser chamado'))
     const markdown = `> [!NOTE]\n> olha\n\n- [ ] tarefa ${Math.random()}`
-    const html = await renderMarkdownController(markdown, 'ghp_x')
-    expect(calls[0].url).toBe('https://api.github.com/markdown')
-    expect(calls[0].method).toBe('POST')
-    expect(calls[0].headers.Authorization).toBe('Bearer ghp_x')
-    expect(calls[0].body).toEqual({ text: markdown, mode: 'markdown' })
+    const html = await renderMarkdownController(markdown)
+    expect(calls).toHaveLength(0)
     expect(html).toContain('markdown-alert-note')
     expect(html).toContain('task-list-item-checkbox')
-    expect(await renderMarkdownController(markdown, 'ghp_x')).toBe(html)
-    expect(calls).toHaveLength(1)
+    expect(await renderMarkdownController(markdown)).toBe(html)
+    expect(calls).toHaveLength(0)
   })
 
-  it('explains the anonymous rate limit', async () => {
+  it('entrega a mesma estrutura que a api do GitHub entregava', async () => {
     const { renderMarkdownController } = await import('@/controllers/github.controller')
-    installFetch(() => new Response('', { status: 403 }))
-    await expect(renderMarkdownController(`x ${Math.random()}`, '')).rejects.toThrow('O GitHub recusou por limite de uso (60 por hora sem token). Ponha um token do GitHub nas Configurações.')
+    const markdown = `# Titulo da aula\n\nParagrafo ${Math.random()} com [link](https://exemplo.com).\n\n\`\`\`python\ndef soma(a, b):\n    return a + b\n\`\`\`\n\n\`\`\`mermaid\nflowchart TD\n  A --> B\n\`\`\`\n`
+    const html = await renderMarkdownController(markdown)
+    expect(html).toContain('<div class="markdown-heading"><h1 class="heading-element">Titulo da aula</h1>')
+    expect(html).toContain('<a id="user-content-titulo-da-aula" class="anchor" aria-label="Permalink: Titulo da aula" href="#titulo-da-aula">')
+    expect(html).toContain('<a href="https://exemplo.com" rel="nofollow">link</a>')
+    expect(html).toContain('<div class="highlight highlight-source-python"><pre><span class="pl-k">def</span>')
+    expect(html).toContain('<div class="highlight highlight-source-mermaid">')
   })
 })

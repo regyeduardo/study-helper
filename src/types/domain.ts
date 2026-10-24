@@ -287,7 +287,6 @@ export interface Settings {
   transcription: TranscriptionSettings
   youtube: { reader: YoutubeReader; geminiApiKey: string }
   timezone: string
-  githubToken: string
   layout: LayoutId
   storageLimitBytes: number | null
   examOneAtATime: boolean

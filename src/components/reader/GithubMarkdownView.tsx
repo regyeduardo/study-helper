@@ -6,7 +6,6 @@ import { renderMarkdownController } from '@/controllers/github.controller'
 import { copyButtons, headingAnchors } from '@/lib/github/chrome'
 import { mountDiagrams } from '@/lib/github/diagrams'
 import { APP_PALETTE } from '@/lib/github/palette'
-import { useLibraryStore } from '@/stores/library'
 
 export interface PaintedQuote {
   quote: string
@@ -121,7 +120,6 @@ function markQuote(container: HTMLElement, quote: PaintedQuote): void {
 }
 
 export default function GithubMarkdownView({ markdown, live = false, quotes = [], onSelection, onQuoteClick, onHeadings, onHeading }: GithubMarkdownViewProps) {
-  const githubToken = useLibraryStore(state => state.index.settings.githubToken)
   const [html, setHtml] = useState('')
   const [error, setError] = useState('')
   const host = useRef<HTMLDivElement>(null)
@@ -135,7 +133,7 @@ export default function GithubMarkdownView({ markdown, live = false, quotes = []
       setHtml(marked.parse(markdown.replace(/<!-- diagram:\d+ -->/g, '_Desenhando o diagrama…_'), { async: false }) as string)
       return
     }
-    renderMarkdownController(markdown, githubToken)
+    renderMarkdownController(markdown)
       .then(rendered => current && setHtml(rendered))
       .catch(failure => {
         if (!current) return
@@ -145,7 +143,7 @@ export default function GithubMarkdownView({ markdown, live = false, quotes = []
     return () => {
       current = false
     }
-  }, [markdown, live, githubToken])
+  }, [markdown, live])
 
   useEffect(() => {
     const element = host.current

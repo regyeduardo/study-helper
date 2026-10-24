@@ -12,7 +12,6 @@ export function defaultSettings(): Settings {
     transcription: { engine: 'gemini', language: 'pt', credentials: {}, speakersEngine: '' },
     youtube: { reader: 'youtube-transcript', geminiApiKey: '' },
     timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/Sao_Paulo',
-    githubToken: '',
     layout: 'reader',
     storageLimitBytes: null,
     examOneAtATime: false,

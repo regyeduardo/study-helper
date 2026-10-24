@@ -57,8 +57,8 @@ export function paperDocument(html: string, title: string, today = new Date()): 
   return `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>${escapeHtml(title)}</title><style>${PAPER_STYLE}</style></head><body>${header}${html}</body></html>`
 }
 
-export async function printMarkdownAsPdf(markdown: string, title: string, githubToken: string): Promise<void> {
-  const html = await withDiagrams(await renderMarkdownController(markdown, githubToken))
+export async function printMarkdownAsPdf(markdown: string, title: string): Promise<void> {
+  const html = await withDiagrams(await renderMarkdownController(markdown))
   const frame = document.createElement('iframe')
   Object.assign(frame.style, { position: 'fixed', right: '0', bottom: '0', width: '0', height: '0', border: '0' })
   document.body.appendChild(frame)

@@ -20,7 +20,6 @@ const chosen: Partial<Settings> = {
   ai: { provider: 'openai', baseUrl: '', apiKey: 'sk-live-123456', model: 'gpt-x' },
   transcription: { engine: 'deepinfra', language: 'pt', credentials: { deepinfra: { apiKey: 'di_abcdef', baseUrl: '', model: '', extra: '' } }, speakersEngine: '' },
   timezone: 'America/Manaus',
-  githubToken: 'ghp_token987',
 }
 
 beforeEach(() => {
@@ -54,7 +53,6 @@ describe('configurações no study-helper.json da pasta', () => {
     const raw = drive.one('index').content!
     expect(raw).toContain('"apiKey": "sk-live-123456"')
     expect(raw).toContain('"apiKey": "di_abcdef"')
-    expect(raw).toContain('"githubToken": "ghp_token987"')
   })
 
   it('no perfil Local as configurações ficam no índice do IndexedDB', async () => {
@@ -82,7 +80,6 @@ describe('configurações no study-helper.json da pasta', () => {
     const settings = useLibraryStore.getState().index.settings
     expect(settings.timezone).toBe('Europe/Lisbon')
     expect(settings.ai).toEqual(defaultSettings().ai)
-    expect(settings.githubToken).toBe('')
   })
 })
 
@@ -111,11 +108,9 @@ describe('a tela mascara as chaves', () => {
     expect(document.body.textContent).not.toContain('AIza-secret')
   })
 
-  it('token do GitHub aparece como senha e o fuso vem do índice', () => {
+  it('o fuso vem do índice e não há mais campo de token do GitHub', () => {
     render(<SettingsDialog initial="general" />)
-    const input = screen.getByLabelText(/Token do GitHub/)
-    expect(input).toHaveAttribute('type', 'password')
-    expect(input).toHaveValue('ghp_token987')
     expect(screen.getByLabelText('Fuso horário')).toHaveValue('America/Manaus')
+    expect(screen.queryByLabelText(/Token do GitHub/)).toBeNull()
   })
 })
