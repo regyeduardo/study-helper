@@ -58,6 +58,7 @@ export interface NewContentRequest {
   storage: SourceStorage
   litterboxTime: LitterboxTime
   marks?: RecordingMark[]
+  ataParts?: AtaPart[]
 }
 
 export interface SaveRecordingRequest {
@@ -317,10 +318,12 @@ export const useJobsStore = create<JobsState>((set, get) => {
       await library().updateSidecar(meta.id, sidecar => ({ ...sidecar, transcript, ...(recording ? { recording } : {}) }))
       const name = request.name.trim() || resolved.title || meta.name
       const description = request.description.trim() || resolved.description
-      if (agent === 'reading') {
+      const ataParts = agent === 'meeting' ? chosenParts(request.ataParts ?? []) : []
+      if (agent === 'reading' || ataParts.length) {
         const polishing = polishSessions.get(resolved.transcription!)
-        await library().saveContent(meta.id, resolved.content.replace(/^# Conteúdo\n\n/, ''), { name, description, pendingExcerpt: null, ...(polishing ? { generation: generationMeta(polishing, resolved, resolved.transcription?.stages) } : {}) })
+        await library().saveContent(meta.id, resolved.content.replace(/^# Conteúdo\n\n/, ''), { name, description, pendingExcerpt: null, ...(ataParts.length ? { type: 'reading' as const, status: 'ready' as const } : {}), ...(polishing ? { generation: generationMeta(polishing, resolved, resolved.transcription?.stages) } : {}) })
         closeJob(job.id, 'done', 'Material lido.')
+        if (ataParts.length) await get().generateAta(meta.id, ataParts)
         return
       }
       await library().updateFile(meta.id, { name, description, pendingExcerpt: resolved.content })

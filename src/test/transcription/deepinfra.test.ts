@@ -100,12 +100,12 @@ describe('DeepInfra provider', () => {
     expect(words[6]).toEqual({ start: 602, end: 602.4, text: 'Quanto' })
   })
 
-  it('uses the model typed by the user and omits the language on auto', async () => {
+  it('uses the model typed by the user and sends Portuguese on auto, so Whisper never translates to English', async () => {
     const server = serve()
     await transcribeWithDeepInfra(job({ language: '', credential: { apiKey: 'di_ok', baseUrl: '', model: 'Qwen/Qwen3-ASR', extra: '' } }))
     const body = server.to(WHISPER_URL)[0][1].body
     expect(body.get('model')).toBe('Qwen/Qwen3-ASR')
-    expect(body.has('language')).toBe(false)
+    expect(body.get('language')).toBe('pt')
   })
 
   it('an answer with only segments still gives timed text', async () => {

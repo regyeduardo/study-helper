@@ -98,9 +98,8 @@ export function ItemMenu() {
     ['Cartões', 'note', act(() => ui.open({ kind: 'cards', fileId: file.id }))],
     ['Tutor', 'bulb', act(() => ui.open({ kind: 'tutor', fileId: file.id }))],
     ['Prova', 'exam', act(() => ui.open({ kind: 'exam', fileId: file.id }))],
-    ['Ata', 'file', generate('meeting')],
+    ['Ata', 'file', mediaOf(file) === 'text' ? generate('meeting') : act(() => ui.open({ kind: 'ata-parts', fileId: file.id }))],
     ['Aula', 'book', generate('lesson')],
-    ...(mediaOf(file) === 'text' ? [] : ([['Ata (escolher partes)', 'file', act(() => ui.open({ kind: 'ata-parts', fileId: file.id }))]] as typeof tools)),
   ]
   return (
     <Popover x={menu.x} y={menu.y} onClose={close} label={`Opções de ${file.name}`}>

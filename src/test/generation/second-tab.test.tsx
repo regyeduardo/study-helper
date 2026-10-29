@@ -11,6 +11,7 @@ import { listLocalMedia } from '@/lib/recording/media-library'
 import type { Repository } from '@/lib/storage/repository'
 import { useJobsStore, type NewContentRequest } from '@/stores/jobs'
 import { useLibraryStore } from '@/stores/library'
+import { useUiStore } from '@/stores/ui'
 import { type CapturedRequest, installFetch, openAiStream, systemPromptOf } from '@/test/ai/fake-provider'
 import type { FileSidecar, RecordingData } from '@/types/domain'
 
@@ -121,17 +122,12 @@ describe('"O que gerar" chooses only the second tab', () => {
     expect(screen.queryByTestId('markdown')).not.toBeInTheDocument()
   })
 
-  it('asking for the Ata later, in the note, makes the Ata tab appear', async () => {
+  it('asking for the Ata later, in the note, opens the checkboxes of the parts first', async () => {
     const id = await noteFrom('reading')
     open(id)
     fireEvent.click(await screen.findByRole('button', { name: 'Gerar a Ata' }))
-    await waitFor(() => expect(tabs()).toEqual(['Transcrição', 'Ata*']))
-    await waitFor(() => expect(useLibraryStore.getState().files.find(file => file.id === id)?.status).toBe('ready'))
-    expect(screen.getByTestId('markdown')).toHaveTextContent('### Data - Lançar em maio')
-    expect(memory.contents.get(id)).toContain('- Lançar em maio [▸ 00:04](#t=4)')
-    expect(useLibraryStore.getState().files).toHaveLength(1)
-    expect(useLibraryStore.getState().files.find(file => file.id === id)?.type).toBe('meeting')
-    expect(memory.sidecars.get(id)!.recording?.blocks).toHaveLength(3)
+    expect(useUiStore.getState().overlay).toEqual({ kind: 'ata-parts', fileId: id })
+    expect(useJobsStore.getState().jobs.filter(job => job.status === 'running')).toHaveLength(0)
   })
 
   it('"Ata de reunião" gives the two tabs at once, the Ata pointing to the speech', async () => {
@@ -140,6 +136,15 @@ describe('"O que gerar" chooses only the second tab', () => {
     open(id)
     await waitFor(() => expect(tabs()).toEqual(['Transcrição', 'Ata*']))
     expect(screen.queryByRole('button', { name: 'Gerar a Ata' })).not.toBeInTheDocument()
+  })
+
+  it('"Ata de reunião" with the parts chosen keeps the transcription and starts the Ata with those parts', async () => {
+    const generateAta = vi.fn(async () => undefined)
+    useJobsStore.setState({ generateAta })
+    const id = await useJobsStore.getState().startNewContent({ ...recordingRequest('meeting'), ataParts: ['resumo', 'tarefas'] })
+    await waitFor(() => expect(generateAta).toHaveBeenCalledWith(id, ['resumo', 'tarefas']))
+    expect(useLibraryStore.getState().files.find(file => file.id === id)).toMatchObject({ type: 'reading', status: 'ready' })
+    expect(memory.contents.get(id!)).toContain('Bruno [00:04]:')
   })
 
   it('renaming a speaker in the note is saved and reaches the Ata', async () => {
@@ -153,17 +158,14 @@ describe('"O que gerar" chooses only the second tab', () => {
     expect(memory.contents.get(id)).toContain('Você [00:09]: Valeu, Bruno.')
   })
 
-  it('"Refazer a Ata" writes the Ata again from the saved transcription, without transcribing again', async () => {
+  it('"Refazer a Ata" opens the checkboxes of the parts, without writing anything yet', async () => {
     const id = await noteFrom('meeting')
-    await useLibraryStore.getState().saveContent(id, '# Ata antiga\n\n## Encaminhamentos\n| O que fazer |')
-    const heardTimes = vi.mocked(transcribe).mock.calls.length
+    const before = memory.contents.get(id)
     open(id)
     await waitFor(() => expect(tabs()).toEqual(['Transcrição', 'Ata*']))
     fireEvent.click(screen.getByRole('button', { name: 'Refazer a Ata' }))
-    await waitFor(() => expect(memory.contents.get(id)).toContain('- Lançar em maio [▸ 00:04](#t=4)'))
-    await waitFor(() => expect(screen.getByTestId('markdown')).toHaveTextContent('### Data - Lançar em maio'))
-    expect(vi.mocked(transcribe).mock.calls.length).toBe(heardTimes)
-    expect(useLibraryStore.getState().files.find(file => file.id === id)?.type).toBe('meeting')
+    expect(useUiStore.getState().overlay).toEqual({ kind: 'ata-parts', fileId: id })
+    expect(memory.contents.get(id)).toBe(before)
   })
 })
 

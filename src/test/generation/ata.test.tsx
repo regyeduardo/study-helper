@@ -227,7 +227,7 @@ describe('generating the Ata from a note', () => {
     return meta.id
   }
 
-  it('Gerar › "Ata (escolher partes)" opens the checkboxes; Resumo comes checked; nothing checked disables Gerar; the Ata tab appears', async () => {
+  it('Gerar › "Ata" opens the checkboxes; Resumo comes checked; nothing checked disables Gerar; the Ata tab appears', async () => {
     const { calls } = installFetch(request => openAiStream(textAnswer(systemPromptOf(request), userContentOf(request))))
     const id = await note()
     useUiStore.getState().openMenu({ kind: 'file', id, x: 1, y: 1 })
@@ -236,7 +236,7 @@ describe('generating the Ata from a note', () => {
         <ItemMenu />
       </MemoryRouter>,
     )
-    fireEvent.click(screen.getByRole('button', { name: 'Ata (escolher partes)' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Ata' }))
     expect(useUiStore.getState().overlay).toEqual({ kind: 'ata-parts', fileId: id })
     menu.unmount()
     render(<AtaPartsDialog fileId={id} />)
@@ -273,7 +273,7 @@ describe('generating the Ata from a note', () => {
         <ItemMenu />
       </MemoryRouter>,
     )
-    const item = screen.getByRole('button', { name: /Ata \(escolher partes\)/ })
+    const item = screen.getByRole('button', { name: /^Ata/ })
     expect(item).toBeDisabled()
     expect(item).toHaveTextContent('transcrever antes')
   })
@@ -310,7 +310,7 @@ describe('the Ata tab', () => {
     const media = { url: 'blob:reuniao', available: true, video: false, request: async () => undefined }
     render(<MeetingTabs recording={meeting} media={media} ata={<ShadowAta markdown={'- [Ajustar](#t1)\n<a id="t1"></a> texto [▸ 01:05](#t=65)'} />} onChooseParts={() => undefined} />)
     expect(screen.getAllByRole('tab').map(tab => tab.textContent)).toEqual(['Transcrição', 'Ata'])
-    expect(screen.getByRole('button', { name: 'Refazer a Ata (escolher partes)' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Refazer a Ata' })).toBeInTheDocument()
     const root = screen.getByTestId('ata').shadowRoot!
     fireEvent.click(root.querySelector('a[href="#t=65"]')!)
     expect(document.querySelector('audio')!.currentTime).toBe(65)

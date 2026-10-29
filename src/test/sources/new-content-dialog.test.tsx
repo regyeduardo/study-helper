@@ -80,3 +80,18 @@ describe('NewContentDialog storage choice', () => {
     expect(checkedName(group)).toBe('Não guardar')
   })
 })
+
+describe('NewContentDialog Ata parts', () => {
+  it('a meeting video with "Ata de reunião" shows the parts with Resumo checked and sends the chosen ones', async () => {
+    await openWithFile(sizedFile('Reunião 28-10.mp4', 20))
+    await waitFor(() => expect(screen.getByRole('radio', { name: /Ata de reunião/ })).toHaveAttribute('aria-checked', 'true'))
+    const boxes = screen.getAllByRole('checkbox')
+    expect(boxes.map(box => `${box.parentElement?.textContent}${(box as HTMLInputElement).checked ? '*' : ''}`)).toEqual(['Resumo*', 'Levantamento de tarefas', 'Perguntas em aberto', 'Linha do tempo', '1:1'])
+    fireEvent.click(screen.getByLabelText('Resumo'))
+    expect(screen.getByRole('button', { name: 'Gerar ata' })).toBeDisabled()
+    fireEvent.click(screen.getByLabelText('Levantamento de tarefas'))
+    fireEvent.click(screen.getByRole('button', { name: 'Gerar ata' }))
+    await waitFor(() => expect(startNewContent).toHaveBeenCalled())
+    expect(startNewContent.mock.calls[0][0]).toMatchObject({ agent: 'meeting', ataParts: ['tarefas'] })
+  })
+})

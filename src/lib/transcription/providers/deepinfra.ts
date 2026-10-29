@@ -20,7 +20,7 @@ async function words(job: ProviderJob): Promise<Word[]> {
     form.append('model', job.credential.model || DEEPINFRA_MODEL)
     form.append('response_format', 'verbose_json')
     form.append('timestamp_granularities[]', 'word')
-    if (job.language) form.append('language', job.language)
+    form.append('language', job.language || 'pt')
     return timedWords(await postAudioController(TRANSCRIPTION_URL, keyOf(job), withTerms(form, job), DEEPINFRA, job.signal), partStart(job, index))
   })
   return heard.flat()

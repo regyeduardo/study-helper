@@ -92,7 +92,7 @@ export function MeetingTabs({ recording, media, name, second, ata, onChooseParts
             {secondLabel}
           </button>
         )}
-        {second && onRedo && (
+        {second && onRedo && !(onChooseParts && second.label === 'Ata') && (
           <span className="meeting-make">
             <button className="btn" onClick={onRedo}>
               <Icon name="sync" />
@@ -102,10 +102,6 @@ export function MeetingTabs({ recording, media, name, second, ata, onChooseParts
         )}
         {!second && onGenerate && (
           <span className="meeting-make">
-            <button className="btn" onClick={() => onGenerate('meeting')}>
-              <Icon name="plus" />
-              Gerar a Ata
-            </button>
             <button className="btn" onClick={() => onGenerate('lesson')}>
               <Icon name="plus" />
               Gerar a Aula
@@ -116,7 +112,7 @@ export function MeetingTabs({ recording, media, name, second, ata, onChooseParts
           <span className="meeting-make">
             <button className="btn" onClick={onChooseParts}>
               <Icon name="plus" />
-              {ata ? 'Refazer a Ata (escolher partes)' : 'Ata (escolher partes)'}
+              {ata || second?.label === 'Ata' ? 'Refazer a Ata' : 'Gerar a Ata'}
             </button>
           </span>
         )}

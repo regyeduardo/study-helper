@@ -112,16 +112,13 @@ describe('the ellipsis menu of a note', () => {
     expect(items(menu)).toEqual(expect.arrayContaining(['Atatranscrever antes [off]', 'Aulatranscrever antes [off]', 'Provatranscrever antes [off]', 'Sugerir etiquetas [off]']))
   })
 
-  it('Ata of a transcribed recording becomes its own Ata tab, each point linked to the moment of the media', async () => {
+  it('Ata of a recording opens the checkboxes of the parts first, generating nothing yet', async () => {
     const id = await note('Monitoria', true)
     const menu = openMenu(id)
     fireEvent.click(within(menu).getByRole('button', { name: 'Ata' }))
-    await waitFor(() => expect(useLibraryStore.getState().files.find(file => file.id === id)?.type).toBe('meeting'))
-    await waitFor(() => expect(useLibraryStore.getState().files.find(file => file.id === id)?.status).toBe('ready'))
-    expect(useLibraryStore.getState().files).toHaveLength(1)
-    expect(memory.contents.get(id)).toContain('Lançar em maio [▸ 00:04](#t=4)')
-    expect(memory.sidecars.get(id)?.recording?.blocks).toHaveLength(2)
-    await waitFor(() => expect(screen.getByTestId('where')).toHaveTextContent(`/arquivo/${id}`))
+    expect(useUiStore.getState().overlay).toEqual({ kind: 'ata-parts', fileId: id })
+    expect(useJobsStore.getState().jobs).toHaveLength(0)
+    expect(within(document.body).queryByRole('button', { name: /escolher partes/ })).not.toBeInTheDocument()
   })
 
   it('a note with text only still makes a new note with the Ata', async () => {

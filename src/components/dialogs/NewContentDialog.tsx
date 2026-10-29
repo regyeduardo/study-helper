@@ -1,7 +1,8 @@
 import { useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 
-import type { SourceStorage, TranscriptionEngine } from '@/types/domain'
+import type { AtaPart, SourceStorage, TranscriptionEngine } from '@/types/domain'
+import { AtaPartsFields, toggledPart } from '@/components/dialogs/AtaPartsDialog'
 import { Dialog } from '@/components/ui/Dialog'
 import { Icon } from '@/components/ui/Icon'
 import { FolderPicker } from '@/components/dialogs/SimpleDialogs'
@@ -9,6 +10,7 @@ import { SourceStoragePicker } from '@/components/dialogs/SourceStoragePicker'
 import type { LitterboxTime } from '@/controllers/hosting.controller'
 import { youtubeId } from '@/controllers/sources.controller'
 import { isFreeChoice, modelOf, providerOf } from '@/lib/ai/providers'
+import { PART_ORDER } from '@/lib/generation/ata'
 import type { ContentInput } from '@/lib/generation/inputs'
 import { detectKind } from '@/lib/generation/uploads'
 import { paths } from '@/lib/paths'
@@ -102,6 +104,7 @@ export function NewContentDialog({ folderId: initialFolder }: { folderId?: strin
   const [prompt, setPrompt] = useState('')
   const [folderId, setFolderId] = useState<string | null>(initialFolder ?? null)
   const [jobId, setJobId] = useState<string | null>(null)
+  const [ataParts, setAtaParts] = useState<AtaPart[]>(['resumo'])
   const input = useRef<HTMLInputElement>(null)
 
   const driveAvailable = account.kind === 'google'
@@ -110,6 +113,7 @@ export function NewContentDialog({ folderId: initialFolder }: { folderId?: strin
   const chosen = file ? (storage && options.find(option => option.id === storage && option.fits && option.enabled) ? storage : defaultStorage(driveAvailable, options)) : 'none'
   const provider = providerOf(settings.ai.provider)
   const isYoutube = Boolean(youtubeId(url))
+  const choosesParts = agent === 'meeting' && tab === 'file' && Boolean(file) && isMedia
 
   const pickFile = async (picked: File | null) => {
     setFile(picked)
@@ -131,7 +135,7 @@ export function NewContentDialog({ folderId: initialFolder }: { folderId?: strin
     const content = contentInput()
     if (!content) return
     const fileId = await startNewContent(
-      { agent: tab === 'topic' && agent === 'lesson' ? 'explanation' : agent, input: content, name, description, folderId, prompt, storage: chosen, litterboxTime },
+      { agent: tab === 'topic' && agent === 'lesson' ? 'explanation' : agent, input: content, name, description, folderId, prompt, storage: chosen, litterboxTime, ...(choosesParts ? { ataParts: PART_ORDER.filter(part => ataParts.includes(part)) } : {}) },
       setJobId,
     )
     if (fileId) {
@@ -142,7 +146,7 @@ export function NewContentDialog({ folderId: initialFolder }: { folderId?: strin
 
   if (jobId) return <GenerationProgress jobId={jobId} onHide={ui.close} />
 
-  const canGo = Boolean(contentInput())
+  const canGo = Boolean(contentInput()) && !(choosesParts && !ataParts.length)
   const tabButton = (id: Tab, icon: Parameters<typeof Icon>[0]['name'], label: string) => (
     <button aria-pressed={tab === id} onClick={() => setTab(id)}>
       <Icon name={icon} />
@@ -286,6 +290,7 @@ export function NewContentDialog({ folderId: initialFolder }: { folderId?: strin
             </div>
           </div>
         )}
+        {choosesParts && <AtaPartsFields parts={ataParts} onToggle={part => setAtaParts(current => toggledPart(current, part))} />}
         <div className="two-col">
           <div className="field">
             <label htmlFor="nc-name">Nome (opcional)</label>
