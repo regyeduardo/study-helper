@@ -18,6 +18,17 @@ export interface MeetingMedia {
 
 export const SHARED_MEDIA_EXPIRED = 'A mídia deste compartilhamento expirou (fica 3 dias).'
 
+/** Plays from a second; a player that failed to load (Chrome, while the app opens) is loaded again first. */
+export function playAt(element: HTMLMediaElement, seconds: number): void {
+  const go = () => {
+    element.currentTime = seconds
+    void Promise.resolve(element.play()).catch(() => undefined)
+  }
+  if (!element.error) return go()
+  element.addEventListener('loadedmetadata', go, { once: true })
+  element.load()
+}
+
 const nothing = async () => undefined
 
 export function useMeetingMedia(meta: FileMeta | null): MeetingMedia {
@@ -107,6 +118,8 @@ export function MediaPlayer({ player, media, onTime, onPlayFrom }: MediaPlayerPr
   const [time, setTime] = useState(0)
   const [duration, setDuration] = useState(0)
   const [big, setBig] = useState(false)
+  const reloads = useRef({ url: media.url, count: 0 })
+  if (reloads.current.url !== media.url) reloads.current = { url: media.url, count: 0 }
 
   const toggle = () => {
     if (playing) player.current?.pause()
@@ -118,15 +131,30 @@ export function MediaPlayer({ player, media, onTime, onPlayFrom }: MediaPlayerPr
     onTime(seconds)
   }
 
+  // crossOrigin before src: React sets them in this order, and with src first Chrome starts the load without
+  // CORS and then refuses every seek of the remote media ("FFmpegDemuxer: demuxer seek failed")
   const events = {
-    src: media.url ?? undefined,
     crossOrigin: media.remote ? ('anonymous' as const) : undefined,
     preload: 'metadata',
+    src: media.url ?? undefined,
     onPlay: (event: SyntheticEvent<HTMLMediaElement>) => {
       bothEars(event.currentTarget)
       setPlaying(true)
     },
     onPause: () => setPlaying(false),
+    // Chrome sometimes fails the first load made while the app opens ("FFmpegDemuxer: demuxer seek failed",
+    // MEDIA_ERR_NETWORK) and then never asks for more bytes; the same element loaded again a moment later plays and seeks.
+    onError: (event: SyntheticEvent<HTMLMediaElement>) => {
+      const element = event.currentTarget
+      if (element.error?.code !== 2 || reloads.current.count >= 3) return
+      const count = ++reloads.current.count
+      const at = element.currentTime
+      setTimeout(() => {
+        if (!element.error) return
+        if (at > 0) element.addEventListener('loadedmetadata', () => void (element.currentTime = at), { once: true })
+        element.load()
+      }, 1500 * 2 ** (count - 1))
+    },
     onDurationChange: (event: SyntheticEvent<HTMLMediaElement>) => setDuration(Number.isFinite(event.currentTarget.duration) ? event.currentTarget.duration : 0),
     onTimeUpdate: (event: SyntheticEvent<HTMLMediaElement>) => {
       setTime(event.currentTarget.currentTime)

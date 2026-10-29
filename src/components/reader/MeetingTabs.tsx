@@ -1,7 +1,7 @@
 import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react'
 
 import type { RecordingData, RecordingMark } from '@/types/domain'
-import { MediaPlayer, type MeetingMedia } from '@/components/reader/MediaPlayer'
+import { MediaPlayer, type MeetingMedia, playAt } from '@/components/reader/MediaPlayer'
 import { MinutesTab } from '@/components/reader/MinutesTab'
 import { TranscriptTab } from '@/components/reader/TranscriptTab'
 import { Icon } from '@/components/ui/Icon'
@@ -55,9 +55,8 @@ export function MeetingTabs({ recording, media, name, second, ata, onChooseParts
   const start = useCallback((seconds: number) => {
     const audio = player.current
     if (!audio) return
-    audio.currentTime = seconds
     setTime(seconds)
-    void Promise.resolve(audio.play()).catch(() => undefined)
+    playAt(audio, seconds)
   }, [])
 
   const playFrom = (seconds: number) => {

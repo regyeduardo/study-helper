@@ -7,7 +7,7 @@ import { Icon } from '@/components/ui/Icon'
 import { MasteryMeter, TypeDot } from '@/components/library/Badges'
 import { DocumentNav } from '@/components/reader/DocumentNav'
 import GithubMarkdownView, { type PaintedQuote, type ReaderSelection } from '@/components/reader/GithubMarkdownView'
-import { MediaPlayer, type MeetingMedia, useMeetingMedia } from '@/components/reader/MediaPlayer'
+import { MediaPlayer, type MeetingMedia, playAt, useMeetingMedia } from '@/components/reader/MediaPlayer'
 import { MeetingTabs } from '@/components/reader/MeetingTabs'
 import { MinutesTab } from '@/components/reader/MinutesTab'
 import { TagSuggestion } from '@/components/reader/TagSuggestion'
@@ -42,8 +42,7 @@ function MediaOnly({ media, onTranscribe }: { media: MeetingMedia; onTranscribe?
   const play = (seconds: number) => {
     const element = player.current
     if (!media.url || !element) return void media.request()
-    element.currentTime = seconds
-    void Promise.resolve(element.play()).catch(() => undefined)
+    playAt(element, seconds)
   }
   return (
     <div className="media-only">

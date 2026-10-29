@@ -69,6 +69,28 @@ describe('quem abre o link compartilhado', () => {
     )
     await waitFor(() => expect(document.querySelector('video')).toHaveAttribute('src', MEDIA_URL))
     expect(document.querySelector('audio')).toBeNull()
+    // crossorigin BEFORE src: with src first Chrome starts the load without CORS and then fails every seek ("demuxer seek failed")
+    const names = document.querySelector('video')!.getAttributeNames()
+    expect(names.indexOf('crossorigin')).toBeGreaterThanOrEqual(0)
+    expect(names.indexOf('crossorigin')).toBeLessThan(names.indexOf('src'))
+  })
+
+  it('quando a primeira carga do vídeo falha na rede (Chrome: "demuxer seek failed"), o player carrega de novo, até 3 vezes', async () => {
+    const load = vi.spyOn(HTMLMediaElement.prototype, 'load').mockImplementation(() => undefined)
+    render(
+      <MemoryRouter>
+        <DocumentBody fileId="f1" />
+      </MemoryRouter>,
+    )
+    await waitFor(() => expect(document.querySelector('video')).not.toBeNull())
+    const video = document.querySelector('video')!
+    Object.defineProperty(video, 'error', { configurable: true, value: { code: 2, message: 'PIPELINE_ERROR_READ: FFmpegDemuxer: demuxer seek failed' } })
+    vi.useFakeTimers()
+    for (let i = 0; i < 4; i++) fireEvent.error(video)
+    expect(load).not.toHaveBeenCalled()
+    vi.advanceTimersByTime(20000)
+    vi.useRealTimers()
+    expect(load).toHaveBeenCalledTimes(3)
   })
 
   it('baixa a mídia do link, e não vê o que é do dono (Drive dele, Remover a fonte)', async () => {
