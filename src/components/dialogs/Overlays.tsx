@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 
 import { AccountMenu } from '@/components/dialogs/AccountMenu'
+import { AtaPartsDialog } from '@/components/dialogs/AtaPartsDialog'
 import { CardsDialog } from '@/components/dialogs/CardsDialog'
 import { CommandPalette } from '@/components/dialogs/CommandPalette'
 import { MindMapDialog } from '@/components/dialogs/MindMapDialog'
@@ -44,6 +45,7 @@ export function Overlays() {
   else if (overlay?.kind === 'cards') content = <CardsDialog fileId={overlay.fileId} />
   else if (overlay?.kind === 'mindmap') content = <MindMapDialog fileId={overlay.fileId} />
   else if (overlay?.kind === 'tutor') content = <TutorDialog fileId={overlay.fileId} />
+  else if (overlay?.kind === 'ata-parts') content = <AtaPartsDialog fileId={overlay.fileId} />
   else if (overlay?.kind === 'folder-exam') content = <FolderExamDialog folderId={overlay.folderId} fileIds={overlay.fileIds} />
   else if (overlay?.kind === 'account') content = <AccountMenu />
   else if (overlay?.kind === 'new-folder') content = <NewFolderDialog parentId={overlay.parentId} />

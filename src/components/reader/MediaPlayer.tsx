@@ -11,11 +11,19 @@ export interface MeetingMedia {
   url: string | null
   available: boolean
   video: boolean
+  remote?: boolean
+  notice?: string
   request(): Promise<void>
 }
 
+export const SHARED_MEDIA_EXPIRED = 'A mídia deste compartilhamento expirou (fica 3 dias).'
+
+const nothing = async () => undefined
+
 export function useMeetingMedia(meta: FileMeta | null): MeetingMedia {
   const fileId = meta?.id ?? null
+  const sharedItem = useLibraryStore(state => state.sharedView?.item ?? null)
+  const sharedMedia = sharedItem?.files.find(file => file.id === fileId)?.media ?? null
   const local = useLibraryStore(state => state.localMedia.find(item => fileId !== null && item.fileIds.includes(fileId)) ?? null)
   const repo = useLibraryStore(state => state.repo)
   const toast = useUiStore(state => state.toast)
@@ -56,6 +64,12 @@ export function useMeetingMedia(meta: FileMeta | null): MeetingMedia {
     }
   }, [url, local, kept, origin, repo, show, toast])
 
+  if (sharedItem) {
+    const video = (sharedMedia?.mime ?? '').startsWith('video/')
+    if (!sharedMedia) return { url: null, available: false, video, request: nothing }
+    if (sharedItem.mediaExpiresAt && Date.parse(sharedItem.mediaExpiresAt) <= Date.now()) return { url: null, available: false, video, notice: SHARED_MEDIA_EXPIRED, request: nothing }
+    return { url: sharedMedia.url, available: true, video, remote: true, request: nothing }
+  }
   return { url, available: Boolean(local) || kept, video: (local?.mime || origin?.mime || '').startsWith('video/'), request }
 }
 
@@ -69,7 +83,7 @@ interface MediaPlayerProps {
 const wired = new WeakSet<HTMLMediaElement>()
 
 function bothEars(element: HTMLMediaElement): void {
-  if (wired.has(element) || !element.src.startsWith('blob:') || typeof AudioContext === 'undefined') return
+  if (wired.has(element) || !(element.src.startsWith('blob:') || element.crossOrigin === 'anonymous') || typeof AudioContext === 'undefined') return
   wired.add(element)
   const context = new AudioContext()
   const sides = context.createChannelSplitter(2)
@@ -106,6 +120,7 @@ export function MediaPlayer({ player, media, onTime, onPlayFrom }: MediaPlayerPr
 
   const events = {
     src: media.url ?? undefined,
+    crossOrigin: media.remote ? ('anonymous' as const) : undefined,
     preload: 'metadata',
     onPlay: (event: SyntheticEvent<HTMLMediaElement>) => {
       bothEars(event.currentTarget)

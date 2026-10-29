@@ -14,11 +14,27 @@ function momentIn(event: MouseEvent): number | null {
   return null
 }
 
+/** "#t1" links of the Ata's task list: the target lives inside the viewer's shadow root. */
+function jumpToAnchor(event: MouseEvent): boolean {
+  for (const node of event.nativeEvent.composedPath()) {
+    const href = (node as Element).getAttribute?.('href')
+    if (!href || !href.startsWith('#') || MOMENT.test(href) || href.length < 2) continue
+    const root = (node as Element).getRootNode?.() as Document | ShadowRoot | undefined
+    const target = root?.getElementById?.(decodeURIComponent(href.slice(1)))
+    if (!target) return false
+    event.preventDefault()
+    target.scrollIntoView?.({ behavior: 'smooth', block: 'start' })
+    return true
+  }
+  return false
+}
+
 export function MinutesTab({ children, frames = [], onMoment }: { children: ReactNode; frames?: ScreenFrame[]; onMoment(seconds: number): void }) {
   return (
     <div
       className="minutes"
       onClick={event => {
+        if (jumpToAnchor(event)) return
         const seconds = momentIn(event)
         if (seconds === null) return
         event.preventDefault()

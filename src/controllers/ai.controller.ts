@@ -123,7 +123,7 @@ function estimate(content: string, systemPrompt: string, text: string): ChatUsag
   return { inputTokens: Math.round((content.length + systemPrompt.length) / 4), outputTokens: Math.round(text.length / 4), estimated: true }
 }
 
-async function anthropicChat(settings: AiSettings, content: string, systemPrompt: string, maxTokens: number, signal?: AbortSignal): Promise<ChatReply> {
+async function anthropicChat(settings: AiSettings, content: string, systemPrompt: string, maxTokens: number, signal?: AbortSignal, temperature = TEMPERATURE): Promise<ChatReply> {
   const response = await send(
     settings,
     `${baseUrlOf(settings)}/v1/messages`,
@@ -138,7 +138,7 @@ async function anthropicChat(settings: AiSettings, content: string, systemPrompt
       body: JSON.stringify({
         model: modelOf(settings),
         max_tokens: maxTokens,
-        temperature: TEMPERATURE,
+        temperature,
         system: systemPrompt,
         messages: [{ role: 'user', content }],
         stream: true,
@@ -173,7 +173,7 @@ interface OpenAiOptions {
   stream_options?: { include_usage: boolean }
 }
 
-async function openAiChat(settings: AiSettings, content: string, systemPrompt: string, maxTokens: number, signal?: AbortSignal): Promise<ChatReply> {
+async function openAiChat(settings: AiSettings, content: string, systemPrompt: string, maxTokens: number, signal?: AbortSignal, temperature = TEMPERATURE): Promise<ChatReply> {
   const options: OpenAiOptions = { max_tokens: maxTokens, stream_options: { include_usage: true } }
   if (systemPrompt.toLowerCase().includes('json')) options.response_format = { type: 'json_object' }
   const headers: Record<string, string> = { 'content-type': 'application/json' }
@@ -192,7 +192,7 @@ async function openAiChat(settings: AiSettings, content: string, systemPrompt: s
             { role: 'system', content: systemPrompt },
             { role: 'user', content },
           ],
-          temperature: TEMPERATURE,
+          temperature,
           stream: true,
           ...options,
         }),
@@ -235,13 +235,14 @@ export async function chatController(
   systemPrompt: string,
   maxTokens = MAX_TOKENS,
   signal?: AbortSignal,
+  temperature = TEMPERATURE,
 ): Promise<ChatReply> {
   const problem = missingSetup(settings)
   if (problem) throw new AiError(problem)
   return oneAtATime(settings, () =>
     providerOf(settings.provider).format === 'anthropic'
-      ? anthropicChat(settings, content, systemPrompt, maxTokens, signal)
-      : openAiChat(settings, content, systemPrompt, maxTokens, signal),
+      ? anthropicChat(settings, content, systemPrompt, maxTokens, signal, temperature)
+      : openAiChat(settings, content, systemPrompt, maxTokens, signal, temperature),
     signal,
   )
 }
@@ -276,7 +277,7 @@ function imageParts(images: string[]): { mediaType: string; data: string; url: s
   })
 }
 
-export async function visionController(settings: AiSettings, images: string[], prompt: string, signal?: AbortSignal): Promise<string> {
+export async function visionController(settings: AiSettings, images: string[], prompt: string, signal?: AbortSignal, maxTokens = VISION_MAX_TOKENS): Promise<string> {
   const problem = missingSetup(settings)
   if (problem) throw new AiError(problem)
   const parts = imageParts(images)
@@ -287,12 +288,12 @@ export async function visionController(settings: AiSettings, images: string[], p
   const body = anthropic
     ? {
         model: modelOf(settings),
-        max_tokens: VISION_MAX_TOKENS,
+        max_tokens: maxTokens,
         messages: [{ role: 'user', content: [...parts.map(part => ({ type: 'image', source: { type: 'base64', media_type: part.mediaType, data: part.data } })), { type: 'text', text: prompt }] }],
       }
     : {
         model: modelOf(settings),
-        max_tokens: VISION_MAX_TOKENS,
+        max_tokens: maxTokens,
         messages: [{ role: 'user', content: [...parts.map(part => ({ type: 'image_url', image_url: { url: part.url } })), { type: 'text', text: prompt }] }],
       }
   const response = await send(settings, anthropic ? `${baseUrlOf(settings)}/v1/messages` : `${baseUrlOf(settings)}/chat/completions`, { method: 'POST', headers, body: JSON.stringify(body) }, signal)

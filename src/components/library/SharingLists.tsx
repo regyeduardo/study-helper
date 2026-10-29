@@ -29,9 +29,9 @@ function ShareRow({ share }: { share: ShareRecord }) {
         return
       }
       try {
-        const result = await deleteShareController(options => tokenFor(account.id, options), share.id)
+        await deleteShareController(options => tokenFor(account.id, options), share.id)
         await dropShare(share.id)
-        ui.toast(result.returned ? `Compartilhamento apagado: ${formatBytes(result.returned)} voltaram para a cota de hoje` : 'Compartilhamento apagado')
+        ui.toast('Compartilhamento apagado')
         return
       } catch (error) {
         if (!(error instanceof ShareError && error.status === 404)) {

@@ -100,6 +100,7 @@ export function ItemMenu() {
     ['Prova', 'exam', act(() => ui.open({ kind: 'exam', fileId: file.id }))],
     ['Ata', 'file', generate('meeting')],
     ['Aula', 'book', generate('lesson')],
+    ...(mediaOf(file) === 'text' ? [] : ([['Ata (escolher partes)', 'file', act(() => ui.open({ kind: 'ata-parts', fileId: file.id }))]] as typeof tools)),
   ]
   return (
     <Popover x={menu.x} y={menu.y} onClose={close} label={`Opções de ${file.name}`}>

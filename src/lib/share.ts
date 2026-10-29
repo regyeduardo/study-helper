@@ -2,10 +2,12 @@ import type { Attempt, FileMeta, FolderMeta, ShareContent, SharedFile, SharedFol
 import { currentDevice } from '@/lib/device'
 import { env } from '@/lib/env'
 import { masteryOf } from '@/lib/exam'
-import { FILE_TYPES } from '@/lib/file-types'
+import { FILE_TYPES, mediaOf } from '@/lib/file-types'
 import { newFileMeta, newFolderMeta } from '@/lib/defaults'
 import { newId, nowIso } from '@/lib/ids'
-import { bytesOf, type StoredSize } from '@/lib/storage/repository'
+import { type LocalMedia, readLocalMedia } from '@/lib/recording/media-library'
+import { bytesOf, type Repository, type StoredSize } from '@/lib/storage/repository'
+import { downloadStoredSource, sourceExpired } from '@/lib/storage/source-storage'
 import { readingMinutes, wordCount } from '@/utils/format'
 import type { OpenedFile } from '@/stores/library'
 
@@ -88,6 +90,36 @@ export async function buildShareContent(target: ShareTarget, folders: FolderMeta
   }
   const title = target.kind === 'folder' ? (tree[0]?.name ?? '') : (chosen[0]?.name ?? '')
   return { kind: target.kind, title, folders: sharedFolders, files: sharedFiles }
+}
+
+export interface ShareMedia {
+  fileId: string
+  name: string
+  mime: string
+  size: number | null
+  read(): Promise<Blob>
+}
+
+async function blobOf(source: Blob | string): Promise<Blob> {
+  if (typeof source !== 'string') return source
+  const response = await fetch(source)
+  if (!response.ok) throw new Error('Não consegui baixar a mídia guardada.')
+  return response.blob()
+}
+
+export function shareMediaOf(content: ShareContent, files: FileMeta[], localMedia: LocalMedia[], repo: Repository | null): ShareMedia[] {
+  const found: ShareMedia[] = []
+  for (const shared of content.files) {
+    const meta = files.find(file => file.id === shared.id)
+    const origin = meta?.origin ?? null
+    const kind = meta ? mediaOf(meta) : 'text'
+    const local = localMedia.find(item => item.fileIds.includes(shared.id))
+    const fallback = `${kind === 'video' ? 'video' : 'audio'}/webm`
+    if (local) found.push({ fileId: shared.id, name: local.name, mime: local.mime || origin?.mime || fallback, size: local.size || null, read: () => readLocalMedia(local) })
+    else if (origin && repo && kind !== 'text' && (origin.storedFileId || origin.storedUrl) && !origin.removedAt && !sourceExpired(origin))
+      found.push({ fileId: shared.id, name: origin.name, mime: origin.mime || fallback, size: origin.sizeBytes ?? null, read: async () => blobOf(await downloadStoredSource(origin, repo)) })
+  }
+  return found
 }
 
 export async function questionCountOf(target: ShareTarget, folders: FolderMeta[], files: FileMeta[]): Promise<number> {

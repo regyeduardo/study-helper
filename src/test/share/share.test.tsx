@@ -11,6 +11,7 @@ import { SharedBadge } from '@/components/library/SharedBadge'
 import { SharingView } from '@/components/library/SharingLists'
 import { env } from '@/lib/env'
 import { buildShareContent, importSharedItem, readSharedAttempts, saveSharedAttempt, shareBytes } from '@/lib/share'
+import { MEDIA_PART_BYTES } from '@/controllers/share.controller'
 import { LocalRepository } from '@/lib/storage/local-repository'
 import { mergeKept } from '@/lib/sync/merge'
 import { SharedStatus, useSharedRoute } from '@/pages/shared'
@@ -34,7 +35,7 @@ interface Call {
 }
 
 let calls: Call[]
-let replies: Record<string, () => Response>
+let replies: Record<string, () => Response | Promise<Response>>
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
@@ -71,9 +72,10 @@ beforeEach(async () => {
     vi.fn(async (input: string, init: RequestInit = {}) => {
       const url = String(input)
       const headers = (init.headers ?? {}) as Record<string, string>
-      calls.push({ url, method: init.method ?? 'GET', body: init.body ? JSON.parse(String(init.body)) : null, authorization: headers.Authorization ?? '' })
+      calls.push({ url, method: init.method ?? 'GET', body: typeof init.body === 'string' ? JSON.parse(init.body) : init.body instanceof Blob ? { size: init.body.size } : null, authorization: headers.Authorization ?? '' })
       const key = `${init.method ?? 'GET'} ${url}`
-      if (replies[key]) return replies[key]()
+      const reply = replies[key] ?? replies[key.replace(/\?.*$/, '')]
+      if (reply) return reply()
       return new Response('not found', { status: 404 })
     }),
   )
@@ -99,25 +101,23 @@ describe('diálogo de compartilhar', () => {
     expect(calls).toHaveLength(0)
   })
 
-  it('mostra o tamanho e o que ainda dá hoje, com "Levar as provas" desmarcado', async () => {
+  it('mostra o tamanho, sem cota do dia, com "Levar as provas" desmarcado', async () => {
     useGoogle()
     const note = await noteWithExam()
-    replies['GET https://share.test/quota'] = () => json({ remaining: 250_000 })
     render(<MemoryRouter><ShareDialog target="file" id={note.id} /></MemoryRouter>)
     const expected = shareBytes(await buildShareContent({ kind: 'file', id: note.id }, useLibraryStore.getState().folders, useLibraryStore.getState().files, useLibraryStore.getState().openFile, false))
-    const box = screen.getByLabelText('Tamanho e cota')
+    const box = screen.getByLabelText('Tamanho')
     await waitFor(() => expect(within(box).getByText(formatBytes(expected))).toBeInTheDocument())
-    expect(within(box).getByText(formatBytes(250_000))).toBeInTheDocument()
+    expect(screen.queryByText('Hoje ainda dá')).not.toBeInTheDocument()
     expect(screen.getByRole('checkbox', { name: /Levar as provas/ })).toHaveAttribute('aria-checked', 'false')
-    expect(calls.find(call => call.url.endsWith('/quota'))?.authorization).toBe('Bearer at-1')
+    expect(calls.some(call => call.url.endsWith('/quota'))).toBe(false)
   })
 
   it('sem marcar, a prova não vai; marcando, vão as questões; destaques vão, tentativas nunca', async () => {
     useGoogle()
     const note = await noteWithExam()
-    replies['GET https://share.test/quota'] = () => json({ remaining: 250_000 })
     let created = 0
-    replies['POST https://share.test/shares'] = () => json({ id: `AbCdEfGhIjKlMnOpQrStU${++created}`, createdAt: '2026-09-28T12:00:00.000Z', expiresAt: '2026-10-01T12:00:00.000Z', bytes: 300, remaining: 1000 }, 201)
+    replies['POST https://share.test/shares'] = () => json({ id: `AbCdEfGhIjKlMnOpQrStU${++created}`, createdAt: '2026-09-28T12:00:00.000Z', expiresAt: '2026-10-01T12:00:00.000Z', bytes: 300 }, 201)
     const first = render(<MemoryRouter><ShareDialog target="file" id={note.id} /></MemoryRouter>)
     const share = await screen.findByRole('button', { name: /^Compartilhar$/ })
     await waitFor(() => expect(share).toBeEnabled())
@@ -143,26 +143,62 @@ describe('diálogo de compartilhar', () => {
     expect(useLibraryStore.getState().index.shares.map(item => item.withExams)).toEqual([true, false])
   })
 
-  it('passando do que sobra hoje, mostra a recusa e não deixa compartilhar', async () => {
+  it('uma nota grande compartilha sem limite de tamanho', async () => {
     useGoogle()
-    const note = await noteWithExam()
-    replies['GET https://share.test/quota'] = () => json({ remaining: 10 })
+    const note = await useLibraryStore.getState().createFile({ name: 'Apostila', type: 'reading' }, `# Apostila\n\n${'texto longo '.repeat(200_000)}`)
+    replies['POST https://share.test/shares'] = () => json({ id: 'GrandeGrandeGrandeGran1', createdAt: '2026-09-28T12:00:00.000Z', expiresAt: '2026-10-01T12:00:00.000Z', bytes: 2_400_000 }, 201)
     render(<MemoryRouter><ShareDialog target="file" id={note.id} /></MemoryRouter>)
-    expect(await screen.findByText('Passa do limite de hoje: ainda dá para compartilhar 10 B.')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /^Compartilhar$/ })).toBeDisabled()
+    const share = await screen.findByRole('button', { name: /^Compartilhar$/ })
+    await waitFor(() => expect(share).toBeEnabled())
+    expect(screen.queryByText(/limite/)).not.toBeInTheDocument()
+    fireEvent.click(share)
+    await screen.findByDisplayValue(/\/shared\/GrandeGrandeGrandeGran1$/)
+    expect(useLibraryStore.getState().index.shares[0].bytes).toBe(2_400_000)
   })
 
-  it('a recusa do Worker aparece com o que ainda sobra', async () => {
+  it('a recusa do Worker aparece', async () => {
     useGoogle()
     const note = await noteWithExam()
-    replies['GET https://share.test/quota'] = () => json({ remaining: 250_000 })
-    replies['POST https://share.test/shares'] = () => json({ error: 'ip_limit', remaining: 2048 }, 429)
+    replies['POST https://share.test/shares'] = () => json({ error: 'turnstile_failed' }, 403)
     render(<MemoryRouter><ShareDialog target="file" id={note.id} /></MemoryRouter>)
     const share = await screen.findByRole('button', { name: /^Compartilhar$/ })
     await waitFor(() => expect(share).toBeEnabled())
     fireEvent.click(share)
-    expect(await screen.findByText('Passou do limite de hoje desta rede: ainda dá para compartilhar 2 KB.')).toBeInTheDocument()
+    expect(await screen.findByText('A verificação anti-robô não passou. Tente de novo.')).toBeInTheDocument()
     expect(useLibraryStore.getState().index.shares).toEqual([])
+  })
+
+  it('uma nota com gravação nas Mídias leva a mídia em partes, mostrando o progresso', async () => {
+    useGoogle()
+    const note = await useLibraryStore.getState().createFile({ name: 'Reunião', type: 'meeting' }, '# Ata')
+    const size = 2 * MEDIA_PART_BYTES + 1024 * 1024
+    const audio = new File([new Uint8Array(size)], 'Reunião.webm', { type: 'audio/webm' })
+    Object.defineProperty(navigator, 'storage', { configurable: true, value: { getDirectory: async () => ({ getFileHandle: async () => ({ getFile: async () => audio }) }) } })
+    useLibraryStore.setState({ localMedia: [{ storedName: 'gravacao-1.webm', name: 'Reunião.webm', mime: 'audio/webm', durationSeconds: 60, size, createdAt: '', fileIds: [note.id] }] })
+    const id = 'MidiaMidiaMidiaMidia01'
+    const base = `https://share.test/shares/${id}/media/${note.id}`
+    let release = () => undefined as void
+    replies['POST https://share.test/shares'] = () => json({ id, createdAt: '2026-09-28T12:00:00.000Z', expiresAt: '2026-10-01T12:00:00.000Z', mediaExpiresAt: '2026-10-01T12:00:00.000Z', bytes: 300 }, 201)
+    replies[`POST ${base}`] = () => json({ uploadId: 'up-1' }, 201)
+    for (const part of [1, 2, 3]) replies[`PUT ${base}/${part}`] = () => (part === 2 ? new Promise<Response>(resolve => (release = () => resolve(json({ partNumber: 2, etag: 'e2' })))) : json({ partNumber: part, etag: `e${part}` }))
+    replies[`POST ${base}/done`] = () => json({ key: `shared-media/${id}/${note.id}`, mime: 'audio/webm', size })
+    render(<MemoryRouter><ShareDialog target="file" id={note.id} /></MemoryRouter>)
+    await waitFor(() => expect(within(screen.getByLabelText('Tamanho')).getByText(formatBytes(size))).toBeInTheDocument())
+    expect(screen.getByText(/A mídia fica disponível por 3 dias/)).toBeInTheDocument()
+    const share = screen.getByRole('button', { name: /^Compartilhar$/ })
+    await waitFor(() => expect(share).toBeEnabled())
+    fireEvent.click(share)
+    const bar = await screen.findByRole('progressbar', { name: 'Enviando a mídia' })
+    await waitFor(() => expect(bar).toHaveAttribute('aria-valuenow', '48'))
+    expect(screen.getByText('Enviando a mídia (Reunião.webm): 48%')).toBeInTheDocument()
+    release()
+    await screen.findByDisplayValue(new RegExp(`/shared/${id}$`))
+    const puts = calls.filter(call => call.method === 'PUT')
+    expect(puts.map(call => call.url)).toEqual([1, 2, 3].map(part => `${base}/${part}?uploadId=up-1`))
+    expect(puts.map(call => (call.body as { size: number }).size)).toEqual([MEDIA_PART_BYTES, MEDIA_PART_BYTES, 1024 * 1024])
+    expect(calls.find(call => call.url === base)?.body).toEqual({ mime: 'audio/webm' })
+    expect(calls.find(call => call.url === `${base}/done`)?.body).toEqual({ uploadId: 'up-1', parts: [1, 2, 3].map(part => ({ partNumber: part, etag: `e${part}` })) })
+    expect(useLibraryStore.getState().index.shares[0].bytes).toBe(300 + size)
   })
 })
 

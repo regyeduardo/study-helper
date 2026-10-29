@@ -1,15 +1,18 @@
 const LOCAL_ORIGIN = /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/
 const GOOGLE_API_BASE = 'https://www.googleapis.com'
 const TURNSTILE_URL = 'https://challenges.cloudflare.com/turnstile/v0/siteverify'
-const TIME_ZONE = 'America/Sao_Paulo'
-const KB = 1024
-const LIMITS = { account: 300 * KB, ip: 900 * KB, site: 100 * KB * KB }
 const SHARE_DAYS = 3
+const MEDIA_DAYS = 3
 const DAY_MS = 24 * 3600 * 1000
 const CAS_ATTEMPTS = 10
 const SHARED_PREFIX = 'shared/'
+const MEDIA_PREFIX = 'shared-media/'
 const SHARED_CACHE = 'public, max-age=60'
+const MEDIA_CACHE = 'private, max-age=3600'
+const MEDIA_TYPE = /^(audio|video)\//i
 const SHARE_PATH = /^\/shares\/([A-Za-z0-9_-]{16,64})$/
+const MEDIA_UPLOAD_PATH = /^\/shares\/([A-Za-z0-9_-]{16,64})\/media\/([A-Za-z0-9_-]{1,64})(?:\/(\d{1,5}|done))?$/
+const MEDIA_PATH = /^\/media\/([A-Za-z0-9_-]{16,64})\/([A-Za-z0-9_-]{1,64})$/
 const SHARED_FILE_PATH = /^\/shared\/([A-Za-z0-9_-]{16,64})\/(.+)$/
 const MANIFEST_NAME = 'share.json'
 const FOLDER_META_NAME = '.folder.json'
@@ -23,8 +26,9 @@ function allowedOrigin(origin, env) {
 function corsHeaders(origin) {
   return {
     'Access-Control-Allow-Origin': origin,
-    'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+    'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization, Range',
+    'Access-Control-Expose-Headers': 'Content-Range, Content-Length, Accept-Ranges',
     'Access-Control-Max-Age': '86400',
     Vary: 'Origin',
   }
@@ -32,10 +36,6 @@ function corsHeaders(origin) {
 
 function json(body, status, headers) {
   return new Response(JSON.stringify(body), { status, headers: { ...headers, 'Content-Type': 'application/json', 'Cache-Control': 'no-store' } })
-}
-
-export function dayOf(time) {
-  return new Intl.DateTimeFormat('en-CA', { timeZone: TIME_ZONE, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(time))
 }
 
 async function hashOf(text) {
@@ -62,10 +62,6 @@ async function identify(request, env) {
   return typeof permissionId === 'string' && permissionId ? `account-${await hashOf(permissionId)}` : null
 }
 
-async function ipKeyOf(request) {
-  return `ip-${await hashOf(request.headers.get('CF-Connecting-IP') ?? 'unknown')}`
-}
-
 async function turnstilePassed(token, request, env) {
   if (typeof token !== 'string' || !token || !env.TURNSTILE_SECRET) return false
   const form = new FormData()
@@ -77,66 +73,6 @@ async function turnstilePassed(token, request, env) {
   const body = await response?.json().catch(() => null)
   if (body?.success !== true) console.log(JSON.stringify({ turnstile: body?.['error-codes'] ?? 'no_response', hostname: body?.hostname ?? null }))
   return body?.success === true
-}
-
-function counterKey(day, name) {
-  return `counters/${day}/${name}.json`
-}
-
-async function readCounter(bucket, key) {
-  const object = await bucket.get(key)
-  if (!object) return { used: 0, etag: null }
-  const body = await object.json().catch(() => ({}))
-  return { used: Number(body.used) || 0, etag: object.etag }
-}
-
-async function adjust(bucket, key, delta, limit) {
-  for (let attempt = 0; attempt < CAS_ATTEMPTS; attempt++) {
-    const { used, etag } = await readCounter(bucket, key)
-    const next = Math.max(0, used + delta)
-    if (delta > 0 && next > limit) return { ok: false, remaining: Math.max(0, limit - used) }
-    const written = await bucket.put(key, JSON.stringify({ used: next }), {
-      httpMetadata: { contentType: 'application/json' },
-      onlyIf: etag ? { etagMatches: etag } : { etagDoesNotMatch: '*' },
-    })
-    if (written) return { ok: true, remaining: Math.max(0, limit - next) }
-  }
-  throw new Error('counter_busy')
-}
-
-async function factorOf(bucket, accountKey) {
-  return (await bucket.get(`grants/${accountKey}.json`)) ? 2 : 1
-}
-
-function countersOf(day, accountKey, ipKey, factor = 1) {
-  return [
-    { name: 'account', key: counterKey(day, accountKey), limit: LIMITS.account * factor },
-    { name: 'ip', key: counterKey(day, ipKey), limit: LIMITS.ip },
-    { name: 'site', key: counterKey(day, 'site'), limit: LIMITS.site },
-  ]
-}
-
-async function reserve(bucket, counters, bytes) {
-  const done = []
-  for (const counter of counters) {
-    const result = await adjust(bucket, counter.key, bytes, counter.limit)
-    if (!result.ok) {
-      for (const previous of done) await adjust(bucket, previous.key, -bytes, previous.limit)
-      return { ok: false, failed: counter.name, remaining: result.remaining }
-    }
-    done.push(counter)
-  }
-  return { ok: true }
-}
-
-async function quotaOf(bucket, counters) {
-  const parts = {}
-  for (const counter of counters) {
-    const { used } = await readCounter(bucket, counter.key)
-    parts[counter.name] = { used, limit: counter.limit }
-  }
-  const remaining = Math.max(0, Math.min(...counters.map(counter => counter.limit - parts[counter.name].used)))
-  return { remaining, ...parts }
 }
 
 function hasBinary(text) {
@@ -175,10 +111,12 @@ function cleanFile(file) {
   const highlights = file.highlights ?? []
   if ([...questions, ...highlights].some(item => !plainObject(item))) return null
   if (file.transcript !== undefined && !isText(file.transcript)) return null
+  if (file.recording !== undefined && !plainObject(file.recording)) return null
   return {
     meta: plainObject(file.meta) ?? {},
     highlights,
     transcript: isText(file.transcript) ? file.transcript : undefined,
+    recording: file.recording,
     id: file.id,
     name: file.name,
     folderId: isText(file.folderId) ? file.folderId : null,
@@ -211,7 +149,7 @@ function uniqueName(name, taken) {
   return candidate
 }
 
-export function shareTree(share, id, createdAt, expiresAt) {
+export function shareTree(share, id, createdAt, expiresAt, mediaExpiresAt) {
   const root = `${SHARED_PREFIX}${id}/`
   const folderPaths = new Map()
   const taken = new Map()
@@ -234,18 +172,25 @@ export function shareTree(share, id, createdAt, expiresAt) {
     const base = file.folderId ? (folderPaths.get(file.folderId) ?? '') : ''
     const path = `${base}${uniqueName(file.name, namesIn(base))}`
     const meta = { ...file.meta, id: file.id, name: file.name, folderId: file.folderId, type: file.type, position: file.position, description: file.description, tags: file.tags, mastery: null, lastReviewedAt: null, questionCount: file.questions.length }
-    const sidecar = { meta, questions: file.questions, attempts: [], highlights: file.highlights, ...(file.transcript !== undefined ? { transcript: file.transcript } : {}) }
+    const sidecar = { meta, questions: file.questions, attempts: [], highlights: file.highlights, ...(file.transcript !== undefined ? { transcript: file.transcript } : {}), ...(file.recording !== undefined ? { recording: file.recording } : {}) }
     objects.push({ key: `${root}${path}.md`, body: file.content, type: 'text/markdown' })
     objects.push({ key: `${root}${path}.json`, body: JSON.stringify(sidecar, null, 2), type: 'application/json' })
     return { id: file.id, path }
   })
-  const manifest = { version: 2, id, kind: share.kind, title: share.title, createdAt, expiresAt, folders, files }
+  const manifest = { version: 2, id, kind: share.kind, title: share.title, createdAt, expiresAt, mediaExpiresAt, folders, files }
   objects.unshift({ key: `${root}${MANIFEST_NAME}`, body: JSON.stringify(manifest, null, 2), type: 'application/json' })
   return objects
 }
 
-async function removeShareObjects(bucket, id) {
-  const prefix = `${SHARED_PREFIX}${id}/`
+function manifestKey(id) {
+  return `${SHARED_PREFIX}${id}/${MANIFEST_NAME}`
+}
+
+function mediaKey(id, fileId) {
+  return `${MEDIA_PREFIX}${id}/${fileId}`
+}
+
+async function removePrefix(bucket, prefix) {
   let cursor
   do {
     const page = await bucket.list({ prefix, cursor })
@@ -253,6 +198,11 @@ async function removeShareObjects(bucket, id) {
     if (keys.length) await bucket.delete(keys)
     cursor = page.truncated ? page.cursor : undefined
   } while (cursor)
+}
+
+async function removeShareObjects(bucket, id) {
+  await removePrefix(bucket, `${SHARED_PREFIX}${id}/`)
+  await removePrefix(bucket, `${MEDIA_PREFIX}${id}/`)
 }
 
 async function createShare(request, env, headers) {
@@ -268,50 +218,126 @@ async function createShare(request, env, headers) {
   const id = newShareId()
   const createdAt = new Date(now).toISOString()
   const expiresAt = new Date(now + SHARE_DAYS * DAY_MS).toISOString()
-  const objects = shareTree(share, id, createdAt, expiresAt)
+  const mediaExpiresAt = new Date(now + MEDIA_DAYS * DAY_MS).toISOString()
+  const objects = shareTree(share, id, createdAt, expiresAt, mediaExpiresAt)
   const bytes = objects.reduce((sum, object) => sum + bytesOf(object.body), 0)
-  const day = dayOf(now)
-  const ipKey = await ipKeyOf(request)
-  const counters = countersOf(day, accountKey, ipKey, await factorOf(env.BUCKET, accountKey))
-  const reserved = await reserve(env.BUCKET, counters, bytes)
-  if (!reserved.ok) return json({ error: `${reserved.failed}_limit`, remaining: reserved.remaining, bytes }, 429, headers)
   try {
     for (const object of objects) {
       await env.BUCKET.put(object.key, object.body, {
         httpMetadata: { contentType: `${object.type}; charset=utf-8`, cacheControl: SHARED_CACHE },
-        customMetadata: object.key.endsWith(`/${MANIFEST_NAME}`) ? { owner: accountKey, ip: ipKey, day, bytes: String(bytes), expiresAt } : { expiresAt },
+        customMetadata: object.key.endsWith(`/${MANIFEST_NAME}`) ? { owner: accountKey, bytes: String(bytes), expiresAt } : { expiresAt },
       })
     }
   } catch (error) {
     await removeShareObjects(env.BUCKET, id).catch(() => undefined)
-    for (const counter of counters) await adjust(env.BUCKET, counter.key, -bytes, counter.limit)
     throw error
   }
-  const quota = await quotaOf(env.BUCKET, counters)
-  return json({ id, createdAt, expiresAt, bytes, remaining: quota.remaining }, 201, headers)
+  return json({ id, createdAt, expiresAt, mediaExpiresAt, bytes }, 201, headers)
 }
 
 async function deleteShare(request, env, headers, id) {
   const accountKey = await identify(request, env)
   if (!accountKey) return json({ error: 'login_required' }, 401, headers)
-  const object = await env.BUCKET.head(`${SHARED_PREFIX}${id}/${MANIFEST_NAME}`)
+  const object = await env.BUCKET.head(manifestKey(id))
   if (!object) return json({ error: 'not_found' }, 404, headers)
-  const meta = object.customMetadata ?? {}
-  if (meta.owner !== accountKey) return json({ error: 'not_owner' }, 403, headers)
+  if (object.customMetadata?.owner !== accountKey) return json({ error: 'not_owner' }, 403, headers)
   await removeShareObjects(env.BUCKET, id)
-  const day = dayOf(Date.now())
-  const bytes = Number(meta.bytes) || 0
-  const sameDay = meta.day === day
-  if (sameDay && bytes) for (const counter of countersOf(day, meta.owner, meta.ip)) await adjust(env.BUCKET, counter.key, -bytes, counter.limit)
-  const quota = await quotaOf(env.BUCKET, countersOf(day, accountKey, await ipKeyOf(request), await factorOf(env.BUCKET, accountKey)))
-  return json({ returned: sameDay ? bytes : 0, remaining: quota.remaining }, 200, headers)
+  return json({ deleted: true }, 200, headers)
 }
 
-async function readQuota(request, env, headers) {
+async function ownedShare(request, env, headers, id, fileId) {
   const accountKey = await identify(request, env)
-  if (!accountKey) return json({ error: 'login_required' }, 401, headers)
-  const day = dayOf(Date.now())
-  return json({ day, ...(await quotaOf(env.BUCKET, countersOf(day, accountKey, await ipKeyOf(request), await factorOf(env.BUCKET, accountKey)))) }, 200, headers)
+  if (!accountKey) return { refused: json({ error: 'login_required' }, 401, headers) }
+  const object = await env.BUCKET.get(manifestKey(id))
+  if (!object) return { refused: json({ error: 'not_found' }, 404, headers) }
+  if (object.customMetadata?.owner !== accountKey) return { refused: json({ error: 'not_owner' }, 403, headers) }
+  const manifest = await object.json().catch(() => null)
+  if (!manifest?.files?.some(file => file.id === fileId)) return { refused: json({ error: 'not_found' }, 404, headers) }
+  if (!(Date.parse(manifest.mediaExpiresAt ?? '') > Date.now())) return { refused: json({ error: 'media_expired' }, 410, headers) }
+  return { manifest }
+}
+
+async function startMedia(request, env, headers, id, fileId) {
+  const input = await request.json().catch(() => null)
+  const mime = typeof input?.mime === 'string' ? input.mime.trim() : ''
+  if (!MEDIA_TYPE.test(mime) || hasBinary(mime)) return json({ error: 'media_only' }, 415, headers)
+  const { refused, manifest } = await ownedShare(request, env, headers, id, fileId)
+  if (refused) return refused
+  const upload = await env.BUCKET.createMultipartUpload(mediaKey(id, fileId), { httpMetadata: { contentType: mime }, customMetadata: { expiresAt: manifest.mediaExpiresAt } })
+  return json({ uploadId: upload.uploadId }, 201, headers)
+}
+
+async function putMediaPart(request, env, headers, id, fileId, partNumber) {
+  const uploadId = new URL(request.url).searchParams.get('uploadId')
+  if (!uploadId || !request.body || partNumber < 1) return json({ error: 'invalid_part' }, 400, headers)
+  const { refused } = await ownedShare(request, env, headers, id, fileId)
+  if (refused) return refused
+  const part = await env.BUCKET.resumeMultipartUpload(mediaKey(id, fileId), uploadId).uploadPart(partNumber, request.body)
+  return json({ partNumber: part.partNumber, etag: part.etag }, 200, headers)
+}
+
+async function addMediaToManifest(bucket, id, fileId, media) {
+  for (let attempt = 0; attempt < CAS_ATTEMPTS; attempt++) {
+    const object = await bucket.get(manifestKey(id))
+    if (!object) return false
+    const manifest = await object.json()
+    manifest.files = manifest.files.map(file => (file.id === fileId ? { ...file, media } : file))
+    const written = await bucket.put(manifestKey(id), JSON.stringify(manifest, null, 2), { httpMetadata: object.httpMetadata, customMetadata: object.customMetadata, onlyIf: { etagMatches: object.etag } })
+    if (written) return true
+  }
+  throw new Error('manifest_busy')
+}
+
+async function finishMedia(request, env, headers, id, fileId) {
+  const input = await request.json().catch(() => null)
+  const parts = Array.isArray(input?.parts) ? input.parts.filter(part => Number.isInteger(part?.partNumber) && typeof part?.etag === 'string') : []
+  if (typeof input?.uploadId !== 'string' || !parts.length) return json({ error: 'invalid_part' }, 400, headers)
+  const { refused } = await ownedShare(request, env, headers, id, fileId)
+  if (refused) return refused
+  const key = mediaKey(id, fileId)
+  const object = await env.BUCKET.resumeMultipartUpload(key, input.uploadId).complete(parts.map(part => ({ partNumber: part.partNumber, etag: part.etag })))
+  const media = { key, mime: object.httpMetadata?.contentType ?? '', size: object.size }
+  if (!(await addMediaToManifest(env.BUCKET, id, fileId, media))) {
+    await env.BUCKET.delete(key)
+    return json({ error: 'not_found' }, 404, headers)
+  }
+  return json(media, 200, headers)
+}
+
+export function rangeOf(header, size) {
+  const match = /^bytes=(\d*)-(\d*)$/.exec((header ?? '').trim())
+  if (!match || (!match[1] && !match[2]) || (match[1] && match[2] && Number(match[2]) < Number(match[1]))) return null
+  const suffix = !match[1]
+  const start = suffix ? Math.max(0, size - Number(match[2])) : Number(match[1])
+  const end = !suffix && match[2] ? Math.min(Number(match[2]), size - 1) : size - 1
+  if (start >= size || (suffix && !Number(match[2]))) return 'unsatisfiable'
+  return { start, end }
+}
+
+async function mediaExpiryOf(bucket, id, media) {
+  if (media) return media.customMetadata?.expiresAt
+  const object = await bucket.get(manifestKey(id))
+  const manifest = object ? await object.json().catch(() => null) : null
+  return manifest?.mediaExpiresAt
+}
+
+async function serveMedia(request, env, headers, id, fileId) {
+  const key = mediaKey(id, fileId)
+  const media = await env.BUCKET.head(key)
+  const expiresAt = await mediaExpiryOf(env.BUCKET, id, media)
+  if (expiresAt && Date.parse(expiresAt) <= Date.now()) {
+    if (media) await env.BUCKET.delete(key).catch(() => undefined)
+    return json({ error: 'media_expired' }, 410, headers)
+  }
+  if (!media) return json({ error: 'not_found' }, 404, headers)
+  const size = media.size
+  const range = rangeOf(request.headers.get('Range'), size)
+  const common = { ...headers, 'Content-Type': media.httpMetadata?.contentType ?? 'application/octet-stream', 'Accept-Ranges': 'bytes', 'Cache-Control': MEDIA_CACHE }
+  if (range === 'unsatisfiable') return new Response(null, { status: 416, headers: { ...common, 'Content-Range': `bytes */${size}` } })
+  const object = await env.BUCKET.get(key, range ? { range: { offset: range.start, length: range.end - range.start + 1 } } : undefined)
+  if (!object) return json({ error: 'not_found' }, 404, headers)
+  if (!range) return new Response(object.body, { status: 200, headers: { ...common, 'Content-Length': String(size) } })
+  return new Response(object.body, { status: 206, headers: { ...common, 'Content-Length': String(range.end - range.start + 1), 'Content-Range': `bytes ${range.start}-${range.end}/${size}` } })
 }
 
 async function serveShared(env, headers, id, path) {
@@ -322,16 +348,22 @@ async function serveShared(env, headers, id, path) {
 
 export default {
   async fetch(request, env) {
-    const origin = allowedOrigin(request.headers.get('Origin'), env)
+    const path = new URL(request.url).pathname
+    const asked = request.headers.get('Origin')
+    const origin = allowedOrigin(asked, env)
+    const mediaMatch = path.match(MEDIA_PATH)
+    if (mediaMatch && request.method === 'GET' && (origin || !asked)) return serveMedia(request, env, origin ? corsHeaders(origin) : {}, mediaMatch[1], mediaMatch[2])
     if (!origin) return new Response('Forbidden', { status: 403 })
     const headers = corsHeaders(origin)
     if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers })
-    const path = new URL(request.url).pathname
     const shareMatch = path.match(SHARE_PATH)
+    const uploadMatch = path.match(MEDIA_UPLOAD_PATH)
     const fileMatch = path.match(SHARED_FILE_PATH)
-    if (path === '/quota' && request.method === 'GET') return readQuota(request, env, headers)
     if (path === '/shares' && request.method === 'POST') return createShare(request, env, headers)
     if (shareMatch && request.method === 'DELETE') return deleteShare(request, env, headers, shareMatch[1])
+    if (uploadMatch && !uploadMatch[3] && request.method === 'POST') return startMedia(request, env, headers, uploadMatch[1], uploadMatch[2])
+    if (uploadMatch && uploadMatch[3] === 'done' && request.method === 'POST') return finishMedia(request, env, headers, uploadMatch[1], uploadMatch[2])
+    if (uploadMatch && /^\d+$/.test(uploadMatch[3] ?? '') && request.method === 'PUT') return putMediaPart(request, env, headers, uploadMatch[1], uploadMatch[2], Number(uploadMatch[3]))
     if (fileMatch && request.method === 'GET' && env.SERVE_SHARED === 'true') return serveShared(env, headers, fileMatch[1], fileMatch[2])
     return json({ error: 'not_found' }, 404, headers)
   },

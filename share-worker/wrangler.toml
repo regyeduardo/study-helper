@@ -6,6 +6,9 @@ workers_dev = true
 [vars]
 ALLOWED_ORIGINS = "https://study.ryns.me,https://regyeduardo.github.io"
 
+# Mídia dos compartilhamentos fica em shared-media/<id>/<nota> e vale 3 dias
+# (o Worker responde 410 depois disso e apaga). Regra opcional de limpeza no R2:
+#   npx wrangler r2 bucket lifecycle add study-helper midia-3-dias shared-media/ --expire-days 3
 [[r2_buckets]]
 binding = "BUCKET"
 bucket_name = "study-helper"

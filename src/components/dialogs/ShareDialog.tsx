@@ -4,10 +4,10 @@ import { useNavigate } from 'react-router-dom'
 import type { ShareContent, ShareKind, ShareRecord } from '@/types/domain'
 import { Dialog } from '@/components/ui/Dialog'
 import { Icon } from '@/components/ui/Icon'
-import { createShareController, fetchShareQuotaController, isShareConfigured, ShareError } from '@/controllers/share.controller'
+import { createShareController, isShareConfigured, uploadShareMediaController } from '@/controllers/share.controller'
 import { env } from '@/lib/env'
 import { paths } from '@/lib/paths'
-import { buildShareContent, questionCountOf, shareBytes, shareUrl } from '@/lib/share'
+import { buildShareContent, questionCountOf, shareBytes, shareMediaOf, shareUrl } from '@/lib/share'
 import { loadTurnstile } from '@/lib/turnstile'
 import { useAccountStore } from '@/stores/account'
 import { useLibraryStore } from '@/stores/library'
@@ -39,7 +39,12 @@ function TurnstileBox({ onToken }: { onToken(token: string): void }) {
   )
 }
 
-function CreatedShare({ share }: { share: ShareRecord }) {
+interface MediaProgress {
+  name: string
+  percent: number
+}
+
+function CreatedShare({ share, mediaFailed }: { share: ShareRecord; mediaFailed: string[] }) {
   const toast = useUiStore(state => state.toast)
   const timeZone = useLibraryStore(state => state.index.settings.timezone)
   const url = shareUrl(share.id)
@@ -62,6 +67,12 @@ function CreatedShare({ share }: { share: ShareRecord }) {
       <span className="muted" style={{ fontSize: 13 }}>
         Vale por 3 dias, até {dateTime(share.expiresAt, timeZone)}, e mostra a versão de agora. Se mudar alguma coisa, apague em Compartilhados e compartilhe de novo.
       </span>
+      {mediaFailed.length > 0 && (
+        <div className="banner" role="alert">
+          <Icon name="warn" />
+          <span>Não consegui enviar a mídia de {mediaFailed.join(', ')}. O link funciona, mas sem tocar a gravação.</span>
+        </div>
+      )}
     </>
   )
 }
@@ -75,10 +86,13 @@ export function ShareDialog({ target, id }: { target: ShareKind; id: string }) {
   const files = useLibraryStore(state => state.files)
   const openFile = useLibraryStore(state => state.openFile)
   const saveShare = useLibraryStore(state => state.saveShare)
+  const localMedia = useLibraryStore(state => state.localMedia)
+  const repo = useLibraryStore(state => state.repo)
   const [withExams, setWithExams] = useState(false)
   const [content, setContent] = useState<ShareContent | null>(null)
   const [questions, setQuestions] = useState(0)
-  const [remaining, setRemaining] = useState<number | null>(null)
+  const [progress, setProgress] = useState<MediaProgress | null>(null)
+  const [mediaFailed, setMediaFailed] = useState<string[]>([])
   const [error, setError] = useState<string | null>(null)
   const [captcha, setCaptcha] = useState('')
   const [captchaRound, setCaptchaRound] = useState(0)
@@ -102,14 +116,31 @@ export function ShareDialog({ target, id }: { target: ShareKind; id: string }) {
   useEffect(() => {
     if (!google || !configured) return
     void questionCountOf({ kind: target, id }, folders, files).then(setQuestions)
-    fetchShareQuotaController(token)
-      .then(quota => setRemaining(quota.remaining))
-      .catch(failure => setError(failure instanceof Error ? failure.message : 'Não consegui ver a cota de hoje.'))
   }, [google, configured])
 
   const bytes = content ? shareBytes(content) : null
-  const over = bytes !== null && remaining !== null && bytes > remaining
+  const media = content ? shareMediaOf(content, files, localMedia, repo) : []
+  const mediaBytes = media.every(item => item.size !== null) ? media.reduce((sum, item) => sum + (item.size ?? 0), 0) : null
   const empty = content !== null && content.files.length === 0
+
+  const uploadMedia = async (shareId: string): Promise<{ sent: number; failed: string[] }> => {
+    let total = media.reduce((sum, item) => sum + (item.size ?? 0), 0)
+    let sent = 0
+    const failed: string[] = []
+    for (const item of media) {
+      const show = (bytesSent: number) => setProgress({ name: item.name, percent: total ? Math.min(100, Math.round(((sent + bytesSent) / total) * 100)) : 0 })
+      try {
+        show(0)
+        const blob = await item.read()
+        if (item.size === null) total += blob.size
+        if (!blob.size) throw new Error('mídia vazia')
+        sent += await uploadShareMediaController(token, shareId, item.fileId, blob, item.mime, show)
+      } catch {
+        failed.push(item.name)
+      }
+    }
+    return { sent, failed }
+  }
 
   const share = async () => {
     if (!content) return
@@ -117,17 +148,18 @@ export function ShareDialog({ target, id }: { target: ShareKind; id: string }) {
     setError(null)
     try {
       const result = await createShareController(token, captcha, content)
-      const record: ShareRecord = { id: result.id, kind: target, itemId: id, title: content.title, bytes: result.bytes, withExams, createdAt: result.createdAt, expiresAt: result.expiresAt }
+      const uploaded = await uploadMedia(result.id)
+      const record: ShareRecord = { id: result.id, kind: target, itemId: id, title: content.title, bytes: result.bytes + uploaded.sent, withExams, createdAt: result.createdAt, expiresAt: result.expiresAt }
       await saveShare(record)
-      setRemaining(result.remaining)
+      setMediaFailed(uploaded.failed)
       setCreated(record)
     } catch (failure) {
-      if (failure instanceof ShareError && failure.remaining !== null) setRemaining(failure.remaining)
       setError(failure instanceof Error ? failure.message : 'O compartilhamento falhou.')
       setCaptcha('')
       setCaptchaRound(round => round + 1)
     } finally {
       setBusy(false)
+      setProgress(null)
     }
   }
 
@@ -161,7 +193,7 @@ export function ShareDialog({ target, id }: { target: ShareKind; id: string }) {
       <button className="btn quiet" onClick={ui.close}>
         Cancelar
       </button>
-      <button className="btn primary" disabled={!configured || !content || empty || over || remaining === null || !captcha || busy} onClick={() => void share()}>
+      <button className="btn primary" disabled={!configured || !content || empty || !captcha || busy} onClick={() => void share()}>
         <Icon name="link" />
         {busy ? 'Compartilhando…' : 'Compartilhar'}
       </button>
@@ -182,7 +214,7 @@ export function ShareDialog({ target, id }: { target: ShareKind; id: string }) {
             <span>O compartilhamento ainda não foi configurado neste site.</span>
           </div>
         ) : created ? (
-          <CreatedShare share={created} />
+          <CreatedShare share={created} mediaFailed={mediaFailed} />
         ) : (
           <>
             <span className="muted" style={{ fontSize: 13 }}>
@@ -195,26 +227,37 @@ export function ShareDialog({ target, id }: { target: ShareKind; id: string }) {
                 <span>{questions === 1 ? 'Vai só a questão' : questions ? `Vão só as ${questions} questões` : 'Vão só as questões'}. Suas tentativas, notas e destaques ficam com você.</span>
               </span>
             </button>
-            <div className="share-size" aria-label="Tamanho e cota">
+            <div className="share-size" aria-label="Tamanho">
               <div>
-                <span className="faint">Tamanho</span>
+                <span className="faint">Texto</span>
                 <b>{bytes === null ? '…' : formatBytes(bytes)}</b>
               </div>
-              <div>
-                <span className="faint">Hoje ainda dá</span>
-                <b>{remaining === null ? '…' : formatBytes(remaining)}</b>
-              </div>
+              {media.length > 0 && (
+                <div>
+                  <span className="faint">{media.length === 1 ? 'Mídia' : `Mídia · ${media.length} arquivos`}</span>
+                  <b>{mediaBytes === null ? '…' : formatBytes(mediaBytes)}</b>
+                </div>
+              )}
             </div>
+            {media.length > 0 && (
+              <span className="muted" style={{ fontSize: 13 }}>
+                A gravação vai junto: quem abrir o link pode tocar e pular para cada fala. A mídia fica disponível por 3 dias.
+              </span>
+            )}
+            {progress && (
+              <div className="db" role="status" aria-label="Envio da mídia">
+                <div className="bar" role="progressbar" aria-label="Enviando a mídia" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress.percent}>
+                  <i style={{ '--v': `${progress.percent}%` } as React.CSSProperties} />
+                </div>
+                <span className="muted" style={{ fontSize: 13 }}>
+                  Enviando a mídia ({progress.name}): {progress.percent}%
+                </span>
+              </div>
+            )}
             {empty && (
               <div className="banner" role="alert">
                 <Icon name="warn" />
                 <span>Não há nota pronta para compartilhar aqui.</span>
-              </div>
-            )}
-            {over && !error && (
-              <div className="banner" role="alert">
-                <Icon name="warn" />
-                <span>Passa do limite de hoje: ainda dá para compartilhar {formatBytes(remaining ?? 0)}.</span>
               </div>
             )}
             {error && (

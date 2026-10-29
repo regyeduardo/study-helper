@@ -179,6 +179,25 @@ export interface RecordingData {
   frames?: ScreenFrame[]
 }
 
+export type AtaPart = 'resumo' | 'tarefas' | 'perguntas' | 'linha' | 'um-a-um'
+
+export interface AtaImage {
+  name: string
+  dataUrl: string
+}
+
+export interface MeetingDocument {
+  id: string
+  kind: 'ata'
+  parts: AtaPart[]
+  markdown: string
+  images: AtaImage[]
+  createdAt: string
+  models: Record<string, string>
+  costUsd?: number
+  stages?: StageTime[]
+}
+
 export interface FileSidecar {
   meta: FileMeta
   questions: StoredQuestion[]
@@ -188,6 +207,7 @@ export interface FileSidecar {
   recording?: RecordingData
   cards?: StudyCard[]
   mindmap?: MindNode
+  documents?: MeetingDocument[]
 }
 
 export interface StudyCard {
@@ -280,9 +300,18 @@ export interface VisionSettings {
   model: string
 }
 
+export interface AiPassModels {
+  context?: string
+  candidates?: string
+  review?: string
+  pending?: string
+  write?: string
+}
+
 export interface Settings {
   ai: AiSettings
   aiCredentials: Partial<Record<AiProviderId, AiCredential>>
+  aiPasses?: AiPassModels
   vision?: VisionSettings
   transcription: TranscriptionSettings
   youtube: { reader: YoutubeReader; geminiApiKey: string }
@@ -328,6 +357,12 @@ export interface SharedFolder {
   description: string
 }
 
+export interface SharedMedia {
+  url: string
+  mime: string
+  size: number
+}
+
 export interface SharedFile {
   id: string
   name: string
@@ -341,6 +376,7 @@ export interface SharedFile {
   highlights: Highlight[]
   transcript?: string
   recording?: RecordingData
+  media?: SharedMedia
   meta?: Partial<FileMeta>
 }
 
@@ -356,6 +392,7 @@ export interface SharedItem extends ShareContent {
   id: string
   createdAt: string
   expiresAt: string
+  mediaExpiresAt?: string
 }
 
 export interface LibraryIndex {

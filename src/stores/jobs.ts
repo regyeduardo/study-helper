@@ -1,10 +1,15 @@
 import { create } from 'zustand'
 
-import type { CourseAnalysis, FileMeta, FileType, GenerationMeta, RecordingData, RecordingMark, SourceMeta, SourceStorage, StageTime, StoredQuestion } from '@/types/domain'
+import type { AtaPart, CourseAnalysis, FileMeta, FileType, GenerationMeta, MeetingDocument, RecordingData, RecordingMark, SourceMeta, SourceStorage, StageTime, StoredQuestion } from '@/types/domain'
 import { Cancelled } from '@/controllers/ai.controller'
 import type { LitterboxTime } from '@/controllers/hosting.controller'
 import { storedFromRaw } from '@/lib/exam'
 import { analyzeCourse } from '@/lib/generation/course'
+import { buildAta, chosenParts } from '@/lib/generation/ata'
+import { appAi } from '@/lib/generation/ata-ai'
+import type { FrameSource } from '@/lib/generation/ata-types'
+import { renderPrint } from '@/lib/generation/prints'
+import { openVideoFrames, signatureDifference } from '@/lib/generation/video-source'
 import { courseLessonInput, courseOf, explanationName, selectionInput, selectionTitle } from '@/lib/generation/course-lesson'
 import { type ContentInput, resolveInput, type ResolvedInput } from '@/lib/generation/inputs'
 import { buildMinutes, minutesFileName } from '@/lib/generation/minutes'
@@ -17,7 +22,7 @@ import { redoTranscript } from '@/lib/generation/reviewer'
 import { GenerationSession } from '@/lib/generation/session'
 import { suggestTags } from '@/lib/generation/tags'
 import { newId } from '@/lib/ids'
-import { recordingName } from '@/lib/file-types'
+import { mediaOf, recordingName } from '@/lib/file-types'
 import { downloadStoredSource, storeSource } from '@/lib/storage/source-storage'
 import { keepLocalMedia, linkLocalMedia, readLocalMedia } from '@/lib/recording/media-library'
 import { transcribe } from '@/lib/transcription'
@@ -85,6 +90,7 @@ interface JobsState {
   generateSecondTab(fileId: string, agent: SecondTabAgent): Promise<void>
   redoTranscript(fileId: string, instruction: string): Promise<void>
   generateFromNote(fileId: string, agent: SecondTabAgent): Promise<string | null>
+  generateAta(fileId: string, parts: AtaPart[]): Promise<void>
   suggestTags(fileId: string): Promise<void>
   generateRemaining(folderId: string): Promise<void>
   regenerate(fileId: string): Promise<void>
@@ -146,6 +152,13 @@ function destinationName(folderId: string | null): string {
 
 function failureText(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
+}
+
+/** When the meeting started: from the recording's name ("Reunião 28-10-2026, 18-15-41"), else creation minus length. */
+export function meetingStart(meta: FileMeta): Date {
+  const found = /(\d{2})-(\d{2})-(\d{4}),?\s+(\d{2})-(\d{2})/.exec(meta.origin?.name ?? meta.name)
+  if (found) return new Date(Number(found[3]), Number(found[2]) - 1, Number(found[1]), Number(found[4]), Number(found[5]))
+  return new Date(new Date(meta.created.at).getTime() - (meta.origin?.durationSeconds ?? 0) * 1000)
 }
 
 async function mediaFileOf(meta: FileMeta): Promise<File> {
@@ -534,6 +547,44 @@ export const useJobsStore = create<JobsState>((set, get) => {
       )
       void runOnFile(meta, agent, material, null, AGENT_LABEL[agent], source.name, undefined, recording)
       return meta.id
+    },
+
+    generateAta: async (fileId, parts) => {
+      const meta = library().files.find(file => file.id === fileId)
+      if (!meta || !chosenParts(parts).length || get().jobs.some(job => job.fileId === fileId && job.status === 'running')) return
+      const heard = (await library().openFile(fileId)).sidecar.recording
+      if (!heard?.blocks.length) return
+      const { job, controller } = openJob('generation', `Ata: ${meta.name}`, fileId)
+      const activityId = await library().startActivity({ kind: 'meeting', label: `Ata: ${meta.name}`, origin: meta.origin?.name ?? meta.name, destination: 'aba Ata da própria nota', fileId })
+      const progress = (message: string) => patchJob(job.id, { message })
+      const settings = library().index.settings
+      const ai = appAi(settings, controller.signal)
+      let frames: FrameSource | null = null
+      try {
+        if (mediaOf(meta) === 'video' && ai.hasVision) {
+          progress('Abrindo o vídeo da gravação')
+          const video = await mediaFileOf(meta).catch(() => null)
+          frames = video ? await openVideoFrames(video).catch(() => null) : null
+        }
+        const done = await buildAta({ recording: heard, parts, startedAt: meetingStart(meta), onProgress: progress }, { ai, frames, difference: signatureDifference, renderPrint: (image, marks, caption) => renderPrint(image, marks, caption) })
+        progress('Salvando')
+        const document: MeetingDocument = { id: newId(), kind: 'ata', parts: chosenParts(parts), markdown: done.markdown, images: done.images, createdAt: new Date().toISOString(), models: done.models, ...(done.costUsd !== undefined ? { costUsd: done.costUsd } : {}), stages: done.stages }
+        const renamed = done.recording !== heard
+        await library().updateSidecar(fileId, sidecar => ({
+          ...sidecar,
+          ...(renamed && sidecar.recording ? { recording: { ...sidecar.recording, speakers: done.recording.speakers }, transcript: transcriptText({ ...sidecar.recording, speakers: done.recording.speakers }) } : {}),
+          documents: [...(sidecar.documents ?? []).filter(item => item.kind !== 'ata'), document],
+        }))
+        if (renamed && meta.type === 'reading') await library().saveContent(fileId, transcriptText(done.recording).trim())
+        closeJob(job.id, 'done', 'Ata pronta: veja a aba Ata.')
+        await library().finishActivity(activityId, 'done', 'Ata pronta.')
+      } catch (error) {
+        const cancelled = error instanceof Cancelled || controller.signal.aborted
+        closeJob(job.id, cancelled ? 'cancelled' : 'error', cancelled ? 'Cancelado por você.' : 'A ata não saiu.', cancelled ? null : failureText(error))
+        await library().finishActivity(activityId, cancelled ? 'cancelled' : 'error', cancelled ? 'Cancelado por você.' : failureText(error))
+      } finally {
+        frames?.close?.()
+      }
     },
 
     suggestTags: fileId => suggestTagsFor(fileId),

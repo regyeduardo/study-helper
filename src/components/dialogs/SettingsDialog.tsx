@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 
 import type { AiProviderId, AiSettings, LayoutId, ProviderEngine, Settings, SpeakersEngine, TranscriptionCredential, TranscriptionEngine } from '@/types/domain'
 import { IntegrationStatus } from '@/components/dialogs/IntegrationStatus'
+import { PassModels } from '@/components/dialogs/PassModels'
 import { Icon } from '@/components/ui/Icon'
 import { listModelsController } from '@/controllers/ai.controller'
 import { isFreeChoice, isKnownProvider, modelOf, PROVIDER_LEFT, PROVIDERS, type ProviderInfo, providerOf } from '@/lib/ai/providers'
@@ -239,6 +240,7 @@ function AiTab() {
         </div>
       )}
       </>
+      <PassModels />
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
         <button className="btn" onClick={() => void runTest()} disabled={test.state === 'busy'}>
           <Icon name="check" />

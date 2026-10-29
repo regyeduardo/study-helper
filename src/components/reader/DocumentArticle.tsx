@@ -12,6 +12,7 @@ import { MeetingTabs } from '@/components/reader/MeetingTabs'
 import { MinutesTab } from '@/components/reader/MinutesTab'
 import { TagSuggestion } from '@/components/reader/TagSuggestion'
 import { useDocument } from '@/hooks/use-document'
+import { withImages } from '@/lib/generation/ata'
 import { courseOf } from '@/lib/generation/course-lesson'
 import { usePathName } from '@/hooks/use-library-view'
 import { MEDIA_LABEL, mediaOf } from '@/lib/file-types'
@@ -46,7 +47,7 @@ function MediaOnly({ media, onTranscribe }: { media: MeetingMedia; onTranscribe?
   }
   return (
     <div className="media-only">
-      {media.available ? <MediaPlayer player={player} media={media} onTime={() => undefined} onPlayFrom={play} /> : <div className="banner">A mídia desta nota não está mais guardada.</div>}
+      {media.available ? <MediaPlayer player={player} media={media} onTime={() => undefined} onPlayFrom={play} /> : <div className="banner">{media.notice ?? 'A mídia desta nota não está mais guardada.'}</div>}
       {onTranscribe && media.available && (
         <div className="media-only-act">
           <button className="btn primary" onClick={onTranscribe}>
@@ -242,6 +243,8 @@ export function DocumentBody({ fileId, compact = false }: { fileId: string; comp
   ) : opened && opened.content && !(recording && meta.type === 'reading') ? (
     <GithubMarkdownView markdown={opened.content} quotes={quotes} onSelection={setSelection} onQuoteClick={onQuoteClick} onHeadings={onHeadings} onHeading={setHeading} />
   ) : null
+  const ataDocument = opened?.sidecar.documents?.filter(item => item.kind === 'ata').at(-1)
+  const ataView = ataDocument ? <GithubMarkdownView markdown={withImages(ataDocument.markdown, ataDocument.images)} /> : undefined
   const rename = async (speakerId: string, name: string) => {
     if (!recording || !opened) return
     const renamed = renameSpeaker(recording, speakerId, name)
@@ -289,6 +292,8 @@ export function DocumentBody({ fileId, compact = false }: { fileId: string; comp
           media={media}
           name={meta.name}
           second={secondLabel && viewer ? { label: secondLabel, node: viewer } : undefined}
+          ata={ataView}
+          onChooseParts={readOnly || job ? undefined : () => ui.open({ kind: 'ata-parts', fileId: meta.id })}
           onRename={readOnly ? undefined : (speakerId, name) => void rename(speakerId, name)}
           onMarks={readOnly ? undefined : saveMarks}
           startAt={startAt}
