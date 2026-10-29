@@ -3,7 +3,8 @@ import { AUDIBLE_LEVEL, loudness } from '@/lib/transcription/audio'
 import type { SpeakerTurn, Word } from '@/lib/transcription/types'
 
 export const MICROPHONE = 'mic'
-const MICROPHONE_NAME = 'Você'
+/** The microphone voice when the name of who recorded is not known yet: never "Você". */
+export const RECORDER = 'Quem gravou'
 const MICROPHONE_DOMINANCE = 2
 const PARAGRAPH_PAUSE_SECONDS = 2
 const PARAGRAPH_SECONDS = 30
@@ -62,11 +63,11 @@ function microphoneSpeakers(words: Word[], turns: SpeakerTurn[], fromMicrophone:
   return new Set([...count].filter(([, tally]) => tally.microphone > 0 && tally.mine > tally.theirs).map(([speaker]) => speaker))
 }
 
-export function speakersOf(blocks: TranscriptBlock[]): RecordingSpeaker[] {
+export function speakersOf(blocks: TranscriptBlock[], recorder = ''): RecordingSpeaker[] {
   const ids = [...new Set(blocks.map(block => block.speaker).filter(Boolean))]
   return ids.map((id, index) => ({
     id,
-    name: id === MICROPHONE ? MICROPHONE_NAME : `Falante ${index + 1}`,
+    name: id === MICROPHONE ? recorder.trim() || RECORDER : `Falante ${index + 1}`,
     suggested: false,
   }))
 }
@@ -124,6 +125,13 @@ export function blocksFromWords(words: Word[], turns: SpeakerTurn[], fromMicroph
     } else blocks.push({ speaker, start: word.start, end: word.end, text })
   }
   return blocks
+}
+
+/** Notes transcribed before kept the microphone voice as "Você": shown with the name of who recorded. */
+export function withRecorder(recording: RecordingData, recorder: string): RecordingData {
+  const old = (speaker: RecordingSpeaker) => speaker.id === MICROPHONE && speaker.name === 'Você'
+  if (!recording.speakers.some(old)) return recording
+  return { ...recording, speakers: recording.speakers.map(speaker => (old(speaker) ? { ...speaker, name: recorder.trim() || RECORDER } : speaker)) }
 }
 
 export function renameSpeaker(recording: RecordingData, id: string, name: string): RecordingData {

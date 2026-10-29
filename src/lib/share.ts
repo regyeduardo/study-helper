@@ -8,6 +8,7 @@ import { newId, nowIso } from '@/lib/ids'
 import { keepLocalMedia, type LocalMedia, readLocalMedia } from '@/lib/recording/media-library'
 import { bytesOf, type Repository, type StoredSize } from '@/lib/storage/repository'
 import { downloadStoredSource, sourceExpired, storeSource } from '@/lib/storage/source-storage'
+import { RECORDER, withRecorder } from '@/lib/transcription/turns'
 import { readingMinutes, wordCount } from '@/utils/format'
 import type { TrackedTask } from '@/stores/jobs'
 import type { OpenedFile } from '@/stores/library'
@@ -58,7 +59,8 @@ function folderTree(folders: FolderMeta[], rootId: string): FolderMeta[] {
   return walk(rootId)
 }
 
-export async function buildShareContent(target: ShareTarget, folders: FolderMeta[], files: FileMeta[], open: (id: string) => Promise<OpenedFile>, withExams: boolean): Promise<ShareContent> {
+/** `recorder`: name of who shares, for the microphone voice of notes transcribed back when it was "Você". */
+export async function buildShareContent(target: ShareTarget, folders: FolderMeta[], files: FileMeta[], open: (id: string) => Promise<OpenedFile>, withExams: boolean, recorder = ''): Promise<ShareContent> {
   const tree = target.kind === 'folder' ? folderTree(folders, target.id) : []
   const folderIds = new Set(tree.map(folder => folder.id))
   const chosen = target.kind === 'file' ? files.filter(file => file.id === target.id) : files.filter(file => !file.deletedAt && file.folderId !== null && folderIds.has(file.folderId)).sort((a, b) => a.position - b.position)
@@ -73,6 +75,9 @@ export async function buildShareContent(target: ShareTarget, folders: FolderMeta
   const sharedFiles: SharedFile[] = []
   for (const file of chosen) {
     const opened = await open(file.id)
+    const recording = opened.sidecar.recording && withRecorder(opened.sidecar.recording, recorder)
+    // only the speaker label at the start of a line: "Você" inside what was said stays
+    const named = (text: string) => (recording !== opened.sidecar.recording ? text.replace(/^Você(?= \[)/gm, recorder.trim() || RECORDER) : text)
     sharedFiles.push({
       id: file.id,
       name: file.name,
@@ -81,11 +86,11 @@ export async function buildShareContent(target: ShareTarget, folders: FolderMeta
       position: file.position,
       description: file.description,
       tags: file.tags,
-      content: opened.content,
+      content: named(opened.content),
       questions: withExams ? opened.sidecar.questions : [],
       highlights: opened.sidecar.highlights,
-      ...(opened.sidecar.transcript !== undefined ? { transcript: opened.sidecar.transcript } : {}),
-      ...(opened.sidecar.recording ? { recording: opened.sidecar.recording } : {}),
+      ...(opened.sidecar.transcript !== undefined ? { transcript: named(opened.sidecar.transcript) } : {}),
+      ...(recording ? { recording } : {}),
       ...(opened.sidecar.documents ? { documents: opened.sidecar.documents } : {}),
       meta: { ...file, mastery: null, lastReviewedAt: null },
     })

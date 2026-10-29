@@ -9,6 +9,7 @@ import { PROMPTS } from '@/lib/generation/prompts.data'
 import { transcribe } from '@/lib/transcription'
 import { listLocalMedia } from '@/lib/recording/media-library'
 import type { Repository } from '@/lib/storage/repository'
+import { LOCAL_ACCOUNT, useAccountStore } from '@/stores/account'
 import { useJobsStore, type NewContentRequest } from '@/stores/jobs'
 import { useLibraryStore } from '@/stores/library'
 import { useUiStore } from '@/stores/ui'
@@ -22,18 +23,24 @@ const { heard } = vi.hoisted(() => ({
       { speaker: 'speaker_0', start: 4, end: 8, text: 'Vamos lançar em maio, eu mando a proposta para a Mariana.' },
       { speaker: 'mic', start: 9, end: 10, text: 'Valeu, Bruno.' },
     ],
-    speakers: [
-      { id: 'mic', name: 'Você', suggested: false },
-      { id: 'speaker_0', name: 'Falante 2', suggested: false },
-    ],
     marks: [],
   },
 }))
 
-vi.mock('@/lib/transcription', () => ({
-  ENGINES: [],
-  transcribe: vi.fn(async () => ({ text: 'bruto', engine: 'deepinfra', language: 'pt', durationSeconds: 10, speakers: 2, recording: heard })),
-}))
+vi.mock('@/lib/transcription', async () => {
+  const { speakersOf } = await vi.importActual<typeof import('@/lib/transcription/turns')>('@/lib/transcription/turns')
+  return {
+    ENGINES: [],
+    transcribe: vi.fn(async (_file: Blob, _settings: unknown, _progress: unknown, _signal: unknown, options?: { recorder?: string }) => ({
+      text: 'bruto',
+      engine: 'deepinfra',
+      language: 'pt',
+      durationSeconds: 10,
+      speakers: 2,
+      recording: { ...heard, speakers: speakersOf(heard.blocks, options?.recorder) },
+    })),
+  }
+})
 
 vi.mock('@/components/reader/GithubMarkdownView', () => ({
   default: ({ markdown }: { markdown: string }) => <div data-testid="markdown">{markdown}</div>,
@@ -104,22 +111,44 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllGlobals()
+  useAccountStore.setState({ accounts: [LOCAL_ACCOUNT], activeId: LOCAL_ACCOUNT.id })
 })
+
+const REGY = { id: 'google-regy', kind: 'google' as const, name: 'Regy Niles', email: 'regy@example.com', picture: '' }
 
 describe('"O que gerar" chooses only the second tab', () => {
   it('"Só a transcrição" gives a note with the Transcrição tab alone, already named and reviewed', async () => {
     const id = await noteFrom('reading')
     const recording = memory.sidecars.get(id)!.recording as RecordingData
     expect(recording.speakers).toEqual([
-      { id: 'mic', name: 'Você', suggested: false },
+      { id: 'mic', name: 'Quem gravou', suggested: false },
       { id: 'speaker_0', name: 'Bruno', suggested: true },
     ])
     expect(recording.blocks[1]).toMatchObject({ text: 'Vamos lançar em maio, eu mando a proposta para a Marina.', original: 'Vamos lançar em maio, eu mando a proposta para a Mariana.' })
-    expect(memory.contents.get(id)).toBe('Você [00:00]: Vamos lançar em maio?\nBruno [00:04]: Vamos lançar em maio, eu mando a proposta para a Marina.\nVocê [00:09]: Valeu, Bruno.')
+    expect(memory.contents.get(id)).toBe('Quem gravou [00:00]: Vamos lançar em maio?\nBruno [00:04]: Vamos lançar em maio, eu mando a proposta para a Marina.\nQuem gravou [00:09]: Valeu, Bruno.')
     open(id)
     await waitFor(() => expect(screen.getAllByRole('listitem')).toHaveLength(3))
     expect(tabs()).toEqual(['Transcrição*'])
     expect(screen.queryByTestId('markdown')).not.toBeInTheDocument()
+  })
+
+  it('with a Google account the microphone voice is the name of who recorded, never "Você"', async () => {
+    useAccountStore.setState({ accounts: [LOCAL_ACCOUNT, REGY], activeId: REGY.id })
+    const id = await noteFrom('reading')
+    expect(memory.sidecars.get(id)!.recording?.speakers[0]).toEqual({ id: 'mic', name: 'Regy Niles', suggested: false })
+    expect(memory.contents.get(id)).toContain('Regy Niles [00:00]: Vamos lançar em maio?')
+    expect(memory.contents.get(id)).not.toContain('Você [')
+  })
+
+  it('a note transcribed before shows the name of who recorded where it said "Você"', async () => {
+    useAccountStore.setState({ accounts: [LOCAL_ACCOUNT, REGY], activeId: REGY.id })
+    const recording: RecordingData = { ...heard, speakers: [{ id: 'mic', name: 'Você', suggested: false }, { id: 'speaker_0', name: 'Bruno', suggested: false }] }
+    const meta = await useLibraryStore.getState().createFile({ name: 'Antiga', type: 'reading', description: '', folderId: null, status: 'ready', pendingExcerpt: null }, 'Você [00:00]: Vamos lançar em maio?')
+    await useLibraryStore.getState().updateSidecar(meta.id, sidecar => ({ ...sidecar, recording }))
+    open(meta.id)
+    await waitFor(() => expect(screen.getAllByRole('listitem')).toHaveLength(3))
+    expect(screen.getAllByRole('button', { name: 'Renomear Regy Niles' })).toHaveLength(2)
+    expect(screen.queryByText('Você')).not.toBeInTheDocument()
   })
 
   it('asking for the Ata later, in the note, opens the checkboxes of the parts first', async () => {
@@ -155,7 +184,7 @@ describe('"O que gerar" chooses only the second tab', () => {
     fireEvent.keyDown(screen.getByRole('textbox', { name: 'Nome do falante' }), { key: 'Enter' })
     await waitFor(() => expect(memory.sidecars.get(id)!.recording?.speakers[1]).toEqual({ id: 'speaker_0', name: 'Bruno Lima', suggested: false }))
     await waitFor(() => expect(memory.contents.get(id)).toContain('Bruno Lima [00:04]:'))
-    expect(memory.contents.get(id)).toContain('Você [00:09]: Valeu, Bruno.')
+    expect(memory.contents.get(id)).toContain('Quem gravou [00:09]: Valeu, Bruno.')
   })
 
   it('"Refazer a Ata" opens the checkboxes of the parts, without writing anything yet', async () => {

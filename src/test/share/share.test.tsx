@@ -163,6 +163,15 @@ describe('diálogo de compartilhar', () => {
     expect(content.files[0]).not.toHaveProperty('documents')
   })
 
+  it('nota antiga com "Você": o link leva o nome de quem compartilha, na fala e no texto, sem mexer no que é dito', async () => {
+    const library = useLibraryStore.getState()
+    const note = await library.createFile({ name: 'Reunião antiga', type: 'reading' }, 'Você [00:30]: Você vai fazer ainda?\nFalante 1 [00:32]: Tá.')
+    await library.updateSidecar(note.id, sidecar => ({ ...sidecar, recording: { blocks: [{ speaker: 'mic', start: 30, end: 31, text: 'Você vai fazer ainda?' }, { speaker: 'speaker_0', start: 32, end: 33, text: 'Tá.' }], speakers: [{ id: 'mic', name: 'Você', suggested: false }, { id: 'speaker_0', name: 'Falante 1', suggested: false }], marks: [] } }))
+    const content = await buildShareContent({ kind: 'file', id: note.id }, useLibraryStore.getState().folders, useLibraryStore.getState().files, useLibraryStore.getState().openFile, false, 'Regy Niles')
+    expect(content.files[0].recording!.speakers[0]).toMatchObject({ id: 'mic', name: 'Regy Niles' })
+    expect(content.files[0].content).toBe('Regy Niles [00:30]: Você vai fazer ainda?\nFalante 1 [00:32]: Tá.')
+  })
+
   it('uma nota grande compartilha sem limite de tamanho', async () => {
     useGoogle()
     const note = await useLibraryStore.getState().createFile({ name: 'Apostila', type: 'reading' }, `# Apostila\n\n${'texto longo '.repeat(200_000)}`)

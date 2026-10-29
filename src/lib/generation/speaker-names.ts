@@ -5,7 +5,7 @@ import { transcriptChunks } from '@/lib/generation/minutes'
 import { PROMPTS } from '@/lib/generation/prompts.data'
 import type { GenerationSession } from '@/lib/generation/session'
 import { transcriptText } from '@/lib/transcription/export'
-import { MICROPHONE } from '@/lib/transcription/turns'
+import { MICROPHONE, RECORDER } from '@/lib/transcription/turns'
 
 export interface Suggestion {
   speaker: string
@@ -26,7 +26,7 @@ export function applied(speakers: RecordingSpeaker[], suggestions: Suggestion[],
   const said = transcript.toLocaleLowerCase('pt-BR')
   const taken = new Set(speakers.map(speaker => speaker.name.toLocaleLowerCase('pt-BR')))
   return speakers.map(speaker => {
-    if (speaker.id === MICROPHONE) return speaker
+    if (speaker.id === MICROPHONE && speaker.name !== RECORDER) return speaker
     const found = suggestions.find(item => item.speaker === speaker.name && item.name && said.includes(item.name.toLocaleLowerCase('pt-BR')) && !taken.has(item.name.toLocaleLowerCase('pt-BR')))
     if (!found) return speaker
     taken.add(found.name.toLocaleLowerCase('pt-BR'))

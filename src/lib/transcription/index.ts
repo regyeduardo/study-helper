@@ -40,6 +40,8 @@ export interface TranscriptionOutcome {
 
 export interface TranscribeOptions {
   microphoneOnLeft?: boolean
+  /** Name of who recorded, given to the microphone voice. */
+  recorder?: string
 }
 
 const PROVIDERS: Record<ProviderEngine, (job: ProviderJob) => Promise<ProviderResult>> = {
@@ -85,7 +87,7 @@ async function transcribeWithProvider(engine: ProviderEngine, audio: Blob, setti
   if (!turns.length && !warning) warning = NO_SPEAKERS
   const sides = options.microphoneOnLeft && channels.length === 2 ? { microphone: channels[0], computer: channels[1] } : null
   const blocks = blocksFromWords(heard.inSpeech ? heard.words : wordsInSpeech(heard.words, turns), turns, sides ? microphoneWords(sides) : undefined, sides ? computerWords(sides) : undefined)
-  const speakers = speakersOf(blocks)
+  const speakers = speakersOf(blocks, options.recorder)
   const recording: RecordingData = { blocks, speakers, marks: [], ...(warning ? { warning } : {}) }
   return { text: transcriptText(recording).trim(), engine, language: settings.language, durationSeconds: durationOf(samples), speakers: speakers.length, recording, stages: clock.stages }
 }

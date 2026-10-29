@@ -55,6 +55,11 @@ function readActive(accounts: Account[]): string {
   return LOCAL_ACCOUNT_ID
 }
 
+/** The person's real name, for the microphone voice of a recording; the local account has none. */
+export function recorderName(account: Account): string {
+  return account.kind === 'google' ? account.name.trim() : ''
+}
+
 export function initialsOf(account: Account): string {
   if (account.kind === 'local') return 'L'
   const words = account.name.split(/\s+/).filter(Boolean)

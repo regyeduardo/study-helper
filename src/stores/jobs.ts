@@ -28,6 +28,7 @@ import { keepLocalMedia, linkLocalMedia, readLocalMedia } from '@/lib/recording/
 import { transcribe } from '@/lib/transcription'
 import { StageClock } from '@/lib/transcription/types'
 import { transcriptText } from '@/lib/transcription/export'
+import { recorderName, useAccountStore } from '@/stores/account'
 import { useLibraryStore } from '@/stores/library'
 
 export type Agent = 'lesson' | 'explanation' | 'meeting' | 'reading'
@@ -339,7 +340,7 @@ export const useJobsStore = create<JobsState>((set, get) => {
 
   const resolveRecording = async (file: File, progress: (message: string, fraction?: number) => void, signal: AbortSignal): Promise<ResolvedInput> => {
     progress('Transcrevendo a gravação')
-    const transcription = await transcribe(file, library().index.settings.transcription, progress, signal, { microphoneOnLeft: true })
+    const transcription = await transcribe(file, library().index.settings.transcription, progress, signal, { microphoneOnLeft: true, recorder: recorderName(useAccountStore.getState().active()) })
     return {
       content: `${CONTENT_HEADER}${transcription.text}`,
       title: file.name,
@@ -456,7 +457,7 @@ export const useJobsStore = create<JobsState>((set, get) => {
         progress('Abrindo a mídia')
         const file = source ?? (await mediaFileOf(meta))
         progress('Transcrevendo a gravação')
-        const transcription = await transcribe(file, library().index.settings.transcription, progress, controller.signal, { microphoneOnLeft: origin.input === 'recording' })
+        const transcription = await transcribe(file, library().index.settings.transcription, progress, controller.signal, { microphoneOnLeft: origin.input === 'recording', recorder: recorderName(useAccountStore.getState().active()) })
         const read: ResolvedInput = { content: `${CONTENT_HEADER}${transcription.text}`, title: meta.name, description: meta.description, origin, transcription }
         const marks = (await library().openFile(fileId)).sidecar.recording?.marks ?? []
         const resolved = await polished(read, marks, progress, controller.signal, file)

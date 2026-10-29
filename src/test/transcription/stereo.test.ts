@@ -34,7 +34,7 @@ afterEach(() => {
 })
 
 describe('who spoke into the microphone', () => {
-  it('speech only on the microphone channel is "Você", speech only on the computer channel is someone else', () => {
+  it('speech only on the microphone channel is who recorded, speech only on the computer channel is someone else', () => {
     const fromMicrophone = microphoneWords({
       microphone: channel([3, 0.4], [3, 0]),
       computer: channel([3, 0], [3, 0.4]),
@@ -45,12 +45,12 @@ describe('who spoke into the microphone', () => {
       ['speaker_1', 'Dois mil.'],
     ])
     expect(speakersOf(blocks)).toEqual([
-      { id: 'mic', name: 'Você', suggested: false },
+      { id: 'mic', name: 'Quem gravou', suggested: false },
       { id: 'speaker_1', name: 'Falante 2', suggested: false },
     ])
   })
 
-  it('the computer sound leaking into the microphone does not turn the other person into "Você"', () => {
+  it('the computer sound leaking into the microphone does not turn the other person into who recorded', () => {
     const fromMicrophone = microphoneWords({
       microphone: channel([3, 0.4], [3, 0.08]),
       computer: channel([3, 0], [3, 0.4]),
@@ -75,7 +75,7 @@ describe('who spoke into the microphone', () => {
     })
     expect(speakersOf(blocksFromWords(words, turns, fromMicrophone))).toEqual([
       { id: 'speaker_0', name: 'Falante 1', suggested: false },
-      { id: 'mic', name: 'Você', suggested: false },
+      { id: 'mic', name: 'Quem gravou', suggested: false },
     ])
     expect(speakersOf(blocksFromWords(words, []))).toEqual([])
   })

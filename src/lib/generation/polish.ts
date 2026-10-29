@@ -7,6 +7,7 @@ import type { GenerationSession } from '@/lib/generation/session'
 import { applied, type Suggestion, suggestionsIn } from '@/lib/generation/speaker-names'
 import { cleanTitle } from '@/lib/generation/title'
 import { clockTime, speakerName, transcriptText } from '@/lib/transcription/export'
+import { RECORDER } from '@/lib/transcription/turns'
 import { termsHint } from '@/lib/transcription/types'
 
 const UNNAMED = /^Falante \d+$/
@@ -57,7 +58,7 @@ export async function polishTranscript(recording: RecordingData, session: Genera
       ),
     ])
     for (const answer of answers) {
-      names.push(...suggestionsIn(answer).filter(item => UNNAMED.test(item.speaker)))
+      names.push(...suggestionsIn(answer).filter(item => UNNAMED.test(item.speaker) || item.speaker === RECORDER))
       corrections.push(...correctionsIn(answer))
     }
     title = cleanTitle(extractJson(long ? opening : answers[0])?.titulo)

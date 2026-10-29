@@ -9,7 +9,7 @@ import { env } from '@/lib/env'
 import { paths } from '@/lib/paths'
 import { buildShareContent, questionCountOf, shareBytes, shareMediaOf, shareUrl } from '@/lib/share'
 import { loadTurnstile } from '@/lib/turnstile'
-import { useAccountStore } from '@/stores/account'
+import { recorderName, useAccountStore } from '@/stores/account'
 import { useLibraryStore } from '@/stores/library'
 import { useUiStore } from '@/stores/ui'
 import { dateTime, formatBytes } from '@/utils/format'
@@ -107,7 +107,7 @@ export function ShareDialog({ target, id }: { target: ShareKind; id: string }) {
     if (!google || !configured) return
     let alive = true
     setContent(null)
-    void buildShareContent({ kind: target, id }, folders, files, openFile, withExams).then(built => alive && setContent(built))
+    void buildShareContent({ kind: target, id }, folders, files, openFile, withExams, recorderName(useAccountStore.getState().active())).then(built => alive && setContent(built))
     return () => {
       alive = false
     }

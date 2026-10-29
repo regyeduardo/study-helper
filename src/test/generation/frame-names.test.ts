@@ -28,6 +28,15 @@ describe('the name on the screen', () => {
     expect(seen.speakers[0]).toEqual(recording.speakers[0])
   })
 
+  it('without the name of who recorded, the microphone voice is also looked at and named from the screen', async () => {
+    const unnamed: RecordingData = { ...recording, speakers: [{ id: 'mic', name: 'Quem gravou', suggested: false }, recording.speakers[1]] }
+    const session = { chat: vi.fn(async () => '{"horas": []}') } as unknown as GenerationSession
+    const grab = vi.fn(async (_video: Blob, times: number[]) => times.map(at => ({ at, image: `img-${at}`, signature: [at] })))
+    const see = vi.fn(async (_settings: unknown, _images: string[], prompt: string) => (prompt.includes('"Quem gravou"') ? '{"nome": "Regy Niles"}' : '{"nome": ""}'))
+    const seen = await lookAtScreen(unnamed, new Blob(['v'], { type: 'video/webm' }), vision, session, { grab, see })
+    expect(seen.speakers[0]).toEqual({ id: 'mic', name: 'Regy Niles', suggested: false })
+  })
+
   it('keeps the name heard when the screen shows no name', async () => {
     const session = { chat: vi.fn(async () => '{"horas": []}') } as unknown as GenerationSession
     const grab = vi.fn(async (_video: Blob, times: number[]) => times.map(at => ({ at, image: `img-${at}`, signature: [at] })))

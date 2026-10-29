@@ -19,7 +19,8 @@ import { MEDIA_LABEL, mediaOf } from '@/lib/file-types'
 import { newId, nowIso } from '@/lib/ids'
 import { paths } from '@/lib/paths'
 import { transcriptText } from '@/lib/transcription/export'
-import { renameInText, renameSpeaker } from '@/lib/transcription/turns'
+import { renameInText, renameSpeaker, withRecorder } from '@/lib/transcription/turns'
+import { recorderName, useAccountStore } from '@/stores/account'
 import { useDocumentStore } from '@/stores/document'
 import { useJobsStore } from '@/stores/jobs'
 import { useLibraryStore } from '@/stores/library'
@@ -233,7 +234,7 @@ export function DocumentBody({ fileId, compact = false }: { fileId: string; comp
   const showInfo = () => ui.set({ inspectorTab: 'info', rightOpen: true, panelAsked: true, columnsSheet: true, focusPop: 'info' })
   const readOnly = Boolean(useLibraryStore.getState().sharedView)
 
-  const recording = opened?.sidecar.recording
+  const recording = opened?.sidecar.recording && withRecorder(opened.sidecar.recording, readOnly ? '' : recorderName(useAccountStore.getState().active()))
   const transcribed = Boolean(recording?.blocks.length)
   const mediaNote = mediaOf(meta) !== 'text'
   const secondLabel = meta.type === 'reading' || !(live || meta.status === 'ready') ? undefined : SECOND_TAB[meta.type]

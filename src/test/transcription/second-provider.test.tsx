@@ -114,7 +114,7 @@ describe('a provider that gives only the text with time', () => {
     expect(outcome.recording?.warning).toBe('Os falantes não foram separados: A chave da DeepInfra foi recusada.')
   })
 
-  it('in an app recording the microphone side is "Você" even without a second provider', async () => {
+  it('in an app recording the microphone side is "Quem gravou" when nobody is named, even without a second provider', async () => {
     stubDecoder([joined(tone(4, 0.4), tone(4, 0)), joined(tone(4, 0), tone(4, 0.4))])
     serve()
     const outcome = await transcribe(audio, settings(), () => {}, undefined, { microphoneOnLeft: true })
@@ -122,7 +122,17 @@ describe('a provider that gives only the text with time', () => {
       ['mic', 'Quanto custou isso?'],
       ['', 'Custou dois mil.'],
     ])
-    expect(outcome.recording?.speakers).toEqual([{ id: 'mic', name: 'Você', suggested: false }])
+    expect(outcome.recording?.speakers).toEqual([{ id: 'mic', name: 'Quem gravou', suggested: false }])
+    expect(outcome.text).not.toContain('Você')
+  })
+
+  it('the microphone side gets the name of who recorded, never "Você"', async () => {
+    stubDecoder([joined(tone(4, 0.4), tone(4, 0)), joined(tone(4, 0), tone(4, 0.4))])
+    serve()
+    const outcome = await transcribe(audio, settings(), () => {}, undefined, { microphoneOnLeft: true, recorder: 'Regy Niles' })
+    expect(outcome.recording?.speakers).toEqual([{ id: 'mic', name: 'Regy Niles', suggested: false }])
+    expect(outcome.text).toContain('Regy Niles [00:02]: Quanto custou isso?')
+    expect(outcome.text).not.toContain('Você')
   })
 
   it('the note shows the warning above the speeches', () => {

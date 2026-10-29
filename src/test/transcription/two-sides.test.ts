@@ -32,8 +32,8 @@ const words = [
 
 const turns = [turn(0, 2.8, 'speaker_0'), turn(2.8, 5.8, 'speaker_1'), turn(5.8, 10, 'speaker_0')]
 
-describe('microphone is always "Você", people are only told apart on the computer side', () => {
-  it('your speech over the computer sound stays "Você", and the computer speech the service gave to you goes to the person on the computer', () => {
+describe('microphone is always who recorded, people are only told apart on the computer side', () => {
+  it('your speech over the computer sound stays with who recorded, and the computer speech the service gave to you goes to the person on the computer', () => {
     const blocks = blocksFromWords(words, turns, microphoneWords(sides), computerWords(sides))
     expect(blocks.map(block => [block.speaker, block.text])).toEqual([
       ['mic', 'Oi pessoal.'],
@@ -41,7 +41,7 @@ describe('microphone is always "Você", people are only told apart on the comput
       ['mic', 'Eu'],
       ['speaker_1', 'concordo.'],
     ])
-    expect(speakersOf(blocks).map(speaker => speaker.name)).toEqual(['Você', 'Falante 2'])
+    expect(speakersOf(blocks).map(speaker => speaker.name)).toEqual(['Quem gravou', 'Falante 2'])
   })
 
   it('with no computer sound nothing changes: a meeting in the room keeps the speakers the service found', () => {

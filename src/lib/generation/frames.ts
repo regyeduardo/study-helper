@@ -8,7 +8,7 @@ import { PROMPTS } from '@/lib/generation/prompts.data'
 import type { GenerationSession } from '@/lib/generation/session'
 import { type GrabbedFrame, grabFrames } from '@/lib/recording/frame-grab'
 import { transcriptText } from '@/lib/transcription/export'
-import { MICROPHONE } from '@/lib/transcription/turns'
+import { MICROPHONE, RECORDER } from '@/lib/transcription/turns'
 
 const LOOK_AFTER = [0, 2, 5]
 const SAME_SCREEN = 8
@@ -49,8 +49,10 @@ export function screenMoments(recording: RecordingData, asked: number[]): Screen
   const end = Math.max(0, ...recording.blocks.map(block => block.end))
   const moments: ScreenMoment[] = asked.flatMap(start => LOOK_AFTER.map(after => ({ at: Math.min(start + after, end), kind: 'tela' as const, from: start })))
   const seen = new Set<string>()
+  // The microphone is looked at only while nobody knows who recorded.
+  const recorderKnown = recording.speakers.some(speaker => speaker.id === MICROPHONE && speaker.name !== RECORDER)
   for (const block of recording.blocks) {
-    if (!block.speaker || block.speaker === MICROPHONE || seen.has(block.speaker)) continue
+    if (!block.speaker || (block.speaker === MICROPHONE && recorderKnown) || seen.has(block.speaker)) continue
     seen.add(block.speaker)
     moments.push({ at: block.start + Math.min(1, (block.end - block.start) / 2), kind: 'falante', speaker: block.speaker })
   }
