@@ -21,13 +21,15 @@ import { isKnownProvider, providerOf } from '@/lib/ai/providers'
 import { defaultIndex, newFileMeta, newFolderMeta, newSidecar } from '@/lib/defaults'
 import { currentDevice, stamp } from '@/lib/device'
 import { masteryOf } from '@/lib/exam'
+import { mediaOf } from '@/lib/file-types'
 import { activeLinks, saveSharedAttempt, type SharedAttempts, sharedLibrary } from '@/lib/share'
 import { setSharedRoot } from '@/lib/paths'
 import { newId, nowIso } from '@/lib/ids'
-import { type LocalMedia, listLocalMedia, watchLocalMedia } from '@/lib/recording/media-library'
+import { type LocalMedia, listLocalMedia, removeLocalMedia, watchLocalMedia } from '@/lib/recording/media-library'
 import { openDriveLibrary } from '@/lib/storage/hidden-migration'
 import { LocalRepository } from '@/lib/storage/local-repository'
 import type { Repository, StoredSize } from '@/lib/storage/repository'
+import { removeStoredSource } from '@/lib/storage/source-storage'
 import type { TrackedTask } from '@/stores/jobs'
 import { readingMinutes, wordCount } from '@/utils/format'
 
@@ -73,7 +75,8 @@ interface LibraryState {
   updateFile(id: string, patch: Partial<FileMeta>): Promise<void>
   updateSidecar(id: string, change: (sidecar: FileSidecar) => FileSidecar): Promise<FileSidecar>
   moveFiles(ids: string[], folderId: string | null): Promise<void>
-  trashFiles(ids: string[]): Promise<void>
+  hasMedia(id: string): boolean
+  trashFiles(ids: string[], options?: { media?: boolean }): Promise<void>
   restoreFile(id: string): Promise<void>
   deleteFileForever(id: string): Promise<void>
   createFolder(fields: Partial<FolderMeta> & { name: string }): Promise<FolderMeta>
@@ -155,6 +158,17 @@ export const useLibraryStore = create<LibraryState>((set, get) => {
   const refreshMedia = () => void listLocalMedia().then(localMedia => set({ localMedia }), () => undefined)
 
   watchLocalMedia(refreshMedia)
+
+  const removeMediaOf = async (id: string) => {
+    const local = get().localMedia.find(item => item.fileIds.includes(id))
+    if (local) {
+      await removeLocalMedia(local.storedName)
+      set({ localMedia: await listLocalMedia() })
+    }
+    const origin = get().files.find(file => file.id === id)?.origin
+    if (!origin) return undefined
+    return (origin.storedFileId || origin.storedUrl) && !origin.removedAt ? removeStoredSource(origin, repository()) : { ...origin, removedAt: nowIso() }
+  }
 
   const saveSidecarOnly = async (sidecar: FileSidecar): Promise<FileSidecar> => {
     const saved = await repository().saveFile(sidecar)
@@ -295,8 +309,17 @@ export const useLibraryStore = create<LibraryState>((set, get) => {
       for (const id of ids) await get().updateFile(id, { folderId })
     },
 
-    trashFiles: async ids => {
-      for (const id of ids) await get().updateFile(id, { deletedAt: nowIso() })
+    hasMedia: id => {
+      const meta = get().files.find(file => file.id === id)
+      const origin = meta?.origin
+      return Boolean(meta && mediaOf(meta) !== 'text' && (get().localMedia.some(item => item.fileIds.includes(id)) || (origin && (origin.storedFileId || origin.storedUrl) && !origin.removedAt)))
+    },
+
+    trashFiles: async (ids, options) => {
+      for (const id of ids) {
+        const origin = options?.media && get().hasMedia(id) ? await removeMediaOf(id) : undefined
+        await get().updateFile(id, { deletedAt: nowIso(), ...(origin && { origin }) })
+      }
     },
 
     restoreFile: async id => {

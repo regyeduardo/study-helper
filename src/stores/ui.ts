@@ -20,7 +20,7 @@ export type Overlay =
   | { kind: 'new-folder'; parentId: string | null }
   | { kind: 'rename'; target: 'file' | 'folder'; id: string }
   | { kind: 'move'; fileIds: string[]; folderIds: string[] }
-  | { kind: 'confirm'; title: string; text: string; ok: string; danger?: boolean; onConfirm: () => void | Promise<void> }
+  | { kind: 'confirm'; title: string; text: string; ok: string; danger?: boolean; onConfirm: () => void | Promise<void>; alt?: { label: string; onConfirm: () => void | Promise<void> } }
   | { kind: 'explain'; fileId: string; excerpt: string }
   | { kind: 'order'; folderId: string }
   | { kind: 'activity' }

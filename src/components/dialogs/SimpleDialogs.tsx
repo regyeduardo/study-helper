@@ -11,6 +11,11 @@ import { type Overlay, useUiStore } from '@/stores/ui'
 export function ConfirmDialog({ overlay }: { overlay: Extract<Overlay, { kind: 'confirm' }> }) {
   const close = useUiStore(state => state.close)
   const [busy, setBusy] = useState(false)
+  const run = (action: () => void | Promise<void>) => async () => {
+    setBusy(true)
+    close()
+    await action()
+  }
   return (
     <Dialog
       title={overlay.title}
@@ -22,15 +27,12 @@ export function ConfirmDialog({ overlay }: { overlay: Extract<Overlay, { kind: '
           <button className="btn quiet" onClick={close}>
             Cancelar
           </button>
-          <button
-            className={`btn ${overlay.danger ? 'danger' : 'primary'}`}
-            disabled={busy}
-            onClick={async () => {
-              setBusy(true)
-              close()
-              await overlay.onConfirm()
-            }}
-          >
+          {overlay.alt && (
+            <button className="btn" disabled={busy} onClick={run(overlay.alt.onConfirm)}>
+              {overlay.alt.label}
+            </button>
+          )}
+          <button className={`btn ${overlay.danger ? 'danger' : 'primary'}`} disabled={busy} onClick={run(overlay.onConfirm)}>
             {overlay.ok}
           </button>
         </>

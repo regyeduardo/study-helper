@@ -167,9 +167,21 @@ export function ItemMenu() {
       <div className="sep" />
       <button
         className="mi danger"
-        onClick={act(async () => {
-          await library.trashFiles([file.id])
-          ui.toast(`"${file.name}" foi para a lixeira`)
+        onClick={act(() => {
+          const trash = async (media: boolean) => {
+            await library.trashFiles([file.id], { media })
+            ui.toast(`"${file.name}" foi para a lixeira${media ? ', com a mídia' : ''}`)
+          }
+          if (!library.hasMedia(file.id)) return trash(false)
+          ui.open({
+            kind: 'confirm',
+            title: `Apagar "${file.name}"?`,
+            text: `A nota vai para a lixeira e dá para restaurar. ${mediaOf(file) === 'video' ? 'O vídeo' : 'O áudio'} pode ir junto, mas aí não volta.`,
+            ok: 'Apagar a nota e a mídia',
+            danger: true,
+            onConfirm: () => trash(true),
+            alt: { label: 'Apagar só a nota', onConfirm: () => trash(false) },
+          })
         })}
       >
         <Icon name="trash" />

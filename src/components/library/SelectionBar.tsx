@@ -38,10 +38,23 @@ export function SelectionBar({ hideSingle = false }: { hideSingle?: boolean }) {
       </button>
       <button
         className="btn"
-        onClick={async () => {
-          await library.trashFiles(ids)
-          ui.clearSelection()
-          ui.toast(`${count} na lixeira`)
+        onClick={() => {
+          const trash = async (media: boolean) => {
+            await library.trashFiles(ids, { media })
+            ui.clearSelection()
+            ui.toast(`${count} na lixeira${media ? ', com a mídia' : ''}`)
+          }
+          if (!ids.some(id => library.hasMedia(id))) return void trash(false)
+          const one = count === 1
+          ui.open({
+            kind: 'confirm',
+            title: `Apagar ${count} nota${one ? '' : 's'}?`,
+            text: `${one ? 'A nota vai' : 'As notas vão'} para a lixeira e dá para restaurar. A mídia (áudio ou vídeo) pode ir junto, mas aí não volta.`,
+            ok: one ? 'Apagar a nota e a mídia' : 'Apagar as notas e as mídias',
+            danger: true,
+            onConfirm: () => trash(true),
+            alt: { label: one ? 'Apagar só a nota' : 'Apagar só as notas', onConfirm: () => trash(false) },
+          })
         }}
       >
         <Icon name="trash" />

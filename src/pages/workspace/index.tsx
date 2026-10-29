@@ -1,4 +1,8 @@
+import { useEffect } from 'react'
+import { useNavigate } from 'react-router-dom'
+
 import { useViewRoute, type ViewRoute } from '@/hooks/use-view-route'
+import { paths } from '@/lib/paths'
 import { useSharedRoute } from '@/pages/shared'
 import { useLibraryStore } from '@/stores/library'
 import { ColumnsWorkspace } from '@/pages/workspace/container/columns'
@@ -20,5 +24,10 @@ function SharedWorkspace({ shareId }: { shareId: string }) {
 
 export default function WorkspacePage() {
   const route = useViewRoute()
+  const navigate = useNavigate()
+  const trashed = useLibraryStore(state => route.view === 'doc' && Boolean(state.files.find(file => file.id === route.fileId)?.deletedAt))
+  useEffect(() => {
+    if (trashed) navigate(paths.library, { replace: true })
+  }, [trashed])
   return route.view === 'shared' && route.shareId ? <SharedWorkspace key={route.shareId} shareId={route.shareId} /> : <Layout route={route} />
 }
