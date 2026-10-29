@@ -4,7 +4,7 @@ import type { GenerationSession } from '@/lib/generation/session'
 import { reviewTranscript } from '@/lib/generation/reviewer'
 import { termsHint } from '@/lib/transcription/types'
 import { transcribeWithCustom } from '@/lib/transcription/providers/custom'
-import { transcribeWithDeepInfra } from '@/lib/transcription/providers/deepinfra'
+import { DEEPINFRA_TEXT_MODEL, transcribeWithDeepInfra } from '@/lib/transcription/providers/deepinfra'
 import { transcribeWithOpenAi } from '@/lib/transcription/providers/openai'
 import type { ProviderJob } from '@/lib/transcription/types'
 
@@ -48,7 +48,7 @@ describe('your list of terms', () => {
     for (const transcribe of [transcribeWithDeepInfra, transcribeWithCustom, transcribeWithOpenAi]) {
       const forms = capture()
       await transcribe(job(TERMS))
-      const sent = forms.filter(form => form.has('file'))
+      const sent = forms.filter(form => form.has('file') && form.get('model') !== DEEPINFRA_TEXT_MODEL)
       expect(sent.length).toBeGreaterThan(0)
       for (const form of sent) expect(form.get('prompt')).toBe(termsHint(TERMS))
       vi.unstubAllGlobals()

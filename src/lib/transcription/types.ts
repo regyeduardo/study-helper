@@ -86,4 +86,5 @@ export async function sendParts<T>(job: ProviderJob, label: string, send: (part:
 export interface ProviderResult {
   words: Word[]
   turns: SpeakerTurn[]
+  inSpeech?: boolean
 }

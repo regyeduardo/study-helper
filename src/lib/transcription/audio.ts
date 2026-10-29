@@ -35,6 +35,53 @@ export function mixedDown(channels: Float32Array[]): Float32Array {
 
 export const AUDIBLE_LEVEL = 10 ** (SILENCE_THRESHOLD_DB / 20)
 
+const LEVEL_WINDOW_SECONDS = 0.4
+const TARGET_LEVEL = 0.1
+const MAX_GAIN = 40
+const HIGH_PASS_HZ = 80
+
+function voiceLevel(samples: Float32Array): number {
+  const size = Math.round(LEVEL_WINDOW_SECONDS * SAMPLE_RATE)
+  let energy = 0
+  let count = 0
+  for (let start = 0; start < samples.length; start += size) {
+    const end = Math.min(start + size, samples.length)
+    let window = 0
+    for (let index = start; index < end; index++) window += samples[index] * samples[index]
+    if (Math.sqrt(window / Math.max(1, end - start)) < AUDIBLE_LEVEL) continue
+    energy += window
+    count += end - start
+  }
+  return count ? Math.sqrt(energy / count) : 0
+}
+
+function leveled(samples: Float32Array): Float32Array {
+  const level = voiceLevel(samples)
+  const gain = level ? Math.min(MAX_GAIN, TARGET_LEVEL / level) : 1
+  const keep = 1 / (1 + (2 * Math.PI * HIGH_PASS_HZ) / SAMPLE_RATE)
+  const out = new Float32Array(samples.length)
+  let previousIn = 0
+  let previousOut = 0
+  for (let index = 0; index < samples.length; index++) {
+    previousOut = keep * (previousOut + samples[index] - previousIn)
+    previousIn = samples[index]
+    out[index] = previousOut * gain
+  }
+  return out
+}
+
+/** Each side (microphone, computer) at the same voice level before mixing, so a quiet microphone is still heard. */
+export function balancedMix(channels: Float32Array[]): Float32Array {
+  const sides = channels.map(leveled)
+  const mixed = new Float32Array(sides[0].length)
+  for (let index = 0; index < mixed.length; index++) {
+    let sum = 0
+    for (const side of sides) sum += side[index] ?? 0
+    mixed[index] = Math.tanh(sum)
+  }
+  return mixed
+}
+
 export function loudness(samples: Float32Array, fromSeconds: number, toSeconds: number): number {
   const slice = samples.subarray(Math.max(0, Math.round(fromSeconds * SAMPLE_RATE)), Math.max(0, Math.round(toSeconds * SAMPLE_RATE)))
   let energy = 0

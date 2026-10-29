@@ -1,16 +1,17 @@
 import type { ProviderEngine, RecordingData, SpeakersEngine, StageTime,TranscriptionCredential, TranscriptionEngine, TranscriptionSettings } from '@/types/domain'
-import { decodeChannels16k, durationOf, encodeWav, mixedDown, splitSamples } from '@/lib/transcription/audio'
+import { balancedMix, decodeChannels16k, durationOf, encodeWav, mixedDown, splitSamples } from '@/lib/transcription/audio'
 import { transcriptText } from '@/lib/transcription/export'
 import { lightParts } from '@/lib/transcription/opus'
 import { transcribeWithCustom } from '@/lib/transcription/providers/custom'
 import { deepInfraTurns, transcribeWithDeepInfra } from '@/lib/transcription/providers/deepinfra'
 import { transcribeWithGemini } from '@/lib/transcription/providers/gemini'
 import { transcribeWithOpenAi } from '@/lib/transcription/providers/openai'
-import { blocksFromWords, computerWords, microphoneWords, speakersOf } from '@/lib/transcription/turns'
+import { blocksFromWords, computerWords, microphoneWords, speakersOf, wordsInSpeech } from '@/lib/transcription/turns'
 import { type Progress, type ProviderJob, type ProviderResult, type SpeakerTurn, StageClock } from '@/lib/transcription/types'
 
 const PROVIDER_PART_SECONDS = 300
-const LIGHT_PARTS = new Set<ProviderEngine>(['deepinfra', 'custom'])
+const LIGHT_PARTS = new Set<ProviderEngine>(['custom'])
+const BALANCED_PARTS = new Set<ProviderEngine>(['deepinfra'])
 const CHOOSE_ENGINE = 'Escolha um provedor de transcrição em Configurações › Transcrição.'
 
 export interface EngineInfo {
@@ -65,7 +66,7 @@ async function transcribeWithProvider(engine: ProviderEngine, audio: Blob, setti
   const { channels, samples, parts, partStarts } = await clock.run('Preparar o áudio', async () => {
     const [channels, light] = await Promise.all([decodeChannels16k(audio), LIGHT_PARTS.has(engine) ? lightParts(audio, PROVIDER_PART_SECONDS) : null])
     const samples = mixedDown(channels)
-    return { channels, samples, parts: light?.parts ?? splitSamples(samples, PROVIDER_PART_SECONDS).map(part => encodeWav(part)), partStarts: light?.starts }
+    return { channels, samples, parts: light?.parts ?? splitSamples(BALANCED_PARTS.has(engine) ? balancedMix(channels) : samples, PROVIDER_PART_SECONDS).map(part => encodeWav(part)), partStarts: light?.starts }
   })
   const credentials = settings.credentials ?? {}
   const job: ProviderJob = { audio, parts, ...(partStarts ? { partStarts } : {}), partSeconds: PROVIDER_PART_SECONDS, language: settings.language, terms: settings.terms ?? '', credential: credentials[engine] ?? EMPTY_CREDENTIAL, progress, signal }
@@ -83,7 +84,7 @@ async function transcribeWithProvider(engine: ProviderEngine, audio: Blob, setti
   }
   if (!turns.length && !warning) warning = NO_SPEAKERS
   const sides = options.microphoneOnLeft && channels.length === 2 ? { microphone: channels[0], computer: channels[1] } : null
-  const blocks = blocksFromWords(heard.words, turns, sides ? microphoneWords(sides) : undefined, sides ? computerWords(sides) : undefined)
+  const blocks = blocksFromWords(heard.inSpeech ? heard.words : wordsInSpeech(heard.words, turns), turns, sides ? microphoneWords(sides) : undefined, sides ? computerWords(sides) : undefined)
   const speakers = speakersOf(blocks)
   const recording: RecordingData = { blocks, speakers, marks: [], ...(warning ? { warning } : {}) }
   return { text: transcriptText(recording).trim(), engine, language: settings.language, durationSeconds: durationOf(samples), speakers: speakers.length, recording, stages: clock.stages }

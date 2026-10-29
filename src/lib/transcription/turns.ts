@@ -71,6 +71,35 @@ export function speakersOf(blocks: TranscriptBlock[]): RecordingSpeaker[] {
   }))
 }
 
+const SPEECH_MARGIN_SECONDS = 0.3
+
+export function wordsInSpeech(words: Word[], turns: SpeakerTurn[]): Word[] {
+  if (!turns.length) return words
+  return words.filter(word => {
+    const middle = (word.start + word.end) / 2
+    return turns.some(turn => middle >= turn.start - SPEECH_MARGIN_SECONDS && middle <= turn.end + SPEECH_MARGIN_SECONDS)
+  })
+}
+
+const STRAY_WORDS = 4
+const STRAY_SHARE = 0.3
+
+/** A sentence stays with whoever said most of it: a few words given to someone else in the middle are a slip of the speaker detection. */
+function sentenceSpeakers(words: Word[], speakers: string[]): string[] {
+  const out = [...speakers]
+  let start = 0
+  for (let index = 0; index < words.length; index++) {
+    if (!/[.!?…]$/.test(words[index].text.trim())) continue
+    const count = new Map<string, number>()
+    for (let at = start; at <= index; at++) count.set(speakers[at], (count.get(speakers[at]) ?? 0) + 1)
+    const [main, most] = [...count].reduce((best, entry) => (entry[1] > best[1] ? entry : best))
+    const stray = index + 1 - start - most
+    if (stray <= STRAY_WORDS && stray <= (index + 1 - start) * STRAY_SHARE) for (let at = start; at <= index; at++) out[at] = main
+    start = index + 1
+  }
+  return out
+}
+
 export function blocksFromWords(words: Word[], turns: SpeakerTurn[], fromMicrophone: WordTest = () => false, fromComputer: WordTest = () => false): TranscriptBlock[] {
   const yours = microphoneSpeakers(words, turns, fromMicrophone, fromComputer)
   const theirs = turns.filter(turn => !yours.has(turn.speaker))
@@ -81,11 +110,12 @@ export function blocksFromWords(words: Word[], turns: SpeakerTurn[], fromMicroph
     if (!fromComputer(word)) return MICROPHONE
     return theirs.length ? speakerOf(word, theirs) : speaker
   }
+  const spoken = words.filter(word => word.text.trim())
+  const speakers = sentenceSpeakers(spoken, spoken.map(sideOf))
   const blocks: TranscriptBlock[] = []
-  for (const word of words) {
+  for (const [index, word] of spoken.entries()) {
     const text = word.text.trim()
-    if (!text) continue
-    const speaker = sideOf(word)
+    const speaker = speakers[index]
     const last = blocks[blocks.length - 1]
     const sameParagraph = last && !(/[.!?…]$/.test(last.text) && (word.start - last.end >= PARAGRAPH_PAUSE_SECONDS || last.end - last.start >= PARAGRAPH_SECONDS))
     if (last && last.speaker === speaker && sameParagraph) {

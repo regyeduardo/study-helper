@@ -45,8 +45,8 @@ describe('audio parts sent together', () => {
     const { waiting, fetchMock } = slowProvider()
     const progress = vi.fn()
     const running = transcribeWithDeepInfra(job(progress))
-    await vi.waitFor(() => expect(waiting).toHaveLength(PARTS))
-    expect(fetchMock.mock.calls.filter(([url]) => url === WHISPER_URL)).toHaveLength(PARTS)
+    await vi.waitFor(() => expect(waiting).toHaveLength(PARTS * 2))
+    expect(fetchMock.mock.calls.filter(([url]) => url === WHISPER_URL)).toHaveLength(PARTS * 2)
     for (const pending of [...waiting].reverse()) pending.answer(wordsOf(pending.part))
     const { words } = await running
     expect(words.map(word => word.text)).toEqual(Array.from({ length: PARTS }, (_, index) => `parte${index}`))

@@ -41,7 +41,8 @@ export async function polishTranscript(recording: RecordingData, session: Genera
     }
   } catch (error) {
     if (error instanceof Cancelled) throw error
-    return { recording, title }
+    const reason = `A revisão por IA não rodou (nomes e palavras ficaram como o áudio saiu): ${error instanceof Error ? error.message : String(error)}`
+    return { recording: { ...recording, warning: recording.warning ? `${recording.warning} ${reason}` : reason }, title }
   }
   const speakers = applied(recording.speakers, names, transcriptText(recording))
   const named = speakers.some((speaker, index) => speaker !== recording.speakers[index]) ? { ...recording, speakers } : recording

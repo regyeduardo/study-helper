@@ -64,3 +64,10 @@ describe('the finishing of the transcript in one pass', () => {
     expect(inputs[1]).toContain('não devolva "titulo"')
   })
 })
+
+it('when the AI fails, the transcription stays as heard and says why on screen', async () => {
+  const session = { chat: vi.fn(async () => { throw new Error('402 sem saldo') }) } as unknown as GenerationSession
+  const { recording } = await polishTranscript(meeting(), session)
+  expect(recording.blocks).toEqual(meeting().blocks)
+  expect(recording.warning).toBe('A revisão por IA não rodou (nomes e palavras ficaram como o áudio saiu): 402 sem saldo')
+})

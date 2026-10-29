@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { transcribeWithDeepInfra } from '@/lib/transcription/providers/deepinfra'
+import { DEEPINFRA_TEXT_MODEL, transcribeWithDeepInfra } from '@/lib/transcription/providers/deepinfra'
 import { blocksFromWords } from '@/lib/transcription/turns'
 import type { ProviderJob } from '@/lib/transcription/types'
 
@@ -37,10 +37,17 @@ const whisper = {
 
 type Call = [string, { method: string; headers: Record<string, string>; body: FormData; signal?: AbortSignal }]
 
-function serve(answers: { nemotron?: () => Response; whisper?: () => Response } = {}) {
-  const fetch = vi.fn(async (url: string) => (url === NEMOTRON_URL ? (answers.nemotron?.() ?? json(nemotron)) : (answers.whisper?.() ?? json(whisper))))
+const isText = (call: Call) => call[1].body.get('model') === DEEPINFRA_TEXT_MODEL
+
+function serve(answers: { nemotron?: () => Response; whisper?: () => Response; voxtral?: () => Response } = {}) {
+  const fetch = vi.fn(async (url: string, init: Call[1]) => {
+    if (url === NEMOTRON_URL) return answers.nemotron?.() ?? json(nemotron)
+    if (init.body.get('model') === DEEPINFRA_TEXT_MODEL) return answers.voxtral?.() ?? json({ text: whisper.text })
+    return answers.whisper?.() ?? json(whisper)
+  })
   vi.stubGlobal('fetch', fetch)
-  return { calls: () => fetch.mock.calls as unknown as Call[], to: (url: string) => (fetch.mock.calls as unknown as Call[]).filter(call => call[0] === url) }
+  const all = () => fetch.mock.calls as unknown as Call[]
+  return { calls: all, to: (url: string) => all().filter(call => call[0] === url && !isText(call)), text: () => all().filter(isText) }
 }
 
 const job = (fields: Partial<ProviderJob> = {}): ProviderJob => ({
@@ -109,12 +116,36 @@ describe('DeepInfra provider', () => {
   })
 
   it('an answer with only segments still gives timed text', async () => {
-    serve({ whisper: () => json({ text: 'oi tudo bem', segments: [{ start: 1, end: 2.5, text: ' oi ' }, { start: 3, end: 4, text: 'tudo bem' }] }) })
+    serve({ whisper: () => json({ text: 'oi tudo bem', segments: [{ start: 1, end: 2.5, text: ' oi ' }, { start: 3, end: 4, text: 'tudo bem' }] }), voxtral: () => json({}, 400) })
     const { words } = await transcribeWithDeepInfra(job())
     expect(words).toEqual([
       { start: 1, end: 2.5, text: 'oi' },
       { start: 3, end: 4, text: 'tudo bem' },
     ])
+  })
+
+  it('the words come from Voxtral, which hears better, on the times of Whisper, in the same language', async () => {
+    const server = serve({ voxtral: () => json({ text: 'Quanto custou isso? Custou dois mil reais.' }) })
+    const { words, inSpeech } = await transcribeWithDeepInfra(job())
+    const asked = server.text()[0][1].body
+    expect(asked.get('language')).toBe('pt')
+    expect((asked.get('file') as File).name).toBe('trecho.wav')
+    expect(words.map(word => word.text)).toEqual(['Quanto', 'custou', 'isso?', 'Custou', 'dois', 'mil', 'reais.'])
+    expect(words[3]).toEqual({ start: 4.1, end: 4.5, text: 'Custou' })
+    expect(inSpeech).toBe(true)
+  })
+
+  it('what Whisper invents where nobody speaks is dropped', async () => {
+    serve({ whisper: () => json({ ...whisper, words: [{ word: ' Tchau.', start: 8, end: 8.5 }, ...whisper.words] }) })
+    const { words } = await transcribeWithDeepInfra(job())
+    expect(words.map(word => word.text)).not.toContain('Tchau.')
+    expect(words).toHaveLength(6)
+  })
+
+  it('when Voxtral fails, the text of Whisper stays', async () => {
+    serve({ voxtral: () => json({}, 400) })
+    const { words } = await transcribeWithDeepInfra(job())
+    expect(words.map(word => word.text)).toEqual(['Quanto', 'custou', 'isso?', 'Custou', 'dois', 'mil.'])
   })
 
   it('missing key fails before any request and says where to get one', async () => {
@@ -171,12 +202,12 @@ describe('DeepInfra provider', () => {
     await vi.advanceTimersByTimeAsync(62000)
     await failing
     expect(server.to(WHISPER_URL)).toHaveLength(6)
-    const dropped = vi.fn(async (_url: string) => Promise.reject(new TypeError('network')))
+    const dropped = vi.fn(async (_url: string, _init: Call[1]) => Promise.reject(new TypeError('network')))
     vi.stubGlobal('fetch', dropped)
     const offline = expect(transcribeWithDeepInfra(job())).rejects.toThrow('A DeepInfra não respondeu depois de 6 tentativas. Confira a internet e tente de novo.')
     await vi.advanceTimersByTimeAsync(62000)
     await offline
-    expect(dropped.mock.calls.filter(call => call[0] === WHISPER_URL)).toHaveLength(6)
+    expect((dropped.mock.calls as unknown as Call[]).filter(call => call[0] === WHISPER_URL && !isText(call))).toHaveLength(6)
   })
 
   it('when Nemotron fails the text still comes, without speakers', async () => {
