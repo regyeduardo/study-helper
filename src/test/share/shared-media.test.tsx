@@ -7,7 +7,7 @@ import { fetchSharedItemController } from '@/controllers/share.controller'
 import { defaultIndex } from '@/lib/defaults'
 import { env } from '@/lib/env'
 import { useLibraryStore } from '@/stores/library'
-import type { RecordingData } from '@/types/domain'
+import type { FileSidecar, MeetingDocument, RecordingData } from '@/types/domain'
 
 import { installMemoryStorage } from '../storage/fake-drive'
 
@@ -48,12 +48,12 @@ function json(body: unknown): Response {
   return new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } })
 }
 
-function serveMeeting(mediaExpiresAt: string) {
+function serveMeeting(mediaExpiresAt: string, extra: Partial<FileSidecar> = {}) {
   const files: Record<string, () => Response> = {
     'share.json': () =>
       json({ version: 2, id: SHARE_ID, kind: 'file', title: 'Reunião', createdAt: new Date(Date.now() - 3600_000).toISOString(), expiresAt: new Date(Date.now() + 2 * 24 * 3600_000).toISOString(), mediaExpiresAt, folders: [], files: [{ id: 'f1', path: 'Reunião', media: { key: `shared-media/${SHARE_ID}/f1`, mime: 'audio/webm', size: 1000 } }] }),
     'Reuni%C3%A3o.md': () => new Response('# Ata\n\n- O preço fica em dois mil. [▸ 01:12](#t=72)'),
-    'Reuni%C3%A3o.json': () => json({ meta: { id: 'f1', name: 'Reunião', folderId: null, type: 'meeting', position: 0, description: '', tags: [], status: 'ready', origin: { input: 'recording', name: 'Reunião.webm', mime: 'audio/webm', storage: 'drive', storedFileId: 'drive-da-ana' } }, questions: [], attempts: [], highlights: [], recording }),
+    'Reuni%C3%A3o.json': () => json({ meta: { id: 'f1', name: 'Reunião', folderId: null, type: 'meeting', position: 0, description: '', tags: [], status: 'ready', origin: { input: 'recording', name: 'Reunião.webm', mime: 'audio/webm', storage: 'drive', storedFileId: 'drive-da-ana' } }, questions: [], attempts: [], highlights: [], recording, ...extra }),
   }
   vi.stubGlobal(
     'fetch',
@@ -64,8 +64,8 @@ function serveMeeting(mediaExpiresAt: string) {
   )
 }
 
-async function openShared(mediaExpiresAt: string) {
-  serveMeeting(mediaExpiresAt)
+async function openShared(mediaExpiresAt: string, extra: Partial<FileSidecar> = {}) {
+  serveMeeting(mediaExpiresAt, extra)
   const item = await fetchSharedItemController(SHARE_ID)
   expect(item).not.toBeNull()
   useLibraryStore.getState().enterShared(item!, {})
@@ -118,5 +118,24 @@ describe('mídia no link compartilhado', () => {
     fireEvent.click(screen.getByRole('tab', { name: 'Transcrição' }))
     expect(screen.getByText('Custou dois mil.')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /Tocar a partir de/ })).not.toBeInTheDocument()
+  })
+})
+
+describe('Ata no link compartilhado', () => {
+  const ata: MeetingDocument = { id: 'ata-1', kind: 'ata', parts: ['resumo'], markdown: '## Resumo\n\nFechamos a curva de vendas.\n\n![quadro](imagens/quadro-1.png)', images: [{ name: 'quadro-1.png', dataUrl: 'data:image/png;base64,iVBORw0KGgo=' }], createdAt: '2026-09-28T12:00:00.000Z', models: {} }
+
+  it('abre na aba Ata como o dono vê, com as imagens; o texto da nota fica em "Ata anterior"', async () => {
+    await openShared(new Date(Date.now() + 2 * 24 * 3600_000).toISOString(), { documents: [ata] })
+    expect(useLibraryStore.getState().opened.f1.sidecar.documents).toEqual([ata])
+    expect(screen.getByRole('tab', { name: 'Ata' })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByRole('tab', { name: 'Ata anterior' })).toBeInTheDocument()
+    expect(screen.getByTestId('markdown')).toHaveTextContent('Fechamos a curva de vendas.')
+    expect(screen.getByTestId('markdown')).toHaveTextContent('data:image/png;base64,iVBORw0KGgo=')
+  })
+
+  it('nota sem Ata segue igual: nada de documents', async () => {
+    serveMeeting(new Date(Date.now() + 2 * 24 * 3600_000).toISOString())
+    const item = await fetchSharedItemController(SHARE_ID)
+    expect(item!.files[0]).not.toHaveProperty('documents')
   })
 })

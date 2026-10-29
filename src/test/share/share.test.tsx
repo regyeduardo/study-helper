@@ -4,7 +4,7 @@ import 'fake-indexeddb/auto'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter, Route, Routes, useParams } from 'react-router-dom'
 
-import type { SharedItem, SharedLink, StoredQuestion } from '@/types/domain'
+import type { MeetingDocument, SharedFile, SharedItem, SharedLink, StoredQuestion } from '@/types/domain'
 import { ShareDialog } from '@/components/dialogs/ShareDialog'
 import { Overlays } from '@/components/dialogs/Overlays'
 import { SharedBadge } from '@/components/library/SharedBadge'
@@ -26,6 +26,8 @@ import { installMemoryStorage } from '../storage/fake-drive'
 const GOOGLE: Account = { id: 'google-1', kind: 'google', name: 'Ana', email: 'ana@example.com', picture: '', token: { accessToken: 'at-1', expiresAt: Date.now() + 3600_000 } }
 
 const QUESTION: StoredQuestion = { storedId: 'q1', tipo: 'unica', enunciado: 'Quanto é 2 + 2?', alternativas: { A: '3', B: '4' }, correta: 'B', explicacao: 'Soma.' }
+
+const ATA: MeetingDocument = { id: 'ata-1', kind: 'ata', parts: ['resumo'], markdown: '## Resumo\n\nFechamos a curva de vendas.\n\n![quadro](imagens/quadro-1.png)', images: [{ name: 'quadro-1.png', dataUrl: 'data:image/png;base64,iVBORw0KGgo=' }], createdAt: '2026-09-28T12:00:00.000Z', models: { ata: 'modelo' } }
 
 interface Call {
   url: string
@@ -141,6 +143,24 @@ describe('diálogo de compartilhar', () => {
     expect(text).not.toMatch(/attempts|"mastery":\d|certainty/)
     expect(text).toContain('minha nota')
     expect(useLibraryStore.getState().index.shares.map(item => item.withExams)).toEqual([true, false])
+  })
+
+  it('a Ata da nota vai junto no link, com as imagens; nota sem Ata segue igual', async () => {
+    useGoogle()
+    const library = useLibraryStore.getState()
+    const meeting = await library.createFile({ name: 'Curva de vendas', type: 'meeting' }, '# Reunião')
+    await library.updateSidecar(meeting.id, sidecar => ({ ...sidecar, documents: [ATA] }))
+    replies['POST https://share.test/shares'] = () => json({ id: 'AtaAtaAtaAtaAtaAtaAta1', createdAt: '2026-09-28T12:00:00.000Z', expiresAt: '2026-10-01T12:00:00.000Z', bytes: 300 }, 201)
+    render(<MemoryRouter><ShareDialog target="file" id={meeting.id} /></MemoryRouter>)
+    const share = await screen.findByRole('button', { name: /^Compartilhar$/ })
+    await waitFor(() => expect(share).toBeEnabled())
+    fireEvent.click(share)
+    await screen.findByDisplayValue(/\/shared\/AtaAtaAtaAtaAtaAtaAta1$/)
+    const sent = calls.find(call => call.method === 'POST')!.body as { share: { files: SharedFile[] } }
+    expect(sent.share.files[0].documents).toEqual([ATA])
+    const plain = await noteWithExam()
+    const content = await buildShareContent({ kind: 'file', id: plain.id }, useLibraryStore.getState().folders, useLibraryStore.getState().files, useLibraryStore.getState().openFile, false)
+    expect(content.files[0]).not.toHaveProperty('documents')
   })
 
   it('uma nota grande compartilha sem limite de tamanho', async () => {

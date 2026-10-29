@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import { distinctFrames, lookAtScreen, screenMoments } from '@/lib/generation/frames'
+import { CHUNK_CHARS } from '@/lib/generation/minutes'
+import { PROMPTS } from '@/lib/generation/prompts.data'
 import type { GenerationSession } from '@/lib/generation/session'
 import type { RecordingData } from '@/types/domain'
 
@@ -47,11 +49,94 @@ describe('which moments of the screen are looked at', () => {
     const see = vi.fn(async (_settings: unknown, images: string[], _prompt: string) => (images.length > 1 || images[0].startsWith('img-3') ? '{"texto": "Gráfico de vendas do trimestre"}' : '{"nome": ""}'))
     const seen = await lookAtScreen(recording, new Blob(['v'], { type: 'video/webm' }), vision, session, { grab, see })
     const asked = grab.mock.calls[0][1] as number[]
-    expect(asked).toEqual(expect.arrayContaining([31, 33, 36]))
-    expect(asked).toEqual(expect.arrayContaining([0, 60]))
-    expect(asked).toHaveLength(8)
+    expect(asked).toEqual([13, 31, 32, 33, 36, 62])
     const screenCall = see.mock.calls[0]
     expect(screenCall[1]).toEqual(['img-31'])
     expect(seen.frames).toEqual([{ at: 31, image: 'img-31', text: 'Gráfico de vendas do trimestre' }])
+  })
+
+  it('without a speech that needs the screen, only the first turn of each speaker is looked at', () => {
+    const moments = screenMoments(recording, [])
+    expect(moments.filter(moment => moment.kind === 'tela')).toEqual([])
+    expect(moments.map(moment => moment.at)).toEqual([13, 32, 62])
+  })
+
+  it('the agent marks the speech that needs the screen: names, siglas, terms and numbers said, and who is on the call', () => {
+    const prompt = PROMPTS.SCREEN_ASKS_PROMPT
+    for (const asked of ['sigla', 'termo', 'número', 'nome de pessoa', 'quadros da chamada', '"VGV"', '"Pró Soluto"']) expect(prompt).toContain(asked)
+    expect(prompt).toContain('{"horas": ["12:40"]}')
+  })
+})
+
+const video = new Blob(['v'], { type: 'video/webm' })
+const asking = (hours: string[]) => ({ chat: vi.fn(async () => JSON.stringify({ horas: hours })) }) as unknown as GenerationSession
+const everyScreenDiffers = vi.fn(async (_video: Blob, times: number[]) => times.map(at => ({ at, image: `img-${at}`, signature: [at * 10, at * 10, at * 10, at * 10] })))
+const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
+
+describe('the vision calls run side by side', () => {
+  it('the screen and the speaker frames go to the vision model at once: the whole look takes about one call', async () => {
+    let active = 0
+    let peak = 0
+    const see = vi.fn(async (_settings: unknown, _images: string[], prompt: string) => {
+      active++
+      peak = Math.max(peak, active)
+      await wait(60)
+      active--
+      return prompt === PROMPTS.SCREEN_TEXT_PROMPT ? '{"texto": "Slide de vendas"}' : '{"nome": ""}'
+    })
+    const started = Date.now()
+    await lookAtScreen(recording, video, vision, asking(['00:31']), { grab: everyScreenDiffers, see })
+    const took = Date.now() - started
+    expect(see).toHaveBeenCalledTimes(4)
+    expect(peak).toBe(4)
+    expect(took).toBeLessThan(3 * 60)
+  })
+
+  it('frames and names keep the order of the meeting even when the later calls answer first', async () => {
+    let calls = 0
+    const names: Record<string, string> = { 'Falante 2': 'Ana Lima', 'Falante 3': 'Bruno Dias', 'Falante 4': 'Carla Reis' }
+    const see = vi.fn(async (_settings: unknown, images: string[], prompt: string) => {
+      await wait(60 - 10 * calls++)
+      if (prompt === PROMPTS.SCREEN_TEXT_PROMPT) return JSON.stringify({ texto: `Tela ${images[0]}` })
+      const heard = Object.keys(names).find(name => prompt.includes(`"${name}"`))
+      return JSON.stringify({ nome: heard ? names[heard] : '' })
+    })
+    const seen = await lookAtScreen(recording, video, vision, asking(['00:12', '01:01']), { grab: everyScreenDiffers, see })
+    expect(seen.frames).toEqual([
+      { at: 12, image: 'img-17', text: 'Tela img-12' },
+      { at: 61, image: 'img-66', text: 'Tela img-61' },
+    ])
+    expect(seen.speakers.map(speaker => speaker.name)).toEqual(['Você', 'Ana Lima', 'Bruno Dias', 'Carla Reis'])
+    expect(seen.speakers.slice(1).every(speaker => !speaker.suggested)).toBe(true)
+  })
+
+  it('a screen already read at an earlier moment is not sent again', async () => {
+    const same = vi.fn(async (_video: Blob, times: number[]) => times.map(at => ({ at, image: `img-${at}`, signature: [9, 9, 9, 9] })))
+    const see = vi.fn(async (_settings: unknown, _images: string[], prompt: string) => (prompt === PROMPTS.SCREEN_TEXT_PROMPT ? '{"texto": "Mesmo slide"}' : '{"nome": ""}'))
+    const seen = await lookAtScreen(recording, video, vision, asking(['00:12', '01:01']), { grab: same, see })
+    expect(see.mock.calls.filter(call => call[2] === PROMPTS.SCREEN_TEXT_PROMPT)).toHaveLength(1)
+    expect(seen.frames).toEqual([{ at: 12, image: 'img-12', text: 'Mesmo slide' }])
+  })
+
+  it('the pieces of a long transcript are asked about the screen at the same time', async () => {
+    const long: RecordingData = {
+      ...recording,
+      blocks: [
+        { speaker: 'speaker_0', start: 0, end: 30, text: 'a'.repeat(CHUNK_CHARS) },
+        { speaker: 'speaker_1', start: 31, end: 60, text: 'b'.repeat(CHUNK_CHARS) },
+      ],
+    }
+    let active = 0
+    let peak = 0
+    const chat = vi.fn(async () => {
+      active++
+      peak = Math.max(peak, active)
+      await wait(20)
+      active--
+      return '{"horas": []}'
+    })
+    await lookAtScreen(long, video, vision, { chat } as unknown as GenerationSession, { grab: vi.fn(async () => []), see: vi.fn() })
+    expect(chat.mock.calls.length).toBeGreaterThan(1)
+    expect(peak).toBe(chat.mock.calls.length)
   })
 })

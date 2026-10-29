@@ -22,13 +22,13 @@ const recording: RecordingData = {
 const vision = { provider: 'openai' as const, baseUrl: '', apiKey: 'sk-teste', model: 'gpt-visao' }
 
 describe('name written on the screen fixes the transcript', () => {
-  it('the screen is also looked at regularly, not only where the agent asked', () => {
-    const times = screenMoments(recording, []).filter(moment => moment.kind === 'tela').map(moment => moment.at)
-    expect(times).toEqual([0, 60, 120])
+  it('the screen is looked at only where the speech needs it, not every minute', () => {
+    const times = screenMoments(recording, [21]).filter(moment => moment.kind === 'tela').map(moment => moment.at)
+    expect(times).toEqual([21, 23, 26])
   })
 
-  it('a name on the screen, outside the moments the agent marked, reaches the reviewer and fixes what was misheard', async () => {
-    const lookSession = { chat: vi.fn(async () => '{"horas": []}') } as unknown as GenerationSession
+  it('a name said in the speech is marked by the agent, read on the screen, and fixes what was misheard', async () => {
+    const lookSession = { chat: vi.fn(async () => '{"horas": ["00:21"]}') } as unknown as GenerationSession
     const grab = vi.fn(async (_video: Blob, times: number[]) => times.map(at => ({ at, image: `img-${at}`, signature: [7, 7, 7, 7] })))
     const see = vi.fn(async (_settings: unknown, _images: string[], prompt: string) =>
       prompt === PROMPTS.SCREEN_TEXT_PROMPT ? '{"texto": "Participantes: João Vitor Almeida, Você"}' : '{"nome": ""}',

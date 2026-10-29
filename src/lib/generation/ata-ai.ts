@@ -2,6 +2,7 @@ import type { AiSettings, Settings } from '@/types/domain'
 import { AiError, Cancelled, chatController, visionController } from '@/controllers/ai.controller'
 import { modelOf } from '@/lib/ai/providers'
 import { visionSettingsOf } from '@/lib/generation/frames'
+import { jsonIn } from '@/lib/generation/meeting-material'
 
 /** Text passes that can use their own model (Configurações › IA › Geral › Avançado). */
 export type TextPass = 'context' | 'candidates' | 'review' | 'pending' | 'write'
@@ -49,12 +50,18 @@ export function passSettings(settings: Settings, pass: TextPass): AiSettings {
   return model ? { ...settings.ai, model } : settings.ai
 }
 
+// DeepSeek in JSON mode sometimes answers empty: read as "nothing found", it emptied the Levantamento de tarefas.
+const EMPTY_REPLY = 'A IA respondeu vazio ou sem JSON legível.'
+
 function retryable(error: unknown): boolean {
   if (!(error instanceof AiError)) return false
   const status = /\((\d{3})\)/.exec(error.message)?.[1]
   if (status) return status === '429' || status.startsWith('5')
-  return /Não consegui falar com a IA/.test(error.message)
+  return /Não consegui falar com a IA/.test(error.message) || error.message === EMPTY_REPLY || THOUGHT_TOO_LONG.test(error.message)
 }
+
+// deepseek-flash thinks by default with high effort: the limit can go on the thinking and leave no answer.
+const THOUGHT_TOO_LONG = /^A IA gastou o limite de \d+ tokens pensando/
 
 const pause = (ms: number, signal?: AbortSignal) =>
   new Promise<void>((resolve, reject) => {
@@ -90,7 +97,7 @@ export async function withRetry<T>(run: (signal: AbortSignal) => Promise<T>, opt
 }
 
 /** The app's AI for the Ata: text passes use the Geral AI (with per-pass model), vision uses the Visão tab. */
-export function appAi(settings: Settings, signal?: AbortSignal, timeouts = { text: TEXT_TIMEOUT_MS, vision: VISION_TIMEOUT_MS }): AtaAi {
+export function appAi(settings: Settings, signal?: AbortSignal, timeouts: { text: number; vision: number; backoffMs?: number } = { text: TEXT_TIMEOUT_MS, vision: VISION_TIMEOUT_MS }): AtaAi {
   const vision = visionSettingsOf(settings)
   const used: Record<string, string> = {}
   let dollars = 0
@@ -101,8 +108,20 @@ export function appAi(settings: Settings, signal?: AbortSignal, timeouts = { tex
       const ai = passSettings(settings, pass)
       const model = modelOf(ai)
       used[pass] = model
-      const max = tokensFor(model, options.max ?? 6000)
-      const reply = await withRetry(own => chatController(ai, user, system, max, own, options.temperature ?? TEMPERATURE), { signal, timeoutMs: timeouts.text })
+      let max = tokensFor(model, options.max ?? 6000)
+      const reply = await withRetry(
+        async own => {
+          const answer = await chatController(ai, user, system, max, own, options.temperature ?? TEMPERATURE)
+          if (answer.text.trim() && !(options.json && !jsonIn(answer.text))) return answer
+          if (answer.finish === 'length' && !answer.text.trim()) {
+            const spent = max
+            max *= 2
+            throw new AiError(`A IA gastou o limite de ${spent} tokens pensando e não escreveu a resposta.`)
+          }
+          throw new AiError(EMPTY_REPLY)
+        },
+        { signal, timeoutMs: timeouts.text, backoffMs: timeouts.backoffMs },
+      )
       const price = PRICES[model]
       if (price) {
         priced = true

@@ -54,14 +54,46 @@ describe('the finishing of the transcript in one pass', () => {
     expect(recording.blocks[1]).toMatchObject({ text: 'Mando sim, falei com o João Vitor ontem.', original: 'Mando sim, falei com o João Vito ontem.' })
   })
 
-  it('a long transcript is one call per piece, and only the first one asks for the title', async () => {
-    const session = { chat: vi.fn(async () => '{"titulo": "", "nomes": [], "correcoes": []}') } as unknown as GenerationSession
+  it('a long transcript goes in small pieces asked all at once, and the title comes from its own call over the opening', async () => {
+    let active = 0
+    let peak = 0
+    const session = {
+      chat: vi.fn(async (_input: string, system: string) => {
+        active++
+        peak = Math.max(peak, active)
+        await new Promise(resolve => setTimeout(resolve, 20))
+        active--
+        return system === PROMPTS.TITLE_PROMPT ? '{"titulo": "Proposta do PIX para maio"}' : '{"nomes": [], "correcoes": [{"fala": 1, "de": "pics", "para": "PIX"}]}'
+      }),
+    } as unknown as GenerationSession
     const long = meeting(Math.ceil((CHUNK_CHARS * 1.5) / 400))
-    await polishTranscript(long, session)
-    const inputs = vi.mocked(session.chat).mock.calls.map(call => call[0] as string)
-    expect(inputs.length).toBe(2)
-    expect(inputs[0]).toContain('Primeiro trecho')
-    expect(inputs[1]).toContain('não devolva "titulo"')
+    const { recording, title } = await polishTranscript(long, session)
+    const calls = vi.mocked(session.chat).mock.calls as unknown as [string, string][]
+    const pieces = calls.filter(([, system]) => system === PROMPTS.POLISH_PROMPT).map(([input]) => input)
+    const titles = calls.filter(([, system]) => system === PROMPTS.TITLE_PROMPT).map(([input]) => input)
+    expect(pieces.length).toBeGreaterThanOrEqual(4)
+    expect(pieces.every(input => input.includes('não devolva "titulo"') && input.length < CHUNK_CHARS / 2)).toBe(true)
+    expect(pieces.every(input => input.includes('Escrito na tela durante a reunião: Participantes: João Vitor Almeida'))).toBe(true)
+    expect(titles).toHaveLength(1)
+    expect(titles[0]).toContain('1 | Você [00:00]: Marina, você manda a proposta do pics?')
+    expect(titles[0].length).toBeGreaterThan(CHUNK_CHARS * 0.9)
+    expect(title).toBe('Proposta do PIX para maio')
+    expect(peak).toBe(calls.length)
+    expect(recording.blocks[0].text).toBe('Marina, você manda a proposta do PIX?')
+  })
+
+  it('the text read on the screen is the glossary of the review: a sigla misheard becomes the one on the screen', async () => {
+    const screen = { ...meeting(), blocks: [{ speaker: 'speaker_0', start: 4, end: 8, text: 'O BGF do soluto subiu.' }], frames: [{ at: 4, image: 'i', text: 'VGV e Pró Soluto por mês' }] }
+    const session = {
+      chat: vi.fn(async (input: string) =>
+        input.includes('Escrito na tela durante a reunião: VGV e Pró Soluto por mês')
+          ? JSON.stringify({ titulo: '', nomes: [], correcoes: [{ fala: 1, de: 'BGF', para: 'VGV' }, { fala: 1, de: 'soluto', para: 'Pró Soluto' }] })
+          : '{"titulo": "", "nomes": [], "correcoes": []}',
+      ),
+    } as unknown as GenerationSession
+    const { recording } = await polishTranscript(screen, session)
+    expect(recording.blocks[0].text).toBe('O VGV do Pró Soluto subiu.')
+    expect(PROMPTS.POLISH_PROMPT).toMatch(/^- .*sigla.*"Escrito na tela durante a reunião".*"VGV"/m)
   })
 })
 

@@ -1,6 +1,7 @@
 import type { AiSettings, RecordingData, ScreenFrame, Settings } from '@/types/domain'
 import { Cancelled, visionController } from '@/controllers/ai.controller'
 import { providerOf } from '@/lib/ai/providers'
+import { pool } from '@/lib/generation/meeting-material'
 import { extractJson } from '@/lib/generation/mermaid'
 import { transcriptChunks } from '@/lib/generation/minutes'
 import { PROMPTS } from '@/lib/generation/prompts.data'
@@ -11,7 +12,7 @@ import { MICROPHONE } from '@/lib/transcription/turns'
 
 const LOOK_AFTER = [0, 2, 5]
 const SAME_SCREEN = 8
-const SAMPLE_SECONDS = 60
+const SEE_AT_ONCE = 4
 const NO_VISION = 'A tela gravada não foi usada: escolha um Modelo de visão em Configurações › IA para o agente ler os nomes e os slides.'
 
 export interface ScreenMoment {
@@ -47,7 +48,6 @@ function seconds(clock: string): number | null {
 export function screenMoments(recording: RecordingData, asked: number[]): ScreenMoment[] {
   const end = Math.max(0, ...recording.blocks.map(block => block.end))
   const moments: ScreenMoment[] = asked.flatMap(start => LOOK_AFTER.map(after => ({ at: Math.min(start + after, end), kind: 'tela' as const, from: start })))
-  for (let at = 0; at <= end; at += SAMPLE_SECONDS) if (!asked.includes(at)) moments.push({ at, kind: 'tela', from: at })
   const seen = new Set<string>()
   for (const block of recording.blocks) {
     if (!block.speaker || block.speaker === MICROPHONE || seen.has(block.speaker)) continue
@@ -74,8 +74,9 @@ export function distinctFrames(frames: GrabbedFrame[]): GrabbedFrame[] {
 async function askedMoments(recording: RecordingData, session: GenerationSession): Promise<number[]> {
   const starts = recording.blocks.map(block => block.start)
   const found = new Set<number>()
-  for (const piece of transcriptChunks(transcriptText(recording))) {
-    const hours = extractJson(await session.chat(piece, PROMPTS.SCREEN_ASKS_PROMPT))?.horas
+  const answers = await Promise.all(transcriptChunks(transcriptText(recording)).map(piece => session.chat(piece, PROMPTS.SCREEN_ASKS_PROMPT)))
+  for (const answer of answers) {
+    const hours = extractJson(answer)?.horas
     if (!Array.isArray(hours)) continue
     for (const hour of hours) {
       const at = typeof hour === 'string' ? seconds(hour) : null
@@ -99,7 +100,7 @@ export async function lookAtScreen(recording: RecordingData, video: Blob | null,
     const moments = screenMoments(recording, asked)
     const times = [...new Set(moments.map(moment => moment.at))].sort((a, b) => a - b)
     const grabbed = new Map((await tools.grab(video, times)).map(frame => [frame.at, frame]))
-    const frames: ScreenFrame[] = []
+    const looks: { at: number; shots: GrabbedFrame[] }[] = []
     const read: GrabbedFrame[] = []
     for (const start of new Set(moments.filter(moment => moment.kind === 'tela').map(moment => moment.from ?? moment.at))) {
       const shots = distinctFrames(moments.filter(moment => moment.from === start).map(moment => grabbed.get(moment.at)).filter((frame): frame is GrabbedFrame => Boolean(frame))).filter(
@@ -107,17 +108,29 @@ export async function lookAtScreen(recording: RecordingData, video: Blob | null,
       )
       if (!shots.length) continue
       read.push(...shots)
-      const text = field(await tools.see(vision, shots.map(shot => shot.image), PROMPTS.SCREEN_TEXT_PROMPT), 'texto')
-      if (text) frames.push({ at: start, image: shots[shots.length - 1].image, text })
+      looks.push({ at: start, shots })
     }
     const speakers = [...recording.speakers]
-    for (const moment of moments.filter(item => item.kind === 'falante')) {
-      const shot = grabbed.get(moment.at)
+    const faces = moments.flatMap(moment => {
+      const shot = moment.kind === 'falante' ? grabbed.get(moment.at) : undefined
       const index = speakers.findIndex(speaker => speaker.id === moment.speaker)
-      if (!shot || index < 0) continue
-      const name = field(await tools.see(vision, [shot.image], PROMPTS.SCREEN_NAME_PROMPT.replace('{nome}', speakers[index].name)), 'nome')
-      if (name) speakers[index] = { ...speakers[index], name, suggested: false }
-    }
+      return shot && index >= 0 ? [{ shot, index }] : []
+    })
+    // Which screens to read is settled above; the vision calls themselves run side by side.
+    const asks = [
+      ...looks.map(look => () => tools.see(vision, look.shots.map(shot => shot.image), PROMPTS.SCREEN_TEXT_PROMPT)),
+      ...faces.map(face => () => tools.see(vision, [face.shot.image], PROMPTS.SCREEN_NAME_PROMPT.replace('{nome}', speakers[face.index].name))),
+    ]
+    const answers = await pool(asks, SEE_AT_ONCE, ask => ask())
+    const frames: ScreenFrame[] = []
+    looks.forEach((look, index) => {
+      const text = field(answers[index], 'texto')
+      if (text) frames.push({ at: look.at, image: look.shots[look.shots.length - 1].image, text })
+    })
+    faces.forEach((face, index) => {
+      const name = field(answers[looks.length + index], 'nome')
+      if (name) speakers[face.index] = { ...speakers[face.index], name, suggested: false }
+    })
     frames.sort((a, b) => a.at - b.at)
     return { ...recording, speakers, ...(frames.length ? { frames } : {}) }
   } catch (error) {

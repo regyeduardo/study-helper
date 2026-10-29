@@ -132,13 +132,20 @@ export async function buildAta(request: AtaRequest, tools: AtaTools): Promise<At
   const written = new Map<AtaPart, PartResult>()
   await Promise.all(
     parts.map(async part => {
-      if (part === 'tarefas') {
-        const tasks = await stages.run(PART_LABEL[part], () => buildTasks(material, context, ai, look, progress))
-        written.set(part, { markdown: tasks.markdown, title: tasks.title, prints: tasks.prints })
-        return
+      try {
+        if (part === 'tarefas') {
+          const tasks = await stages.run(PART_LABEL[part], () => buildTasks(material, context, ai, look, progress))
+          written.set(part, { markdown: tasks.markdown, title: tasks.title, prints: tasks.prints })
+          return
+        }
+        progress(`Escrevendo: ${PART_LABEL[part]}`)
+        written.set(part, await stages.run(PART_LABEL[part], () => writePart(part as BasePart, material, context, ai)))
+      } catch (error) {
+        if (error instanceof Cancelled) throw error
+        // one part failing never takes the others down, and never passes for "nothing in the meeting"
+        const why = error instanceof Error ? error.message : String(error)
+        written.set(part, { markdown: `> Esta parte não saiu: ${why.replace(/\.?$/, '.')} Use "Refazer a Ata" para tentar de novo.\n`, title: '', prints: [] })
       }
-      progress(`Escrevendo: ${PART_LABEL[part]}`)
-      written.set(part, await stages.run(PART_LABEL[part], () => writePart(part as BasePart, material, context, ai)))
     }),
   )
 
@@ -155,7 +162,7 @@ export async function buildAta(request: AtaRequest, tools: AtaTools): Promise<At
   const legend = new Map(requests.map(item => [item.name, item.legenda]))
   let markdown = out
     .join('\n')
-    .replace(/^\{\{img:([^}]+)\}\}[ \t]*$/gm, (_all, name: string) => (images.has(name) ? `![${(legend.get(name) ?? '').replace(/[[\]]/g, '')}](${IMAGE_DIR}${name})` : ''))
+    .replace(/[ \t]*\{\{img:([^}]+)\}\}[ \t]*/g, (all, name: string) => (images.has(name) ? `${all.startsWith(' ') ? ' ' : ''}![${(legend.get(name) ?? '').replace(/[[\]]/g, '')}](${IMAGE_DIR}${name})` : ''))
     .replace(/\n{3,}/g, '\n\n')
   markdown = accentNames(linkMoments(markdown), [...material.people, ...list(context.brief.pessoas).map(p => String(p.nome ?? ''))])
   const used = [...images.values()].filter(image => markdown.includes(`${IMAGE_DIR}${image.name}`))

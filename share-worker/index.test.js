@@ -88,7 +88,8 @@ function fakeBucket() {
           const body = new Uint8Array(chunks.reduce((sum, chunk) => sum + chunk.length, 0))
           chunks.reduce((offset, chunk) => (body.set(chunk, offset), offset + chunk.length), 0)
           uploads.delete(uploadId)
-          return store(key, body, upload.options)
+          // like the real R2 (links of 29/10 came out with mime ""): the object complete() returns has no httpMetadata
+          return { ...(await store(key, body, upload.options)), httpMetadata: {} }
         },
       }
     },
@@ -271,6 +272,15 @@ describe('share worker', () => {
   it('keeps the transcription of a recorded note in the shared sidecar', async () => {
     const { id } = await meetingShare()
     expect(JSON.parse(env.BUCKET.objects.get(`shared/${id}/Reunião.json`).body).recording).toEqual(recording)
+  })
+
+  it('keeps the Ata of a meeting note in the shared sidecar; a note without one stays as it was', async () => {
+    const ata = { id: 'ata-1', kind: 'ata', parts: ['resumo'], markdown: '## Resumo\n\n![quadro](imagens/quadro-1.png)', images: [{ name: 'quadro-1.png', dataUrl: 'data:image/png;base64,iVBORw0KGgo=' }], createdAt: '2026-09-28T12:00:00.000Z', models: {} }
+    const meeting = { kind: 'file', title: 'Reunião', folders: [], files: [{ id: 'f1', name: 'Reunião', folderId: null, type: 'meeting', position: 0, description: '', tags: [], content: '# Ata', questions: [], recording, documents: [ata] }] }
+    const { id } = await (await call('POST', '/shares', { token: 'token-ana', body: { turnstileToken: 'ok', share: meeting } })).json()
+    expect(JSON.parse(env.BUCKET.objects.get(`shared/${id}/Reunião.json`).body).documents).toEqual([ata])
+    const plain = await (await post()).json()
+    expect(JSON.parse(env.BUCKET.objects.get(`shared/${plain.id}/Nota.json`).body)).not.toHaveProperty('documents')
   })
 
   it('answers CORS only for the allowed origins', async () => {

@@ -10,10 +10,26 @@ import { clockTime, speakerName, transcriptText } from '@/lib/transcription/expo
 import { termsHint } from '@/lib/transcription/types'
 
 const UNNAMED = /^Falante \d+$/
+const PIECE_CHARS = 4000
 
 export interface Polished {
   recording: RecordingData
   title: string | null
+}
+
+/** Smaller than the reviewer's batches: more pieces asked side by side, each answering faster. */
+function pieces(lines: string[]): string[][] {
+  const out: string[][] = [[]]
+  let size = 0
+  for (const line of lines) {
+    if (size + line.length > PIECE_CHARS && out[out.length - 1].length) {
+      out.push([])
+      size = 0
+    }
+    out[out.length - 1].push(line)
+    size += line.length
+  }
+  return out
 }
 
 export async function polishTranscript(recording: RecordingData, session: GenerationSession, terms = ''): Promise<Polished> {
@@ -28,17 +44,23 @@ export async function polishTranscript(recording: RecordingData, session: Genera
   const corrections: Correction[] = []
   let title: string | null = null
   try {
-    const answers = await Promise.all(
-      batches(lines).map((batch, index) => {
-        const ask = index === 0 ? 'Primeiro trecho: devolva também o "titulo".' : 'Trecho do meio: não devolva "titulo".'
-        return session.chat(`${ask}\n\n${context}${batch.join('\n')}`, PROMPTS.POLISH_PROMPT)
-      }),
-    )
-    for (const [index, answer] of answers.entries()) {
+    const parts = pieces(lines)
+    const long = parts.length > 1
+    // A long transcript gets its title from its own call over the same opening the first batch used to have.
+    const [opening, answers] = await Promise.all([
+      long ? session.chat(`${context}${batches(lines)[0].join('\n')}`, PROMPTS.TITLE_PROMPT) : Promise.resolve(''),
+      Promise.all(
+        parts.map(part => {
+          const ask = long ? 'Trecho da gravação: não devolva "titulo".' : 'Primeiro trecho: devolva também o "titulo".'
+          return session.chat(`${ask}\n\n${context}${part.join('\n')}`, PROMPTS.POLISH_PROMPT)
+        }),
+      ),
+    ])
+    for (const answer of answers) {
       names.push(...suggestionsIn(answer).filter(item => UNNAMED.test(item.speaker)))
       corrections.push(...correctionsIn(answer))
-      if (index === 0) title = cleanTitle(extractJson(answer)?.titulo)
     }
+    title = cleanTitle(extractJson(long ? opening : answers[0])?.titulo)
   } catch (error) {
     if (error instanceof Cancelled) throw error
     const reason = `A revisão por IA não rodou (nomes e palavras ficaram como o áudio saiu): ${error instanceof Error ? error.message : String(error)}`

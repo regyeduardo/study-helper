@@ -65,7 +65,7 @@ export function useMeetingMedia(meta: FileMeta | null): MeetingMedia {
   }, [url, local, kept, origin, repo, show, toast])
 
   if (sharedItem) {
-    const video = (sharedMedia?.mime ?? '').startsWith('video/')
+    const video = (sharedMedia?.mime || origin?.mime || '').startsWith('video/')
     if (!sharedMedia) return { url: null, available: false, video, request: nothing }
     if (sharedItem.mediaExpiresAt && Date.parse(sharedItem.mediaExpiresAt) <= Date.now()) return { url: null, available: false, video, notice: SHARED_MEDIA_EXPIRED, request: nothing }
     return { url: sharedMedia.url, available: true, video, remote: true, request: nothing }

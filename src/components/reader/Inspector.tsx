@@ -177,11 +177,41 @@ function TranscriptDownload({ meta }: { meta: FileMeta }) {
   )
 }
 
+/** Whoever opens a shared link gets the media from the link itself, never from the owner's storage. */
+function SharedMediaDownload({ url, name }: { url: string; name: string }) {
+  const toast = useUiStore(state => state.toast)
+  const [busy, setBusy] = useState(false)
+  return (
+    <button
+      className="btn"
+      style={{ marginTop: 10 }}
+      disabled={busy}
+      onClick={async () => {
+        setBusy(true)
+        try {
+          const response = await fetch(url)
+          if (!response.ok) throw new Error('Não deu para baixar a mídia do link.')
+          downloadBlob(await response.blob(), name)
+        } catch (error) {
+          toast(error instanceof Error ? error.message : 'Não deu para baixar a mídia do link.')
+        } finally {
+          setBusy(false)
+        }
+      }}
+    >
+      <Icon name="download" />
+      {busy ? 'Baixando a mídia…' : 'Baixar a mídia'}
+    </button>
+  )
+}
+
 function SourceActions({ meta }: { meta: FileMeta }) {
   const library = useLibraryStore()
   const ui = useUiStore()
   const [confirming, setConfirming] = useState(false)
   const origin = meta.origin!
+  const sharedMedia = library.sharedView?.item.files.find(file => file.id === meta.id)?.media ?? null
+  if (library.sharedView) return sharedMedia ? <SharedMediaDownload url={sharedMedia.url} name={origin.name} /> : null
   const stored = (origin.storedFileId || origin.storedUrl) && !origin.removedAt
   if (!stored) return null
   const expired = sourceExpired(origin)

@@ -376,6 +376,7 @@ export interface SharedFile {
   highlights: Highlight[]
   transcript?: string
   recording?: RecordingData
+  documents?: MeetingDocument[]
   media?: SharedMedia
   meta?: Partial<FileMeta>
 }

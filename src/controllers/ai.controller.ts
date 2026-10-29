@@ -16,6 +16,8 @@ export interface ChatUsage {
 export interface ChatReply {
   text: string
   usage: ChatUsage
+  /** finish_reason of the OpenAI format: "length" with no text means the limit went on the thinking. */
+  finish?: string
 }
 
 export class AiError extends Error {}
@@ -175,7 +177,8 @@ interface OpenAiOptions {
 
 async function openAiChat(settings: AiSettings, content: string, systemPrompt: string, maxTokens: number, signal?: AbortSignal, temperature = TEMPERATURE): Promise<ChatReply> {
   const options: OpenAiOptions = { max_tokens: maxTokens, stream_options: { include_usage: true } }
-  if (systemPrompt.toLowerCase().includes('json')) options.response_format = { type: 'json_object' }
+  // DeepSeek's JSON mode "may occasionally return empty content" (api-docs.deepseek.com/guides/json_mode): the prompt already asks for JSON only
+  if (systemPrompt.toLowerCase().includes('json') && !/api\.deepseek\.com/.test(baseUrlOf(settings))) options.response_format = { type: 'json_object' }
   const headers: Record<string, string> = { 'content-type': 'application/json' }
   if (settings.apiKey) headers.authorization = `Bearer ${settings.apiKey}`
 
@@ -214,18 +217,22 @@ async function openAiChat(settings: AiSettings, content: string, systemPrompt: s
 
     let text = ''
     let usage: ChatUsage | null = null
+    let finish: string | undefined
     for await (const data of serverEvents(response, signal)) {
       if (!data || data === '[DONE]') continue
       const chunk = JSON.parse(data) as {
-        choices?: { delta?: { content?: string } }[]
+        choices?: { delta?: { content?: string }; finish_reason?: string | null }[]
         usage?: { prompt_tokens?: number; completion_tokens?: number }
         error?: { message?: string }
       }
       if (chunk.error) throw new AiError(`A IA parou no meio: ${chunk.error.message ?? 'erro'}`)
-      for (const choice of chunk.choices ?? []) text += choice.delta?.content ?? ''
+      for (const choice of chunk.choices ?? []) {
+        text += choice.delta?.content ?? ''
+        if (choice.finish_reason) finish = choice.finish_reason
+      }
       if (chunk.usage) usage = { inputTokens: chunk.usage.prompt_tokens ?? 0, outputTokens: chunk.usage.completion_tokens ?? 0, estimated: false }
     }
-    return { text, usage: usage ?? estimate(content, systemPrompt, text) }
+    return { text, usage: usage ?? estimate(content, systemPrompt, text), ...(finish ? { finish } : {}) }
   }
 }
 

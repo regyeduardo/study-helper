@@ -1,5 +1,6 @@
 import { strToU8, zipSync } from 'fflate'
 
+import { withImages } from '@/lib/generation/ata'
 import { addFrontmatter } from '@/lib/imports/frontmatter'
 import { buildZip } from '@/lib/imports/zip'
 import { useLibraryStore } from '@/stores/library'
@@ -9,8 +10,10 @@ export async function exportFileAsMarkdown(id: string): Promise<void> {
   const library = useLibraryStore.getState()
   const meta = library.files.find(file => file.id === id)
   if (!meta) return
-  const { content } = await library.openFile(id)
-  downloadBlob(new Blob([addFrontmatter(content, meta.type)], { type: 'text/markdown' }), `${safeFilename(meta.name)}.md`)
+  const { content, sidecar } = await library.openFile(id)
+  const ata = sidecar.documents?.filter(item => item.kind === 'ata').at(-1)
+  const body = ata ? `${withImages(ata.markdown, ata.images).trim()}\n\n---\n\n# Transcrição\n\n${content}` : content
+  downloadBlob(new Blob([addFrontmatter(body, meta.type)], { type: 'text/markdown' }), `${safeFilename(meta.name)}.md`)
 }
 
 export async function exportFileAsZip(id: string): Promise<void> {

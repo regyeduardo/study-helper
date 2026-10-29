@@ -1,14 +1,15 @@
-import type { Attempt, FileMeta, FolderMeta, ShareContent, SharedFile, SharedFolder, SharedItem, SharedLink, ShareKind } from '@/types/domain'
+import type { Attempt, FileMeta, FolderMeta, ShareContent, SharedFile, SharedFolder, SharedItem, SharedLink, SharedMedia, ShareKind, SourceMeta } from '@/types/domain'
 import { currentDevice } from '@/lib/device'
 import { env } from '@/lib/env'
 import { masteryOf } from '@/lib/exam'
 import { FILE_TYPES, mediaOf } from '@/lib/file-types'
 import { newFileMeta, newFolderMeta } from '@/lib/defaults'
 import { newId, nowIso } from '@/lib/ids'
-import { type LocalMedia, readLocalMedia } from '@/lib/recording/media-library'
+import { keepLocalMedia, type LocalMedia, readLocalMedia } from '@/lib/recording/media-library'
 import { bytesOf, type Repository, type StoredSize } from '@/lib/storage/repository'
-import { downloadStoredSource, sourceExpired } from '@/lib/storage/source-storage'
+import { downloadStoredSource, sourceExpired, storeSource } from '@/lib/storage/source-storage'
 import { readingMinutes, wordCount } from '@/utils/format'
+import type { TrackedTask } from '@/stores/jobs'
 import type { OpenedFile } from '@/stores/library'
 
 const DAY_MS = 24 * 3600 * 1000
@@ -85,6 +86,7 @@ export async function buildShareContent(target: ShareTarget, folders: FolderMeta
       highlights: opened.sidecar.highlights,
       ...(opened.sidecar.transcript !== undefined ? { transcript: opened.sidecar.transcript } : {}),
       ...(opened.sidecar.recording ? { recording: opened.sidecar.recording } : {}),
+      ...(opened.sidecar.documents ? { documents: opened.sidecar.documents } : {}),
       meta: { ...file, mastery: null, lastReviewedAt: null },
     })
   }
@@ -157,7 +159,51 @@ function knownType(type: string): FileMeta['type'] {
   return FILE_TYPES.find(item => item.id === type)?.id ?? 'reading'
 }
 
-export async function importSharedItem(item: SharedItem, attempts: SharedAttempts, actions: ImportActions): Promise<{ folderId: string | null; fileId: string | null }> {
+export type MediaPlace = 'browser' | 'drive'
+
+export interface MediaImport {
+  place: MediaPlace
+  repo: Repository | null
+  track(title: string): TrackedTask
+}
+
+export function hasSharedMedia(item: SharedItem, now = Date.now()): boolean {
+  return !(item.mediaExpiresAt && isExpired(item.mediaExpiresAt, now)) && item.files.some(file => file.media)
+}
+
+async function downloadSharedMedia(media: SharedMedia, progress: (fraction: number) => void): Promise<Blob> {
+  const response = await fetch(media.url).catch(() => null)
+  if (!response?.ok) throw new Error('Não consegui baixar a mídia compartilhada.')
+  if (!response.body) return response.blob()
+  const total = Number(response.headers.get('Content-Length')) || media.size
+  const reader = response.body.getReader()
+  const parts: BlobPart[] = []
+  let received = 0
+  for (let chunk = await reader.read(); !chunk.done; chunk = await reader.read()) {
+    parts.push(chunk.value)
+    received += chunk.value.byteLength
+    if (total) progress(Math.min(1, received / total))
+  }
+  return new Blob(parts)
+}
+
+async function keepSharedMedia(file: SharedFile, media: SharedMedia, fileId: string, options: MediaImport, task: TrackedTask): Promise<SourceMeta> {
+  const shared = file.meta?.origin
+  const blob = await downloadSharedMedia(media, fraction => task.update(`Baixando a mídia: ${Math.round(fraction * 100)}%`, fraction))
+  const mime = media.mime || shared?.mime || blob.type
+  const kept = new File([blob], shared?.name || file.name, { type: mime })
+  const origin: SourceMeta = { input: shared?.input === 'file' ? 'file' : 'recording', name: kept.name, mime, sizeBytes: shared?.sizeBytes ?? kept.size, ...(shared?.durationSeconds ? { durationSeconds: shared.durationSeconds } : {}), storage: 'none' }
+  if (options.place === 'drive' && options.repo) {
+    task.update('Guardando no Google Drive', null)
+    return { ...origin, ...(await storeSource(kept, 'drive', fileId, options.repo, '72h')) }
+  }
+  task.update('Guardando neste navegador', null)
+  await keepLocalMedia(kept, fileId, shared?.durationSeconds ?? 0)
+  return origin
+}
+
+export async function importSharedItem(item: SharedItem, attempts: SharedAttempts, actions: ImportActions, media?: MediaImport): Promise<{ folderId: string | null; fileId: string | null }> {
+  const withMedia = media && hasSharedMedia(item) ? media : null
   const folderIds = new Map<string, string>()
   const pending = [...item.folders]
   while (pending.length) {
@@ -188,8 +234,19 @@ export async function importSharedItem(item: SharedItem, attempts: SharedAttempt
       highlights: file.highlights ?? [],
       ...(file.transcript !== undefined ? { transcript: file.transcript } : {}),
       ...(file.recording ? { recording: file.recording } : {}),
+      ...(file.documents ? { documents: file.documents } : {}),
       meta: { ...sidecar.meta, questionCount: file.questions.length, ...(last ? { mastery: masteryOf(last.correct, last.total), lastReviewedAt: last.createdAt } : {}) },
     }))
+    if (withMedia && file.media) {
+      const task = withMedia.track(`Guardar a mídia: ${meta.name}`)
+      try {
+        const origin = await keepSharedMedia(file, file.media, meta.id, withMedia, task)
+        await actions.updateSidecar(meta.id, sidecar => ({ ...sidecar, meta: { ...sidecar.meta, origin } }))
+        task.done('Mídia guardada.')
+      } catch (error) {
+        task.fail(error instanceof Error ? error.message : 'Não consegui guardar a mídia.')
+      }
+    }
   }
   const rootId = item.folders.find(folder => folder.parentId === null)?.id
   return { folderId: rootId ? (folderIds.get(rootId) ?? null) : null, fileId: item.kind === 'file' ? firstFileId : null }
@@ -223,7 +280,7 @@ export function sharedLibrary(item: SharedItem, attempts: SharedAttempts): Share
       words: wordCount(file.content),
       readingMinutes: file.content ? readingMinutes(file.content) : 0,
     }
-    opened[file.id] = { content: file.content, sidecar: { meta, questions: file.questions, attempts: done, highlights: file.highlights ?? [], ...(file.transcript !== undefined ? { transcript: file.transcript } : {}), ...(file.recording ? { recording: file.recording } : {}) } }
+    opened[file.id] = { content: file.content, sidecar: { meta, questions: file.questions, attempts: done, highlights: file.highlights ?? [], ...(file.transcript !== undefined ? { transcript: file.transcript } : {}), ...(file.recording ? { recording: file.recording } : {}), ...(file.documents ? { documents: file.documents } : {}) } }
     return meta
   })
   const sizes = Object.fromEntries(files.map(meta => [meta.id, { noteBytes: bytesOf(opened[meta.id].content) + bytesOf(JSON.stringify(opened[meta.id].sidecar)), sourceBytes: 0 }]))

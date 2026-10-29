@@ -112,11 +112,13 @@ function cleanFile(file) {
   if ([...questions, ...highlights].some(item => !plainObject(item))) return null
   if (file.transcript !== undefined && !isText(file.transcript)) return null
   if (file.recording !== undefined && !plainObject(file.recording)) return null
+  if (file.documents !== undefined && (!Array.isArray(file.documents) || file.documents.some(item => !plainObject(item)))) return null
   return {
     meta: plainObject(file.meta) ?? {},
     highlights,
     transcript: isText(file.transcript) ? file.transcript : undefined,
     recording: file.recording,
+    documents: file.documents,
     id: file.id,
     name: file.name,
     folderId: isText(file.folderId) ? file.folderId : null,
@@ -172,7 +174,7 @@ export function shareTree(share, id, createdAt, expiresAt, mediaExpiresAt) {
     const base = file.folderId ? (folderPaths.get(file.folderId) ?? '') : ''
     const path = `${base}${uniqueName(file.name, namesIn(base))}`
     const meta = { ...file.meta, id: file.id, name: file.name, folderId: file.folderId, type: file.type, position: file.position, description: file.description, tags: file.tags, mastery: null, lastReviewedAt: null, questionCount: file.questions.length }
-    const sidecar = { meta, questions: file.questions, attempts: [], highlights: file.highlights, ...(file.transcript !== undefined ? { transcript: file.transcript } : {}), ...(file.recording !== undefined ? { recording: file.recording } : {}) }
+    const sidecar = { meta, questions: file.questions, attempts: [], highlights: file.highlights, ...(file.transcript !== undefined ? { transcript: file.transcript } : {}), ...(file.recording !== undefined ? { recording: file.recording } : {}), ...(file.documents !== undefined ? { documents: file.documents } : {}) }
     objects.push({ key: `${root}${path}.md`, body: file.content, type: 'text/markdown' })
     objects.push({ key: `${root}${path}.json`, body: JSON.stringify(sidecar, null, 2), type: 'application/json' })
     return { id: file.id, path }
@@ -296,7 +298,9 @@ async function finishMedia(request, env, headers, id, fileId) {
   if (refused) return refused
   const key = mediaKey(id, fileId)
   const object = await env.BUCKET.resumeMultipartUpload(key, input.uploadId).complete(parts.map(part => ({ partNumber: part.partNumber, etag: part.etag })))
-  const media = { key, mime: object.httpMetadata?.contentType ?? '', size: object.size }
+  // the object complete() returns comes without httpMetadata in R2: the type is read back from the stored object
+  const mime = object.httpMetadata?.contentType || (await env.BUCKET.head(key))?.httpMetadata?.contentType || ''
+  const media = { key, mime, size: object.size }
   if (!(await addMediaToManifest(env.BUCKET, id, fileId, media))) {
     await env.BUCKET.delete(key)
     return json({ error: 'not_found' }, 404, headers)

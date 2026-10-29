@@ -24,7 +24,7 @@ import type { Repository } from '@/lib/storage/repository'
 import { useJobsStore } from '@/stores/jobs'
 import { useLibraryStore } from '@/stores/library'
 import { useUiStore } from '@/stores/ui'
-import { installFetch, openAiStream, systemPromptOf, userContentOf } from '@/test/ai/fake-provider'
+import { installFetch, openAiStream, sseResponse, systemPromptOf, userContentOf } from '@/test/ai/fake-provider'
 import { fakeAi, fakeFrames, meeting, textAnswer } from '@/test/generation/ata-fixture'
 import type { FileSidecar, Settings } from '@/types/domain'
 
@@ -138,6 +138,24 @@ describe('the Ata pipeline', () => {
     expect(done.stages.map(stage => stage.stage)).toEqual(expect.arrayContaining(['Quem fala (quadros da chamada)', 'Ler a tela compartilhada', 'Contexto e glossário', 'Resumo', 'Levantamento de tarefas', 'Prints marcados']))
   })
 
+  it('a print asked at the end of a line becomes the image too; one that was not made leaves no slot', async () => {
+    const answer = (system: string, user: string) =>
+      system.startsWith(P.BASE) && system.endsWith(P.RESUMO) ? '# Curva de vendas\n\n## Pontos principais\n- Curva validada. [▸ 00:30] {{print 00:40 | campo Valor ticket médio}}\n- Menu de Terreno. [▸ 01:00] {{print 01:00 | menu}}' : textAnswer(system, user)
+    const ai = fakeAi({ text: answer })
+    const made = vi.fn(async (_image: string, _marks: unknown[], caption: string) => (caption.includes('menu') ? Promise.reject(new Error('sem print')) : `data:image/jpeg;base64,PRINT ${caption}`))
+    const done = await buildAta({ recording: meeting, parts: ['resumo'], startedAt }, { ai, frames: fakeFrames(), difference, renderPrint: made })
+    expect(done.markdown).toContain('![campo Valor ticket médio](imagens/resumo-1.jpg)')
+    expect(done.markdown).not.toContain('{{')
+  })
+
+  it('a part whose AI keeps failing says why, and the other parts still come out', async () => {
+    const answer = (system: string, user: string) => (system === P.CANDIDATAS ? Promise.reject(new Error('A IA respondeu vazio ou sem JSON legível.')) : textAnswer(system, user))
+    const done = await buildAta({ recording: meeting, parts: ['resumo', 'tarefas'], startedAt }, { ai: fakeAi({ vision: false, text: answer }), frames: null, difference, renderPrint })
+    expect(done.markdown).toContain('Henrique Souza pediu o ajuste da Tabela de Vendas')
+    expect(done.markdown).toContain('> Esta parte não saiu: A IA respondeu vazio ou sem JSON legível. Use "Refazer a Ata" para tentar de novo.')
+    expect(done.markdown).not.toContain('Nenhuma tarefa apareceu')
+  })
+
   it('every part shares the context pass and uses real names; audio only means no vision and no prints', async () => {
     const ai = fakeAi({ vision: false })
     const named = { ...meeting, speakers: [{ id: 'mic', name: 'Regy Niles', suggested: false }, ...meeting.speakers.slice(1).map((s, i) => ({ ...s, name: ['Henrique Souza', 'Natália Lenza'][i] }))] }
@@ -171,6 +189,34 @@ describe('the AI of the passes', () => {
     expect(calls[0].body?.temperature).toBe(0.2)
     expect(calls[0].headers.authorization).toBe('Bearer k')
     expect(ai.models()).toEqual({ review: 'Qwen/Qwen3.7-Max', context: 'modelo-geral' })
+  })
+
+  it('an empty reply, or JSON nobody can read, is asked again (DeepSeek in JSON mode sometimes answers empty)', async () => {
+    const replies = ['', '   ', 'não sei', '{"tarefas": [{"o_que": "Ajustar a Tabela de Vendas"}]}', '', '## Resumo']
+    const { calls } = installFetch(() => openAiStream(replies.shift() ?? ''))
+    const ai = appAi(settings(), undefined, { text: 1000, vision: 1000, backoffMs: 1 })
+    expect(JSON.parse(await ai.text('candidates', P.CANDIDATAS, 'falas', { json: true })).tarefas).toHaveLength(1)
+    expect(calls).toHaveLength(4)
+    expect(await ai.text('write', 'Escreva o resumo', 'falas')).toBe('## Resumo')
+    expect(calls).toHaveLength(6)
+  })
+
+  it('DeepSeek (deepseek-flash): no JSON mode, and a reply eaten by the thinking is asked again with double the limit', async () => {
+    const thinking = sseResponse([`data: ${JSON.stringify({ choices: [{ delta: { reasoning_content: 'pensando muito...' } }] })}\n\n`, `data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: 'length' }] })}\n\n`, 'data: [DONE]\n\n'])
+    let first = true
+    const { calls } = installFetch(() => (first ? ((first = false), thinking) : openAiStream('{"tarefas": []}')))
+    const deepseek: Settings = { ...defaultIndex().settings, ai: { provider: 'custom', baseUrl: 'https://api.deepseek.com', apiKey: 'k', model: 'deepseek-flash' } }
+    expect(await appAi(deepseek, undefined, { text: 1000, vision: 1000, backoffMs: 1 }).text('candidates', P.CANDIDATAS, 'falas', { max: 6000, json: true })).toBe('{"tarefas": []}')
+    expect(calls.map(call => call.body?.max_tokens)).toEqual([12000, 24000])
+    expect(calls.every(call => !('response_format' in (call.body ?? {})))).toBe(true)
+  })
+
+  it('when the AI never writes the answer, the error says why: the limit spent thinking, or an empty reply', async () => {
+    const eaten = () => sseResponse([`data: ${JSON.stringify({ choices: [{ delta: { reasoning_content: 'hmm' }, finish_reason: 'length' }] })}\n\n`, 'data: [DONE]\n\n'])
+    installFetch(eaten)
+    await expect(appAi(settings(), undefined, { text: 1000, vision: 1000, backoffMs: 1 }).text('candidates', P.CANDIDATAS, 'falas', { max: 100, json: true })).rejects.toThrow('A IA gastou o limite de 800 tokens pensando e não escreveu a resposta.')
+    installFetch(() => openAiStream(''))
+    await expect(appAi(settings(), undefined, { text: 1000, vision: 1000, backoffMs: 1 }).text('write', 'Escreva', 'falas')).rejects.toThrow('A IA respondeu vazio ou sem JSON legível.')
   })
 
   it('retries on 5xx and on timeout, gives up on 4xx, and stops at once when cancelled', async () => {
