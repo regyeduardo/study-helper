@@ -1,5 +1,5 @@
 import type { AiSettings } from '@/types/domain'
-import { chatController, MAX_TOKENS } from '@/controllers/ai.controller'
+import { type ChatContent, chatController, MAX_TOKENS } from '@/controllers/ai.controller'
 import { modelOf } from '@/lib/ai/providers'
 
 export interface SessionUsage {
@@ -25,7 +25,7 @@ export class GenerationSession {
     readonly signal?: AbortSignal,
   ) {}
 
-  async chat(content: string, systemPrompt: string, maxTokens = MAX_TOKENS): Promise<string> {
+  async chat(content: ChatContent, systemPrompt: string, maxTokens = MAX_TOKENS): Promise<string> {
     const reply = await chatController(this.settings, content, systemPrompt, maxTokens, this.signal)
     this.calls++
     this.inputTokens += reply.usage.inputTokens

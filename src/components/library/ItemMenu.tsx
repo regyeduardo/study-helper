@@ -86,6 +86,9 @@ export function ItemMenu() {
   if (!file) return null
   const hasText = mediaOf(file) === 'text' || file.words > 0
   const needs = hasText ? undefined : 'transcrever antes'
+  // Ata and Aula go straight from the media (or transcribe it first)
+  const fromMedia = library.localMedia.some(item => item.fileIds.includes(file.id)) || Boolean(file.origin?.storedFileId || file.origin?.storedUrl)
+  const gate = (label: string) => (fromMedia && (label === 'Ata' || label === 'Aula') ? undefined : needs)
   const generate = (agent: 'meeting' | 'lesson') => act(() => ui.open({ kind: 'generate', fileId: file.id, agent }))
   const again = againOf(file, library.files)
   const tools: [string, Parameters<typeof Icon>[0]['name'], (() => void) | null][] = [
@@ -115,10 +118,10 @@ export function ItemMenu() {
         Gerar{needs ? ' (precisa de transcrição)' : ''}
       </div>
       {tools.map(([label, icon, run]) => (
-        <button key={label} className="mi" disabled={Boolean(needs) || !run} onClick={run ?? undefined}>
+        <button key={label} className="mi" disabled={Boolean(gate(label)) || !run} onClick={run ?? undefined}>
           <Icon name={icon} />
           {label}
-          {(needs || !run) && <span className="mi-hint">{needs ?? 'em breve'}</span>}
+          {(gate(label) || !run) && <span className="mi-hint">{gate(label) ?? 'em breve'}</span>}
         </button>
       ))}
       <div className="sep" />

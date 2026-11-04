@@ -1,4 +1,4 @@
-import { Cancelled } from '@/controllers/ai.controller'
+import { Cancelled, type ChatContent } from '@/controllers/ai.controller'
 import { buildContext, diagramPrompt } from '@/lib/generation/diagram-prompt'
 import {
   buildMarkdown,
@@ -28,7 +28,7 @@ export type Emit = (event: GenerationEvent) => void
 
 export class GenerationError extends Error {}
 
-export async function generateContent(content: string, systemPrompt: string, session: GenerationSession, emit: Emit = () => {}): Promise<string> {
+export async function generateContent(content: ChatContent, systemPrompt: string, session: GenerationSession, emit: Emit = () => {}): Promise<string> {
   const { elements, diagrams, suggestion } = await phaseOne(content, systemPrompt, session)
   emit({ type: 'phase1_complete', markdown: buildMarkdown(elements, null, true) })
   if (suggestion) emit({ type: 'suggestion', suggestion })
@@ -38,7 +38,7 @@ export async function generateContent(content: string, systemPrompt: string, ses
   return markdown
 }
 
-async function phaseOne(content: string, systemPrompt: string, session: GenerationSession) {
+async function phaseOne(content: ChatContent, systemPrompt: string, session: GenerationSession) {
   let lastError = ''
   for (let attempt = 0; attempt < PHASE1_MAX_RETRIES; attempt++) {
     const prompt = lastError

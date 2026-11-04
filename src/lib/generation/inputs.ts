@@ -31,7 +31,7 @@ export interface ResolvedInput {
 
 const TITLE_CHARS = 60
 
-function mediaDuration(file: File): Promise<number | undefined> {
+export function mediaDuration(file: File): Promise<number | undefined> {
   return new Promise(resolve => {
     const element = document.createElement(file.type.startsWith('video') ? 'video' : 'audio')
     const url = URL.createObjectURL(file)

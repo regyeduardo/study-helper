@@ -20,6 +20,9 @@ export interface ChatReply {
   finish?: string
 }
 
+/** What the user turn carries: text, or parts in the OpenAI format (the light audio of a recording and the text). */
+export type ChatContent = string | Record<string, unknown>[]
+
 export class AiError extends Error {}
 
 export class Cancelled extends Error {
@@ -100,11 +103,11 @@ async function* serverEvents(response: Response, signal?: AbortSignal): AsyncGen
   }
 }
 
-function estimate(content: string, systemPrompt: string, text: string): ChatUsage {
-  return { inputTokens: Math.round((content.length + systemPrompt.length) / 4), outputTokens: Math.round(text.length / 4), estimated: true }
+function estimate(content: ChatContent, systemPrompt: string, text: string): ChatUsage {
+  return { inputTokens: Math.round(((typeof content === 'string' ? content.length : 0) + systemPrompt.length) / 4), outputTokens: Math.round(text.length / 4), estimated: true }
 }
 
-async function anthropicChat(settings: AiSettings, content: string, systemPrompt: string, maxTokens: number, signal?: AbortSignal, temperature = TEMPERATURE, extra: Record<string, unknown> = {}): Promise<ChatReply> {
+async function anthropicChat(settings: AiSettings, content: ChatContent, systemPrompt: string, maxTokens: number, signal?: AbortSignal, temperature = TEMPERATURE, extra: Record<string, unknown> = {}): Promise<ChatReply> {
   const response = await send(
     settings,
     `${baseUrlOf(settings)}/v1/messages`,
@@ -155,7 +158,7 @@ interface OpenAiOptions {
   stream_options?: { include_usage: boolean }
 }
 
-async function openAiChat(settings: AiSettings, content: string, systemPrompt: string, maxTokens: number, signal?: AbortSignal, temperature = TEMPERATURE, extra: Record<string, unknown> = {}): Promise<ChatReply> {
+async function openAiChat(settings: AiSettings, content: ChatContent, systemPrompt: string, maxTokens: number, signal?: AbortSignal, temperature = TEMPERATURE, extra: Record<string, unknown> = {}): Promise<ChatReply> {
   const options: OpenAiOptions = { max_tokens: maxTokens, stream_options: { include_usage: true } }
   // DeepSeek's JSON mode "may occasionally return empty content" (api-docs.deepseek.com/guides/json_mode): the prompt already asks for JSON only
   if (systemPrompt.toLowerCase().includes('json') && !/api\.deepseek\.com/.test(baseUrlOf(settings))) options.response_format = { type: 'json_object' }
@@ -219,7 +222,7 @@ async function openAiChat(settings: AiSettings, content: string, systemPrompt: s
 
 export async function chatController(
   settings: AiSettings,
-  content: string,
+  content: ChatContent,
   systemPrompt: string,
   maxTokens = MAX_TOKENS,
   signal?: AbortSignal,

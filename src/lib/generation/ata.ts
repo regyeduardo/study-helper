@@ -143,7 +143,7 @@ function marksBlock(marks: RecordingMark[], blocks: Speech[], seen: Map<string, 
 }
 
 /** The model's answer without thinking, code fences or minute marks (never "when"). */
-function modelDocument(raw: string): string {
+export function modelDocument(raw: string): string {
   return (
     raw
       .replace(/<think>[\s\S]*?<\/think>/g, '')
