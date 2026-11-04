@@ -14,6 +14,7 @@ vi.mock('@/lib/recording/media-library', async importOriginal => ({
 }))
 vi.mock('@/lib/generation/inputs', async importOriginal => ({ ...(await importOriginal<typeof import('@/lib/generation/inputs')>()), mediaDuration: async () => 90 }))
 // a transcription that never ends: the Ata must not wait for it
+vi.mock('@/lib/transcription/audio', async importOriginal => ({ ...(await importOriginal<typeof import('@/lib/transcription/audio')>()), decodeChannels16k: vi.fn(async () => [new Float32Array(16000).map((_, at) => Math.sin(at / 8) * 0.3)]) }))
 vi.mock('@/lib/transcription', async importOriginal => ({ ...(await importOriginal<typeof import('@/lib/transcription')>()), transcribe: vi.fn(() => new Promise(() => undefined)) }))
 
 import { defaultIndex } from '@/lib/defaults'
@@ -117,6 +118,22 @@ describe('generation straight from the media', () => {
     expect(new DataView(ogg.buffer).getUint32(last + 6, true)).toBe(6 * 960)
     expect(ogg[last + 5]).toBe(0x04)
     expect([...ogg.subarray(last + 27 + 6)]).toEqual(Array<number[]>(6).fill([0xfc, 0x11, 0x22]).flat())
+  })
+
+  it('DeepInfra gets the audio as MP3: it refuses Ogg with 422 "Input should be a valid string"', async () => {
+    const DI = 'deepinfra::google/gemini-2.5-flash'
+    const index = useLibraryStore.getState().index
+    useLibraryStore.setState({ index: { ...index, settings: { ...index.settings, aiConfig: { providers: [{ id: 'deepinfra', type: 'deepinfra', name: 'DeepInfra', key: 'k', base: '' }], models: [{ uid: DI, pid: 'deepinfra', mid: 'google/gemini-2.5-flash', name: 'Gemini' }], defaults: { estudo: DI, ata: DI }, steps: {} } } } })
+    const model = { id: 'google/gemini-2.5-flash', name: 'Gemini 2.5 Flash', media: { texto: true, imagem: true, audio: true, video: false, pdf: null } }
+    useModelsStore.setState({ live: { deepinfra: { state: 'ok', token: 1, at: Date.now(), list: [model], byId: new Map([[model.id, model]]) } }, probes: {} })
+    const { calls } = installFetch(() => openAiStream(DIRECT))
+    const id = await recordingNote(false)
+    await useJobsStore.getState().generateAta(id, ['resumo'])
+    const audio = audioOf(calls[0])!
+    expect(audio.format).toBe('mp3')
+    const bytes = Uint8Array.from(atob(audio.data), letter => letter.charCodeAt(0))
+    // an MPEG audio frame: sync 0xFFE
+    expect(bytes.some((byte, at) => byte === 0xff && (bytes[at + 1] & 0xe0) === 0xe0)).toBe(true)
   })
 
   it('a model that hears audio writes the Ata in ONE call with the light audio: no video, no transcription, the minutes play the media', async () => {

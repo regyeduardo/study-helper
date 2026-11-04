@@ -216,21 +216,23 @@ function choiceOf(use: AiUse, model: string | null | undefined, rest: Omit<Gener
 }
 
 /** The use's model hears audio: the provider's list says so, or "Testar" saw it (unknown is not enough). */
-async function hearsAudio(use: AiUse, pick?: string | null): Promise<boolean> {
+/** The provider of the use's model when that model hears audio; null when it does not. */
+async function hearsAudio(use: AiUse, pick?: string | null): Promise<string | null> {
   const config = aiConfigOf(library().index.settings)
   const model = modelByUid(config, (pick && modelByUid(config, pick) ? pick : undefined) ?? uidFor(config, use))
   const provider = providerById(config, model?.pid)
-  if (!model || !provider) return false
+  if (!model || !provider) return null
   if (useModelsStore.getState().live[provider.id]?.state !== 'ok') await useModelsStore.getState().read(provider, false)
   const { live, probes } = useModelsStore.getState()
-  return mediaOfModel(config, live, probes, model.uid)?.audio === true
+  return mediaOfModel(config, live, probes, model.uid)?.audio === true ? provider.type : null
 }
 
 /** The media for ONE call to the use's model, when it hears audio and the light audio fits; null keeps the transcription path. */
 async function directMedia(use: AiUse, pick: string | null | undefined, open: () => Promise<File>): Promise<MediaParts | null> {
-  if (!(await hearsAudio(use, pick))) return null
+  const provider = await hearsAudio(use, pick)
+  if (!provider) return null
   const file = await open().catch(() => null)
-  return file ? mediaParts(file) : null
+  return file ? mediaParts(file, provider) : null
 }
 
 /** The note has its media at hand (kept here or stored). */
