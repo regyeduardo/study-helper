@@ -5,6 +5,7 @@ import type { SourceStorage } from '@/types/domain'
 import { Dialog } from '@/components/ui/Dialog'
 import { Icon } from '@/components/ui/Icon'
 import { IntegrationStatus } from '@/components/dialogs/IntegrationStatus'
+import { ModelPick, useModelChoice } from '@/components/dialogs/ModelPick'
 import { FolderPicker } from '@/components/dialogs/SimpleDialogs'
 import { SourceStoragePicker } from '@/components/dialogs/SourceStoragePicker'
 import type { LitterboxTime } from '@/controllers/hosting.controller'
@@ -817,6 +818,7 @@ function RecordingDoneOptions({ place }: { place: 'dialog' | 'window' }) {
   const saveRecording = useJobsStore(state => state.saveRecording)
   const toast = useUiStore(state => state.toast)
   const [transcribing, setTranscribing] = useState(true)
+  const heardBy = useModelChoice('transcricao')
   const [discarding, setDiscarding] = useState(false)
   const [folderId, setFolderId] = useState<string | null>(null)
   const [storage, setStorage] = useState<SourceStorage | null>(null)
@@ -841,7 +843,7 @@ function RecordingDoneOptions({ place }: { place: 'dialog' | 'window' }) {
     const { file, storedName, marks, durationSeconds } = result
     clearResult()
     setStorage(null)
-    void saveRecording({ file, storedName, durationSeconds, folderId, storage: chosen, litterboxTime, marks: marks ?? [], transcribe: transcribing }).then(fileId => openNote(fileId))
+    void saveRecording({ file, storedName, durationSeconds, folderId, storage: chosen, litterboxTime, marks: marks ?? [], transcribe: transcribing, ...(transcribing && heardBy.model ? { transcriptionModel: heardBy.model } : {}) }).then(fileId => openNote(fileId))
   }
   const actions = discarding ? (
     <div className="inline-confirm">
@@ -858,7 +860,7 @@ function RecordingDoneOptions({ place }: { place: 'dialog' | 'window' }) {
       <button className="btn quiet" onClick={() => setDiscarding(true)}>
         Descartar
       </button>
-      <button className="btn primary" onClick={save}>
+      <button className="btn primary" disabled={transcribing && !heardBy.ready} onClick={save}>
         Salvar
       </button>
     </>
@@ -887,6 +889,7 @@ function RecordingDoneOptions({ place }: { place: 'dialog' | 'window' }) {
           ))}
         </div>
       </div>
+      {transcribing && <ModelPick choice={heardBy} label="Transcrição" />}
       <SourceStoragePicker
         label="Guardar também na nuvem?"
         sizeBytes={result.file.size}

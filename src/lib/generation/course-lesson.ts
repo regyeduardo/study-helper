@@ -2,6 +2,11 @@ import type { FileMeta, FolderMeta } from '@/types/domain'
 
 const OUTLINE_LINES = 80
 
+/** A course is just a folder with folders inside; the old `isCourse` mark is ignored. */
+export function isCourseFolder(folders: FolderMeta[], folderId: string | null | undefined): boolean {
+  return Boolean(folderId) && folders.some(folder => folder.parentId === folderId && !folder.deletedAt)
+}
+
 export function courseOf(folders: FolderMeta[], folderId: string | null): FolderMeta | null {
   const byId = new Map(folders.map(folder => [folder.id, folder]))
   const seen = new Set<string>()
@@ -10,7 +15,7 @@ export function courseOf(folders: FolderMeta[], folderId: string | null): Folder
     seen.add(current)
     const folder = byId.get(current)
     if (!folder) return null
-    if (folder.isCourse) return folder
+    if (isCourseFolder(folders, folder.id)) return folder
     current = folder.parentId
   }
   return null

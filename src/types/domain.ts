@@ -37,6 +37,8 @@ export interface Question {
   explicacao: string
   explicacao_das_erradas?: Record<string, string>
   diagrama?: string | null
+  /** Questões da web: the page the real question was found on. */
+  fonte?: string
   letraOriginal?: Record<string, string>
   ordemInicial?: string[]
   direitas?: string[]
@@ -110,6 +112,17 @@ export interface GenerationMeta {
   language?: string
 }
 
+/** What the generation dialog picked for a note made from another. */
+export interface GenerationChoice {
+  /** "Modelo da IA" (uid): the one picked, or the default of that moment. */
+  model?: string
+  everyStep?: boolean
+  /** The Ata of a recording: its "Modelo da ata", or the parts of Padrão. */
+  ataModel?: AtaModelId
+  parts?: AtaPart[]
+  at: string
+}
+
 export interface StampedChange {
   at: string
   deviceId: string
@@ -134,6 +147,8 @@ export interface FileMeta {
   pendingExcerpt: string | null
   origin: SourceMeta | null
   generation: GenerationMeta | null
+  /** Note made from another: the choices of its last generation, for "Gerar de novo". */
+  made?: GenerationChoice
   created: StampedChange
   updated: StampedChange
   deletedAt: string | null
@@ -171,15 +186,33 @@ export interface ScreenFrame {
   text: string
 }
 
+/** The screens the transcription found in the recorded video (visão 4.1), kept so the Ata does not look again. No images. */
+export interface ScreenIndex {
+  /** Size of the video it was found in: the area is in these pixels. */
+  width: number
+  height: number
+  /** The shared area. */
+  area: { x: number; y: number; w: number; h: number }
+  /** Each distinct screen from `at` to `end` (seconds), with what the local OCR read on it; no `texts` when it was not read. */
+  screens: { at: number; end: number; texts?: { text: string; confidence: number }[] }[]
+}
+
 export interface RecordingData {
   blocks: TranscriptBlock[]
   speakers: RecordingSpeaker[]
   marks: RecordingMark[]
   warning?: string
   frames?: ScreenFrame[]
+  /** Terms the local OCR read on the screen with certainty (voted across frames): the review corrects by them. */
+  screenTerms?: string[]
+  /** The distinct screens of the video and their OCR, found by the transcription; the Ata reuses it. */
+  screenIndex?: ScreenIndex
 }
 
 export type AtaPart = 'resumo' | 'tarefas' | 'perguntas' | 'linha' | 'um-a-um'
+
+/** Known minutes models (modelos-de-ata/01..15): the Ata comes out as ONE document in that skeleton. */
+export type AtaModelId = 'fathom' | 'fireflies' | 'google-meet' | 'zoom-ai' | 'read-ai' | 'tldv' | 'ata-executiva' | 'confluence' | 'adi' | 'decision-first' | 'decisoes-proximos-passos' | 'kt' | 'cornell' | 'adr' | 'raid'
 
 export interface AtaImage {
   name: string
@@ -190,6 +223,8 @@ export interface MeetingDocument {
   id: string
   kind: 'ata'
   parts: AtaPart[]
+  /** The model chosen in "Modelo da ata"; absent for "Padrão" (the parts). */
+  ataModel?: { id: AtaModelId; name: string }
   markdown: string
   images: AtaImage[]
   createdAt: string
@@ -254,12 +289,50 @@ export interface Activity {
   deviceId: string
 }
 
+/** Provider types of Configurações › Inteligência artificial › Provedores (all OpenAI format but Anthropic). */
 export type AiProviderId =
+  | 'deepinfra'
+  | 'openrouter'
+  | 'vercel'
+  | 'deepseek'
+  | 'xai'
   | 'anthropic'
+  | 'mistral'
   | 'openai'
   | 'gemini'
-  | 'xai'
+  | 'groq'
+  | 'together'
   | 'custom'
+
+/** One provider the user added: its own key; custom ones also their base URL. */
+export interface AiProvider {
+  id: string
+  type: AiProviderId
+  name: string
+  key: string
+  base: string
+}
+
+/** One of "Meus modelos". What it accepts and what it costs are never stored: always read live from the provider. */
+export interface AiModel {
+  uid: string
+  pid: string
+  mid: string
+  name: string
+}
+
+export type AiUse = 'estudo' | 'aula' | 'explicacao' | 'prova' | 'web' | 'cartoes' | 'mapa' | 'tutor' | 'curso' | 'titulo' | 'midia' | 'transcricao' | 'tela' | 'ata'
+
+/** Steps of the Ata ("Avançado: modelo por passo"). */
+export type AiStep = 'contexto' | 'tarefas' | 'revisar' | 'semdono' | 'escrever'
+
+export interface AiConfig {
+  providers: AiProvider[]
+  models: AiModel[]
+  /** Model uid per use; absent = inherits (or, for the mothers, no default: chosen at generation time). */
+  defaults: Partial<Record<AiUse, string>>
+  steps: Partial<Record<AiStep, string>>
+}
 
 export interface AiSettings {
   provider: AiProviderId
@@ -268,7 +341,8 @@ export interface AiSettings {
   model: string
 }
 
-export type ProviderEngine = 'openai' | 'deepinfra' | 'gemini' | 'custom'
+/** "chat": a model that hears through chat/completions (input_audio), like the video models. */
+export type ProviderEngine = 'openai' | 'deepinfra' | 'gemini' | 'custom' | 'chat'
 
 export type TranscriptionEngine = ProviderEngine
 
@@ -309,6 +383,9 @@ export interface AiPassModels {
 }
 
 export interface Settings {
+  /** Providers, models and defaults per use. Absent in old indexes: derived from the old fields below on load. */
+  aiConfig?: AiConfig
+  /** Old single AI: now kept in step with the Tutor model of aiConfig (read only by old code). */
   ai: AiSettings
   aiCredentials: Partial<Record<AiProviderId, AiCredential>>
   aiPasses?: AiPassModels

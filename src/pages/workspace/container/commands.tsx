@@ -26,7 +26,6 @@ import { FILE_TYPES, typeInfo } from '@/lib/file-types'
 import { paths, type View } from '@/lib/paths'
 import { useLibraryStore } from '@/stores/library'
 import { type GroupKey, type SortKey, useUiStore } from '@/stores/ui'
-import { formatBytes } from '@/utils/format'
 import { useScrollerRef } from '@/pages/workspace/container/shared'
 
 function FilterBar() {
@@ -187,22 +186,7 @@ function Table({ route }: { route: ViewRoute }) {
   }
   const rows = (files: FileMeta[], inCourse = false) => files.map(file => <CommandsRow key={file.id} file={file} showWhere={!data.browsing} inCourse={inCourse} siblings={inCourse ? files : undefined} />)
   let body: React.ReactNode
-  if (data.isCourse) {
-    body = data.courseGroups.map(group => (
-      <div key={group.module?.id ?? 'root'}>
-        {group.module && (
-          <div className="gh">
-            <Icon name="layers" />
-            {group.module.name}
-            <span className="faint">
-              {group.files.length} · {formatBytes(group.bytes)}
-            </span>
-          </div>
-        )}
-        {rows(group.files, true)}
-      </div>
-    ))
-  } else if (ui.group === 'type') {
+  if (ui.group === 'type') {
     body = FILE_TYPES.map(type => {
       const items = data.files.filter(file => file.type === type.id)
       return items.length ? (
@@ -246,7 +230,7 @@ function Table({ route }: { route: ViewRoute }) {
           </h3>
           {head}
           {body}
-          {!data.files.length && !data.isCourse && <EmptyList filtering={data.filtering} browsing={data.browsing} hasTiles={data.tiles.length > 0} />}
+          {!data.files.length && <EmptyList filtering={data.filtering} browsing={data.browsing} hasTiles={data.tiles.length > 0} />}
         </>
       )}
     </div>
@@ -415,12 +399,6 @@ export function CommandsWorkspace({ route }: { route: ViewRoute }) {
         )}
         <span className="spacer" />
         <SharedBadge />
-        {data.isCourse && !shared && (
-          <button className="btn quiet" aria-pressed={ui.reorder} onClick={() => ui.set({ reorder: !ui.reorder })}>
-            <Icon name="sort" />
-            {ui.reorder ? 'Pronto' : 'Ordenar aulas'}
-          </button>
-        )}
         {data.browsing && effective.folderId && (
           <button className="btn quiet" onClick={() => ui.open({ kind: 'folder-exam', folderId: effective.folderId })}>
             <Icon name="exam" />

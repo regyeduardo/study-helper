@@ -17,6 +17,7 @@ export function studyLibrary() {
       if (content !== undefined) contents.set(sidecar.meta.id, content)
       return sidecar
     },
+    saveFolder: async () => undefined,
     saveIndex: async () => undefined,
     fileSizes: async () => ({}),
   } as unknown as Repository

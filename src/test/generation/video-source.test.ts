@@ -149,6 +149,18 @@ describe('openVideoFrames', () => {
     expect(toDataURL).toHaveBeenCalledWith('image/jpeg', 0.9)
   })
 
+  it('crop() follows a recording that opens at 1280x720 and grows to 1920x1080 after the first frame', async () => {
+    const opening = openVideoFrames(new Blob(['x']))
+    lastVideo().videoWidth = 1280
+    lastVideo().videoHeight = 720
+    const opened = await opening
+    expect(opened.width).toBe(1280)
+    lastVideo().videoWidth = 1920
+    lastVideo().videoHeight = 1080
+    const shot = await opened.crop(20, { x: 240, y: 200, w: 720, h: 400 })
+    expect(drawsOn(1280, shot.height)).toEqual([[lastVideo(), 360, 300, 1080, 600, 0, 0, 1280, shot.height]])
+  })
+
   it('crop() keeps the box inside the frame', async () => {
     const source = await openVideoFrames(new Blob(['x']))
     const shot = await source.crop(20, { x: 1600, y: -50, w: 600, h: 350 })

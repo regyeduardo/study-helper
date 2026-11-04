@@ -1,10 +1,11 @@
 import { useNavigate } from 'react-router-dom'
 
+import { againOf, madeLine } from '@/components/dialogs/FromNoteFields'
 import { Icon } from '@/components/ui/Icon'
 import { Popover } from '@/components/ui/Popover'
-import { exportFileAsMarkdown, exportFileAsZip } from '@/lib/exports/library-export'
+import { exportFileAsMarkdown, exportFileAsPdf, exportFileAsZip } from '@/lib/exports/library-export'
 import { mediaOf } from '@/lib/file-types'
-import { printMarkdownAsPdf } from '@/lib/exports/pdf'
+import { isCourseFolder } from '@/lib/generation/course-lesson'
 import { paths } from '@/lib/paths'
 import { useJobsStore } from '@/stores/jobs'
 import { useLibraryStore } from '@/stores/library'
@@ -26,6 +27,7 @@ export function ItemMenu() {
   if (menu.kind === 'folder') {
     const folder = library.folders.find(item => item.id === menu.id)
     if (!folder) return null
+    const course = isCourseFolder(library.folders, folder.id)
     return (
       <Popover x={menu.x} y={menu.y} onClose={close} label={`Opções de ${folder.name}`}>
         <div className="mh">{folder.name}</div>
@@ -51,9 +53,9 @@ export function ItemMenu() {
         </button>
         <button className="mi" onClick={act(() => ui.open({ kind: 'share', target: 'folder', id: folder.id }))}>
           <Icon name="link" />
-          {folder.isCourse ? 'Compartilhar o curso' : 'Compartilhar a pasta'}
+          Compartilhar a pasta
         </button>
-        {folder.isCourse && (
+        {course && (
           <>
             <button className="mi" onClick={act(() => ui.open({ kind: 'order', folderId: folder.id }))}>
               <Icon name="sort" />
@@ -65,10 +67,6 @@ export function ItemMenu() {
             </button>
           </>
         )}
-        <button className="mi" onClick={act(() => library.updateFolder(folder.id, { isCourse: !folder.isCourse }))}>
-          <Icon name="layers" />
-          {folder.isCourse ? 'Deixar de ser curso' : 'Marcar como curso'}
-        </button>
         <div className="sep" />
         <button
           className="mi danger"
@@ -88,11 +86,8 @@ export function ItemMenu() {
   if (!file) return null
   const hasText = mediaOf(file) === 'text' || file.words > 0
   const needs = hasText ? undefined : 'transcrever antes'
-  const generate = (agent: 'meeting' | 'lesson') =>
-    act(async () => {
-      const id = await jobs.generateFromNote(file.id, agent)
-      if (id) navigate(paths.file(id))
-    })
+  const generate = (agent: 'meeting' | 'lesson') => act(() => ui.open({ kind: 'generate', fileId: file.id, agent }))
+  const again = againOf(file, library.files)
   const tools: [string, Parameters<typeof Icon>[0]['name'], (() => void) | null][] = [
     ['Mapa mental', 'layers', act(() => ui.open({ kind: 'mindmap', fileId: file.id }))],
     ['Cartões', 'note', act(() => ui.open({ kind: 'cards', fileId: file.id }))],
@@ -104,6 +99,18 @@ export function ItemMenu() {
   return (
     <Popover x={menu.x} y={menu.y} onClose={close} label={`Opções de ${file.name}`}>
       <div className="mh">{file.name}</div>
+      {again && (
+        <button
+          className="mi"
+          onClick={act(() => ui.open(again.ata ? { kind: 'ata-parts', fileId: again.source.id, again: file.id } : { kind: 'generate', fileId: again.source.id, agent: file.type === 'meeting' ? 'meeting' : 'lesson', again: file.id }))}
+        >
+          <Icon name="sync" />
+          <span className="mi-two">
+            Gerar de novo…
+            <small>{madeLine(file, library.index.settings)}</small>
+          </span>
+        </button>
+      )}
       <div className="mg" role="presentation">
         Gerar{needs ? ' (precisa de transcrição)' : ''}
       </div>
@@ -154,13 +161,7 @@ export function ItemMenu() {
         <Icon name="download" />
         Exportar .zip (com a prova)
       </button>
-      <button
-        className="mi"
-        onClick={act(async () => {
-          const { content } = await library.openFile(file.id)
-          await printMarkdownAsPdf(content, file.name)
-        })}
-      >
+      <button className="mi" onClick={act(() => exportFileAsPdf(file.id))}>
         <Icon name="download" />
         Exportar PDF
       </button>

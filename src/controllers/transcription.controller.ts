@@ -99,6 +99,37 @@ export async function geminiAudioController(model: string, apiKey: string, audio
   return (body.candidates?.[0]?.content?.parts ?? []).map(part => part.text ?? '').join('')
 }
 
+/** A model that hears through chat/completions (input_audio), like the video models of DeepInfra or OpenRouter. */
+export async function chatAudioController(baseUrl: string, apiKey: string, model: string, wavBase64: string, instruction: string, signal?: AbortSignal): Promise<string> {
+  const base = baseUrl.trim().replace(/\/+$/, '')
+  if (!base) throw new TranscriptionError('Falta o endereço do provedor do modelo de transcrição.')
+  for (let attempt = 0; ; attempt++) {
+    const last = attempt === AUDIO_ATTEMPTS - 1
+    let response: Response
+    try {
+      response = await fetch(`${base}/chat/completions`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}) },
+        body: JSON.stringify({ model, temperature: 0, messages: [{ role: 'user', content: [{ type: 'input_audio', input_audio: { data: wavBase64, format: 'wav' } }, { type: 'text', text: instruction }] }] }),
+        signal,
+      })
+    } catch {
+      if (signal?.aborted) throw new TranscriptionError('Transcrição cancelada.')
+      if (last) throw new TranscriptionError(`O modelo ${model} não respondeu depois de ${AUDIO_ATTEMPTS} tentativas. Confira a internet e tente de novo.`)
+      await pause(2 ** attempt * 2)
+      continue
+    }
+    if ((response.status === 429 || SERVER_ERRORS.includes(response.status)) && !last) {
+      await pause(Number(response.headers.get('retry-after') ?? '') || 2 ** attempt * 2)
+      continue
+    }
+    if (response.status === 401 || response.status === 403) throw new TranscriptionError(`A chave do provedor de ${model} foi recusada.`)
+    if (!response.ok) throw new TranscriptionError(`O modelo ${model} recusou o áudio (${response.status}).`)
+    const body = (await response.json()) as { choices?: { message?: { content?: string } }[] }
+    return body.choices?.[0]?.message?.content ?? ''
+  }
+}
+
 async function callFreeWorker(path: string, token: string, init: RequestInit = {}): Promise<Response> {
   if (!env.transcriptionWorkerUrl) throw new TranscriptionError('Os minutos grátis não estão configurados neste app.')
   try {

@@ -32,6 +32,20 @@ export interface FrameSource {
   full(at: number): Promise<Shot>
   /** Only the box, cut from the full-resolution frame and scaled to 1280 px wide. */
   crop(at: number, box: Box): Promise<Shot>
+  /** Grayscale (0-255) thumbnails of the whole frame, `width`x`height`, one per time: the local scene index. */
+  thumbs?(times: number[], width: number, height: number): Promise<Uint8Array[]>
+  close?(): void
+}
+
+/** A piece of text the local OCR read, with how sure it is (0-1). */
+export interface OcrText {
+  text: string
+  confidence: number
+}
+
+/** The local OCR (in the browser, no AI): reads the text of a JPEG data URL. */
+export interface ScreenOcr {
+  read(image: string): Promise<OcrText[]>
   close?(): void
 }
 

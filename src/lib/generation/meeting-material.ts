@@ -133,7 +133,8 @@ export interface Material {
 
 const span = (g: { at: number; end: number }) => (g.end - g.at >= 2 ? `${clock(g.at)}–${clock(g.end)}` : clock(g.at))
 
-export function meetingMaterial(recording: RecordingData, startedAt: Date, screen: ScreenGroup[]): Material {
+/** `written`: the exact screen terms read by the local OCR, appended to the screen reading. */
+export function meetingMaterial(recording: RecordingData, startedAt: Date, screen: ScreenGroup[], written = ''): Material {
   const nameOf = (id: string) => recording.speakers.find(speaker => speaker.id === id)?.name ?? id
   const blocks = recording.blocks.filter(block => block.text.trim() && !NOISE.test(block.text.trim())).map(block => ({ at: block.start, end: block.end, who: block.speaker ? nameOf(block.speaker) : '?', text: block.text.trim() }))
   const people = [...new Set(blocks.map(block => block.who))].filter(name => name !== '?')
@@ -156,7 +157,7 @@ export function meetingMaterial(recording: RecordingData, startedAt: Date, scree
       .map(line)
       .join('\n')
   const screenLine = (g: ScreenGroup) => `${span(g)} | ${g.text}`
-  const tela = screen.length ? screen.map(screenLine).join('\n') : fallbackScreen(recording)
+  const tela = (screen.length ? screen.map(screenLine).join('\n') : fallbackScreen(recording)) + (written ? `\n${written}` : '')
   return {
     recording,
     people,

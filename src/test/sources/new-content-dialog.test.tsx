@@ -94,4 +94,16 @@ describe('NewContentDialog Ata parts', () => {
     await waitFor(() => expect(startNewContent).toHaveBeenCalled())
     expect(startNewContent.mock.calls[0][0]).toMatchObject({ agent: 'meeting', ataParts: ['tarefas'] })
   })
+
+  it('choosing a "Modelo da ata" hides the parts, needs none of them and sends the model', async () => {
+    await openWithFile(sizedFile('Reunião 28-10.mp4', 20))
+    await waitFor(() => expect(screen.getByRole('radio', { name: /Ata de reunião/ })).toHaveAttribute('aria-checked', 'true'))
+    fireEvent.click(screen.getByLabelText('Resumo'))
+    expect(screen.getByRole('button', { name: 'Gerar ata' })).toBeDisabled()
+    fireEvent.change(screen.getByLabelText('Modelo da ata'), { target: { value: 'adr' } })
+    expect(screen.queryAllByRole('checkbox')).toHaveLength(0)
+    fireEvent.click(screen.getByRole('button', { name: 'Gerar ata' }))
+    await waitFor(() => expect(startNewContent).toHaveBeenCalled())
+    expect(startNewContent.mock.calls[0][0]).toMatchObject({ agent: 'meeting', ataParts: [], ataModel: 'adr' })
+  })
 })

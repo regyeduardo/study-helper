@@ -102,7 +102,7 @@ function ShareRow({ share }: { share: ShareRecord }) {
 function MyShares() {
   const shares = useLibraryStore(state => state.index.shares)
   useNow()
-  if (!shares.length) return <p className="muted share-empty">Você ainda não compartilhou nada. Abra o menu ⋯ de uma nota, pasta ou curso e escolha Compartilhar.</p>
+  if (!shares.length) return <p className="muted share-empty">Você ainda não compartilhou nada. Abra o menu ⋯ de uma nota ou pasta e escolha Compartilhar.</p>
   return (
     <div className="share-list">
       {shares.map(share => (

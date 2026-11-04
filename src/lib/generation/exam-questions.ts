@@ -16,21 +16,26 @@ function filled(value: unknown): value is string {
   return typeof value === 'string' && value.trim() !== ''
 }
 
-function hasFiveAlternatives(question: RawQuestion): boolean {
+/** The letters the question uses: A to E, or A to D when four are accepted (a real question from the web). */
+function lettersOf(question: RawQuestion, fewest: number): string[] | null {
   const alternatives = question.alternativas as Record<string, unknown> | undefined
-  return typeof alternatives === 'object' && alternatives !== null && LETTERS.every(letter => filled(alternatives[letter]))
+  if (typeof alternatives !== 'object' || alternatives === null) return null
+  const used = filled(alternatives.E) ? LETTERS : LETTERS.slice(0, fewest)
+  return used.every(letter => filled(alternatives[letter])) ? used : null
 }
 
-const KIND_CHECKS: Record<string, (question: RawQuestion) => string | null> = {
-  unica: question => {
-    if (!hasFiveAlternatives(question)) return 'não tem as 5 alternativas'
-    if (!LETTERS.includes(question.correta as string)) return 'sem letra correta válida'
+const KIND_CHECKS: Record<string, (question: RawQuestion, fewest: number) => string | null> = {
+  unica: (question, fewest) => {
+    const letters = lettersOf(question, fewest)
+    if (!letters) return `não tem as ${fewest} alternativas`
+    if (!letters.includes(question.correta as string)) return 'sem letra correta válida'
     return null
   },
-  multipla: question => {
-    if (!hasFiveAlternatives(question)) return 'não tem as 5 alternativas'
+  multipla: (question, fewest) => {
+    const used = lettersOf(question, fewest)
+    if (!used) return `não tem as ${fewest} alternativas`
     const letters = question.corretas
-    if (!Array.isArray(letters) || !letters.every(letter => LETTERS.includes(letter)) || new Set(letters).size < 2 || new Set(letters).size > 4) {
+    if (!Array.isArray(letters) || !letters.every(letter => used.includes(letter)) || new Set(letters).size < 2 || new Set(letters).size > 4) {
       return 'marque todas sem 2 a 4 letras corretas válidas'
     }
     return null
@@ -63,11 +68,11 @@ const KIND_CHECKS: Record<string, (question: RawQuestion) => string | null> = {
   },
 }
 
-function problem(question: RawQuestion): string | null {
+function problem(question: RawQuestion, fewest: number): string | null {
   if (!KINDS.includes(question.tipo)) return `tipo desconhecido: ${question.tipo}`
   if (!filled(question.enunciado)) return 'sem enunciado'
   if (!filled(question.explicacao)) return 'sem explicação'
-  return KIND_CHECKS[question.tipo](question)
+  return KIND_CHECKS[question.tipo](question, fewest)
 }
 
 function clean(question: RawQuestion): RawQuestion {
@@ -87,12 +92,13 @@ function clean(question: RawQuestion): RawQuestion {
   return cleaned
 }
 
-export function validateQuestions(questions: unknown[]): RawQuestion[] {
+/** `fewest`: 4 keeps a question with four alternatives as it is (the web ones); the AI's always have five. */
+export function validateQuestions(questions: unknown[], fewest = 5): RawQuestion[] {
   const accepted: RawQuestion[] = []
   for (const item of questions) {
     if (typeof item !== 'object' || item === null || Array.isArray(item)) continue
     const question = { ...(item as Record<string, unknown>), tipo: ((item as Record<string, unknown>).tipo as string) || 'unica' } as RawQuestion
-    if (problem(question)) continue
+    if (problem(question, fewest)) continue
     accepted.push(clean(question))
   }
   return accepted
@@ -143,9 +149,12 @@ function relabel(question: RawQuestion, order: string[]): RawQuestion {
   return relabeled
 }
 
+// A web question can keep four alternatives: the letters move only among the ones it has
+const presentLetters = (question: RawQuestion) => LETTERS.filter(letter => filled((question.alternativas as Record<string, unknown>)[letter]))
+
 function moveRightLetter(question: RawQuestion, target: string, random: Random): RawQuestion {
   const others = shuffle(
-    LETTERS.filter(letter => letter !== question.correta),
+    presentLetters(question).filter(letter => letter !== question.correta),
     random,
   )
   others.splice(LETTERS.indexOf(target), 0, question.correta as string)
@@ -157,7 +166,7 @@ export function finishQuestions(questions: RawQuestion[], random: Random = Math.
   const targets = balancedLetters(built.filter(getsDrawnLetter).length, random)
   return built.map(question => {
     if (getsDrawnLetter(question)) return moveRightLetter(question, targets.pop()!, random)
-    if (question.tipo === 'multipla') return relabel(question, shuffle(LETTERS, random))
+    if (question.tipo === 'multipla') return relabel(question, shuffle(presentLetters(question), random))
     return question
   })
 }

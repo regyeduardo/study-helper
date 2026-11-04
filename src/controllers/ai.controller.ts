@@ -1,5 +1,5 @@
 import type { AiSettings } from '@/types/domain'
-import { baseUrlOf, intervalOf, missingSetup, modelOf, oneAtATimeOf, providerOf } from '@/lib/ai/providers'
+import { baseUrlOf, missingSetup, modelOf, providerOf } from '@/lib/ai/providers'
 
 export const MAX_TOKENS = 16384
 export const LONG_REPLY_MAX_TOKENS = 32768
@@ -28,9 +28,6 @@ export class Cancelled extends Error {
   }
 }
 
-const inFlight = new Map<string, Promise<unknown>>()
-const lastStart = new Map<string, number>()
-
 function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) return reject(new Cancelled())
@@ -40,24 +37,6 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
       reject(new Cancelled())
     })
   })
-}
-
-async function oneAtATime<T>(settings: AiSettings, task: () => Promise<T>, signal?: AbortSignal): Promise<T> {
-  if (!oneAtATimeOf(settings)) return task()
-  const key = `${settings.provider}|${baseUrlOf(settings)}`
-  const paced = async () => {
-    const wait = (lastStart.get(key) ?? 0) + intervalOf(settings) - Date.now()
-    if (wait > 0) await sleep(wait, signal)
-    lastStart.set(key, Date.now())
-    return task()
-  }
-  const current = (inFlight.get(key) ?? Promise.resolve()).catch(() => undefined).then(paced)
-  inFlight.set(key, current)
-  try {
-    return await current
-  } finally {
-    if (inFlight.get(key) === current) inFlight.delete(key)
-  }
 }
 
 function retryDelay(response: Response, attempt: number): number {
@@ -125,7 +104,7 @@ function estimate(content: string, systemPrompt: string, text: string): ChatUsag
   return { inputTokens: Math.round((content.length + systemPrompt.length) / 4), outputTokens: Math.round(text.length / 4), estimated: true }
 }
 
-async function anthropicChat(settings: AiSettings, content: string, systemPrompt: string, maxTokens: number, signal?: AbortSignal, temperature = TEMPERATURE): Promise<ChatReply> {
+async function anthropicChat(settings: AiSettings, content: string, systemPrompt: string, maxTokens: number, signal?: AbortSignal, temperature = TEMPERATURE, extra: Record<string, unknown> = {}): Promise<ChatReply> {
   const response = await send(
     settings,
     `${baseUrlOf(settings)}/v1/messages`,
@@ -144,6 +123,7 @@ async function anthropicChat(settings: AiSettings, content: string, systemPrompt
         system: systemPrompt,
         messages: [{ role: 'user', content }],
         stream: true,
+        ...extra,
       }),
     },
     signal,
@@ -175,7 +155,7 @@ interface OpenAiOptions {
   stream_options?: { include_usage: boolean }
 }
 
-async function openAiChat(settings: AiSettings, content: string, systemPrompt: string, maxTokens: number, signal?: AbortSignal, temperature = TEMPERATURE): Promise<ChatReply> {
+async function openAiChat(settings: AiSettings, content: string, systemPrompt: string, maxTokens: number, signal?: AbortSignal, temperature = TEMPERATURE, extra: Record<string, unknown> = {}): Promise<ChatReply> {
   const options: OpenAiOptions = { max_tokens: maxTokens, stream_options: { include_usage: true } }
   // DeepSeek's JSON mode "may occasionally return empty content" (api-docs.deepseek.com/guides/json_mode): the prompt already asks for JSON only
   if (systemPrompt.toLowerCase().includes('json') && !/api\.deepseek\.com/.test(baseUrlOf(settings))) options.response_format = { type: 'json_object' }
@@ -198,6 +178,7 @@ async function openAiChat(settings: AiSettings, content: string, systemPrompt: s
           temperature,
           stream: true,
           ...options,
+          ...extra,
         }),
       },
       signal,
@@ -243,15 +224,14 @@ export async function chatController(
   maxTokens = MAX_TOKENS,
   signal?: AbortSignal,
   temperature = TEMPERATURE,
+  /** Fields added to the request body (Questões da web turns search on with them). */
+  extra: Record<string, unknown> = {},
 ): Promise<ChatReply> {
   const problem = missingSetup(settings)
   if (problem) throw new AiError(problem)
-  return oneAtATime(settings, () =>
-    providerOf(settings.provider).format === 'anthropic'
-      ? anthropicChat(settings, content, systemPrompt, maxTokens, signal, temperature)
-      : openAiChat(settings, content, systemPrompt, maxTokens, signal, temperature),
-    signal,
-  )
+  return providerOf(settings.provider).format === 'anthropic'
+    ? anthropicChat(settings, content, systemPrompt, maxTokens, signal, temperature, extra)
+    : openAiChat(settings, content, systemPrompt, maxTokens, signal, temperature, extra)
 }
 
 export async function listModelsController(settings: AiSettings): Promise<string[]> {

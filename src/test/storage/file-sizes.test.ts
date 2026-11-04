@@ -128,8 +128,8 @@ describe('folder size', () => {
   })
 })
 
-describe('course module size', () => {
-  it('each module of a course carries the size of its lessons', () => {
+describe('a folder with folders inside', () => {
+  it('opens like any other folder, even with the old course mark: its folders as tiles with their size, no course view', () => {
     const course = newFolderMeta({ name: 'Curso', isCourse: true })
     const first = newFolderMeta({ name: 'Módulo 1', parentId: course.id, position: 0 })
     const second = newFolderMeta({ name: 'Módulo 2', parentId: course.id, position: 1 })
@@ -146,9 +146,11 @@ describe('course module size', () => {
       sizes: { [a.id]: { noteBytes: 1000, sourceBytes: 0 }, [b.id]: { noteBytes: 2000, sourceBytes: 0 }, [c.id]: { noteBytes: 500, sourceBytes: 0 } },
     })
     const { result } = renderHook(() => useLibraryView('folder', course.id))
-    expect(result.current.courseGroups.map(group => [group.module?.name, group.bytes])).toEqual([
+    expect(result.current.tiles.map(tile => [tile.folder.name, tile.bytes])).toEqual([
       ['Módulo 1', 3000],
       ['Módulo 2', 500],
     ])
+    expect(result.current).not.toHaveProperty('isCourse')
+    expect(result.current).not.toHaveProperty('courseGroups')
   })
 })

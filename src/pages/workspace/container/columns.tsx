@@ -20,7 +20,6 @@ import type { ViewRoute } from '@/hooks/use-view-route'
 import { paths, type View } from '@/lib/paths'
 import { useLibraryStore } from '@/stores/library'
 import { type InspectorTab, useUiStore } from '@/stores/ui'
-import { formatBytes } from '@/utils/format'
 import { useScrollerRef } from '@/pages/workspace/container/shared'
 
 const TITLES: Record<View, string> = { folder: 'Biblioteca', review: 'Para revisar', favorites: 'Favoritos', trash: 'Lixeira', home: 'Biblioteca', doc: 'Biblioteca', ...SHARING_TITLES }
@@ -62,11 +61,6 @@ function ListColumn({ view, folderId, currentId }: { view: View; folderId: strin
           <span className="faint" style={{ fontSize: 12 }}>
             {view === 'trash' ? trashCount : data.files.length}
           </span>
-          {data.isCourse && !shared && (
-            <button className="ibtn" aria-pressed={ui.reorder} onClick={() => ui.set({ reorder: !ui.reorder })} aria-label="Ordenar aulas" title="Ordenar aulas">
-              <Icon name="sort" />
-            </button>
-          )}
           <button className="ibtn" onClick={() => ui.open({ kind: 'palette' })} aria-label="Buscar ou fazer algo" title="Ctrl K">
             <Icon name="dots" />
           </button>
@@ -113,21 +107,8 @@ function ListColumn({ view, folderId, currentId }: { view: View; folderId: strin
                   )}
                 </h3>
                 <div>
-                  {data.isCourse
-                    ? data.courseGroups.map(group => (
-                        <div key={group.module?.id ?? 'root'}>
-                          {group.module && (
-                            <div className="grp-h gh" style={{ margin: '10px 0 4px' }}>
-                              <Icon name="layers" /> {group.module.name} <span className="faint">{group.files.length} aulas · {formatBytes(group.bytes)}</span>
-                            </div>
-                          )}
-                          {group.files.map(file => (
-                            <ColumnsCard key={file.id} file={file} showWhere={false} currentId={currentId} excerpt={excerptOf(contents[file.id]?.content)} siblings={group.files} />
-                          ))}
-                        </div>
-                      ))
-                    : data.files.map(file => <ColumnsCard key={file.id} file={file} showWhere={!data.browsing} currentId={currentId} excerpt={excerptOf(contents[file.id]?.content)} />)}
-                  {!data.files.length && !data.isCourse && <EmptyList filtering={data.filtering} browsing={data.browsing} hasTiles={data.tiles.length > 0} />}
+                  {data.files.map(file => <ColumnsCard key={file.id} file={file} showWhere={!data.browsing} currentId={currentId} excerpt={excerptOf(contents[file.id]?.content)} />)}
+                  {!data.files.length && <EmptyList filtering={data.filtering} browsing={data.browsing} hasTiles={data.tiles.length > 0} />}
                 </div>
               </section>
             )}

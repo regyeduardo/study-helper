@@ -53,7 +53,7 @@ export function CommandPalette() {
     const places = folders
       .filter(folder => matches(folder.name))
       .slice(0, RESULT_LIMIT)
-      .map<Item>(folder => ({ key: `folder:${folder.id}`, icon: folder.isCourse ? 'layers' : 'folder', title: folder.name, hint: folder.isCourse ? 'curso' : 'pasta', run: () => navigate(paths.folder(folder.id)) }))
+      .map<Item>(folder => ({ key: `folder:${folder.id}`, icon: 'folder', title: folder.name, hint: 'pasta', run: () => navigate(paths.folder(folder.id)) }))
     const actions = (
       [
       { key: 'new', icon: 'plus', title: 'Novo conteúdo', hint: 'N', run: () => ui.open({ kind: 'new' }) },

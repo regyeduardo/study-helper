@@ -31,9 +31,11 @@ export default defineConfig(({ mode }) => {
     }),
   ],
   resolve: {
-    alias: {
-      '@': path.resolve(__dirname, './src'),
-    },
+    alias: [
+      { find: '@', replacement: path.resolve(__dirname, './src') },
+      // the local OCR runs on wasm only: the default build would download the 29.5 MB WebGPU wasm instead of the 14.8 MB one
+      { find: /^onnxruntime-web$/, replacement: 'onnxruntime-web/wasm' },
+    ],
   },
   server: {
     host: '::',
@@ -47,6 +49,8 @@ export default defineConfig(({ mode }) => {
   },
   optimizeDeps: {
     exclude: ['onnxruntime-web', '@huggingface/transformers'],
+    // found up front: discovered late, the OCR worker would load two copies of onnxruntime-web and one fetches its wasm from a CDN
+    include: ['ppu-paddle-ocr/web'],
   },
   worker: {
     format: 'es',

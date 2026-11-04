@@ -7,14 +7,14 @@ const CONTEXT_SPEECHES = 6
 
 export const GEMINI_MODEL = 'gemini-flash-latest'
 
-interface Speech {
+export interface Speech {
   speaker: string
   start: number
   end: number
   text: string
 }
 
-function instruction(language: string, before: Speech[]): string {
+export function instruction(language: string, before: Speech[]): string {
   const known = before.length ? `\n\nEste áudio continua uma gravação. Os falantes já têm rótulo; as últimas falas antes deste trecho foram:\n${before.map(speech => `${speech.speaker}: ${speech.text}`).join('\n')}\nUse o MESMO rótulo para a mesma voz e crie um rótulo novo só para voz nova.` : ''
   return `Transcreva este áudio por inteiro, palavra por palavra, no idioma falado${language ? ` (${language})` : ''}, sem resumir e sem corrigir.
 Separe por fala: cada vez que muda quem fala, começa uma fala nova. Fala longa da mesma pessoa pode ser dividida a cada frase ou duas.
@@ -23,12 +23,12 @@ Devolva SOMENTE um JSON assim:
 "falante" é um rótulo estável por voz (F1, F2, ...). "inicio" e "fim" são segundos contados do começo DESTE áudio.${known}`
 }
 
-function speechesIn(raw: string): Speech[] {
+export function speechesIn(raw: string, who = 'O Gemini'): Speech[] {
   let parsed: unknown
   try {
     parsed = JSON.parse(raw)
   } catch {
-    throw new TranscriptionError('O Gemini devolveu uma transcrição que não deu para ler. Tente de novo.')
+    throw new TranscriptionError(`${who} devolveu uma transcrição que não deu para ler. Tente de novo.`)
   }
   const list = (parsed as { falas?: unknown })?.falas
   if (!Array.isArray(list)) return []

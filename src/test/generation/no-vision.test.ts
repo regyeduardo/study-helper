@@ -19,7 +19,7 @@ describe('without a vision model', () => {
     expect(grab).not.toHaveBeenCalled()
     expect(see).not.toHaveBeenCalled()
     expect(seen.frames).toBeUndefined()
-    expect(seen.warning).toMatch(/Modelo de visão/)
+    expect(seen.warning).toMatch(/Leitura de tela/)
     expect(seen.blocks).toEqual(recording.blocks)
   })
 

@@ -66,7 +66,7 @@ describe('course detection', () => {
 })
 
 describe('course lessons', () => {
-  const course = newFolderMeta({ name: 'Curso X', isCourse: true, courseDescription: 'Sobre X', courseMaterial: 'material inteiro' })
+  const course = newFolderMeta({ name: 'Curso X', courseDescription: 'Sobre X', courseMaterial: 'material inteiro' })
   const module = newFolderMeta({ name: 'Módulo 1', parentId: course.id })
   const lessonOne = newFileMeta({ name: 'Aula 1', type: 'class', folderId: module.id, description: 'cobre A', pendingExcerpt: 'trecho A', position: 0 })
   const lessonTwo = newFileMeta({ name: 'Aula 2', type: 'class', folderId: module.id, position: 1 })
@@ -74,6 +74,14 @@ describe('course lessons', () => {
   it('finds the course from a nested folder', () => {
     expect(courseOf([course, module], module.id)?.id).toBe(course.id)
     expect(courseOf([module], module.id)).toBeNull()
+  })
+
+  it('a course is just a folder with folders inside: the old mark alone does not make one', () => {
+    const marked = newFolderMeta({ name: 'Marcado antes', isCourse: true })
+    expect(courseOf([marked], marked.id)).toBeNull()
+    expect(courseOf([course, module], course.id)?.id).toBe(course.id)
+    const trashed = { ...newFolderMeta({ name: 'Na lixeira', parentId: marked.id }), deletedAt: '2026-10-01T00:00:00Z' }
+    expect(courseOf([marked, trashed], marked.id)).toBeNull()
   })
 
   it('builds lesson input with course context, outline and excerpt', () => {

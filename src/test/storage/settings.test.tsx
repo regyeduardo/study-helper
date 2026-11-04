@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import 'fake-indexeddb/auto'
 
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 
 import type { LibraryIndex, Settings } from '@/types/domain'
 import { SettingsDialog } from '@/components/dialogs/SettingsDialog'
@@ -85,22 +85,26 @@ describe('configurações no study-helper.json da pasta', () => {
 
 describe('a tela mascara as chaves', () => {
   beforeEach(() => {
+    vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new TypeError('sem rede no teste'))))
     useAccountStore.setState({ accounts: [LOCAL_ACCOUNT], activeId: LOCAL_ACCOUNT.id })
     useLibraryStore.setState({ index: { ...defaultIndex(), settings: { ...defaultSettings(), ...chosen, youtube: { reader: 'gemini', geminiApiKey: 'AIza-secret' } } as Settings } })
   })
 
-  it('chave da IA aparece como senha (asteriscos)', () => {
+  it('chave da IA aparece mascarada na lista e como senha no provedor', () => {
     render(<SettingsDialog initial="ai" />)
-    const input = screen.getByLabelText(/Chave da API/)
+    expect(screen.getByRole('row', { name: /OpenAI/ })).toHaveTextContent('••••3456')
+    fireEvent.click(screen.getByRole('button', { name: 'Editar OpenAI' }))
+    const input = screen.getByLabelText('Chave')
     expect(input).toHaveAttribute('type', 'password')
     expect(input).toHaveValue('sk-live-123456')
     expect(document.body.textContent).not.toContain('sk-live-123456')
   })
 
-  it('chaves da DeepInfra e do Gemini aparecem como senha', () => {
-    const { unmount } = render(<SettingsDialog initial="transcription" />)
-    expect(screen.getByLabelText('Chave da API')).toHaveAttribute('type', 'password')
+  it('chaves da DeepInfra (transcrição) e do Gemini aparecem como senha', () => {
+    const { unmount } = render(<SettingsDialog initial="ai" />)
     expect(document.body.textContent).not.toContain('di_abcdef')
+    fireEvent.click(screen.getByRole('button', { name: 'Editar DeepInfra' }))
+    expect(screen.getByLabelText('Chave')).toHaveAttribute('type', 'password')
     unmount()
     render(<SettingsDialog initial="links" />)
     expect(screen.getByLabelText('Chave do Gemini')).toHaveAttribute('type', 'password')

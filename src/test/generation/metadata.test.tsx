@@ -222,7 +222,7 @@ describe('generation fills metadata', () => {
       if (system === PROMPTS.EXAM_REVIEW_PROMPT) return openAiStream('{"vereditos":[]}')
       return openAiStream('## Resumo')
     })
-    expect(await useJobsStore.getState().createQuestions(id!)).toBe(2)
+    expect((await useJobsStore.getState().createQuestions(id!)).count).toBe(2)
     expect(useLibraryStore.getState().files.find(file => file.id === id)!.questionCount).toBe(2)
   })
 })

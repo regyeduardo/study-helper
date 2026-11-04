@@ -1,15 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import 'fake-indexeddb/auto'
 
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { render, screen } from '@testing-library/react'
 
-import { SettingsDialog } from '@/components/dialogs/SettingsDialog'
 import { TranscriptTab } from '@/components/reader/TranscriptTab'
-import { defaultIndex, defaultSettings } from '@/lib/defaults'
+import { defaultSettings } from '@/lib/defaults'
 import { transcribe } from '@/lib/transcription'
-import { LOCAL_ACCOUNT, useAccountStore } from '@/stores/account'
 import { installBlobShim } from '@/test/imports/blob-shim'
-import { useLibraryStore } from '@/stores/library'
 import type { TranscriptionSettings } from '@/types/domain'
 
 const CUSTOM_URL = 'https://agrupador.example/v1/audio/transcriptions'
@@ -84,7 +81,7 @@ describe('a provider that gives only the text with time', () => {
     const outcome = await transcribe(audio, settings())
     expect(outcome.recording?.blocks).toEqual([{ speaker: '', start: 2, end: 5.6, text: 'Quanto custou isso? Custou dois mil.' }])
     expect(outcome.recording?.speakers).toEqual([])
-    expect(outcome.recording?.warning).toBe('Este provedor não separa quem fala. Para ver os falantes, escolha em Configurações › Transcrição um segundo provedor só para isso.')
+    expect(outcome.recording?.warning).toBe('Este modelo de transcrição não separa quem fala.')
     expect(outcome).toMatchObject({ engine: 'custom', language: 'pt', durationSeconds: 8, speakers: 0, text: '[00:02] Quanto custou isso? Custou dois mil.' })
     expect(to(CUSTOM_URL)).toHaveLength(1)
     expect(to(CUSTOM_URL)[0][1].body.getAll('timestamp_granularities[]')).toEqual(['word'])
@@ -138,53 +135,6 @@ describe('a provider that gives only the text with time', () => {
   it('the note shows the warning above the speeches', () => {
     render(<TranscriptTab recording={{ blocks: [{ speaker: '', start: 2, end: 5.6, text: 'Quanto custou isso?' }], speakers: [], marks: [], warning: 'Este provedor não separa quem fala.' }} />)
     expect(screen.getByRole('status')).toHaveTextContent('Este provedor não separa quem fala.')
-  })
-})
-
-describe('transcription settings for the new providers', () => {
-  beforeEach(() => {
-    useAccountStore.setState({ accounts: [LOCAL_ACCOUNT], activeId: LOCAL_ACCOUNT.id })
-    useLibraryStore.setState({ index: defaultIndex(), repo: { saveIndex: async () => undefined } as never })
-  })
-
-  const saved = () => useLibraryStore.getState().index.settings.transcription
-
-  it('offers OpenAI, DeepInfra, Gemini and Personalizado, each keeping its own key', async () => {
-    render(<SettingsDialog initial="transcription" />)
-    for (const name of [/^OpenAI/, /^DeepInfra/, /^Google Gemini/, /^Personalizado/]) expect(screen.getByRole('radio', { name })).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('radio', { name: /^DeepInfra/ }))
-    fireEvent.change(screen.getByLabelText('Chave da API'), { target: { value: 'di_minha' } })
-    fireEvent.click(screen.getByRole('radio', { name: /^OpenAI/ }))
-    await waitFor(() => expect(screen.getByLabelText('Chave da API')).toHaveValue(''))
-    fireEvent.change(screen.getByLabelText('Chave da API'), { target: { value: 'sk-minha' } })
-    await waitFor(() => expect(saved().credentials.openai?.apiKey).toBe('sk-minha'))
-    expect(saved().credentials.deepinfra?.apiKey).toBe('di_minha')
-    expect(saved().engine).toBe('openai')
-  })
-
-  it('Personalizado asks the address, the key and the model, and keeps the extra options under "Avançado"', async () => {
-    render(<SettingsDialog initial="transcription" />)
-    fireEvent.click(screen.getByRole('radio', { name: /^Personalizado/ }))
-    fireEvent.change(screen.getByLabelText('Endereço (URL base)'), { target: { value: 'https://agrupador.example/v1' } })
-    fireEvent.change(screen.getByLabelText('Chave da API'), { target: { value: 'chave' } })
-    fireEvent.change(screen.getByLabelText('Modelo'), { target: { value: 'whisper-large' } })
-    fireEvent.click(screen.getByText('Avançado'))
-    fireEvent.change(screen.getByLabelText('Opções extras (JSON)'), { target: { value: '{"diarize": true}' } })
-    await waitFor(() => expect(saved().credentials.custom).toEqual({ apiKey: 'chave', baseUrl: 'https://agrupador.example/v1', model: 'whisper-large', extra: '{"diarize": true}' }))
-    fireEvent.change(screen.getByLabelText('Opções extras (JSON)'), { target: { value: '{diarize' } })
-    expect(await screen.findByText('Isto não é um JSON válido: as opções extras não serão enviadas.')).toBeInTheDocument()
-  })
-
-  it('lets a second provider be chosen only for the speakers, with its key right there', async () => {
-    render(<SettingsDialog initial="transcription" />)
-    fireEvent.click(screen.getByRole('radio', { name: /^Personalizado/ }))
-    const second = screen.getByLabelText('Quem fala (segundo provedor)')
-    expect(second).toHaveValue('')
-    fireEvent.change(second, { target: { value: 'deepinfra' } })
-    await waitFor(() => expect(saved().speakersEngine).toBe('deepinfra'))
-    fireEvent.change(screen.getByLabelText('Chave da DeepInfra'), { target: { value: 'di_falantes' } })
-    await waitFor(() => expect(saved().credentials.deepinfra?.apiKey).toBe('di_falantes'))
-    expect([...(second as HTMLSelectElement).options].map(option => option.value)).toEqual(['', 'deepinfra', 'openai'])
   })
 })
 

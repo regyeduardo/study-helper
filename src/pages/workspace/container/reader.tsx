@@ -24,7 +24,6 @@ import { MEDIA_LABEL, mediaLength, mediaOf, REVIEW_BELOW } from '@/lib/file-type
 import { paths } from '@/lib/paths'
 import { useLibraryStore } from '@/stores/library'
 import { useUiStore } from '@/stores/ui'
-import { formatBytes } from '@/utils/format'
 import { ContinueCard, greeting, QuickActions, reviewSentence, todayText, useHomeData, useScrollerRef, WelcomeEmpty } from '@/pages/workspace/container/shared'
 
 const TITLES = { folder: 'Biblioteca', review: 'Para revisar', favorites: 'Favoritos', trash: 'Lixeira', home: 'Início', doc: '', ...SHARING_TITLES }
@@ -115,7 +114,7 @@ export function Library({ route }: { route: ViewRoute }) {
   const data = useLibraryView(route.view, route.folderId)
   const shared = useLibraryStore(state => state.sharedView)
   const q = ui.query.trim()
-  const explorer = !data.isCourse && (route.view === 'folder' || route.view === 'review' || route.view === 'favorites')
+  const explorer = route.view === 'folder' || route.view === 'review' || route.view === 'favorites'
   const title = q && !explorer ? `Resultados para “${ui.query}”` : route.view === 'folder' ? (data.folder?.name ?? 'Biblioteca') : TITLES[route.view]
   return (
     <>
@@ -126,7 +125,6 @@ export function Library({ route }: { route: ViewRoute }) {
           </span>
         )}
         <h2>{title}</h2>
-        {data.isCourse && <span className="crs">curso</span>}
         {shared && <SharedBadge label />}
         <span style={{ marginLeft: 'auto', display: 'flex', gap: 6, flexWrap: 'wrap' }}>
           {shared && <SharedBadge button />}
@@ -137,12 +135,6 @@ export function Library({ route }: { route: ViewRoute }) {
             <button className="btn" onClick={() => ui.open({ kind: 'new-folder', parentId: route.folderId })}>
               <Icon name="folder" />
               Nova pasta
-            </button>
-          )}
-          {data.isCourse && !shared && (
-            <button className="btn" aria-pressed={ui.reorder} onClick={() => ui.set({ reorder: !ui.reorder })}>
-              <Icon name="sort" />
-              {ui.reorder ? 'Pronto' : 'Ordenar aulas'}
             </button>
           )}
           {data.browsing && route.folderId && !shared && !explorer && (
@@ -164,31 +156,18 @@ export function Library({ route }: { route: ViewRoute }) {
             <section className="blk">
               <h3 className="blk-h">
                 <Icon name="file" />
-                Arquivos <span>{data.isCourse ? data.courseGroups.reduce((sum, group) => sum + group.files.length, 0) : data.files.length}</span>
+                Arquivos <span>{data.files.length}</span>
               </h3>
               <div className="filters" style={{ margin: 0 }}>
                 <FilterChips />
-                {!data.isCourse && <SortSelect />}
+                <SortSelect />
               </div>
               <div className="selwrap" style={{ margin: 0 }}>
                 <SelectionBar />
               </div>
               <div className="list">
-                {data.isCourse
-                  ? data.courseGroups.map(group => (
-                      <div key={group.module?.id ?? 'root'}>
-                        {group.module && (
-                          <div className="grp-h gh">
-                            <Icon name="layers" /> {group.module.name} <span className="faint">{group.files.length} aulas · {formatBytes(group.bytes)}</span>
-                          </div>
-                        )}
-                        {group.files.map(file => (
-                          <ReaderRow key={file.id} file={file} showWhere={false} inCourse siblings={group.files} />
-                        ))}
-                      </div>
-                    ))
-                  : data.files.map(file => <ReaderRow key={file.id} file={file} showWhere={!data.browsing} />)}
-                {!data.files.length && !data.isCourse && <EmptyList filtering={data.filtering} browsing={data.browsing} hasTiles={data.tiles.length > 0} />}
+                {data.files.map(file => <ReaderRow key={file.id} file={file} showWhere={!data.browsing} />)}
+                {!data.files.length && <EmptyList filtering={data.filtering} browsing={data.browsing} hasTiles={data.tiles.length > 0} />}
               </div>
             </section>
           )}

@@ -23,6 +23,17 @@ Devolva SOMENTE um JSON:
 Se a tela for um cartão ou tarefa de um quadro de tarefas (Trello, Jira, etc.), troque null por {"numero": "", "titulo": "", "descricao": "texto da descrição, literal", "responsaveis": [""], "inicio": "", "prazo": "", "status": "", "revisor_ou_homologacao": "", "projeto": ""}.
 Se não houver conteúdo de trabalho legível (só papel de parede, área vazia, tela carregando), devolva {"vazio": true, "resumo": "o que aparece"}.`
 
+// Pass 0b (visão 4.1): the text of each screen comes from the local OCR; vision only says what a pointed or marked screen means
+export const SENTIDO_TELA = `Sentido da tela: esta imagem é um recorte da tela compartilhada numa reunião, no minuto {{minuto}}. O texto dela já foi lido por OCR: NÃO o transcreva.
+Lido com certeza (grafia exata): {{exato}}
+Lido com dúvida (só pista; confira na imagem): {{duvida}}
+Falas desse momento:
+{{falas}}
+{{nota}}
+Diga, curto, o que esta tela significa para a reunião. Devolva SOMENTE um JSON:
+{"tela": "programa e tela, aba ou arquivo, em até 8 palavras", "o_que_mostra": "uma frase", "a_fala_se_refere_a": "uma frase: o que, na tela, a fala aponta; '' se nada", "termos": ["até 8 grafias exatas que importam, copiadas do que foi lido ou confirmadas na imagem"]}
+Não invente texto que não está na imagem.`
+
 const ASR = `A transcrição é automática e erra: troca palavras de som parecido (siglas, nomes de sistemas, termos técnicos, nomes de pessoas; nomes de produtos, ferramentas e empresas costumam virar palavras comuns de som parecido), inventa frases curtas soltas que ninguém disse ("Tchau", "Obrigado", "Amém", "Legenda por ...") e às vezes troca o falante no meio de uma frase. O que está ESCRITO na tela vale mais que o que foi ouvido.`
 
 // Pass 1: context brief + glossary (text, whole meeting)
@@ -239,3 +250,465 @@ export const UM_A_UM = `Modelo 1:1. Título "# 1:1 · <quem conduziu> com <quem>
 "## Contexto que <nome> trouxe": o que foi contado de fora da reunião (cliente, chefe, outra equipe), se houve.
 "## Combinados": "- **<o quê>:** <dono>, <prazo>. [▸ mm:ss]".
 "## Para a próxima conversa": "- <Nome>: <o que trazer ou responder>". Use "A confirmar:" para o que não tem dono. Varie o começo dos itens: não comece todos com a mesma palavra ("Cobrança:", "Elogio:").`
+
+// ---------------- known minutes models (modelos-de-ata/01..15): ONE document in the model's skeleton ----------------
+// ABERTURA_MODELO + the model. Same input as the parts (dados, CONTEXTO, falas, tela). Never who spoke,
+// when, owner or deadline; the skeletons come from the filled examples, never their facts.
+export const ABERTURA_MODELO = `Você escreve, em português do Brasil, a ata de uma reunião gravada no formato de uma ferramenta ou método conhecido, a partir da transcrição e do que apareceu na tela, para quem não estava na reunião. Sai UM documento só, no esqueleto descrito no fim.
+
+Você recebe:
+- os dados da reunião e o CONTEXTO (assunto, telas, cartões e o glossário com as palavras que a transcrição escreveu errado);
+- as falas, uma por linha: "mm:ss | Nome: texto";
+- a leitura da tela: "mm:ss | ...".
+${ASR}
+
+Regras (valem para todo formato):
+- Tópicos: separe os tópicos pelo que foi discutido, um por assunto, na ordem em que apareceram (nunca por pessoa nem por horário).
+- Resumo e conclusão: diga no que a reunião deu: o que ficou definido, o que mudou e o que ficou a confirmar.
+- Tarefas: só o que precisa ser feito, em detalhe: verbo no infinitivo + a entrega, onde (tela, aba, campo, célula, cartão) e como (regras, contas e valores ditos ou vistos na tela, com o exemplo da reunião, se houve). Uma tarefa por entrega.
+- Nunca escreva quem falou, quando, responsável ou prazo: nada de "Fulano disse" ou "Fulano pediu", nenhum minuto ou horário ([▸ mm:ss], "aos 12 minutos", "no fim"), nenhum dono e nenhuma data de entrega. Só a data e a duração da reunião, no cabeçalho, onde o esqueleto pede. Nome de pessoa só quando ela é o assunto (ex.: "passar o material ao Ney").
+- Nunca invente: só o que foi dito ou apareceu na tela. Use os termos corretos do glossário; o que está escrito na tela vale mais que o que foi ouvido. O que ficou incerto leva "(a confirmar)". Seção sem nada na reunião: escreva "Nada registrado na reunião." e siga.
+- Seja específico: nomes de telas, campos, células, valores, contas e regras exatamente como ditos ou vistos. Nada genérico ("discutiram melhorias", "é importante").
+- Estilo: direto, frases curtas, palavras simples.
+- Siga o esqueleto: os mesmos títulos, na mesma ordem e no mesmo nível (#, ##, ###); troque só o que está entre < >; repita os blocos marcados com "..." quantas vezes precisar. Não acrescente seções. Markdown limpo: títulos, listas, negrito. Nunca tabela, nunca pedido de print.
+- Devolva só o documento, sem nada antes nem depois.`
+
+const TITULO = '# Ata: <assunto em poucas palavras, sem data>'
+const CABECALHO = 'dd/mm/aaaa · cerca de N min · <sistema, projeto ou material de que se tratou>'
+const ASSUNTO = '- <o que foi dito e mostrado sobre o assunto: regras, contas, valores, telas, campos, células>'
+const TAREFAS = `1. **<o que fazer: verbo no infinitivo + a entrega, com a tela, aba, campo, célula ou cartão>**: <como fazer, com as regras, contas e valores ditos ou vistos>
+   - <detalhe ou exemplo da conta, se houve>
+2. ...`
+const ESQUELETO = 'Escreva EXATAMENTE este esqueleto:'
+
+export const MODELO_FATHOM = `Modelo FATHOM (resumo padrão do Fathom). Abre com o propósito em 1 frase e as conclusões, depois um subtítulo por assunto, e deixa as tarefas só para o fim. ${ESQUELETO}
+
+${TITULO}
+
+${CABECALHO}
+
+## Propósito da reunião (Meeting Purpose)
+
+<1 frase: para que foi a reunião>
+
+## Conclusões (Key Takeaways)
+
+- <3 a 6 conclusões, inclusive o que ficou a confirmar>
+
+## Assuntos (Topics)
+
+### <assunto>
+
+${ASSUNTO}
+
+...
+
+## Próximos passos (Next Steps)
+
+${TAREFAS}`
+
+export const MODELO_FIREFLIES = `Modelo FIREFLIES (General Summary do Fireflies). Visão dupla: palavras-chave no topo, notas agrupadas por tema e, de novo, a reunião contada em capítulos; as ações ficam no fim. ${ESQUELETO}
+
+${TITULO}
+
+${CABECALHO}
+
+## Palavras-chave (Meeting Keywords)
+
+<10 a 20 termos do assunto (telas, campos, siglas, valores-chave) separados por " · ">
+
+## Visão geral (Meeting Overview)
+
+<2 ou 3 parágrafos curtos: do que se tratou, o que ficou definido e o que ficou a confirmar>
+
+## Notas (Meeting Notes)
+
+### <assunto>
+
+${ASSUNTO}
+
+...
+
+## Capítulos (Time-stamped Notes, sem o tempo)
+
+1. **<assunto>**: <numa linha, os pontos do assunto na ordem da conversa>
+2. ...
+
+## Ações (Action Items)
+
+${TAREFAS}`
+
+export const MODELO_GOOGLE_MEET = `Modelo GOOGLE MEET ("Anotar para mim", do Gemini). Duas camadas, notas rápidas e notas completas, e cada decisão com uma situação: Alinhado, Precisa de mais discussão, Discordância ou Engavetado. ${ESQUELETO}
+
+${TITULO}
+
+${CABECALHO}
+
+## Aba 1: Notas rápidas (Quick notes)
+
+- <4 a 6 linhas: as conclusões e o que ficou a confirmar>
+
+**Ações**
+
+1. <cada tarefa numa linha curta>
+2. ...
+
+## Aba 2: Notas completas (Full notes)
+
+### Resumo (Summary)
+
+- **<assunto>**: <o essencial do assunto numa linha>
+
+### Decisões (Decisions)
+
+- **<Alinhado | Precisa de mais discussão | Discordância | Engavetado>**: <a decisão ou o ponto, numa frase>
+
+### Próximos passos (Next steps)
+
+${TAREFAS}
+
+### Detalhes (Details)
+
+#### <assunto>
+
+${ASSUNTO}
+
+...`
+
+export const MODELO_ZOOM_AI = `Modelo ZOOM AI COMPANION (resumo da reunião, parecido com o do Otter). Ação primeiro: as tarefas vêm logo depois de um parágrafo de recapitulação, antes dos assuntos, que saem em parágrafos corridos. ${ESQUELETO}
+
+${TITULO}
+
+${CABECALHO}
+
+## Recapitulação rápida (Quick recap)
+
+<um parágrafo de 4 a 6 frases: do que se tratou, o que ficou definido e o que ficou a confirmar>
+
+## Próximos passos (Next steps)
+
+${TAREFAS}
+
+## Resumo (Summary)
+
+**<assunto>**
+
+<um parágrafo corrido com o que foi dito e mostrado: regras, contas, valores, telas>
+
+...`
+
+export const MODELO_READ_AI = `Modelo READ AI (Meeting Report do Read AI). Fecha com as perguntas-chave: cada dúvida da reunião com a resposta que teve, ou marcada como em aberto. ${ESQUELETO}
+
+${TITULO}
+
+${CABECALHO}
+
+## Resumo da reunião (Meeting Summary)
+
+<1 frase: do que se tratou>. Conclusões:
+
+- <2 a 4 conclusões>
+
+## Capítulos e tópicos (Chapters & Topics)
+
+### 1. <assunto>
+
+${ASSUNTO}
+
+...
+
+## Ações (Action Items)
+
+${TAREFAS}
+
+## Perguntas-chave (Key Questions)
+
+Dúvidas que a reunião respondeu ou deixou em aberto.
+
+- **<a pergunta, como pergunta?>** <a resposta que teve, ou "Em aberto (a confirmar).">`
+
+export const MODELO_TLDV = `Modelo TL;DV SMART TOPICS (parecido com as Smart Categories do Avoma). As seções são fixas, as mesmas em toda ata, e cada bloco abre com o resumo de uma frase (o "gist") antes das notas. ${ESQUELETO}
+
+# <assunto · tela ou parte, em poucas palavras>
+
+Reunião de dd/mm/aaaa, cerca de N min, sobre <sistema, projeto ou material>.
+
+## O que foi explicado
+
+### <assunto>
+**Gist:** <1 frase: o essencial do assunto>
+${ASSUNTO}
+
+...
+
+## Conclusões
+**Gist:** <1 frase>
+- <as conclusões>
+
+## Tarefas pedidas
+**Gist:** <1 frase: o que é preciso fazer, no conjunto>
+${TAREFAS}
+
+## Dúvidas que ficaram
+**Gist:** <1 frase>
+- <cada dúvida que ficou sem resposta>`
+
+export const MODELO_ATA_EXECUTIVA = `Modelo ATA EXECUTIVA BRASILEIRA (pauta, deliberações e compromissos). Vocabulário que o mercado brasileiro reconhece; fecha com as aprovações: quem não pedir correção aprova a ata. ${ESQUELETO}
+
+# ATA DE REUNIÃO
+
+## 1. Informações Gerais
+- **Data:** dd/mm/aaaa · cerca de N min
+- **Objeto:** <sistema, projeto ou material de que se tratou>.
+
+## 2. Participantes
+Sem nomes nesta versão.
+
+## 3. Pauta
+1. <assunto>
+2. ...
+
+## 4. Principais Assuntos Abordados/Deliberações
+
+### 4.1 <assunto>
+${ASSUNTO}
+
+...
+
+### Deliberações
+- <o que ficou decidido>
+
+### Pontos em aberto
+- <o que ficou sem resposta ou a confirmar>
+
+## 5. Compromissos Gerados
+${TAREFAS}
+
+## 6. Aprovações
+Esta ata segue para correções. Quem não se manifestar, aprova o texto como está.`
+
+export const MODELO_CONFLUENCE = `Modelo CONFLUENCE ("Meeting notes" da Atlassian). Abre com os objetivos, cada tópico é um item com notas, as tarefas são caixinhas de dois estados (a fazer / feito) e as decisões ficam no fim. ${ESQUELETO}
+
+# Notas de reunião: <assunto em poucas palavras>
+
+## Data (Date)
+dd/mm/aaaa · cerca de N min
+
+## Participantes (Participants)
+Sem nomes nesta versão.
+
+## Objetivos (Goals)
+- <o que a reunião tratou, numa linha>
+
+## Tópicos discutidos (Discussion topics)
+
+### Item: <assunto>
+${ASSUNTO}
+- Em aberto: <o que ficou sem resposta neste assunto; omita a linha se nada>
+
+...
+
+## Itens de ação (Action items)
+- [ ] <o que fazer: verbo no infinitivo + a entrega, com onde e como: regras, contas e valores ditos ou vistos>
+
+## Decisões (Decisions)
+- <o que ficou decidido>`
+
+export const MODELO_ADI = `Modelo A/D/I (Ação / Decisão / Informação, parecido com o TDA). Toda linha de cada assunto leva uma etiqueta (I, D ou A), e a tarefa fica dentro do assunto em que nasceu. ${ESQUELETO}
+
+${TITULO}
+
+**Reunião:** ${CABECALHO}
+**Legenda:** **I** = informação (o que foi explicado) · **D** = decisão (o que ficou decidido) · **A** = ação (o que precisa ser feito)
+
+## 1. <assunto>
+- **I** · <o que foi explicado ou mostrado: regras, contas, valores, telas; o que ficou em aberto começa com "Em aberto:">
+- **D** · <o que ficou decidido neste assunto; omita se nada>
+- **A** · <o que fazer: verbo no infinitivo + a entrega, com onde e como: regras, contas e valores ditos ou vistos>
+
+...
+
+## Índice das linhas A (o que precisa ser feito)
+1. <a tarefa, curta> → assunto <número>
+2. ...`
+
+export const MODELO_DECISION_FIRST = `Modelo DECISION-FIRST DE 1 PÁGINA (decisões primeiro). Cada decisão vem com o porquê; cada ação tem um ID ligado à decisão (A1 → D1); riscos, dependências e o que ficou para depois têm seções próprias. ${ESQUELETO}
+
+${TITULO}
+
+## Cabeçalho (Header)
+${CABECALHO}
+
+## 1) Principais decisões (Top decisions)
+- **D1 · Decisão:** <a decisão>
+  **Por quê:** <o motivo dito>
+- ...
+
+## 2) Ações (no original: "Actions requiring leadership support")
+- **A1 · Ação:** <o que fazer: verbo no infinitivo + a entrega, com onde e como: regras, contas e valores ditos ou vistos>. **Decisão ligada:** <D1 | nenhuma>
+- ...
+
+## 3) Riscos e dependências (Key risks and dependencies)
+- **Risco:** <o que pode dar errado, como dito>
+- **Dependência:** <qual ação depende de qual (ex.: A4 depende de A2)>
+
+## 4) Por assunto (Short updates by agenda topic)
+
+### <assunto>
+${ASSUNTO}
+
+...
+
+## 5) Parking lot (ficou para depois)
+- <o que ficou para outro dia ou a confirmar>
+
+## 6) Próxima reunião (Next meeting)
+<o que a próxima reunião vai tratar, se foi dito, sem data nem horário; senão "Nada registrado sobre a próxima reunião.">`
+
+export const MODELO_DECISOES_PROXIMOS_PASSOS = `Modelo DECISÕES E PRÓXIMOS PASSOS ("Decisions & Next Steps" do Zoom Docs). Separa o que foi fechado do que ainda é dúvida: o que não foi decidido fica em aberto e nunca vira decisão. ${ESQUELETO}
+
+${TITULO}
+
+Reunião de dd/mm/aaaa · cerca de N min
+
+## Decidido
+1. **<a decisão, numa frase>**
+   - Escopo: <onde vale: tela, células, parte do sistema>
+   - Impacto: <o que muda por causa dela; omita se não foi dito>
+2. ...
+
+## Em aberto
+- <o que não foi decidido ou ficou a confirmar, com o que já se sabe>
+
+## A fazer
+${TAREFAS}
+
+## Contexto e recursos
+
+**Propósito da reunião:** <1 frase>
+
+**Recursos usados:**
+- <telas, planilhas, páginas e documentos abertos na reunião>
+
+### O que foi dito, por assunto
+
+#### 1. <assunto>
+${ASSUNTO}
+
+...`
+
+export const MODELO_KT = `Modelo SESSÃO DE KT (passagem de conhecimento / walkthrough). Feito para reunião em que se explica um processo: cada fórmula, regra ou tela explicada tem seção própria, e a última seção guarda o que ficou para depois. ${ESQUELETO}
+
+${TITULO}
+
+## Contexto da sessão
+- Reunião de dd/mm/aaaa, cerca de N min.
+- Assunto: <sistema, projeto ou material>.
+
+## Pauta
+1. <assunto>
+2. ...
+
+## Explicação do processo
+
+### 1. <assunto>
+- <como funciona, como foi explicado: regras, contas, valores, telas, células>
+
+...
+
+## Perguntas e esclarecimentos
+- **<a pergunta?>** <a resposta que teve>
+Ficaram sem resposta:
+- <cada pergunta sem resposta>
+
+## Decisões e encaminhamentos
+- <o que ficou decidido ou encaminhado>
+
+## O que precisa ser feito
+- [ ] 1. <o que fazer: verbo no infinitivo + a entrega, com onde e como: regras, contas e valores ditos ou vistos>
+- [ ] 2. ...
+
+## Próxima vez
+- <o que ficou para depois>`
+
+export const MODELO_CORNELL = `Modelo CORNELL (pergunta-chave, notas e resumo; método de Walter Pauk). Cada assunto vira as perguntas que quem não estava na reunião vai ter, com a resposta logo abaixo e um resumo do assunto no fim. ${ESQUELETO}
+
+${TITULO}
+
+Reunião de dd/mm/aaaa · cerca de N min
+
+## 1. <assunto>
+
+**<pergunta-chave sobre o assunto?>**
+- <a resposta, com regras, contas e valores ditos ou vistos>
+
+...
+
+**Resumo do assunto:** <1 ou 2 frases>
+
+...
+
+## Resumo da reunião
+- <as conclusões>
+
+## O que precisa ser feito
+${TAREFAS}
+
+## Perguntas ainda sem resposta
+- <cada pergunta que ficou sem resposta?>`
+
+export const MODELO_ADR = `Modelo REGISTRO DE DECISÃO ADR (de Michael Nygard). Cada assunto decidido vira um registro curto que guarda por que a regra ficou assim (o contexto) e o que muda por causa dela (as consequências), para ninguém rediscutir depois. ${ESQUELETO}
+
+${TITULO}
+
+Reunião de dd/mm/aaaa · cerca de N min
+
+## Registro 1: <a decisão em poucas palavras>
+
+**Contexto**
+- <o que foi dito e mostrado que leva à decisão: regras, contas, valores, telas>
+
+**Decisão**
+Vamos <a decisão, numa frase>.
+
+**Status**
+<Aceita | Proposta | Em aberto>, <e o que falta confirmar, se houver>.
+
+**Consequências**
+- <o que muda por causa da decisão; "(tarefa N)" quando vira tarefa>
+
+...
+
+## O que precisa ser feito (as consequências juntas)
+${TAREFAS}
+
+## Em aberto
+- <o que ficou sem resposta ou a confirmar>`
+
+export const MODELO_RAID = `Modelo REGISTRO RAID (ações, riscos, premissas, problemas e dependências). Não é um resumo da reunião: é um registro que vai acumulando de uma reunião para a outra, e cada item aponta para o assunto de onde saiu. ${ESQUELETO}
+
+# Registro: <assunto em poucas palavras>
+
+Itens que entraram com a reunião de dd/mm/aaaa (cerca de N min). Todos estão abertos.
+
+## Ações (o que precisa ser feito)
+- **A1** · Origem: assunto <N> · <o que fazer: verbo no infinitivo + a entrega, com onde e como: regras, contas e valores ditos ou vistos> · Status: aberto
+
+## Riscos
+- **R1** · Origem: assunto <N> · <o risco, como dito> · Status: aberto
+
+## Premissas
+- **P1** · Origem: assunto <N> · <o que foi dado como certo ou concluído> · Status: aberto
+
+## Problemas
+- **I1** · Origem: assunto <N> · <o problema visto ou dito> · Status: aberto
+
+## Dependências
+- **D1** · Origem: assunto <N> · <qual item depende de qual (ex.: A3 depende de A2)> · Status: aberto
+
+## Origem: o que foi dito em cada assunto
+
+### Assunto 1. <assunto>
+${ASSUNTO}
+
+...`

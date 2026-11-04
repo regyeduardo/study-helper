@@ -12,6 +12,6 @@ describe('transcription engines', () => {
   })
 
   it.each(['free', 'whisper', 'parakeet', 'groq', 'puter'])('an engine that left (%s) asks to choose another one', async engine => {
-    await expect(transcribe(audioBlob(), { engine: engine as TranscriptionEngine, language: 'pt', credentials: {}, speakersEngine: '' })).rejects.toThrow('Escolha um provedor de transcrição em Configurações › Transcrição.')
+    await expect(transcribe(audioBlob(), { engine: engine as TranscriptionEngine, language: 'pt', credentials: {}, speakersEngine: '' })).rejects.toThrow('Escolha um modelo de Transcrição em Configurações › Inteligência artificial › Padrões por uso, ou na hora de gerar.')
   })
 })

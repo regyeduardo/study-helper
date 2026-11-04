@@ -17,7 +17,7 @@ import type {
   StoredQuestion,
 } from '@/types/domain'
 import type { TokenProvider } from '@/controllers/drive.controller'
-import { isKnownProvider, providerOf } from '@/lib/ai/providers'
+import { legacyAiOf, normalizeSettings } from '@/lib/ai/config'
 import { defaultIndex, newFileMeta, newFolderMeta, newSidecar } from '@/lib/defaults'
 import { currentDevice, stamp } from '@/lib/device'
 import { masteryOf } from '@/lib/exam'
@@ -124,11 +124,6 @@ function readOpened(accountId: string): Record<string, number> {
   }
 }
 
-function withUsableAi(settings: Settings): Settings {
-  const { ai } = settings
-  const usable = isKnownProvider(ai.provider) && !(providerOf(ai.provider).needsKey && !ai.apiKey.trim())
-  return usable ? settings : { ...settings, ai: defaultIndex().settings.ai }
-}
 
 export const useLibraryStore = create<LibraryState>((set, get) => {
   let own: OwnLibrary | null = null
@@ -252,13 +247,13 @@ export const useLibraryStore = create<LibraryState>((set, get) => {
     applySnapshot: (snapshot, changedFileIds = []) => {
       if (get().sharedView && own) {
         own = { ...own, folders: snapshot.folders, files: snapshot.files, opened: {} }
-        set({ index: { ...defaultIndex(), ...snapshot.index, settings: withUsableAi({ ...defaultIndex().settings, ...snapshot.index.settings }) } })
+        set({ index: { ...defaultIndex(), ...snapshot.index, settings: normalizeSettings({ ...defaultIndex().settings, ...snapshot.index.settings }) } })
         return
       }
       set(state => {
         const opened = { ...state.opened }
         for (const id of changedFileIds) delete opened[id]
-        return { folders: snapshot.folders, files: snapshot.files, index: { ...defaultIndex(), ...snapshot.index, settings: withUsableAi({ ...defaultIndex().settings, ...snapshot.index.settings }) }, opened }
+        return { folders: snapshot.folders, files: snapshot.files, index: { ...defaultIndex(), ...snapshot.index, settings: normalizeSettings({ ...defaultIndex().settings, ...snapshot.index.settings }) }, opened }
       })
       const repo = get().repo
       if (repo) measure(repo)
@@ -393,7 +388,9 @@ export const useLibraryStore = create<LibraryState>((set, get) => {
 
     updateSettings: async patch => {
       const index = get().index
-      await saveIndex({ ...index, settings: { ...index.settings, ...patch }, updated: stamp() })
+      const settings = { ...index.settings, ...patch }
+      // The old single AI follows the Tutor model of the new config (old code still reads it).
+      await saveIndex({ ...index, settings: patch.aiConfig ? { ...settings, ai: legacyAiOf(patch.aiConfig) } : settings, updated: stamp() })
     },
 
     startActivity: async fields => {

@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 
+import type { FolderMeta } from '@/types/domain'
 import { Dialog } from '@/components/ui/Dialog'
 import { Icon } from '@/components/ui/Icon'
 import { useLiveLibrary, usePathName } from '@/hooks/use-library-view'
@@ -90,13 +91,12 @@ export function RenameDialog({ target, id }: { target: 'file' | 'folder'; id: st
   const library = useLibraryStore()
   const current = target === 'file' ? library.files.find(file => file.id === id) : library.folders.find(folder => folder.id === id)
   const [name, setName] = useState(current?.name ?? '')
-  const [description, setDescription] = useState((target === 'folder' && current && 'isCourse' in current && current.isCourse ? current.courseDescription : current?.description) ?? '')
+  const [description, setDescription] = useState(current?.description ?? '')
   const save = async () => {
     if (!name.trim()) return
     if (target === 'file') await library.updateFile(id, { name: name.trim(), description })
     else {
-      const folder = library.folders.find(item => item.id === id)
-      await library.updateFolder(id, folder?.isCourse ? { name: name.trim(), courseDescription: description } : { name: name.trim(), description })
+      await library.updateFolder(id, { name: name.trim(), description })
     }
     close()
   }
@@ -130,13 +130,15 @@ export function RenameDialog({ target, id }: { target: 'file' | 'folder'; id: st
   )
 }
 
-export function FolderPicker({ value, onChange, exclude = [] }: { value: string | null; onChange(id: string | null): void; exclude?: string[] }) {
+/** `extra`: a folder not made yet, listed in its place as "(pasta nova)". */
+export function FolderPicker({ value, onChange, exclude = [], extra }: { value: string | null; onChange(id: string | null): void; exclude?: string[]; extra?: Pick<FolderMeta, 'id' | 'name' | 'parentId'> }) {
   const { folders } = useLiveLibrary()
-  const flat: { id: string; name: string; depth: number; course: boolean }[] = []
+  const all: Pick<FolderMeta, 'id' | 'name' | 'parentId'>[] = extra ? [...folders, extra] : folders
+  const flat: { id: string; name: string; depth: number }[] = []
   const walk = (parentId: string | null, depth: number) => {
-    for (const folder of folders.filter(item => item.parentId === parentId).sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'))) {
+    for (const folder of all.filter(item => item.parentId === parentId).sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'))) {
       if (exclude.includes(folder.id)) continue
-      flat.push({ id: folder.id, name: folder.name, depth, course: folder.isCourse })
+      flat.push({ id: folder.id, name: folder === extra ? `${folder.name} (pasta nova)` : folder.name, depth })
       walk(folder.id, depth + 1)
     }
   }
@@ -148,7 +150,6 @@ export function FolderPicker({ value, onChange, exclude = [] }: { value: string 
         <option key={item.id} value={item.id}>
           {'   '.repeat(item.depth + 1)}
           {item.name}
-          {item.course ? ' (curso)' : ''}
         </option>
       ))}
     </select>

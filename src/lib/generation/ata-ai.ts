@@ -1,5 +1,6 @@
-import type { AiSettings, Settings } from '@/types/domain'
+import type { AiSettings, AiStep, Settings } from '@/types/domain'
 import { AiError, Cancelled, chatController, visionController } from '@/controllers/ai.controller'
+import { aiConfigOf, targetFor } from '@/lib/ai/config'
 import { modelOf } from '@/lib/ai/providers'
 import { visionSettingsOf } from '@/lib/generation/frames'
 import { jsonIn } from '@/lib/generation/meeting-material'
@@ -45,9 +46,20 @@ export function tokensFor(model: string, max: number): number {
   return /flash|qwen|mimo|reason|think|r1/i.test(model) ? max * 2 : max
 }
 
-export function passSettings(settings: Settings, pass: TextPass): AiSettings {
-  const model = settings.aiPasses?.[pass]?.trim()
-  return model ? { ...settings.ai, model } : settings.ai
+const PASS_STEP: Record<TextPass, AiStep> = { context: 'contexto', candidates: 'tarefas', review: 'revisar', pending: 'semdono', write: 'escrever' }
+
+/** The model chosen at generation time for the Ata; `everyStep`: it writes every step (the video model writing everything). */
+export interface AtaModels {
+  model?: string | null
+  everyStep?: boolean
+}
+
+/** A step uses its own model (Padrões por uso › Avançado), else the Ata model (picked now, or the default). */
+export function passSettings(settings: Settings, pass: TextPass, chosen: AtaModels = {}): AiSettings {
+  const step = PASS_STEP[pass]
+  const config = aiConfigOf(settings)
+  const own = config.models.some(model => model.uid === config.steps[step])
+  return own && !(chosen.model && chosen.everyStep) ? targetFor(settings, step) : targetFor(settings, 'ata', chosen.model)
 }
 
 // DeepSeek in JSON mode sometimes answers empty: read as "nothing found", it emptied the Levantamento de tarefas.
@@ -96,8 +108,8 @@ export async function withRetry<T>(run: (signal: AbortSignal) => Promise<T>, opt
   throw last
 }
 
-/** The app's AI for the Ata: text passes use the Geral AI (with per-pass model), vision uses the Visão tab. */
-export function appAi(settings: Settings, signal?: AbortSignal, timeouts: { text: number; vision: number; backoffMs?: number } = { text: TEXT_TIMEOUT_MS, vision: VISION_TIMEOUT_MS }): AtaAi {
+/** The app's AI for the Ata: text passes use the Ata model (or each step's own), vision uses Leitura de tela. */
+export function appAi(settings: Settings, signal?: AbortSignal, timeouts: { text: number; vision: number; backoffMs?: number } = { text: TEXT_TIMEOUT_MS, vision: VISION_TIMEOUT_MS }, chosen: AtaModels = {}): AtaAi {
   const vision = visionSettingsOf(settings)
   const used: Record<string, string> = {}
   let dollars = 0
@@ -105,7 +117,7 @@ export function appAi(settings: Settings, signal?: AbortSignal, timeouts: { text
   return {
     hasVision: Boolean(vision),
     async text(pass, system, user, options = {}) {
-      const ai = passSettings(settings, pass)
+      const ai = passSettings(settings, pass, chosen)
       const model = modelOf(ai)
       used[pass] = model
       let max = tokensFor(model, options.max ?? 6000)
@@ -130,7 +142,7 @@ export function appAi(settings: Settings, signal?: AbortSignal, timeouts: { text
       return reply.text
     },
     async see(images, prompt, maxTokens = 1500) {
-      if (!vision) throw new AiError('Sem modelo de visão: escolha um em Configurações › IA › Visão.')
+      if (!vision) throw new AiError('Sem modelo de Leitura de tela: escolha um em Configurações › Inteligência artificial › Padrões por uso.')
       used.vision = modelOf(vision)
       return withRetry(own => visionController(vision, images, prompt, own, Math.max(maxTokens, MIN_VISION_TOKENS)), { signal, timeoutMs: timeouts.vision })
     },

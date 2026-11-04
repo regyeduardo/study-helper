@@ -10,10 +10,11 @@ vi.mock('@/components/reader/GithubMarkdownView', () => ({
 import { AtaPartsDialog } from '@/components/dialogs/AtaPartsDialog'
 import { ItemMenu } from '@/components/library/ItemMenu'
 import { DocumentBody } from '@/components/reader/DocumentArticle'
+import { InfoPanel } from '@/components/reader/Inspector'
 import { MeetingTabs } from '@/components/reader/MeetingTabs'
 import { Cancelled } from '@/controllers/ai.controller'
 import { defaultIndex } from '@/lib/defaults'
-import { buildAta, withImages } from '@/lib/generation/ata'
+import { ATA_MODELS, buildAta, withImages } from '@/lib/generation/ata'
 import { appAi, passSettings, withRetry } from '@/lib/generation/ata-ai'
 import * as P from '@/lib/generation/ata-prompts'
 import { jsonIn, linkMoments } from '@/lib/generation/meeting-material'
@@ -25,8 +26,8 @@ import { useJobsStore } from '@/stores/jobs'
 import { useLibraryStore } from '@/stores/library'
 import { useUiStore } from '@/stores/ui'
 import { installFetch, openAiStream, sseResponse, systemPromptOf, userContentOf } from '@/test/ai/fake-provider'
-import { fakeAi, fakeFrames, meeting, textAnswer } from '@/test/generation/ata-fixture'
-import type { FileSidecar, Settings } from '@/types/domain'
+import { fakeAi, fakeFrames, meeting, MODEL_DOCUMENT, textAnswer } from '@/test/generation/ata-fixture'
+import type { AtaModelId, FileSidecar, Settings } from '@/types/domain'
 
 const startedAt = new Date(2026, 9, 28, 18, 15)
 const difference = (a: number[], b: number[]) => Math.abs(a[0] - b[0])
@@ -175,6 +176,88 @@ describe('the Ata pipeline', () => {
   })
 })
 
+// The fixed headings of each model, in order, copied from modelos-de-ata/01..15.
+const MODEL_HEADINGS: Record<AtaModelId, { name: string; headings: string[] }> = {
+  fathom: { name: 'Fathom', headings: ['# Ata: ', '## Propósito da reunião (Meeting Purpose)', '## Conclusões (Key Takeaways)', '## Assuntos (Topics)', '## Próximos passos (Next Steps)'] },
+  fireflies: { name: 'Fireflies', headings: ['# Ata: ', '## Palavras-chave (Meeting Keywords)', '## Visão geral (Meeting Overview)', '## Notas (Meeting Notes)', '## Capítulos (Time-stamped Notes, sem o tempo)', '## Ações (Action Items)'] },
+  'google-meet': { name: 'Google Meet (Gemini)', headings: ['# Ata: ', '## Aba 1: Notas rápidas (Quick notes)', '**Ações**', '## Aba 2: Notas completas (Full notes)', '### Resumo (Summary)', '### Decisões (Decisions)', '### Próximos passos (Next steps)', '### Detalhes (Details)'] },
+  'zoom-ai': { name: 'Zoom AI Companion', headings: ['# Ata: ', '## Recapitulação rápida (Quick recap)', '## Próximos passos (Next steps)', '## Resumo (Summary)'] },
+  'read-ai': { name: 'Read.ai', headings: ['# Ata: ', '## Resumo da reunião (Meeting Summary)', '## Capítulos e tópicos (Chapters & Topics)', '## Ações (Action Items)', '## Perguntas-chave (Key Questions)'] },
+  tldv: { name: 'tl;dv Smart Topics', headings: ['## O que foi explicado', '**Gist:**', '## Conclusões', '## Tarefas pedidas', '## Dúvidas que ficaram'] },
+  'ata-executiva': { name: 'Ata executiva brasileira', headings: ['# ATA DE REUNIÃO', '## 1. Informações Gerais', '## 2. Participantes', '## 3. Pauta', '## 4. Principais Assuntos Abordados/Deliberações', '### Deliberações', '### Pontos em aberto', '## 5. Compromissos Gerados', '## 6. Aprovações'] },
+  confluence: { name: 'Confluence Meeting notes', headings: ['# Notas de reunião: ', '## Data (Date)', '## Participantes (Participants)', '## Objetivos (Goals)', '## Tópicos discutidos (Discussion topics)', '### Item: ', '## Itens de ação (Action items)', '- [ ] ', '## Decisões (Decisions)'] },
+  adi: { name: 'A/D/I por assunto', headings: ['# Ata: ', '**Reunião:**', '**Legenda:**', '## 1. ', '- **I** · ', '- **D** · ', '- **A** · ', '## Índice das linhas A (o que precisa ser feito)'] },
+  'decision-first': { name: 'Decision-first de 1 página', headings: ['# Ata: ', '## Cabeçalho (Header)', '## 1) Principais decisões (Top decisions)', '## 2) Ações (no original: "Actions requiring leadership support")', '## 3) Riscos e dependências (Key risks and dependencies)', '## 4) Por assunto (Short updates by agenda topic)', '## 5) Parking lot (ficou para depois)', '## 6) Próxima reunião (Next meeting)'] },
+  'decisoes-proximos-passos': { name: 'Decisões e próximos passos', headings: ['# Ata: ', '## Decidido', '## Em aberto', '## A fazer', '## Contexto e recursos', '### O que foi dito, por assunto'] },
+  kt: { name: 'Sessão de KT', headings: ['# Ata: ', '## Contexto da sessão', '## Pauta', '## Explicação do processo', '## Perguntas e esclarecimentos', '## Decisões e encaminhamentos', '## O que precisa ser feito', '## Próxima vez'] },
+  cornell: { name: 'Cornell', headings: ['# Ata: ', '## 1. ', '**Resumo do assunto:**', '## Resumo da reunião', '## O que precisa ser feito', '## Perguntas ainda sem resposta'] },
+  adr: { name: 'Registro de decisão ADR', headings: ['# Ata: ', '## Registro 1: ', '**Contexto**', '**Decisão**', '**Status**', '**Consequências**', '## O que precisa ser feito (as consequências juntas)', '## Em aberto'] },
+  raid: { name: 'Registro RAID', headings: ['# Registro: ', '## Ações (o que precisa ser feito)', '## Riscos', '## Premissas', '## Problemas', '## Dependências', '## Origem: o que foi dito em cada assunto', '### Assunto 1. '] },
+}
+
+describe('the Ata in a chosen model', () => {
+  const audioOnly = { frames: null, difference, renderPrint }
+
+  it('there are 15 models, in the order of the files', () => {
+    expect(Object.keys(ATA_MODELS)).toEqual(Object.keys(MODEL_HEADINGS))
+    expect(Object.values(ATA_MODELS).map(model => model.name)).toEqual(Object.values(MODEL_HEADINGS).map(model => model.name))
+  })
+
+  it.each(Object.entries(MODEL_HEADINGS))('%s: the prompt has the headings in order and the rules of the Ata', async (id, { headings }) => {
+    const ai = fakeAi({ vision: false })
+    await buildAta({ recording: meeting, parts: [], model: id as AtaModelId, startedAt }, { ai, ...audioOnly })
+    const writes = ai.calls.filter(call => call.pass === 'write')
+    expect(writes).toHaveLength(1)
+    const prompt = writes[0].system
+    const skeleton = prompt.slice(prompt.indexOf('Modelo '))
+    const places = headings.map(heading => skeleton.indexOf(heading))
+    expect(places.every((at, index) => at >= 0 && (index === 0 || at > places[index - 1])), places.join(',')).toBe(true)
+    expect(prompt).toContain('separe os tópicos pelo que foi discutido')
+    expect(prompt).toContain('Resumo e conclusão')
+    expect(prompt).toContain('Tarefas: só o que precisa ser feito, em detalhe')
+    expect(prompt).toContain('Nunca escreva quem falou, quando, responsável ou prazo')
+    expect(prompt).toContain('Nunca invente')
+  })
+
+  it('gives ONE document in the skeleton: only the model is written, no participants, no parts, no prints', async () => {
+    const ai = fakeAi()
+    const done = await buildAta({ recording: meeting, parts: ['resumo', 'tarefas'], model: 'fathom', startedAt }, { ai, frames: fakeFrames(), difference, renderPrint })
+    expect(done.markdown).toBe(MODEL_DOCUMENT)
+    expect(done.title).toBe('Ata: Tabela de Vendas')
+    expect(ai.calls.filter(call => call.pass === 'write').map(call => call.system)).toEqual([ATA_MODELS.fathom.prompt])
+    expect(ai.calls.some(call => call.pass === 'candidates')).toBe(false)
+    expect(done.images).toEqual([])
+    expect(done.stages.map(stage => stage.stage)).toEqual(expect.arrayContaining(['Contexto e glossário', 'Modelo: Fathom']))
+  })
+
+  it('the model reads the same material as the parts: the voices named, the screen and the glossary', async () => {
+    const ai = fakeAi()
+    const done = await buildAta({ recording: meeting, parts: [], model: 'cornell', startedAt }, { ai, frames: fakeFrames(), difference, renderPrint })
+    const user = ai.calls.find(call => call.pass === 'write')!.user
+    expect(done.recording.speakers.map(speaker => speaker.name)).toEqual(['Regy Niles', 'Henrique Souza', 'Natália Lenza'])
+    expect(user).toContain('Henrique Souza: Natália, ajusta a Tabela de Vendas')
+    expect(user).toContain('LEITURA DA TELA:\n00:01–05:01 | HM · Tabela de Vendas')
+    expect(user).toContain('VGV')
+    expect(ai.calls.filter(call => call.system === P.ENTENDER)).toHaveLength(1)
+  })
+
+  it('drops the thinking and the code fence around the answer', async () => {
+    const answer = (system: string, user: string) => (system === ATA_MODELS.cornell.prompt ? '<think>hmm</think>\n```markdown\n# Ata: Curva\n\n## 1. Curva\n```\n' : textAnswer(system, user))
+    const done = await buildAta({ recording: meeting, parts: [], model: 'cornell', startedAt }, { ai: fakeAi({ vision: false, text: answer }), ...audioOnly })
+    expect(done.markdown).toBe('# Ata: Curva\n\n## 1. Curva\n')
+  })
+
+  it('when the AI fails there is no half document: the error goes up; cancel too', async () => {
+    const failing = (error: Error) => (system: string, user: string) => (system === ATA_MODELS.kt.prompt ? Promise.reject(error) : textAnswer(system, user))
+    await expect(buildAta({ recording: meeting, parts: [], model: 'kt', startedAt }, { ai: fakeAi({ vision: false, text: failing(new Error('A IA respondeu vazio ou sem JSON legível.')) }), ...audioOnly })).rejects.toThrow('A IA respondeu vazio')
+    await expect(buildAta({ recording: meeting, parts: [], model: 'kt', startedAt }, { ai: fakeAi({ vision: false, text: failing(new Cancelled()) }), ...audioOnly })).rejects.toBeInstanceOf(Cancelled)
+  })
+
+  it('without model and without parts nothing is generated', async () => {
+    await expect(buildAta({ recording: meeting, parts: [], startedAt }, { ai: fakeAi({ vision: false }), ...audioOnly })).rejects.toThrow('Marque ao menos uma parte da ata.')
+  })
+})
+
 describe('the AI of the passes', () => {
   const settings = (): Settings => ({ ...defaultIndex().settings, ai: { provider: 'custom', baseUrl: 'https://ia.exemplo.dev/v1', apiKey: 'k', model: 'modelo-geral' } })
 
@@ -248,6 +331,7 @@ function memoryRepository() {
       if (content !== undefined) contents.set(sidecar.meta.id, content)
       return sidecar
     },
+    saveFolder: async () => undefined,
     saveIndex: async () => undefined,
     fileSizes: async () => ({}),
   } as unknown as Repository
@@ -273,7 +357,10 @@ describe('generating the Ata from a note', () => {
     return meta.id
   }
 
-  it('Gerar › "Ata" opens the checkboxes; Resumo comes checked; nothing checked disables Gerar; the Ata tab appears', async () => {
+  // The Ata of a recording is a note of its own, linked to it.
+  const ataOf = (id: string) => useLibraryStore.getState().files.find(file => file.parentFileId === id)?.id ?? ''
+
+  it('Gerar › "Ata" opens the checkboxes; Resumo comes checked; nothing checked disables Gerar; the Ata is a note of its own', async () => {
     const { calls } = installFetch(request => openAiStream(textAnswer(systemPromptOf(request), userContentOf(request))))
     const id = await note()
     useUiStore.getState().openMenu({ kind: 'file', id, x: 1, y: 1 })
@@ -294,21 +381,84 @@ describe('generating the Ata from a note', () => {
     fireEvent.click(within(dialog).getByLabelText('Resumo'))
     fireEvent.click(within(dialog).getByLabelText('Levantamento de tarefas'))
     fireEvent.click(within(dialog).getByRole('button', { name: 'Gerar' }))
-    await waitFor(() => expect(memory.sidecars.get(id)?.documents?.length).toBe(1))
-    const saved = memory.sidecars.get(id)!.documents![0]
+    await waitFor(() => expect(memory.sidecars.get(ataOf(id))?.documents?.length).toBe(1))
+    const saved = memory.sidecars.get(ataOf(id))!.documents![0]
     expect(saved).toMatchObject({ kind: 'ata', parts: ['resumo', 'tarefas'], images: [], models: { context: 'geral', write: 'geral' } })
     expect(saved.stages?.length).toBeGreaterThan(2)
     expect(saved.markdown).toContain('[▸ 00:30](#t=30)')
     expect(saved.markdown).not.toMatch(/Você|Falante \d/)
     expect(calls.some(call => systemPromptOf(call) === P.ENTENDER && userContentOf(call).includes('28/10/2026 (quarta), 18:15'))).toBe(true)
-    expect(useJobsStore.getState().jobs[0]).toMatchObject({ status: 'done', message: 'Ata pronta: veja a aba Ata.' })
+    expect(useJobsStore.getState().jobs[0]).toMatchObject({ status: 'done', message: 'Pronta e salva na Biblioteca.', fileId: ataOf(id) })
+    expect(memory.sidecars.get(id)!.documents).toBeUndefined()
     render(
       <MemoryRouter>
-        <DocumentBody fileId={id} />
+        <DocumentBody fileId={ataOf(id)} />
       </MemoryRouter>,
     )
-    await waitFor(() => expect(screen.getAllByRole('tab').map(tab => `${tab.textContent}${tab.getAttribute('aria-selected') === 'true' ? '*' : ''}`)).toEqual(['Transcrição', 'Ata*']))
-    expect(screen.getByTestId('markdown')).toHaveTextContent('## Levantamento de tarefas')
+    await waitFor(() => expect(screen.getByTestId('markdown')).toHaveTextContent('## Levantamento de tarefas'))
+    expect(screen.queryByRole('tab')).not.toBeInTheDocument()
+  })
+
+  it('"Modelo da ata": Padrão shows the parts; a model hides them, makes one document, saves the model and shows it in Geração', async () => {
+    const { calls } = installFetch(request => openAiStream(textAnswer(systemPromptOf(request), userContentOf(request))))
+    const id = await note()
+    render(<AtaPartsDialog fileId={id} />)
+    const dialog = screen.getByRole('dialog', { name: 'Gerar a Ata' })
+    const select = within(dialog).getByLabelText('Modelo da ata') as HTMLSelectElement
+    const gerar = within(dialog).getByRole('button', { name: 'Gerar' })
+    expect([...select.options].map(option => option.textContent)).toEqual(['Padrão', ...Object.values(MODEL_HEADINGS).map(model => model.name)])
+    expect(select.selectedOptions[0].textContent).toBe('Padrão')
+    expect(within(dialog).getAllByRole('checkbox')).toHaveLength(5)
+    fireEvent.click(within(dialog).getByLabelText('Resumo'))
+    expect(gerar).toBeDisabled()
+    fireEvent.change(select, { target: { value: 'fathom' } })
+    expect(within(dialog).queryAllByRole('checkbox')).toHaveLength(0)
+    expect(gerar).toBeEnabled()
+    fireEvent.change(select, { target: { value: '' } })
+    expect(within(dialog).getAllByRole('checkbox')).toHaveLength(5)
+    expect(gerar).toBeDisabled()
+    fireEvent.change(select, { target: { value: 'fathom' } })
+    fireEvent.click(gerar)
+    await waitFor(() => expect(memory.sidecars.get(ataOf(id))?.documents?.length).toBe(1))
+    const saved = memory.sidecars.get(ataOf(id))!.documents![0]
+    expect(saved).toMatchObject({ kind: 'ata', parts: [], images: [], ataModel: { id: 'fathom', name: 'Fathom' }, markdown: MODEL_DOCUMENT })
+    expect(memory.contents.get(ataOf(id))).toBe(MODEL_DOCUMENT)
+    expect(calls.filter(call => systemPromptOf(call) === ATA_MODELS.fathom.prompt)).toHaveLength(1)
+    expect(useJobsStore.getState().jobs[0]).toMatchObject({ status: 'done', message: 'Pronta e salva na Biblioteca.' })
+    render(
+      <MemoryRouter>
+        <InfoPanel fileId={ataOf(id)} />
+      </MemoryRouter>,
+    )
+    const geracao = screen.getByRole('heading', { name: 'Geração' }).parentElement!
+    expect(within(geracao).getByText('Modelo da ata').nextElementSibling).toHaveTextContent('Fathom')
+  })
+
+  it('Padrão saves no model and Geração does not speak of it; nothing chosen starts nothing', async () => {
+    installFetch(request => openAiStream(textAnswer(systemPromptOf(request), userContentOf(request))))
+    const id = await note()
+    await useJobsStore.getState().generateAta(id, [])
+    expect(useJobsStore.getState().jobs).toEqual([])
+    const ataId = (await useJobsStore.getState().generateAta(id, ['resumo']))!
+    const saved = memory.sidecars.get(ataId)!.documents![0]
+    expect(saved).toMatchObject({ parts: ['resumo'] })
+    expect(saved).not.toHaveProperty('ataModel')
+    render(
+      <MemoryRouter>
+        <InfoPanel fileId={ataId} />
+      </MemoryRouter>,
+    )
+    expect(screen.queryByText('Modelo da ata')).not.toBeInTheDocument()
+  })
+
+  it('a model that fails keeps the Ata that was there', async () => {
+    installFetch(request => (systemPromptOf(request) === ATA_MODELS.raid.prompt ? new Response('chave recusada', { status: 401 }) : openAiStream(textAnswer(systemPromptOf(request), userContentOf(request)))))
+    const id = await note()
+    const before = { id: 'ata-1', kind: 'ata' as const, parts: ['resumo' as const], markdown: '## Resumo\n\nA de antes.', images: [], createdAt: '2026-10-28T12:00:00.000Z', models: {} }
+    await useLibraryStore.getState().updateSidecar(id, sidecar => ({ ...sidecar, documents: [before] }))
+    await useJobsStore.getState().generateAta(id, [], 'raid')
+    expect(useJobsStore.getState().jobs[0]).toMatchObject({ status: 'error', message: 'A ata não saiu.' })
+    expect(memory.sidecars.get(id)!.documents).toEqual([before])
   })
 
   it('without transcription the menu item asks to transcribe first', async () => {

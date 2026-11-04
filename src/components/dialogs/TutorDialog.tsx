@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 
 import { noteText } from '@/components/dialogs/CardsDialog'
+import GithubMarkdownView from '@/components/reader/GithubMarkdownView'
 import { Dialog } from '@/components/ui/Dialog'
 import { Icon } from '@/components/ui/Icon'
 import { GenerationSession } from '@/lib/generation/session'
@@ -23,14 +24,6 @@ function recognizer(): Recognition | null {
   return Maker ? new Maker() : null
 }
 
-function speak(text: string) {
-  if (typeof window.speechSynthesis === 'undefined' || typeof SpeechSynthesisUtterance === 'undefined') return
-  const utterance = new SpeechSynthesisUtterance(text)
-  utterance.lang = 'pt-BR'
-  window.speechSynthesis.cancel()
-  window.speechSynthesis.speak(utterance)
-}
-
 export function TutorDialog({ fileId }: { fileId: string }) {
   const close = useUiStore(state => state.close)
   const meta = useLibraryStore(state => state.files.find(file => file.id === fileId))
@@ -39,7 +32,6 @@ export function TutorDialog({ fileId }: { fileId: string }) {
   const [turns, setTurns] = useState<TutorTurn[]>([])
   const [draft, setDraft] = useState('')
   const [busy, setBusy] = useState(false)
-  const [voice, setVoice] = useState(false)
   const [listening, setListening] = useState(false)
   const [error, setError] = useState('')
   const note = useRef<Promise<string> | null>(null)
@@ -59,7 +51,6 @@ export function TutorDialog({ fileId }: { fileId: string }) {
     try {
       const reply = await askTutor(await (note.current ?? noteText(fileId)), nextMode, asked, new GenerationSession(settings))
       setTurns([...asked, { who: 'tutor', text: reply }])
-      if (voice) speak(reply)
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : String(failure))
     } finally {
@@ -96,16 +87,12 @@ export function TutorDialog({ fileId }: { fileId: string }) {
               Testar o que sei
             </button>
           </div>
-          <label className="muted" style={{ display: 'flex', gap: 6, alignItems: 'center', marginLeft: 'auto' }}>
-            <input type="checkbox" checked={voice} onChange={event => setVoice(event.target.checked)} />
-            Ler em voz alta
-          </label>
         </div>
         <ol className="tutor-talk" aria-label="Conversa com o tutor">
           {turns.map((turn, index) => (
             <li key={index} className={turn.who === 'tutor' ? 'from-tutor' : 'from-you'}>
               <b>{turn.who === 'tutor' ? 'Tutor' : 'Você'}</b>
-              <p>{turn.text}</p>
+              {turn.who === 'tutor' ? <GithubMarkdownView markdown={turn.text} /> : <p>{turn.text}</p>}
             </li>
           ))}
           {busy && (

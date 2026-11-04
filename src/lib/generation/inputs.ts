@@ -7,6 +7,7 @@ import {
   SourceError,
   youtubeId,
 } from '@/controllers/sources.controller'
+import { transcriptionOf } from '@/lib/ai/config'
 import { docxText } from '@/lib/imports/docx'
 import { pdfText } from '@/lib/imports/pdf'
 import { decodeText, detectKind, subtitleToText } from '@/lib/generation/uploads'
@@ -47,7 +48,7 @@ function mediaDuration(file: File): Promise<number | undefined> {
   })
 }
 
-async function readUpload(file: File, settings: Settings, progress: Progress, signal?: AbortSignal): Promise<{ text: string; transcription: TranscriptionOutcome | null }> {
+async function readUpload(file: File, settings: Settings, progress: Progress, signal?: AbortSignal, transcriptionModel?: string | null): Promise<{ text: string; transcription: TranscriptionOutcome | null }> {
   const bytes = new Uint8Array(await file.arrayBuffer())
   const kind = detectKind(file.name, bytes)
   if (kind === 'pdf') return { text: await pdfText(bytes.buffer), transcription: null }
@@ -55,13 +56,14 @@ async function readUpload(file: File, settings: Settings, progress: Progress, si
   if (kind === 'doc_legacy') throw new SourceError('Formato .doc antigo não é suportado — salve como .docx e envie de novo.')
   if (kind === 'subtitle') return { text: subtitleToText(decodeText(bytes)), transcription: null }
   if (kind === 'media') {
-    const transcription = await transcribe(file, settings.transcription, progress, signal)
+    const transcription = await transcribe(file, transcriptionOf(settings, transcriptionModel), progress, signal)
     return { text: transcription.text, transcription }
   }
   return { text: decodeText(bytes).trim(), transcription: null }
 }
 
-export async function resolveInput(input: ContentInput, settings: Settings, prompt: string, progress: Progress, signal?: AbortSignal): Promise<ResolvedInput> {
+/** `transcriptionModel`: the Transcrição model picked at generation time (else the default). */
+export async function resolveInput(input: ContentInput, settings: Settings, prompt: string, progress: Progress, signal?: AbortSignal, transcriptionModel?: string | null): Promise<ResolvedInput> {
   if (input.kind === 'topic') {
     const topic = input.topic.trim()
     return { content: topic, title: topic.slice(0, TITLE_CHARS), description: topic, origin: { input: 'topic', name: topic, storage: 'none' }, transcription: null }
@@ -110,7 +112,7 @@ export async function resolveInput(input: ContentInput, settings: Settings, prom
 
   const file = input.file
   progress(input.kind === 'recording' ? 'Transcrevendo a gravação' : 'Lendo o arquivo')
-  const { text, transcription } = await readUpload(file, settings, progress, signal)
+  const { text, transcription } = await readUpload(file, settings, progress, signal, transcriptionModel)
   const body = prompt ? `${text}\n\n${prompt}` : text
   return {
     content: `# Conteúdo\n\n${body}`,

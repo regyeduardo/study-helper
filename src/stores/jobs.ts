@@ -1,12 +1,13 @@
 import { create } from 'zustand'
 
-import type { AtaPart, CourseAnalysis, FileMeta, FileType, GenerationMeta, MeetingDocument, RecordingData, RecordingMark, SourceMeta, SourceStorage, StageTime, StoredQuestion } from '@/types/domain'
+import type { AiSettings, AiStep, AiUse, AtaModelId, AtaPart, CourseAnalysis, FileMeta, FileType, FolderMeta, GenerationChoice, GenerationMeta, MeetingDocument, RecordingData, RecordingMark, SourceMeta, SourceStorage, StageTime, StoredQuestion } from '@/types/domain'
 import { Cancelled } from '@/controllers/ai.controller'
 import type { LitterboxTime } from '@/controllers/hosting.controller'
 import { storedFromRaw } from '@/lib/exam'
+import { aiConfigOf, targetFor, targetOf, transcriptionOf, uidFor } from '@/lib/ai/config'
 import { analyzeCourse } from '@/lib/generation/course'
-import { buildAta, chosenParts } from '@/lib/generation/ata'
-import { appAi } from '@/lib/generation/ata-ai'
+import { ATA_MODELS, buildAta, chosenParts } from '@/lib/generation/ata'
+import { type AtaModels, appAi } from '@/lib/generation/ata-ai'
 import type { FrameSource } from '@/lib/generation/ata-types'
 import { renderPrint } from '@/lib/generation/prints'
 import { openVideoFrames, signatureDifference } from '@/lib/generation/video-source'
@@ -16,12 +17,13 @@ import { buildMinutes, minutesFileName } from '@/lib/generation/minutes'
 import { generateContent, type GenerationEvent } from '@/lib/generation/pipeline'
 import { PROMPTS } from '@/lib/generation/prompts.data'
 import { generateQuestions, generateReadingExam, type WrongQuestion } from '@/lib/generation/questions'
+import type { WebOutcome } from '@/lib/generation/web-questions'
 import { lookAtScreen, visionSettingsOf } from '@/lib/generation/frames'
 import { polishTranscript } from '@/lib/generation/polish'
 import { redoTranscript } from '@/lib/generation/reviewer'
 import { GenerationSession } from '@/lib/generation/session'
 import { suggestTags } from '@/lib/generation/tags'
-import { newId } from '@/lib/ids'
+import { newId, nowIso } from '@/lib/ids'
 import { mediaOf, recordingName } from '@/lib/file-types'
 import { downloadStoredSource, storeSource } from '@/lib/storage/source-storage'
 import { keepLocalMedia, linkLocalMedia, readLocalMedia } from '@/lib/recording/media-library'
@@ -29,11 +31,18 @@ import { transcribe } from '@/lib/transcription'
 import { StageClock } from '@/lib/transcription/types'
 import { transcriptText } from '@/lib/transcription/export'
 import { recorderName, useAccountStore } from '@/stores/account'
-import { useLibraryStore } from '@/stores/library'
+import { liveFolders, useLibraryStore } from '@/stores/library'
+import { searchesWeb, useModelsStore } from '@/stores/models'
 
 export type Agent = 'lesson' | 'explanation' | 'meeting' | 'reading'
 
 export type SecondTabAgent = 'meeting' | 'lesson'
+
+/** Where a note made from another goes: 'home', the folder named after the source (made if missing; the source moves in), or the folder picked. */
+export type Placement = 'home' | { folderId: string | null }
+
+/** A new note, placed; or `replace`: the note made before from the same source gets the new text. */
+export type Target = Placement | { replace: string }
 
 export type JobStatus = 'running' | 'done' | 'error' | 'cancelled'
 
@@ -60,6 +69,17 @@ export interface NewContentRequest {
   litterboxTime: LitterboxTime
   marks?: RecordingMark[]
   ataParts?: AtaPart[]
+  /** "Modelo da ata": the Ata in that model instead of the parts. */
+  ataModel?: AtaModelId
+  /** Models picked in the dialog (the default comes preselected there). */
+  models?: GenerationModels
+}
+
+/** What the generation dialog picked: who writes, who transcribes; `everyStep`: the video model writes every step of the Ata. */
+export interface GenerationModels {
+  write?: string | null
+  transcription?: string | null
+  everyStep?: boolean
 }
 
 export interface SaveRecordingRequest {
@@ -71,6 +91,8 @@ export interface SaveRecordingRequest {
   litterboxTime: LitterboxTime
   marks: RecordingMark[]
   transcribe: boolean
+  /** The Transcrição model picked when saving (else the default). */
+  transcriptionModel?: string | null
 }
 
 export interface CourseProposal {
@@ -85,20 +107,20 @@ interface JobsState {
   proposals: CourseProposal[]
   startNewContent(request: NewContentRequest, onJob?: (jobId: string) => void): Promise<string | null>
   saveRecording(request: SaveRecordingRequest): Promise<string>
-  transcribeNote(fileId: string, source?: File): Promise<void>
+  transcribeNote(fileId: string, source?: File, transcriptionModel?: string | null): Promise<void>
   acceptCourse(proposal: CourseProposal, folderId: string | null): Promise<string>
   declineCourse(proposal: CourseProposal): Promise<string>
-  generatePending(fileId: string): Promise<void>
-  generateSecondTab(fileId: string, agent: SecondTabAgent): Promise<void>
+  generatePending(fileId: string, model?: string | null): Promise<void>
+  generateSecondTab(fileId: string, agent: SecondTabAgent, model?: string | null): Promise<void>
   redoTranscript(fileId: string, instruction: string): Promise<void>
-  generateFromNote(fileId: string, agent: SecondTabAgent): Promise<string | null>
-  generateAta(fileId: string, parts: AtaPart[]): Promise<void>
+  generateFromNote(fileId: string, agent: SecondTabAgent, model?: string | null, place?: Target): Promise<string | null>
+  generateAta(fileId: string, parts: AtaPart[], model?: AtaModelId, ai?: AtaModels, place?: Target): Promise<string | undefined>
   suggestTags(fileId: string): Promise<void>
   generateRemaining(folderId: string): Promise<void>
   regenerate(fileId: string): Promise<void>
-  explainSelection(fileId: string, excerpt: string, prompt: string, mode: 'concept' | 'context'): Promise<string>
+  explainSelection(fileId: string, excerpt: string, prompt: string, mode: 'concept' | 'context', model?: string | null): Promise<string>
   explainGaps(target: { fileId: string | null; folderId: string | null }, notes: { title: string; excerpt: string }[]): Promise<string[]>
-  createQuestions(fileId: string, wrong?: WrongQuestion[]): Promise<number>
+  createQuestions(fileId: string, wrong?: WrongQuestion[], model?: string | null): Promise<{ count: number; web: WebOutcome }>
   readingExam(content: string, title: string): Promise<StoredQuestion[]>
   cancel(jobId: string): void
   dismiss(jobId: string): void
@@ -131,6 +153,20 @@ function library() {
   return useLibraryStore.getState()
 }
 
+const AGENT_USE: Record<Agent, AiUse> = { lesson: 'aula', explanation: 'explicacao', meeting: 'ata', reading: 'estudo' }
+
+/** A session with the model of that use: the one picked at generation time, else the default of Padrões por uso. */
+function sessionFor(use: AiUse | AiStep, signal?: AbortSignal, pick?: string | null): GenerationSession {
+  return new GenerationSession(targetFor(library().index.settings, use, pick), signal)
+}
+
+/** The Questões da web model: its own default, else Estudo's when the app knows it searches the web; none → the Prova goes without. */
+function webTarget(): AiSettings | null {
+  const config = aiConfigOf(library().index.settings)
+  const { live, probes } = useModelsStore.getState()
+  return targetOf(config, uidFor(config, 'web', uid => searchesWeb(config, live, probes, uid)))
+}
+
 function generationMeta(session: GenerationSession, resolved: ResolvedInput | null, stages: StageTime[] = []): GenerationMeta {
   const usage = session.usage()
   return {
@@ -161,6 +197,20 @@ export function meetingStart(meta: FileMeta): Date {
   const found = /(\d{2})-(\d{2})-(\d{4}),?\s+(\d{2})-(\d{2})/.exec(meta.origin?.name ?? meta.name)
   if (found) return new Date(Number(found[3]), Number(found[2]) - 1, Number(found[1]), Number(found[4]), Number(found[5]))
   return new Date(new Date(meta.created.at).getTime() - (meta.origin?.durationSeconds ?? 0) * 1000)
+}
+
+/** The folder named after a note: the one it is in, one beside it with that name, or (id null) the one to make beside it. */
+export function homeFolderOf(source: FileMeta, folders: FolderMeta[]): Pick<FolderMeta, 'name' | 'parentId'> & { id: string | null } {
+  const live = liveFolders(folders)
+  const own = live.find(folder => folder.id === source.folderId)
+  if (own?.name === source.name) return own
+  return live.find(folder => folder.parentId === source.folderId && folder.name === source.name) ?? { id: null, name: source.name, parentId: source.folderId }
+}
+
+/** What a note made from another keeps of its generation: the model picked, else the default of that moment. */
+function choiceOf(use: AiUse, model: string | null | undefined, rest: Omit<GenerationChoice, 'model' | 'at'> = {}): GenerationChoice {
+  const uid = model || uidFor(aiConfigOf(library().index.settings), use)
+  return { ...rest, ...(uid ? { model: uid } : {}), at: nowIso() }
 }
 
 async function mediaFileOf(meta: FileMeta): Promise<File> {
@@ -231,21 +281,23 @@ export const useJobsStore = create<JobsState>((set, get) => {
     origin: string,
     systemPrompt?: string,
     heard?: RecordingData,
+    pick?: string | null,
+    keepName = false,
   ): Promise<void> => {
     const { job, controller } = openJob('generation', meta.name, meta.id)
     const activityId = await library().startActivity({ kind: agent, label: `${label}: ${meta.name}`, origin, destination: destinationName(meta.folderId), fileId: meta.id })
     await library().updateFile(meta.id, { status: 'generating' })
-    const session = new GenerationSession(library().index.settings.ai, controller.signal)
+    const session = sessionFor(AGENT_USE[agent], controller.signal, pick)
     try {
       const recording = heard ?? resolved?.transcription?.recording ?? (await library().openFile(meta.id).catch(() => null))?.sidecar.recording
       const clock = new StageClock()
       clock.add(resolved?.transcription?.stages)
       const { markdown, name } = await clock.run('Escrever', () => writeDocument(meta.id, agent, content, session, job.id, systemPrompt, recording))
       patchJob(job.id, { message: 'Salvando' })
-      await library().saveContent(meta.id, markdown, { status: 'ready', pendingExcerpt: null, generation: generationMeta(session, resolved, clock.stages), ...(name ? { name } : {}) })
+      await library().saveContent(meta.id, markdown, { status: 'ready', pendingExcerpt: null, generation: generationMeta(session, resolved, clock.stages), ...(name && !keepName ? { name } : {}) })
       closeJob(job.id, 'done', 'Pronta e salva na Biblioteca.')
       await library().finishActivity(activityId, 'done', 'Pronta e salva na Biblioteca.')
-      void suggestTagsFor(meta.id, session)
+      void suggestTagsFor(meta.id)
     } catch (error) {
       const cancelled = error instanceof Cancelled || controller.signal.aborted
       await library().updateFile(meta.id, { status: 'pending', pendingExcerpt: meta.pendingExcerpt ?? content }).catch(() => undefined)
@@ -256,14 +308,22 @@ export const useJobsStore = create<JobsState>((set, get) => {
     }
   }
 
-  const suggestTagsFor = async (fileId: string, session?: GenerationSession): Promise<void> => {
+  const suggestTagsFor = async (fileId: string): Promise<void> => {
     const meta = library().files.find(file => file.id === fileId)
     if (!meta) return
     const { content, sidecar } = await library().openFile(fileId)
     const text = content.trim() || (sidecar.recording ? transcriptText(sidecar.recording) : '')
     const known = [...new Set(library().files.flatMap(file => file.tags))]
-    const suggested = (await suggestTags(text, known, session ?? new GenerationSession(library().index.settings.ai)).catch(() => [] as string[])).filter(tag => !meta.tags.includes(tag))
+    const suggested = (await suggestTags(text, known, sessionFor('titulo')).catch(() => [] as string[])).filter(tag => !meta.tags.includes(tag))
     if (suggested.length) await library().updateFile(fileId, { suggestedTags: suggested })
+  }
+
+  const folderFor = async (source: FileMeta, place: Placement): Promise<string | null> => {
+    if (place !== 'home') return place.folderId
+    const home = homeFolderOf(source, library().folders)
+    const id = home.id ?? (await library().createFolder({ name: home.name, parentId: home.parentId })).id
+    if (source.folderId !== id) await library().updateFile(source.id, { folderId: id })
+    return id
   }
 
   const createForRequest = async (request: NewContentRequest, resolved: ResolvedInput, agent: Agent): Promise<FileMeta> => {
@@ -320,17 +380,22 @@ export const useJobsStore = create<JobsState>((set, get) => {
       const name = request.name.trim() || resolved.title || meta.name
       const description = request.description.trim() || resolved.description
       const ataParts = agent === 'meeting' ? chosenParts(request.ataParts ?? []) : []
-      if (agent === 'reading' || ataParts.length) {
+      const ataModel = agent === 'meeting' ? request.ataModel : undefined
+      const makesAta = Boolean(ataModel) || ataParts.length > 0
+      if (agent === 'reading' || makesAta) {
         const polishing = polishSessions.get(resolved.transcription!)
-        await library().saveContent(meta.id, resolved.content.replace(/^# Conteúdo\n\n/, ''), { name, description, pendingExcerpt: null, ...(ataParts.length ? { type: 'reading' as const, status: 'ready' as const } : {}), ...(polishing ? { generation: generationMeta(polishing, resolved, resolved.transcription?.stages) } : {}) })
+        await library().saveContent(meta.id, resolved.content.replace(/^# Conteúdo\n\n/, ''), { name, description, pendingExcerpt: null, ...(makesAta ? { type: 'reading' as const, status: 'ready' as const } : {}), ...(polishing ? { generation: generationMeta(polishing, resolved, resolved.transcription?.stages) } : {}) })
         closeJob(job.id, 'done', 'Material lido.')
-        if (ataParts.length) await get().generateAta(meta.id, ataParts)
+        const picked = request.models?.write
+        const ai: AtaModels | undefined = picked ? { model: picked, everyStep: Boolean(request.models?.everyStep) } : undefined
+        if (ataModel) await (ai ? get().generateAta(meta.id, [], ataModel, ai) : get().generateAta(meta.id, [], ataModel))
+        else if (ataParts.length) await (ai ? get().generateAta(meta.id, ataParts, undefined, ai) : get().generateAta(meta.id, ataParts))
         return
       }
       await library().updateFile(meta.id, { name, description, pendingExcerpt: resolved.content })
       closeJob(job.id, 'done', 'Material lido.')
       const fresh = library().files.find(file => file.id === meta.id) ?? { ...meta, name, description }
-      await runOnFile(fresh, agent, resolved.content, resolved, AGENT_LABEL[agent], resolved.origin.url ?? resolved.origin.name)
+      await runOnFile(fresh, agent, resolved.content, resolved, AGENT_LABEL[agent], resolved.origin.url ?? resolved.origin.name, undefined, undefined, request.models?.write)
     } catch (error) {
       const cancelled = signal.aborted
       await library().updateFile(meta.id, { status: 'pending' }).catch(() => undefined)
@@ -338,9 +403,9 @@ export const useJobsStore = create<JobsState>((set, get) => {
     }
   }
 
-  const resolveRecording = async (file: File, progress: (message: string, fraction?: number) => void, signal: AbortSignal): Promise<ResolvedInput> => {
+  const resolveRecording = async (file: File, progress: (message: string, fraction?: number) => void, signal: AbortSignal, transcriptionModel?: string | null): Promise<ResolvedInput> => {
     progress('Transcrevendo a gravação')
-    const transcription = await transcribe(file, library().index.settings.transcription, progress, signal, { microphoneOnLeft: true, recorder: recorderName(useAccountStore.getState().active()) })
+    const transcription = await transcribe(file, transcriptionOf(library().index.settings, transcriptionModel), progress, signal, { microphoneOnLeft: true, recorder: recorderName(useAccountStore.getState().active()) })
     return {
       content: `${CONTENT_HEADER}${transcription.text}`,
       title: file.name,
@@ -353,7 +418,7 @@ export const useJobsStore = create<JobsState>((set, get) => {
   const polished = async (resolved: ResolvedInput, marks: RecordingMark[], progress: (message: string) => void, signal: AbortSignal, source: File | null): Promise<ResolvedInput> => {
     const heard = resolved.transcription?.recording
     if (!resolved.transcription || !heard) return resolved
-    const session = new GenerationSession(library().index.settings.ai, signal)
+    const session = sessionFor('titulo', signal)
     const clock = new StageClock()
     clock.add(resolved.transcription.stages)
     const video = source?.type.startsWith('video/') ? source : null
@@ -382,7 +447,8 @@ export const useJobsStore = create<JobsState>((set, get) => {
       let resolved: ResolvedInput
       try {
         const progress = (message: string, fraction?: number) => patchJob(job.id, { message, fraction: fraction ?? null })
-        const read = request.input.kind === 'recording' ? await resolveRecording(request.input.file, progress, controller.signal) : await resolveInput(request.input, library().index.settings, request.prompt, progress, controller.signal)
+        const heardBy = request.models?.transcription
+        const read = request.input.kind === 'recording' ? await resolveRecording(request.input.file, progress, controller.signal, heardBy) : await resolveInput(request.input, library().index.settings, request.prompt, progress, controller.signal, heardBy)
         if (read.transcription?.recording && agent !== 'lesson') {
           patchJob(job.id, { title: request.name || read.title })
           const meta = await createNote(request, read, agent)
@@ -399,11 +465,11 @@ export const useJobsStore = create<JobsState>((set, get) => {
       patchJob(job.id, { title: request.name || resolved.title })
 
       if (agent === 'lesson') {
-        patchJob(job.id, { message: 'Vendo se cabe numa aula ou se é um curso' })
+        patchJob(job.id, { message: 'Vendo se cabe numa aula ou se rende várias, em módulos' })
         try {
-          const analysis = await analyzeCourse(resolved.content, new GenerationSession(library().index.settings.ai, controller.signal))
+          const analysis = await analyzeCourse(resolved.content, sessionFor('curso', controller.signal))
           if (analysis.isCourse) {
-            closeJob(job.id, 'done', 'Virou proposta de curso.')
+            closeJob(job.id, 'done', 'Virou proposta de pasta com aulas.')
             set(state => ({ proposals: [...state.proposals, { analysis, request, resolved }] }))
             return null
           }
@@ -428,7 +494,7 @@ export const useJobsStore = create<JobsState>((set, get) => {
         if (polishing) await library().updateFile(meta.id, { generation: generationMeta(polishing, resolved, resolved.transcription?.stages) })
         return meta.id
       }
-      void runOnFile(meta, agent, resolved.content, resolved, AGENT_LABEL[agent], resolved.origin.url ?? resolved.origin.name)
+      void runOnFile(meta, agent, resolved.content, resolved, AGENT_LABEL[agent], resolved.origin.url ?? resolved.origin.name, undefined, undefined, request.models?.write)
       return meta.id
     },
 
@@ -443,11 +509,11 @@ export const useJobsStore = create<JobsState>((set, get) => {
           .then(stored => library().updateFile(meta.id, { origin: { ...origin, ...stored } as SourceMeta }))
           .catch(error => get().trackTask(`Guardar a mídia: ${meta.name}`).fail(failureText(error)))
       }
-      if (request.transcribe) void get().transcribeNote(meta.id, file)
+      if (request.transcribe) void get().transcribeNote(meta.id, file, request.transcriptionModel)
       return meta.id
     },
 
-    transcribeNote: async (fileId, source) => {
+    transcribeNote: async (fileId, source, transcriptionModel) => {
       const meta = library().files.find(file => file.id === fileId)
       if (!meta?.origin || get().jobs.some(job => job.fileId === fileId && job.status === 'running')) return
       const origin = meta.origin
@@ -457,7 +523,7 @@ export const useJobsStore = create<JobsState>((set, get) => {
         progress('Abrindo a mídia')
         const file = source ?? (await mediaFileOf(meta))
         progress('Transcrevendo a gravação')
-        const transcription = await transcribe(file, library().index.settings.transcription, progress, controller.signal, { microphoneOnLeft: origin.input === 'recording', recorder: recorderName(useAccountStore.getState().active()) })
+        const transcription = await transcribe(file, transcriptionOf(library().index.settings, transcriptionModel), progress, controller.signal, { microphoneOnLeft: origin.input === 'recording', recorder: recorderName(useAccountStore.getState().active()) })
         const read: ResolvedInput = { content: `${CONTENT_HEADER}${transcription.text}`, title: meta.name, description: meta.description, origin, transcription }
         const marks = (await library().openFile(fileId)).sidecar.recording?.marks ?? []
         const resolved = await polished(read, marks, progress, controller.signal, file)
@@ -480,7 +546,7 @@ export const useJobsStore = create<JobsState>((set, get) => {
       set(state => ({ proposals: state.proposals.filter(item => item !== proposal) }))
       const { analysis, resolved } = proposal
       const root = await library().createFolder({
-        name: analysis.name || 'Curso',
+        name: analysis.name || 'Aulas',
         parentId: folderId,
         isCourse: true,
         courseOrigin: resolved.origin.url ?? resolved.origin.name,
@@ -502,86 +568,104 @@ export const useJobsStore = create<JobsState>((set, get) => {
         }
         if (index === 0) firstModule.push(...created)
       }
-      for (const file of firstModule) void get().generatePending(file.id)
+      for (const file of firstModule) void get().generatePending(file.id, proposal.request.models?.write)
       return root.id
     },
 
     declineCourse: async proposal => {
       set(state => ({ proposals: state.proposals.filter(item => item !== proposal) }))
       const meta = await createForRequest(proposal.request, proposal.resolved, 'lesson')
-      void runOnFile(meta, 'lesson', proposal.resolved.content, proposal.resolved, 'Aula', proposal.resolved.origin.url ?? proposal.resolved.origin.name)
+      void runOnFile(meta, 'lesson', proposal.resolved.content, proposal.resolved, 'Aula', proposal.resolved.origin.url ?? proposal.resolved.origin.name, undefined, undefined, proposal.request.models?.write)
       return meta.id
     },
 
-    generatePending: async fileId => {
+    generatePending: async (fileId, model) => {
       const { files, folders } = library()
       const meta = files.find(file => file.id === fileId)
       if (!meta || get().jobs.some(job => job.fileId === fileId && job.status === 'running')) return
       if (courseOf(folders, meta.folderId)) {
-        await runOnFile(meta, 'lesson', courseLessonInput(meta, folders, files), null, 'Aula do curso', meta.description || meta.name)
+        await runOnFile(meta, 'lesson', courseLessonInput(meta, folders, files), null, 'Aula', meta.description || meta.name, undefined, undefined, model)
         return
       }
       const agent: Agent = meta.type === 'explanation' ? 'explanation' : meta.type === 'meeting' ? 'meeting' : 'lesson'
       await runOnFile(meta, agent, meta.pendingExcerpt ?? `# ${meta.name}`, null, 'Nova tentativa', meta.origin?.url ?? meta.origin?.name ?? meta.name)
     },
 
-    generateSecondTab: async (fileId, agent) => {
+    generateSecondTab: async (fileId, agent, model) => {
       const meta = library().files.find(file => file.id === fileId)
       if (!meta || get().jobs.some(job => job.fileId === fileId && job.status === 'running')) return
       const recording = (await library().openFile(fileId)).sidecar.recording
       if (!recording) return
       await library().updateFile(fileId, { type: FILE_TYPE[agent] })
-      await runOnFile({ ...meta, type: FILE_TYPE[agent] }, agent, `${CONTENT_HEADER}${transcriptText(recording)}`, null, AGENT_LABEL[agent], meta.origin?.name ?? meta.name)
+      await runOnFile({ ...meta, type: FILE_TYPE[agent] }, agent, `${CONTENT_HEADER}${transcriptText(recording)}`, null, AGENT_LABEL[agent], meta.origin?.name ?? meta.name, undefined, undefined, model)
     },
 
-    generateFromNote: async (fileId, agent) => {
+    generateFromNote: async (fileId, agent, model, place = 'home') => {
       const source = library().files.find(file => file.id === fileId)
       if (!source) return null
       const { content, sidecar } = await library().openFile(fileId)
       const recording = sidecar.recording?.blocks.length ? sidecar.recording : undefined
-      if (recording) {
-        void get().generateSecondTab(fileId, agent)
-        return fileId
-      }
       const material = `${CONTENT_HEADER}${recording ? transcriptText(recording) : content}`
       if (!material.replace(CONTENT_HEADER, '').trim()) return null
+      const made = choiceOf(AGENT_USE[agent], model)
+      if (typeof place === 'object' && 'replace' in place) {
+        const meta = library().files.find(file => file.id === place.replace)
+        if (!meta || get().jobs.some(job => job.fileId === meta.id && job.status === 'running')) return null
+        await library().updateFile(meta.id, { made })
+        void runOnFile(meta, agent, material, null, AGENT_LABEL[agent], source.name, undefined, recording, model, true)
+        return meta.id
+      }
       const meta = await library().createFile(
-        { name: `${AGENT_LABEL[agent]}: ${source.name}`, type: FILE_TYPE[agent], description: `gerado de ${source.name}`, folderId: source.folderId, parentFileId: source.id, status: 'generating', pendingExcerpt: material, origin: { input: 'text', name: source.name, storage: 'none' } },
+        { name: `${AGENT_LABEL[agent]}: ${source.name}`, type: FILE_TYPE[agent], description: `gerado de ${source.name}`, folderId: await folderFor(source, place), parentFileId: source.id, status: 'generating', pendingExcerpt: material, origin: { input: 'text', name: source.name, storage: 'none' }, made },
         '',
       )
-      void runOnFile(meta, agent, material, null, AGENT_LABEL[agent], source.name, undefined, recording)
+      void runOnFile(meta, agent, material, null, AGENT_LABEL[agent], source.name, undefined, recording, model)
       return meta.id
     },
 
-    generateAta: async (fileId, parts) => {
-      const meta = library().files.find(file => file.id === fileId)
-      if (!meta || !chosenParts(parts).length || get().jobs.some(job => job.fileId === fileId && job.status === 'running')) return
+    generateAta: async (fileId, parts, model, chosen, place = 'home') => {
+      const source = library().files.find(file => file.id === fileId)
+      const replaced = typeof place === 'object' && 'replace' in place ? library().files.find(file => file.id === place.replace) : undefined
+      // The job shows in the note being replaced, else in the recording until the new note exists.
+      const at = replaced?.id ?? fileId
+      if (!source || !(model || chosenParts(parts).length) || get().jobs.some(job => job.fileId === at && job.status === 'running')) return
       const heard = (await library().openFile(fileId)).sidecar.recording
       if (!heard?.blocks.length) return
-      const { job, controller } = openJob('generation', `Ata: ${meta.name}`, fileId)
-      const activityId = await library().startActivity({ kind: 'meeting', label: `Ata: ${meta.name}`, origin: meta.origin?.name ?? meta.name, destination: 'aba Ata da própria nota', fileId })
+      const { job, controller } = openJob('generation', `Ata: ${source.name}`, at)
+      const activityId = await library().startActivity({ kind: 'meeting', label: `Ata: ${source.name}`, origin: source.origin?.name ?? source.name, destination: replaced ? `nota "${replaced.name}"` : 'nota nova', fileId: at })
       const progress = (message: string) => patchJob(job.id, { message })
       const settings = library().index.settings
-      const ai = appAi(settings, controller.signal)
+      const ai = appAi(settings, controller.signal, undefined, chosen)
       let frames: FrameSource | null = null
       try {
-        if (mediaOf(meta) === 'video' && ai.hasVision) {
+        // A video opens even without a vision model: the local OCR still reads the exact terms on screen
+        if (mediaOf(source) === 'video') {
           progress('Abrindo o vídeo da gravação')
-          const video = await mediaFileOf(meta).catch(() => null)
+          const video = await mediaFileOf(source).catch(() => null)
           frames = video ? await openVideoFrames(video).catch(() => null) : null
         }
-        const done = await buildAta({ recording: heard, parts, startedAt: meetingStart(meta), onProgress: progress }, { ai, frames, difference: signatureDifference, renderPrint: (image, marks, caption) => renderPrint(image, marks, caption) })
+        const done = await buildAta({ recording: heard, parts, model, startedAt: meetingStart(source), onProgress: progress }, { ai, frames, difference: signatureDifference, renderPrint: (image, marks, caption) => renderPrint(image, marks, caption) })
         progress('Salvando')
-        const document: MeetingDocument = { id: newId(), kind: 'ata', parts: chosenParts(parts), markdown: done.markdown, images: done.images, createdAt: new Date().toISOString(), models: done.models, ...(done.costUsd !== undefined ? { costUsd: done.costUsd } : {}), stages: done.stages }
-        const renamed = done.recording !== heard
-        await library().updateSidecar(fileId, sidecar => ({
-          ...sidecar,
-          ...(renamed && sidecar.recording ? { recording: { ...sidecar.recording, speakers: done.recording.speakers }, transcript: transcriptText({ ...sidecar.recording, speakers: done.recording.speakers }) } : {}),
-          documents: [...(sidecar.documents ?? []).filter(item => item.kind !== 'ata'), document],
-        }))
-        if (renamed && meta.type === 'reading') await library().saveContent(fileId, transcriptText(done.recording).trim())
-        closeJob(job.id, 'done', 'Ata pronta: veja a aba Ata.')
+        const document: MeetingDocument = { id: newId(), kind: 'ata', parts: model ? [] : chosenParts(parts), ...(model ? { ataModel: { id: model, name: ATA_MODELS[model].name } } : {}), markdown: done.markdown, images: done.images, createdAt: new Date().toISOString(), models: done.models, ...(done.costUsd !== undefined ? { costUsd: done.costUsd } : {}), stages: done.stages }
+        if (done.recording !== heard) {
+          await library().updateSidecar(fileId, sidecar => (sidecar.recording ? { ...sidecar, recording: { ...sidecar.recording, speakers: done.recording.speakers }, transcript: transcriptText({ ...sidecar.recording, speakers: done.recording.speakers }) } : sidecar))
+          if (source.type === 'reading') await library().saveContent(fileId, transcriptText(done.recording).trim())
+        }
+        const made = choiceOf('ata', chosen?.model, { ...(chosen?.everyStep ? { everyStep: true } : {}), ...(model ? { ataModel: model } : { parts: chosenParts(parts) }) })
+        const fresh = library().files.find(file => file.id === fileId) ?? source
+        const note =
+          replaced ??
+          (await library().createFile(
+            { name: `Ata: ${fresh.name}`, type: 'meeting', description: `gerado de ${fresh.name}`, folderId: await folderFor(fresh, place as Placement), parentFileId: fileId, status: 'ready', origin: { input: 'text', name: fresh.name, storage: 'none' } },
+            '',
+          ))
+        // The note is the Ata; its document keeps the prints and how it was made.
+        await library().updateSidecar(note.id, sidecar => ({ ...sidecar, documents: [document] }))
+        await library().saveContent(note.id, done.markdown, { made })
+        patchJob(job.id, { fileId: note.id })
+        closeJob(job.id, 'done', 'Pronta e salva na Biblioteca.')
         await library().finishActivity(activityId, 'done', 'Ata pronta.')
+        return note.id
       } catch (error) {
         const cancelled = error instanceof Cancelled || controller.signal.aborted
         closeJob(job.id, cancelled ? 'cancelled' : 'error', cancelled ? 'Cancelado por você.' : 'A ata não saiu.', cancelled ? null : failureText(error))
@@ -601,7 +685,7 @@ export const useJobsStore = create<JobsState>((set, get) => {
       const { job, controller } = openJob('transcription', `Refazer a transcrição: ${meta.name}`, fileId)
       try {
         patchJob(job.id, { message: 'Refazendo a transcrição' })
-        const session = new GenerationSession(library().index.settings.ai, controller.signal)
+        const session = sessionFor('estudo', controller.signal)
         const redone = await redoTranscript(recording, instruction, session, library().index.settings.transcription.terms ?? '')
         await library().updateSidecar(fileId, sidecar => ({ ...sidecar, recording: redone }))
         if (meta.type === 'reading') await library().saveContent(fileId, transcriptText(redone).trim())
@@ -632,7 +716,7 @@ export const useJobsStore = create<JobsState>((set, get) => {
       await runOnFile(meta, meta.type === 'explanation' ? 'explanation' : 'lesson', `# ${meta.name}\n\n${content}`, null, 'Nova versão', meta.name, prompt)
     },
 
-    explainSelection: async (fileId, excerpt, prompt, mode) => {
+    explainSelection: async (fileId, excerpt, prompt, mode, model) => {
       const source = library().files.find(file => file.id === fileId)
       if (!source) throw new Error('Arquivo de origem não encontrado.')
       const { content } = await library().openFile(fileId)
@@ -651,7 +735,7 @@ export const useJobsStore = create<JobsState>((set, get) => {
       )
       const input = selectionInput(source, content, library().files, excerpt, prompt, mode)
       void (async () => {
-        await runOnFile(meta, 'explanation', input, null, 'Explicação', `trecho de "${source.name}"`)
+        await runOnFile(meta, 'explanation', input, null, 'Explicação', `trecho de "${source.name}"`, undefined, undefined, model)
         const saved = useLibraryStore.getState().opened[meta.id]?.content
         if (saved) await library().updateFile(meta.id, { name: explanationName(saved, excerpt) })
       })()
@@ -685,21 +769,22 @@ export const useJobsStore = create<JobsState>((set, get) => {
       return ids
     },
 
-    createQuestions: async (fileId, wrong) => {
+    createQuestions: async (fileId, wrong, model) => {
       const meta = library().files.find(file => file.id === fileId)
-      if (!meta) return 0
+      if (!meta) return { count: 0, web: { found: 0, note: '' } }
       const { content } = await library().openFile(fileId)
       const { job, controller } = openJob('questions', wrong?.length ? `Reforço: ${meta.name}` : `Prova: ${meta.name}`, fileId)
       const activityId = await library().startActivity({ kind: 'exam', label: `${wrong?.length ? 'Reforço' : 'Prova'}: ${meta.name}`, origin: meta.name, destination: 'questões do próprio arquivo', fileId })
       try {
         patchJob(job.id, { message: 'Preparando as questões' })
-        const session = new GenerationSession(library().index.settings.ai, controller.signal)
-        const { questions } = await generateQuestions(content, meta.name, meta.type, session, wrong)
+        const session = sessionFor('prova', controller.signal, model)
+        const { questions, web } = await generateQuestions(content, meta.name, meta.type, session, wrong, webTarget())
         if (!questions.length) throw new Error('A IA não devolveu nenhuma questão válida. Tente de novo.')
         await library().setQuestions(fileId, questions.map(storedFromRaw), Boolean(wrong?.length))
-        closeJob(job.id, 'done', `${questions.length} questões geradas.`)
-        await library().finishActivity(activityId, 'done', `${questions.length} questões geradas.`)
-        return questions.length
+        const done = `${questions.length} questões geradas. ${web.note}`
+        closeJob(job.id, 'done', done)
+        await library().finishActivity(activityId, 'done', done)
+        return { count: questions.length, web }
       } catch (error) {
         const cancelled = controller.signal.aborted
         closeJob(job.id, cancelled ? 'cancelled' : 'error', cancelled ? 'Cancelado por você.' : 'A prova não saiu.', cancelled ? null : failureText(error))
@@ -711,7 +796,7 @@ export const useJobsStore = create<JobsState>((set, get) => {
     readingExam: async (content, title) => {
       const { job, controller } = openJob('questions', `Prova de leitura: ${title}`, null)
       try {
-        const session = new GenerationSession(library().index.settings.ai, controller.signal)
+        const session = sessionFor('prova', controller.signal)
         const { questions } = await generateReadingExam(content, title, session)
         closeJob(job.id, 'done', `${questions.length} questões geradas.`)
         return questions.map(storedFromRaw)

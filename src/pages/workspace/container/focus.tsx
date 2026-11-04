@@ -15,21 +15,17 @@ import { TrashList } from '@/components/library/TrashList'
 import { useFileActions } from '@/components/library/use-file-actions'
 import { DocumentBody } from '@/components/reader/DocumentArticle'
 import { InspectorBody } from '@/components/reader/Inspector'
-import { useLibraryView, useLiveLibrary } from '@/hooks/use-library-view'
+import { useLibraryView } from '@/hooks/use-library-view'
 import type { ViewRoute } from '@/hooks/use-view-route'
 import { paths } from '@/lib/paths'
 import { useLibraryStore } from '@/stores/library'
 import { type InspectorTab, useUiStore } from '@/stores/ui'
-import { formatBytes } from '@/utils/format'
 import { ContinueCard, QuickActions, reviewSentence, useHomeData, useScrollerRef, WelcomeEmpty } from '@/pages/workspace/container/shared'
 
 function Home() {
   const data = useHomeData()
   const timeZone = useLibraryStore(state => state.index.settings.timezone)
-  const { folders, files } = useLiveLibrary()
   if (data.empty) return <WelcomeEmpty />
-  const course = folders.find(folder => folder.isCourse && files.some(file => file.status === 'pending' && isInside(file.folderId, folder.id, folders)))
-  const courseFiles = course ? files.filter(file => isInside(file.folderId, course.id, folders)).sort((a, b) => a.position - b.position) : []
   const date = new Date().toLocaleDateString('pt-BR', { timeZone, weekday: 'long', day: '2-digit', month: 'short', year: 'numeric' })
   return (
     <div className="home">
@@ -62,27 +58,8 @@ function Home() {
         </h3>
         <QuickActions fileForExam={data.continueReading} />
       </div>
-      {course && (
-        <div className="sect">
-          <h3>
-            Curso em andamento: {course.name} <span className="ln" />
-          </h3>
-          {courseFiles.map((file, index) => (
-            <FocusRow key={file.id} file={file} showWhere={false} inCourse order={index + 1} />
-          ))}
-        </div>
-      )}
     </div>
   )
-}
-
-function isInside(folderId: string | null, ancestorId: string, folders: { id: string; parentId: string | null }[]): boolean {
-  let current = folderId
-  for (let depth = 0; current && depth < 64; depth++) {
-    if (current === ancestorId) return true
-    current = folders.find(folder => folder.id === current)?.parentId ?? null
-  }
-  return false
 }
 
 function Library({ route }: { route: ViewRoute }) {
@@ -141,32 +118,12 @@ function Library({ route }: { route: ViewRoute }) {
               </h3>
               <div className="fl">
                 <FilterChips />
-                {data.isCourse ? (
-                  <button className="btn quiet" aria-pressed={ui.reorder} onClick={() => ui.set({ reorder: !ui.reorder })} style={{ marginLeft: 'auto' }}>
-                    <Icon name="sort" />
-                    {ui.reorder ? 'Pronto' : 'Ordenar aulas'}
-                  </button>
-                ) : (
-                  <SortSelect />
-                )}
+                <SortSelect />
               </div>
               <SelectionBar />
               <div>
-                {data.isCourse
-                  ? data.courseGroups.map(group => (
-                      <div key={group.module?.id ?? 'root'} className="sect" style={{ marginTop: 14 }}>
-                        {group.module && (
-                          <h3>
-                            {group.module.name} <span className="faint">{formatBytes(group.bytes)}</span> <span className="ln" />
-                          </h3>
-                        )}
-                        {group.files.map((file, index) => (
-                          <FocusRow key={file.id} file={file} showWhere={false} inCourse order={index + 1} siblings={group.files} />
-                        ))}
-                      </div>
-                    ))
-                  : data.files.map(file => <FocusRow key={file.id} file={file} showWhere={!data.browsing} />)}
-                {!data.files.length && !data.isCourse && <EmptyList filtering={data.filtering} browsing={data.browsing} hasTiles={data.tiles.length > 0} />}
+                {data.files.map(file => <FocusRow key={file.id} file={file} showWhere={!data.browsing} />)}
+                {!data.files.length && <EmptyList filtering={data.filtering} browsing={data.browsing} hasTiles={data.tiles.length > 0} />}
               </div>
             </section>
           )}

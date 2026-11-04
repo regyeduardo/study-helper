@@ -25,6 +25,9 @@ export const meeting: RecordingData = {
 
 const json = (value: unknown) => JSON.stringify(value)
 
+/** What the fake AI writes for any model of the Ata: the whole document, title included. */
+export const MODEL_DOCUMENT = '# Ata: Tabela de Vendas\n\n28/10/2026 · cerca de 5 min · sistema HM\n\n## Assuntos\n\n- A Tabela de Vendas precisa dos campos alinhados pelo topo.\n\n## Próximos passos\n\n1. **Alinhar os campos da Tabela de Vendas pelo topo.**\n'
+
 /** Who has the lit tile at each second (the mic voice's tile never lights, like in the real call). */
 function litTile(at: number): string {
   const block = meeting.blocks.find(item => item.start <= at && at <= item.end)
@@ -106,6 +109,7 @@ export function textAnswer(system: string, user: string): string {
   if (system.startsWith(P.BASE) && system.endsWith(P.PERGUNTAS)) return '# Perguntas\n\n## Perguntas sem resposta\n- Regy Niles perguntou quando entra o VGV corrigido. [▸ 01:40]'
   if (system.startsWith(P.BASE) && system.endsWith(P.LINHA_DO_TEMPO)) return '# Linha\n\n### 00:30 · Tabela de Vendas\nHenrique Souza pede o ajuste. [▸ 00:30]'
   if (system.startsWith(P.BASE) && system.endsWith(P.UM_A_UM)) return '# 1:1\n\nNão foi um 1:1.\n\n## Combinados\n- Natália Lenza ajusta a tabela. [▸ 01:00]'
+  if (system.startsWith(P.ABERTURA_MODELO)) return MODEL_DOCUMENT
   return `inesperado: ${system.slice(0, 40)} ${user.slice(0, 10)}`
 }
 

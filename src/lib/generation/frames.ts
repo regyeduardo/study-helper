@@ -1,11 +1,16 @@
-import type { AiSettings, RecordingData, ScreenFrame, Settings } from '@/types/domain'
+import type { AiSettings, RecordingData, ScreenFrame, ScreenIndex, Settings } from '@/types/domain'
 import { Cancelled, visionController } from '@/controllers/ai.controller'
-import { providerOf } from '@/lib/ai/providers'
+import { visionOf } from '@/lib/ai/config'
+import type { ScreenOcr } from '@/lib/generation/ata-types'
 import { pool } from '@/lib/generation/meeting-material'
 import { extractJson } from '@/lib/generation/mermaid'
 import { transcriptChunks } from '@/lib/generation/minutes'
 import { PROMPTS } from '@/lib/generation/prompts.data'
+import { browserOcr } from '@/lib/generation/screen-ocr'
+import { indexAndRead } from '@/lib/generation/screen-reading'
+import { voteTerms } from '@/lib/generation/screen-terms'
 import type { GenerationSession } from '@/lib/generation/session'
+import { openVideoFrames } from '@/lib/generation/video-source'
 import { type GrabbedFrame, grabFrames } from '@/lib/recording/frame-grab'
 import { transcriptText } from '@/lib/transcription/export'
 import { MICROPHONE, RECORDER } from '@/lib/transcription/turns'
@@ -13,7 +18,8 @@ import { MICROPHONE, RECORDER } from '@/lib/transcription/turns'
 const LOOK_AFTER = [0, 2, 5]
 const SAME_SCREEN = 8
 const SEE_AT_ONCE = 4
-const NO_VISION = 'A tela gravada não foi usada: escolha um Modelo de visão em Configurações › IA para o agente ler os nomes e os slides.'
+const NO_VISION = 'A tela gravada não foi usada: escolha um modelo de Leitura de tela (ou de Vídeo e áudio) em Configurações › Inteligência artificial › Padrões por uso para o agente ler os nomes e os slides.'
+const OCR_ONLY = 'A tela gravada foi lida só pelo texto (OCR local): escolha um modelo de Leitura de tela (ou de Vídeo e áudio) em Configurações › Inteligência artificial › Padrões por uso para o agente entender os slides.'
 
 export interface ScreenMoment {
   at: number
@@ -25,18 +31,26 @@ export interface ScreenMoment {
 export interface ScreenTools {
   grab(video: Blob, times: number[]): Promise<GrabbedFrame[]>
   see(settings: AiSettings, images: string[], prompt: string): Promise<string>
+  /** The local OCR (null where it cannot run). */
+  ocr?(): ScreenOcr | null
+  /** The distinct screens of the whole video with their text, to keep for the Ata (null when there are none to keep). */
+  index?(video: Blob, ocr: ScreenOcr | null, signal?: AbortSignal): Promise<ScreenIndex | null>
 }
 
-const REAL_TOOLS: ScreenTools = { grab: grabFrames, see: (settings, images, prompt) => visionController(settings, images, prompt) }
+async function keptIndex(video: Blob, ocr: ScreenOcr | null, signal?: AbortSignal): Promise<ScreenIndex | null> {
+  const source = await openVideoFrames(video)
+  try {
+    return await indexAndRead(source, ocr, signal)
+  } finally {
+    source.close?.()
+  }
+}
 
-export function visionSettingsOf(settings: Settings): AiSettings | null {
-  const vision = settings.vision
-  if (!vision?.provider || !vision.model) return null
-  const credential = settings.aiCredentials[vision.provider]
-  const same = settings.ai.provider === vision.provider
-  const apiKey = credential?.apiKey || (same ? settings.ai.apiKey : '')
-  if (providerOf(vision.provider).needsKey && !apiKey) return null
-  return { provider: vision.provider, model: vision.model, apiKey, baseUrl: credential?.baseUrl || (same ? settings.ai.baseUrl : '') }
+const REAL_TOOLS: ScreenTools = { grab: grabFrames, see: (settings, images, prompt) => visionController(settings, images, prompt), ocr: browserOcr, index: keptIndex }
+
+/** Leitura de tela (own, or the Vídeo e áudio model), or the one picked at generation time; null without a usable one. */
+export function visionSettingsOf(settings: Settings, pick?: string | null): AiSettings | null {
+  return visionOf(settings, pick)
 }
 
 function seconds(clock: string): number | null {
@@ -73,10 +87,11 @@ export function distinctFrames(frames: GrabbedFrame[]): GrabbedFrame[] {
   return kept
 }
 
-async function askedMoments(recording: RecordingData, session: GenerationSession): Promise<number[]> {
+/** Starts of the speech blocks where the speech needs the screen (names, acronyms, "olha essa tela"). */
+export async function askedMoments(recording: RecordingData, chat: (user: string, system: string) => Promise<string>): Promise<number[]> {
   const starts = recording.blocks.map(block => block.start)
   const found = new Set<number>()
-  const answers = await Promise.all(transcriptChunks(transcriptText(recording)).map(piece => session.chat(piece, PROMPTS.SCREEN_ASKS_PROMPT)))
+  const answers = await Promise.all(transcriptChunks(transcriptText(recording)).map(piece => chat(piece, PROMPTS.SCREEN_ASKS_PROMPT)))
   for (const answer of answers) {
     const hours = extractJson(answer)?.horas
     if (!Array.isArray(hours)) continue
@@ -96,12 +111,25 @@ function field(raw: string, name: string): string {
 
 export async function lookAtScreen(recording: RecordingData, video: Blob | null, vision: AiSettings | null, session: GenerationSession, tools: ScreenTools = REAL_TOOLS): Promise<RecordingData> {
   if (!video) return recording
-  if (!vision) return { ...recording, warning: [recording.warning, NO_VISION].filter(Boolean).join(' ') }
+  const ocr = tools.ocr?.() ?? null
+  if (!vision && !ocr) return { ...recording, warning: [recording.warning, NO_VISION].filter(Boolean).join(' ') }
+  // the screens of the whole video are found next to the rest and kept with the recording; failing never fails the look
+  const indexing = tools.index?.(video, ocr, session.signal).catch(() => null)
+  const kept = async () => {
+    const screenIndex = await indexing
+    return screenIndex ? { screenIndex } : {}
+  }
   try {
-    const asked = await askedMoments(recording, session)
+    const asked = await askedMoments(recording, (user, system) => session.chat(user, system))
     const moments = screenMoments(recording, asked)
     const times = [...new Set(moments.map(moment => moment.at))].sort((a, b) => a - b)
     const grabbed = new Map((await tools.grab(video, times)).map(frame => [frame.at, frame]))
+    // The local OCR reads each distinct frame (exact text, free) while the vision model looks; unsure readings never become terms.
+    const reading = Promise.all(distinctFrames([...grabbed.values()]).map(frame => (ocr ? ocr.read(frame.image).catch(() => []) : [])))
+    if (!vision) {
+      const screenTerms = voteTerms(await reading).exact
+      return { ...recording, warning: [recording.warning, screenTerms.length ? OCR_ONLY : NO_VISION].filter(Boolean).join(' '), ...(screenTerms.length ? { screenTerms } : {}), ...(await kept()) }
+    }
     const looks: { at: number; shots: GrabbedFrame[] }[] = []
     const read: GrabbedFrame[] = []
     for (const start of new Set(moments.filter(moment => moment.kind === 'tela').map(moment => moment.from ?? moment.at))) {
@@ -134,9 +162,12 @@ export async function lookAtScreen(recording: RecordingData, video: Blob | null,
       if (name) speakers[face.index] = { ...speakers[face.index], name, suggested: false }
     })
     frames.sort((a, b) => a.at - b.at)
-    return { ...recording, speakers, ...(frames.length ? { frames } : {}) }
+    const screenTerms = voteTerms(await reading).exact
+    return { ...recording, speakers, ...(frames.length ? { frames } : {}), ...(screenTerms.length ? { screenTerms } : {}), ...(await kept()) }
   } catch (error) {
     if (error instanceof Cancelled) throw error
-    return { ...recording, warning: [recording.warning, 'Não deu para ler a tela gravada; a nota foi feita só com o som.'].filter(Boolean).join(' ') }
+    return { ...recording, warning: [recording.warning, 'Não deu para ler a tela gravada; a nota foi feita só com o som.'].filter(Boolean).join(' '), ...(await kept()) }
+  } finally {
+    ocr?.close?.()
   }
 }

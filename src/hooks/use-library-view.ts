@@ -15,12 +15,6 @@ export interface FolderTile {
   bytes: number
 }
 
-export interface CourseGroup {
-  module: FolderMeta | null
-  files: FileMeta[]
-  bytes: number
-}
-
 function descendants(folders: FolderMeta[], id: string): string[] {
   return [id, ...folders.filter(folder => folder.parentId === id).flatMap(folder => descendants(folders, folder.id))]
 }
@@ -135,14 +129,12 @@ export function useLibraryView(view: View, folderId: string | null) {
     if (lowMastery) list = list.filter(file => file.mastery !== null && file.mastery < LOW_MASTERY_BELOW)
     if (trimmed) list = list.filter(file => `${file.name} ${file.description} ${file.tags.join(' ')} ${contents[file.id]?.content ?? ''}`.toLowerCase().includes(trimmed))
 
-    const isCourse = browsing && Boolean(folder?.isCourse)
     const sorted = [...list]
-    if (isCourse) sorted.sort((a, b) => a.position - b.position)
-    else if (sort === 'recent') sorted.sort((a, b) => b.updated.at.localeCompare(a.updated.at))
+    if (sort === 'recent') sorted.sort((a, b) => b.updated.at.localeCompare(a.updated.at))
     else if (sort === 'title') sorted.sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'))
     else sorted.sort((a, b) => (a.mastery ?? 101) - (b.mastery ?? 101))
 
-    const tiles: FolderTile[] = browsing && !isCourse
+    const tiles: FolderTile[] = browsing
       ? folders
           .filter(item => item.parentId === folderId)
           .sort((a, b) => a.position - b.position || a.name.localeCompare(b.name, 'pt-BR'))
@@ -157,22 +149,8 @@ export function useLibraryView(view: View, folderId: string | null) {
           })
       : []
 
-    const courseGroups: CourseGroup[] = isCourse
-      ? [
-          { module: null, files: sorted.filter(file => file.folderId === folderId), bytes: 0 },
-          ...folders
-            .filter(item => item.parentId === folderId)
-            .sort((a, b) => a.position - b.position)
-            .map(module => ({
-              module,
-              files: files.filter(file => file.folderId === module.id).sort((a, b) => a.position - b.position),
-              bytes: folderBytes(module.id, folders, files, file => fileBytes(file, sizes[file.id], media)),
-            })),
-        ].filter(group => group.files.length)
-      : []
-
     const filtering = Boolean(types.size || lowMastery || tag || trimmed)
     const hideFiles = browsing && !sorted.length && tiles.length > 0 && !filtering
-    return { folder, files: sorted, tiles, isCourse, courseGroups, filtering, hideFiles, browsing }
+    return { folder, files: sorted, tiles, filtering, hideFiles, browsing }
   }, [files, folders, contents, sizes, media, view, folderId, trimmed, types, lowMastery, tag, sort])
 }

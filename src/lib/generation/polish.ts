@@ -3,6 +3,7 @@ import { Cancelled } from '@/controllers/ai.controller'
 import { extractJson } from '@/lib/generation/mermaid'
 import { PROMPTS } from '@/lib/generation/prompts.data'
 import { batches, type Correction, correctionsIn, withCorrections } from '@/lib/generation/reviewer'
+import { screenWriting } from '@/lib/generation/screen-terms'
 import type { GenerationSession } from '@/lib/generation/session'
 import { applied, type Suggestion, suggestionsIn } from '@/lib/generation/speaker-names'
 import { cleanTitle } from '@/lib/generation/title'
@@ -39,7 +40,7 @@ export async function polishTranscript(recording: RecordingData, session: Genera
   const context =
     (hint ? `${hint}\n\n` : '') +
     (recording.speakers.length ? `Participantes: ${recording.speakers.map(speaker => speaker.name).join(', ')}\n\n` : '') +
-    (recording.frames?.length ? `Escrito na tela durante a reunião: ${recording.frames.map(frame => frame.text).join(' | ')}\n\n` : '')
+    screenWriting(recording)
   const lines = recording.blocks.map((block, index) => `${index + 1} | ${block.speaker ? `${speakerName(recording, block.speaker)} ` : ''}[${clockTime(block.start)}]: ${block.text}`)
   const names: Suggestion[] = []
   const corrections: Correction[] = []

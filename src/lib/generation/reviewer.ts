@@ -3,6 +3,7 @@ import { Cancelled } from '@/controllers/ai.controller'
 import { extractJson } from '@/lib/generation/mermaid'
 import { CHUNK_CHARS } from '@/lib/generation/minutes'
 import { PROMPTS } from '@/lib/generation/prompts.data'
+import { screenWriting } from '@/lib/generation/screen-terms'
 import type { GenerationSession } from '@/lib/generation/session'
 import { speakerName } from '@/lib/transcription/export'
 import { termsHint } from '@/lib/transcription/types'
@@ -76,7 +77,7 @@ export async function redoTranscript(recording: RecordingData, instruction: stri
     `O que está errado, segundo quem gravou: ${instruction.trim()}\n\n` +
     (hint ? `${hint}\n\n` : '') +
     (recording.speakers.length ? `Participantes: ${recording.speakers.map(speaker => speaker.name).join(', ')}\n\n` : '') +
-    (recording.frames?.length ? `Escrito na tela durante a reunião: ${recording.frames.map(frame => frame.text).join(' | ')}\n\n` : '')
+    screenWriting(recording)
   const lines = recording.blocks.map((block, index) => `${index + 1} | ${block.speaker ? `${speakerName(recording, block.speaker)}: ` : ''}${block.text}`)
   const corrections: Correction[] = []
   const reassignments: Reassignment[] = []
@@ -109,7 +110,7 @@ export async function reviewTranscript(recording: RecordingData, session: Genera
   if (!recording.blocks.length) return recording
   const hint = termsHint(terms)
   const people = (hint ? `${hint}\n\n` : '') + (recording.speakers.length ? `Participantes: ${recording.speakers.map(speaker => speaker.name).join(', ')}\n\n` : '')
-  const screen = recording.frames?.length ? `Escrito na tela durante a reunião: ${recording.frames.map(frame => frame.text).join(' | ')}\n\n` : ''
+  const screen = screenWriting(recording)
   const lines = recording.blocks.map((block, index) => `${index + 1} | ${block.speaker ? `${speakerName(recording, block.speaker)}: ` : ''}${block.text}`)
   const corrections: Correction[] = []
   try {

@@ -8,6 +8,7 @@ import { MindMapDialog } from '@/components/dialogs/MindMapDialog'
 import { TutorDialog } from '@/components/dialogs/TutorDialog'
 import { ConflictDialog } from '@/components/dialogs/ConflictDialog'
 import { ExamDialog, ExamRun, FolderExamDialog } from '@/components/dialogs/ExamDialog'
+import { GenerateDialog, TranscribeDialog } from '@/components/dialogs/GenerateDialog'
 import { JobsPanel } from '@/components/dialogs/JobsPanel'
 import { MediaDialog } from '@/components/dialogs/MediaDialog'
 import { ActivityDialog, CourseProposalDialog, ExplainDialog, ImportDialog, OrderDialog, SendLocalDialog, StorageLimitDialog } from '@/components/dialogs/MoreDialogs'
@@ -45,7 +46,9 @@ export function Overlays() {
   else if (overlay?.kind === 'cards') content = <CardsDialog fileId={overlay.fileId} />
   else if (overlay?.kind === 'mindmap') content = <MindMapDialog fileId={overlay.fileId} />
   else if (overlay?.kind === 'tutor') content = <TutorDialog fileId={overlay.fileId} />
-  else if (overlay?.kind === 'ata-parts') content = <AtaPartsDialog fileId={overlay.fileId} />
+  else if (overlay?.kind === 'ata-parts') content = <AtaPartsDialog fileId={overlay.fileId} again={overlay.again} />
+  else if (overlay?.kind === 'generate') content = <GenerateDialog fileId={overlay.fileId} agent={overlay.agent} redo={overlay.redo} again={overlay.again} />
+  else if (overlay?.kind === 'transcribe') content = <TranscribeDialog fileId={overlay.fileId} />
   else if (overlay?.kind === 'folder-exam') content = <FolderExamDialog folderId={overlay.folderId} fileIds={overlay.fileIds} />
   else if (overlay?.kind === 'account') content = <AccountMenu />
   else if (overlay?.kind === 'new-folder') content = <NewFolderDialog parentId={overlay.parentId} />

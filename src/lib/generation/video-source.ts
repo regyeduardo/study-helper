@@ -5,6 +5,7 @@ const FRAME_WIDTH = 1280
 const SIGNATURE_WIDTH = 48
 const SIGNATURE_HEIGHT = 36
 const DURATION_PROBE_MS = 2000
+const THUMB_VIDEOS = 4
 const OPEN_ERROR = 'O vídeo da gravação não abriu.'
 const DRAW_ERROR = 'Não foi possível desenhar o quadro do vídeo.'
 
@@ -154,10 +155,15 @@ export async function openVideoFrames(video: Blob): Promise<FrameSource> {
     crop: (at: number, box: Box) =>
       run(async () => {
         await seek(at)
-        const x1 = clamp(box.x, 0, Math.max(0, width - 1))
-        const y1 = clamp(box.y, 0, Math.max(0, height - 1))
-        const x2 = clamp(box.x + box.w, x1 + 1, Math.max(x1 + 1, width))
-        const y2 = clamp(box.y + box.h, y1 + 1, Math.max(y1 + 1, height))
+        // A MediaRecorder webm can open at 1280x720 and grow to 1920x1080 after the first frame: the box is in the opening size
+        const frameWidth = element.videoWidth || width
+        const frameHeight = element.videoHeight || height
+        const sx = width ? frameWidth / width : 1
+        const sy = height ? frameHeight / height : 1
+        const x1 = clamp(box.x * sx, 0, Math.max(0, frameWidth - 1))
+        const y1 = clamp(box.y * sy, 0, Math.max(0, frameHeight - 1))
+        const x2 = clamp((box.x + box.w) * sx, x1 + 1, Math.max(x1 + 1, frameWidth))
+        const y2 = clamp((box.y + box.h) * sy, y1 + 1, Math.max(y1 + 1, frameHeight))
         const sourceWidth = x2 - x1
         const sourceHeight = y2 - y1
         const canvas = document.createElement('canvas')
@@ -166,6 +172,40 @@ export async function openVideoFrames(video: Blob): Promise<FrameSource> {
         context2d(canvas).drawImage(element, x1, y1, sourceWidth, sourceHeight, 0, 0, canvas.width, canvas.height)
         return shot(at, canvas, 0.9)
       }),
+    // Seeks cost ~85 ms each in a MediaRecorder webm: a few hidden videos share the times, and the one used for crops stays put.
+    thumbs: async (times: number[], thumbWidth: number, thumbHeight: number) => {
+      const out: Uint8Array[] = new Array(times.length)
+      const videos = Math.max(1, Math.min(THUMB_VIDEOS, times.length))
+      await Promise.all(
+        Array.from({ length: videos }, async (_, part) => {
+          const helper = document.createElement('video')
+          helper.muted = true
+          helper.preload = 'auto'
+          const opened = once(helper, 'loadeddata')
+          helper.src = url
+          try {
+            await opened
+            const canvas = document.createElement('canvas')
+            canvas.width = thumbWidth
+            canvas.height = thumbHeight
+            const context = context2d(canvas, { willReadFrequently: true })
+            for (let index = Math.floor((part * times.length) / videos); index < Math.floor(((part + 1) * times.length) / videos); index++) {
+              const seeked = once(helper, 'seeked')
+              helper.currentTime = duration > 0 ? clamp(times[index], 0, duration) : Math.max(0, times[index])
+              await seeked
+              context.drawImage(helper, 0, 0, thumbWidth, thumbHeight)
+              const pixels = context.getImageData(0, 0, thumbWidth, thumbHeight).data
+              const gray = new Uint8Array(thumbWidth * thumbHeight)
+              for (let pixel = 0; pixel < gray.length; pixel++) gray[pixel] = (pixels[pixel * 4] + pixels[pixel * 4 + 1] + pixels[pixel * 4 + 2]) / 3
+              out[index] = gray
+            }
+          } finally {
+            helper.removeAttribute('src')
+          }
+        }),
+      )
+      return out
+    },
     close: release,
   }
 }

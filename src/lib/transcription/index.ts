@@ -2,6 +2,7 @@ import type { ProviderEngine, RecordingData, SpeakersEngine, StageTime,Transcrip
 import { balancedMix, decodeChannels16k, durationOf, encodeWav, mixedDown, splitSamples } from '@/lib/transcription/audio'
 import { transcriptText } from '@/lib/transcription/export'
 import { lightParts } from '@/lib/transcription/opus'
+import { transcribeWithChat } from '@/lib/transcription/providers/chat'
 import { transcribeWithCustom } from '@/lib/transcription/providers/custom'
 import { deepInfraTurns, transcribeWithDeepInfra } from '@/lib/transcription/providers/deepinfra'
 import { transcribeWithGemini } from '@/lib/transcription/providers/gemini'
@@ -12,7 +13,7 @@ import { type Progress, type ProviderJob, type ProviderResult, type SpeakerTurn,
 const PROVIDER_PART_SECONDS = 300
 const LIGHT_PARTS = new Set<ProviderEngine>(['custom'])
 const BALANCED_PARTS = new Set<ProviderEngine>(['deepinfra'])
-const CHOOSE_ENGINE = 'Escolha um provedor de transcrição em Configurações › Transcrição.'
+const CHOOSE_ENGINE = 'Escolha um modelo de Transcrição em Configurações › Inteligência artificial › Padrões por uso, ou na hora de gerar.'
 
 export interface EngineInfo {
   id: TranscriptionEngine
@@ -49,9 +50,10 @@ const PROVIDERS: Record<ProviderEngine, (job: ProviderJob) => Promise<ProviderRe
   deepinfra: transcribeWithDeepInfra,
   gemini: transcribeWithGemini,
   custom: transcribeWithCustom,
+  chat: transcribeWithChat,
 }
 
-const NO_SPEAKERS = 'Este provedor não separa quem fala. Para ver os falantes, escolha em Configurações › Transcrição um segundo provedor só para isso.'
+const NO_SPEAKERS = 'Este modelo de transcrição não separa quem fala.'
 const EMPTY_CREDENTIAL: TranscriptionCredential = { apiKey: '', baseUrl: '', model: '', extra: '' }
 
 function isProvider(engine: TranscriptionEngine): engine is ProviderEngine {

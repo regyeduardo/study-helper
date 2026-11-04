@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom'
 import type { CourseAnalysis } from '@/types/domain'
 import { Dialog } from '@/components/ui/Dialog'
 import { Icon } from '@/components/ui/Icon'
+import { ModelPick, useModelChoice } from '@/components/dialogs/ModelPick'
 import { FolderPicker } from '@/components/dialogs/SimpleDialogs'
 import { DEFAULT_STORAGE_LIMIT_BYTES } from '@/lib/defaults'
 import { storedFromRaw } from '@/lib/exam'
@@ -22,8 +23,9 @@ export function ExplainDialog({ fileId, excerpt }: { fileId: string; excerpt: st
   const explainSelection = useJobsStore(state => state.explainSelection)
   const [mode, setMode] = useState<'context' | 'concept'>('context')
   const [prompt, setPrompt] = useState('')
+  const choice = useModelChoice('explicacao')
   const go = async () => {
-    const id = await explainSelection(fileId, excerpt, prompt, mode)
+    const id = await explainSelection(fileId, excerpt, prompt, mode, choice.model || null)
     ui.close()
     navigate(paths.file(id))
   }
@@ -36,7 +38,7 @@ export function ExplainDialog({ fileId, excerpt }: { fileId: string; excerpt: st
           <button className="btn quiet" onClick={ui.close}>
             Cancelar
           </button>
-          <button className="btn primary" onClick={() => void go()}>
+          <button className="btn primary" disabled={!choice.ready} onClick={() => void go()}>
             <Icon name="bulb" />
             Gerar explicação
           </button>
@@ -67,6 +69,7 @@ export function ExplainDialog({ fileId, excerpt }: { fileId: string; excerpt: st
           <label htmlFor="ex-prompt">O que você quer saber (opcional)</label>
           <textarea className="input" id="ex-prompt" value={prompt} onChange={event => setPrompt(event.target.value)} placeholder="Ex.: por que isso vale só para índice composto?" />
         </div>
+        <ModelPick choice={choice} />
       </div>
     </Dialog>
   )
@@ -127,10 +130,10 @@ export function OrderDialog({ folderId }: { folderId: string }) {
 
   if (!course) return null
   return (
-    <Dialog title={`Ordem do curso · ${course.name}`} size="wide" onClose={ui.close} footer={<button className="btn primary" onClick={ui.close}>Pronto</button>}>
+    <Dialog title={`Ordem das aulas · ${course.name}`} size="wide" onClose={ui.close} footer={<button className="btn primary" onClick={ui.close}>Pronto</button>}>
       <div className="db">
         <div className="field">
-          <label htmlFor="course-desc">Descrição do curso</label>
+          <label htmlFor="course-desc">Descrição da pasta</label>
           <textarea className="input" id="course-desc" defaultValue={course.courseDescription ?? ''} onBlur={event => void library.updateFolder(course.id, { courseDescription: event.target.value })} />
         </div>
         {renderLessons(folderId)}
@@ -276,7 +279,7 @@ export function CourseProposalDialog() {
   const analysis: CourseAnalysis = proposal.analysis
   return (
     <Dialog
-      title="Isso rende um curso"
+      title="Isso rende uma pasta com aulas"
       footer={
         <>
           <button
@@ -301,7 +304,7 @@ export function CourseProposalDialog() {
               navigate(paths.folder(id))
             }}
           >
-            Criar o curso
+            Criar a pasta com as aulas
           </button>
         </>
       }
@@ -314,7 +317,7 @@ export function CourseProposalDialog() {
           O primeiro módulo é escrito agora; as outras aulas ficam guardadas para gerar quando você quiser.
         </span>
         <div className="field">
-          <span className="lab">Onde criar o curso</span>
+          <span className="lab">Onde criar a pasta</span>
           <FolderPicker value={folderId} onChange={setFolderId} />
         </div>
       </div>

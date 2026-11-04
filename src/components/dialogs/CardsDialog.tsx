@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react'
 
 import type { StudyCard } from '@/types/domain'
+import { ModelPick, useModelChoice } from '@/components/dialogs/ModelPick'
 import { Dialog } from '@/components/ui/Dialog'
 import { Icon } from '@/components/ui/Icon'
+import { targetFor } from '@/lib/ai/config'
 import { generateCards, reviewed, today } from '@/lib/generation/cards'
 import { GenerationSession } from '@/lib/generation/session'
 import { transcriptText } from '@/lib/transcription/export'
@@ -23,7 +25,8 @@ async function saveCards(fileId: string, cards: StudyCard[]): Promise<void> {
 export function CardsDialog({ fileId }: { fileId: string }) {
   const close = useUiStore(state => state.close)
   const meta = useLibraryStore(state => state.files.find(file => file.id === fileId))
-  const settings = useLibraryStore(state => state.index.settings.ai)
+  const settings = useLibraryStore(state => state.index.settings)
+  const choice = useModelChoice('cartoes')
   const [cards, setCards] = useState<StudyCard[] | null>(null)
   const [queue, setQueue] = useState<string[]>([])
   const [showing, setShowing] = useState(false)
@@ -48,7 +51,7 @@ export function CardsDialog({ fileId }: { fileId: string }) {
     setBusy('Fazendo os cartões da nota')
     setError('')
     try {
-      const made = await generateCards(await noteText(fileId), new GenerationSession(settings))
+      const made = await generateCards(await noteText(fileId), new GenerationSession(targetFor(settings, 'cartoes', choice.model)))
       if (!made.length) throw new Error('A IA não devolveu nenhum cartão. Tente de novo.')
       await saveCards(fileId, made)
       start(made)
@@ -85,7 +88,8 @@ export function CardsDialog({ fileId }: { fileId: string }) {
         ) : !cards.length ? (
           <div className="cards-empty">
             <p>Esta nota ainda não tem cartões.</p>
-            <button className="btn primary" onClick={() => void make()}>
+            <ModelPick choice={choice} />
+            <button className="btn primary" disabled={!choice.ready} onClick={() => void make()}>
               Fazer os cartões
             </button>
           </div>
@@ -119,7 +123,8 @@ export function CardsDialog({ fileId }: { fileId: string }) {
             <p className="muted">
               {cards.length} cartões · próximos em {[...new Set(cards.map(card => card.due))].sort()[0] ?? '—'}
             </p>
-            <button className="btn quiet" onClick={() => void make()}>
+            <ModelPick choice={choice} />
+            <button className="btn quiet" disabled={!choice.ready} onClick={() => void make()}>
               Fazer os cartões de novo
             </button>
           </div>

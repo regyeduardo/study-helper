@@ -5,6 +5,7 @@ import type { FileMeta } from '@/types/domain'
 import { Icon } from '@/components/ui/Icon'
 import { useFileActions } from '@/components/library/use-file-actions'
 import { useLiveLibrary, usePathName } from '@/hooks/use-library-view'
+import { isCourseFolder } from '@/lib/generation/course-lesson'
 import { paths } from '@/lib/paths'
 import { useUiStore } from '@/stores/ui'
 
@@ -14,7 +15,7 @@ export function useSiblings(meta: FileMeta): { previous: FileMeta | null; next: 
   return useMemo(() => {
     const folder = folders.find(item => item.id === meta.folderId)
     const list = files.filter(file => file.folderId === meta.folderId)
-    if (folder?.isCourse || folders.find(item => item.id === folder?.parentId)?.isCourse) list.sort((a, b) => a.position - b.position)
+    if (isCourseFolder(folders, folder?.id) || isCourseFolder(folders, folder?.parentId)) list.sort((a, b) => a.position - b.position)
     else if (sort === 'title') list.sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'))
     else if (sort === 'mastery') list.sort((a, b) => (a.mastery ?? 101) - (b.mastery ?? 101))
     else list.sort((a, b) => b.updated.at.localeCompare(a.updated.at))

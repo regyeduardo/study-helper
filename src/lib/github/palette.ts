@@ -18,6 +18,26 @@ export const APP_PALETTE = `
   --borderColor-accent-emphasis: var(--acc1);
   --color-border-default: var(--border);
   --color-border-muted: var(--border-muted);
+  /* Code: GitHub's light syntax colors in the light theme, its dark ones in the dark theme. */
+  color-scheme: inherit;
+  --prettylights-syntax-comment: var(--fg-muted);
+  --prettylights-syntax-storageModifierImport: var(--fg);
+  --prettylights-syntax-markup-bold: var(--fg);
+  --prettylights-syntax-markup-italic: var(--fg);
+  --prettylights-syntax-bracketHighlighterAngle: var(--fg-muted);
+  --prettylights-syntax-constant: light-dark(#0550ae, #79c0ff);
+  --prettylights-syntax-constantOtherReferenceLink: light-dark(#0a3069, #a5d6ff);
+  --prettylights-syntax-entity: light-dark(#6639ba, #d2a8ff);
+  --prettylights-syntax-entityTag: light-dark(#0550ae, #7ee787);
+  --prettylights-syntax-keyword: light-dark(#cf222e, #ff7b72);
+  --prettylights-syntax-string: light-dark(#0a3069, #a5d6ff);
+  --prettylights-syntax-stringRegexp: light-dark(#116329, #7ee787);
+  --prettylights-syntax-variable: light-dark(#953800, #ffa657);
+  --prettylights-syntax-bracketHighlighterUnmatched: light-dark(#82071e, #f85149);
+  --prettylights-syntax-markup-heading: light-dark(#0550ae, #1f6feb);
+  --prettylights-syntax-markup-list: light-dark(#3b2300, #f2cc60);
+  --prettylights-syntax-metaDiffRange: light-dark(#8250df, #d2a8ff);
+  --prettylights-syntax-sublimeLinterGutterMark: light-dark(#818b98, #3d444d);
 }
 
 .markdown-body { background-color: transparent; color: var(--fg); font-size: 16px; }

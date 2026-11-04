@@ -40,11 +40,10 @@ export function FolderTiles({ tiles }: { tiles: FolderTile[] }) {
             {...dropTarget(folder.id)}
           >
             <span className="tile-ic">
-              <Icon name={folder.isCourse ? 'layers' : 'folder'} />
+              <Icon name="folder" />
             </span>
             <span className="tile-t">
               {folder.name}
-              {folder.isCourse && <> <span className="crs">curso</span></>}
             </span>
             <span className="tile-m">
               {plural(files, 'arquivo', 'arquivos')}

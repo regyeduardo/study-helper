@@ -2,8 +2,10 @@ import { useEffect, useState } from 'react'
 
 import type { MindNode } from '@/types/domain'
 import { noteText } from '@/components/dialogs/CardsDialog'
+import { ModelPick, useModelChoice } from '@/components/dialogs/ModelPick'
 import { Dialog } from '@/components/ui/Dialog'
 import { Icon } from '@/components/ui/Icon'
+import { targetFor } from '@/lib/ai/config'
 import { generateMindmap } from '@/lib/generation/mindmap'
 import { GenerationSession } from '@/lib/generation/session'
 import { useLibraryStore } from '@/stores/library'
@@ -40,7 +42,8 @@ export function MindMapView({ map }: { map: MindNode }) {
 export function MindMapDialog({ fileId }: { fileId: string }) {
   const close = useUiStore(state => state.close)
   const meta = useLibraryStore(state => state.files.find(file => file.id === fileId))
-  const settings = useLibraryStore(state => state.index.settings.ai)
+  const settings = useLibraryStore(state => state.index.settings)
+  const choice = useModelChoice('mapa')
   const [map, setMap] = useState<MindNode | null | undefined>(undefined)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -56,7 +59,7 @@ export function MindMapDialog({ fileId }: { fileId: string }) {
     setBusy(true)
     setError('')
     try {
-      const made = await generateMindmap(await noteText(fileId), new GenerationSession(settings))
+      const made = await generateMindmap(await noteText(fileId), new GenerationSession(targetFor(settings, 'mapa', choice.model)))
       if (!made) throw new Error('A IA não devolveu um mapa. Tente de novo.')
       await useLibraryStore.getState().updateSidecar(fileId, sidecar => ({ ...sidecar, mindmap: made }))
       await useLibraryStore.getState().updateFile(fileId, { hasMindmap: true })
@@ -82,14 +85,16 @@ export function MindMapDialog({ fileId }: { fileId: string }) {
         ) : map ? (
           <>
             <MindMapView map={map} />
-            <button className="btn quiet" onClick={() => void make()}>
+            <ModelPick choice={choice} />
+            <button className="btn quiet" disabled={!choice.ready} onClick={() => void make()}>
               Fazer o mapa de novo
             </button>
           </>
         ) : (
           <div className="cards-empty">
             <p>Esta nota ainda não tem mapa mental.</p>
-            <button className="btn primary" onClick={() => void make()}>
+            <ModelPick choice={choice} />
+            <button className="btn primary" disabled={!choice.ready} onClick={() => void make()}>
               Fazer o mapa mental
             </button>
           </div>

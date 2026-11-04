@@ -45,6 +45,7 @@ describe('explorer table', () => {
       ['Limites laterais e continuidade', 'Texto', 'limites', '70%'],
       ['Monitoria de limites', 'Áudio · 52 min', 'limites', ''],
     ])
+    expect(screen.queryByText(/curso/i)).not.toBeInTheDocument()
   })
 
   it('Tudo, Texto, Áudio and Vídeo filter by the media of the note', () => {

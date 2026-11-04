@@ -104,9 +104,9 @@ export function shuffleExam(questions: Question[], random: Random = Math.random)
 function shuffleQuestion(question: Question, random: Random): Question {
   switch (questionType(question)) {
     case 'unica':
-      return question.formato === 'assercao_razao' ? question : relabel(question, shuffled(LETTERS, random))
+      return question.formato === 'assercao_razao' ? question : relabel(question, shuffled(present(question), random))
     case 'multipla':
-      return relabel(question, shuffled(LETTERS, random))
+      return relabel(question, shuffled(present(question), random))
     case 'lacuna':
       return {
         ...question,
@@ -120,6 +120,9 @@ function shuffleQuestion(question: Question, random: Random): Question {
       return question
   }
 }
+
+// A web question can have four alternatives: shuffling a missing E would leave a gap in the letters
+const present = (question: Question) => LETTERS.filter(letter => question.alternativas[letter])
 
 function relabel(question: Question, order: string[]): Question {
   const shown: Record<string, string> = {}

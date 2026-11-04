@@ -86,6 +86,8 @@ export function Explorer({ view, folderId }: { view: View; folderId: string | nu
     const box = event.currentTarget.getBoundingClientRect()
     ui.openMenu({ kind, id, x: box.left - 200, y: box.bottom + 4 })
   }
+  // Enter on the row itself (not on its star or ⋯) opens it, like the click.
+  const onEnter = (open: () => void) => (event: React.KeyboardEvent<HTMLElement>) => event.key === 'Enter' && event.target === event.currentTarget && open()
   return (
     <section className="explorer">
       <div className="ex-tools">
@@ -141,7 +143,7 @@ export function Explorer({ view, folderId }: { view: View; folderId: string | nu
           {subfolders.map(folder => {
             const count = inside.get(folder.id) ?? 0
             return (
-              <tr key={folder.id} className={count ? 'hit' : undefined} onClick={() => navigate(paths.folder(folder.id))}>
+              <tr key={folder.id} className={count ? 'hit' : undefined} tabIndex={0} onClick={() => navigate(paths.folder(folder.id))} onKeyDown={onEnter(() => navigate(paths.folder(folder.id)))}>
                 <td>
                   <div className="ex-name">
                     <Icon name="folder" />
@@ -165,7 +167,7 @@ export function Explorer({ view, folderId }: { view: View; folderId: string | nu
           {rows.map(file => {
             const hit = hits.get(file.id)
             return (
-              <tr key={file.id} className={hit ? 'hit' : undefined} data-file-id={file.id} onClick={() => openFile(file)}>
+              <tr key={file.id} className={hit ? 'hit' : undefined} data-file-id={file.id} tabIndex={0} onClick={() => openFile(file)} onKeyDown={onEnter(() => openFile(file))}>
                 <td>
                   <div className="ex-name">
                     <Icon name={mediaOf(file) === 'text' ? 'file' : mediaOf(file) === 'video' ? 'monitor' : 'mic'} />

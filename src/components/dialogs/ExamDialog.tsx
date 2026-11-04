@@ -3,8 +3,10 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 
 import type { Attempt, Certainty, Question, StoredQuestion, UserAnswer } from '@/types/domain'
+import { ModelPick, useModelChoice } from '@/components/dialogs/ModelPick'
 import { Dialog } from '@/components/ui/Dialog'
 import { Icon } from '@/components/ui/Icon'
+import { targetFor } from '@/lib/ai/config'
 import { CERTAINTY_LABELS, examStats, givenAnswerText, isAnswered, LETTERS, LEVEL_LABELS, questionFromStored, questionType, rightAnswerText, shuffleExam, statementLines, storedAnswer, summarizeExam } from '@/lib/exam'
 import { type Diagnosis, diagnoseMistakes, gapExcerpt, type MissedQuestion } from '@/lib/generation/diagnosis'
 import { paths } from '@/lib/paths'
@@ -19,6 +21,14 @@ const KIND_LABEL: Record<string, string> = {
   ordenar: 'Ordenar',
   associar: 'Associar',
   lacuna: 'Lacuna',
+}
+
+function hostOf(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./, '')
+  } catch {
+    return url
+  }
 }
 
 function Markdown({ text }: { text: string }) {
@@ -206,13 +216,15 @@ interface ExamRunProps {
   sourceOf?: (storedId: string) => string | undefined
   diagnosisTarget?: DiagnosisTarget
   onRegenerate?: () => void
+  /** Said above the questions (Questões da web that did not come). */
+  notice?: string
   onRecord?: (fileId: string, fields: Omit<Attempt, 'id' | 'createdAt' | 'deviceId'>) => void | Promise<void>
 }
 
 function DiagnosisView({ title, missed, target, onBack }: { title: string; missed: MissedQuestion[]; target: DiagnosisTarget; onBack(): void }) {
   const ui = useUiStore()
   const navigate = useNavigate()
-  const ai = useLibraryStore(state => state.index.settings.ai)
+  const settings = useLibraryStore(state => state.index.settings)
   const explainGaps = useJobsStore(state => state.explainGaps)
   const [state, setState] = useState<{ kind: 'thinking' } | { kind: 'error'; message: string } | { kind: 'ready'; diagnosis: Diagnosis }>({ kind: 'thinking' })
   const [single, setSingle] = useState(true)
@@ -224,7 +236,7 @@ function DiagnosisView({ title, missed, target, onBack }: { title: string; misse
     const current = new AbortController()
     controller.current = current
     setState({ kind: 'thinking' })
-    diagnoseMistakes(missed, ai, current.signal)
+    diagnoseMistakes(missed, targetFor(settings, 'prova'), current.signal)
       .then(diagnosis => {
         setSingle(diagnosis.single)
         setState({ kind: 'ready', diagnosis })
@@ -321,7 +333,7 @@ function DiagnosisView({ title, missed, target, onBack }: { title: string; misse
   )
 }
 
-export function ExamRun({ title, questions, sourceOf, diagnosisTarget, onRegenerate, onRecord }: ExamRunProps) {
+export function ExamRun({ title, questions, sourceOf, diagnosisTarget, onRegenerate, notice, onRecord }: ExamRunProps) {
   const ui = useUiStore()
   const libraryRecord = useLibraryStore(state => state.recordAttempt)
   const recordAttempt = onRecord ?? libraryRecord
@@ -404,6 +416,12 @@ export function ExamRun({ title, questions, sourceOf, diagnosisTarget, onRegener
       }
     >
       <div className="db">
+        {notice && !done && (
+          <div className="banner" role="status">
+            <Icon name="warn" />
+            <span>{notice}</span>
+          </div>
+        )}
         {done ? (
           <div className="result-head">
             <div className="score">{stats.percent}%</div>
@@ -460,6 +478,14 @@ export function ExamRun({ title, questions, sourceOf, diagnosisTarget, onRegener
                 {done && question.nivel ? ` · nível: ${LEVEL_LABELS[question.nivel]}` : ''}
                 {done ? ` · certeza: ${CERTAINTY_LABELS[certainty[question.id] ?? 1].toLowerCase()}` : ''}
               </div>
+              {question.fonte && (
+                <div className="faint" style={{ fontSize: 12.5 }}>
+                  Questão da web:{' '}
+                  <a href={question.fonte} target="_blank" rel="noreferrer">
+                    {hostOf(question.fonte)}
+                  </a>
+                </div>
+              )}
               {question.diagrama && <Diagram code={question.diagrama} />}
               <Answer question={question} answer={answers[question.id]} revealed={done} onAnswer={value => setAnswers(state => ({ ...state, [question.id]: value }))} />
               {!done ? (
@@ -516,13 +542,16 @@ export function ExamDialog({ fileId }: { fileId: string }) {
   const opened = useLibraryStore(state => state.opened[fileId])
   const openFile = useLibraryStore(state => state.openFile)
   const createQuestions = useJobsStore(state => state.createQuestions)
-  const [state, setState] = useState<'loading' | 'generating' | 'ready' | 'error'>('loading')
+  const choice = useModelChoice('prova')
+  const [state, setState] = useState<'loading' | 'choose' | 'generating' | 'ready' | 'error'>('loading')
   const [error, setError] = useState('')
+  const [webNote, setWebNote] = useState('')
 
   const generate = async (wrong?: Question[]) => {
     setState('generating')
     try {
-      await createQuestions(fileId, wrong?.map(question => ({ enunciado: question.enunciado, explicacao: question.explicacao })))
+      const { web } = await createQuestions(fileId, wrong?.map(question => ({ enunciado: question.enunciado, explicacao: question.explicacao })), choice.model)
+      setWebNote(web.found ? '' : web.note)
       setState('ready')
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : 'A prova não saiu.')
@@ -532,13 +561,29 @@ export function ExamDialog({ fileId }: { fileId: string }) {
 
   useEffect(() => {
     void openFile(fileId).then(file => {
-      if (file.sidecar.questions.length) setState('ready')
-      else void generate()
+      setState(file.sidecar.questions.length ? 'ready' : 'choose')
     })
   }, [fileId])
 
   if (!meta) return null
   if (state === 'loading' || state === 'generating') return <Generating title={meta.name} onCancel={ui.close} />
+  if (state === 'choose')
+    return (
+      <Dialog
+        title={`Prova · ${meta.name}`}
+        size="narrow"
+        onClose={ui.close}
+        footer={
+          <button className="btn primary" disabled={!choice.ready} onClick={() => void generate()}>
+            Gerar a prova
+          </button>
+        }
+      >
+        <div className="db">
+          <ModelPick choice={choice} />
+        </div>
+      </Dialog>
+    )
   if (state === 'error')
     return (
       <Dialog title={`Prova · ${meta.name}`} size="narrow" onClose={ui.close} footer={<button className="btn primary" onClick={() => void generate()}>Tentar de novo</button>}>
@@ -551,7 +596,7 @@ export function ExamDialog({ fileId }: { fileId: string }) {
       </Dialog>
     )
   const questions = opened?.sidecar.questions ?? []
-  return <ExamRun title={meta.name} questions={questions} sourceOf={() => fileId} diagnosisTarget={{ fileId, folderId: null }} onRegenerate={() => void generate()} />
+  return <ExamRun title={meta.name} questions={questions} sourceOf={() => fileId} diagnosisTarget={{ fileId, folderId: null }} onRegenerate={() => void generate()} notice={webNote} />
 }
 
 export function FolderExamDialog({ folderId, fileIds }: { folderId: string | null; fileIds?: string[] }) {

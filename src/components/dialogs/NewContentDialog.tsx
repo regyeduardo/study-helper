@@ -1,21 +1,20 @@
 import { useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 
-import type { AtaPart, SourceStorage, TranscriptionEngine } from '@/types/domain'
+import type { AtaModelId, AtaPart, SourceStorage } from '@/types/domain'
 import { AtaPartsFields, toggledPart } from '@/components/dialogs/AtaPartsDialog'
+import { ModelPick, useModelChoice } from '@/components/dialogs/ModelPick'
 import { Dialog } from '@/components/ui/Dialog'
 import { Icon } from '@/components/ui/Icon'
 import { FolderPicker } from '@/components/dialogs/SimpleDialogs'
 import { SourceStoragePicker } from '@/components/dialogs/SourceStoragePicker'
 import type { LitterboxTime } from '@/controllers/hosting.controller'
 import { youtubeId } from '@/controllers/sources.controller'
-import { isFreeChoice, modelOf, providerOf } from '@/lib/ai/providers'
 import { PART_ORDER } from '@/lib/generation/ata'
 import type { ContentInput } from '@/lib/generation/inputs'
 import { detectKind } from '@/lib/generation/uploads'
 import { paths } from '@/lib/paths'
 import { defaultStorage, storageOptions } from '@/lib/storage/source-storage'
-import { ENGINES } from '@/lib/transcription'
 import { useAccountStore } from '@/stores/account'
 import { type Agent, useJobsStore } from '@/stores/jobs'
 import { useLibraryStore } from '@/stores/library'
@@ -26,7 +25,7 @@ import { formatBytes } from '@/utils/format'
 type Tab = 'link' | 'file' | 'text' | 'topic'
 
 const AGENTS: { id: Agent; label: string; hint: string }[] = [
-  { id: 'lesson', label: 'Aula', hint: 'Vira uma aula estruturada; se render mais de uma, o app propõe um curso.' },
+  { id: 'lesson', label: 'Aula', hint: 'Vira uma aula estruturada; se render mais de uma, o app propõe uma pasta com as aulas.' },
   { id: 'meeting', label: 'Ata de reunião', hint: 'Transcrição de reunião vira ata com decisões e encaminhamentos.' },
   { id: 'reading', label: 'Só guardar para ler', hint: 'Guarda o texto como veio, sem IA.' },
 ]
@@ -86,7 +85,6 @@ export function NewContentDialog({ folderId: initialFolder }: { folderId?: strin
   const ui = useUiStore()
   const navigate = useNavigate()
   const settings = useLibraryStore(state => state.index.settings)
-  const updateSettings = useLibraryStore(state => state.updateSettings)
   const account = useAccountStore(state => state.active())
   const usage = useSyncStore(state => state.usage)
   const startNewContent = useJobsStore(state => state.startNewContent)
@@ -105,15 +103,19 @@ export function NewContentDialog({ folderId: initialFolder }: { folderId?: strin
   const [folderId, setFolderId] = useState<string | null>(initialFolder ?? null)
   const [jobId, setJobId] = useState<string | null>(null)
   const [ataParts, setAtaParts] = useState<AtaPart[]>(['resumo'])
+  const [ataModel, setAtaModel] = useState<AtaModelId | null>(null)
   const input = useRef<HTMLInputElement>(null)
 
   const driveAvailable = account.kind === 'google'
   const room = usage && settings.storageLimitBytes ? settings.storageLimitBytes - usage.appBytes : null
   const options = useMemo(() => (file ? storageOptions(file.size, driveAvailable, room) : []), [file, driveAvailable, room])
   const chosen = file ? (storage && options.find(option => option.id === storage && option.fits && option.enabled) ? storage : defaultStorage(driveAvailable, options)) : 'none'
-  const provider = providerOf(settings.ai.provider)
   const isYoutube = Boolean(youtubeId(url))
   const choosesParts = agent === 'meeting' && tab === 'file' && Boolean(file) && isMedia
+  const media = tab === 'file' && Boolean(file) && isMedia
+  const choices = { aula: useModelChoice('aula', media), explicacao: useModelChoice('explicacao', media), ata: useModelChoice('ata', media) }
+  const heardBy = useModelChoice('transcricao')
+  const writer = agent === 'reading' ? null : (tab === 'topic' && agent === 'lesson') || agent === 'explanation' ? choices.explicacao : agent === 'meeting' ? choices.ata : choices.aula
 
   const pickFile = async (picked: File | null) => {
     setFile(picked)
@@ -135,7 +137,7 @@ export function NewContentDialog({ folderId: initialFolder }: { folderId?: strin
     const content = contentInput()
     if (!content) return
     const fileId = await startNewContent(
-      { agent: tab === 'topic' && agent === 'lesson' ? 'explanation' : agent, input: content, name, description, folderId, prompt, storage: chosen, litterboxTime, ...(choosesParts ? { ataParts: PART_ORDER.filter(part => ataParts.includes(part)) } : {}) },
+      { agent: tab === 'topic' && agent === 'lesson' ? 'explanation' : agent, input: content, name, description, folderId, prompt, storage: chosen, litterboxTime, ...(choosesParts ? (ataModel ? { ataParts: [], ataModel } : { ataParts: PART_ORDER.filter(part => ataParts.includes(part)) }) : {}), models: { write: writer?.model || null, transcription: media ? heardBy.model || null : null, everyStep: Boolean(writer?.videoWrites) } },
       setJobId,
     )
     if (fileId) {
@@ -146,7 +148,7 @@ export function NewContentDialog({ folderId: initialFolder }: { folderId?: strin
 
   if (jobId) return <GenerationProgress jobId={jobId} onHide={ui.close} />
 
-  const canGo = Boolean(contentInput()) && !(choosesParts && !ataParts.length)
+  const canGo = Boolean(contentInput()) && !(choosesParts && !ataModel && !ataParts.length) && (!writer || writer.ready) && (!media || heardBy.ready)
   const tabButton = (id: Tab, icon: Parameters<typeof Icon>[0]['name'], label: string) => (
     <button aria-pressed={tab === id} onClick={() => setTab(id)}>
       <Icon name={icon} />
@@ -160,18 +162,6 @@ export function NewContentDialog({ folderId: initialFolder }: { folderId?: strin
       onClose={ui.close}
       footer={
         <>
-          <span className="grow">
-            IA: {provider.name} · {modelOf(settings.ai) || 'sem modelo'}
-            {isFreeChoice(settings.ai) && (
-              <>
-                {' · '}
-                <span className="freewarn" style={{ display: 'inline-flex' }}>
-                  <Icon name="warn" />
-                  modelo grátis pode piorar o resultado
-                </span>
-              </>
-            )}
-          </span>
           <button className="btn quiet" onClick={ui.close}>
             Cancelar
           </button>
@@ -204,7 +194,7 @@ export function NewContentDialog({ folderId: initialFolder }: { folderId?: strin
                   <Icon name="info" />
                   <span>
                     Vídeo do YouTube: lido por {settings.youtube.reader === 'gemini' ? 'Gemini (até 8 h de vídeo por dia, só vídeo público)' : 'youtube-transcript.ai (uso justo, sem garantia)'}.{' '}
-                    <button style={{ color: 'var(--acc1)' }} onClick={() => ui.open({ kind: 'settings', tab: 'transcription' })}>
+                    <button style={{ color: 'var(--acc1)' }} onClick={() => ui.open({ kind: 'settings', tab: 'links' })}>
                       Trocar
                     </button>
                   </span>
@@ -237,24 +227,7 @@ export function NewContentDialog({ folderId: initialFolder }: { folderId?: strin
                 names={isMedia ? { none: { name: 'Só neste computador', description: 'Fica em Mídias, neste navegador. A nota toca o vídeo ou o áudio daqui.' } } : undefined}
               />
             )}
-            {file && isMedia && (
-              <div className="field">
-                <span className="lab">Transcrição</span>
-                <div className="opts" role="radiogroup">
-                  {ENGINES.map(engine => (
-                    <button key={engine.id} className="opt" role="radio" aria-checked={settings.transcription.engine === engine.id} onClick={() => void updateSettings({ transcription: { ...settings.transcription, engine: engine.id as TranscriptionEngine } })}>
-                      <span className="radio" />
-                      <span>
-                        <b>{engine.name}</b>
-                        <span>
-                          <span className="lim">{engine.limits}</span>
-                        </span>
-                      </span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
+            {media && <ModelPick choice={heardBy} label="Transcrição" />}
           </>
         )}
         {tab === 'text' && (
@@ -290,7 +263,8 @@ export function NewContentDialog({ folderId: initialFolder }: { folderId?: strin
             </div>
           </div>
         )}
-        {choosesParts && <AtaPartsFields parts={ataParts} onToggle={part => setAtaParts(current => toggledPart(current, part))} />}
+        {writer && <ModelPick choice={writer} />}
+        {choosesParts && <AtaPartsFields parts={ataParts} onToggle={part => setAtaParts(current => toggledPart(current, part))} model={ataModel} onModel={setAtaModel} />}
         <div className="two-col">
           <div className="field">
             <label htmlFor="nc-name">Nome (opcional)</label>

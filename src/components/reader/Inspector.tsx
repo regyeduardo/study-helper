@@ -8,7 +8,6 @@ import { dueCount } from '@/lib/generation/cards'
 import { scrollToHeading } from '@/components/reader/GithubMarkdownView'
 import { providerOf } from '@/lib/ai/providers'
 import { lineageOf } from '@/lib/generation/course-lesson'
-import { courseOf } from '@/lib/generation/course-lesson'
 import { newId, nowIso } from '@/lib/ids'
 import { paths } from '@/lib/paths'
 import { transcriptFileName, transcriptOf } from '@/lib/generation/transcript'
@@ -272,11 +271,11 @@ export function InfoPanel({ fileId }: { fileId: string }) {
   if (!meta) return null
   const timeZone = library.index.settings.timezone
   const folder = library.folders.find(item => item.id === meta.folderId)
-  const course = courseOf(library.folders, meta.folderId)
   const lineage = lineageOf(meta, library.files)
   const children = library.files.filter(file => file.parentFileId === meta.id && !file.deletedAt)
   const origin = meta.origin
   const generation = meta.generation
+  const ataModel = library.opened[fileId]?.sidecar.documents?.filter(item => item.kind === 'ata').at(-1)?.ataModel
   const storeLine = !origin
     ? '—'
     : origin.removedAt
@@ -291,12 +290,6 @@ export function InfoPanel({ fileId }: { fileId: string }) {
       <div className="sec">
         <h4>De onde veio</h4>
         <div className="chain">
-          {course && (
-            <div>
-              <Icon name="layers" /> Curso {course.name}
-              {course.courseOrigin ? ` · ${course.courseOrigin}` : ''}
-            </div>
-          )}
           {[...lineage].reverse().map(step => (
             <div key={step.id}>
               <Icon name="file" />
@@ -387,27 +380,37 @@ export function InfoPanel({ fileId }: { fileId: string }) {
           <TranscriptDownload meta={meta} />
         </div>
       )}
-      {generation && (
+      {(generation || ataModel) && (
         <div className="sec">
           <h4>Geração</h4>
           <dl className="kv">
-            <dt>IA</dt>
-            <dd>
-              {providerOf(generation.provider as never).name} · {generation.model}
-            </dd>
-            <dt>Data</dt>
-            <dd>{dateTime(generation.startedAt, timeZone)}</dd>
-            <dt>Levou</dt>
-            <dd>{duration(generation.durationMs / 1000)}</dd>
-            <dt>Tokens</dt>
-            <dd>
-              {(generation.inputTokens + generation.outputTokens).toLocaleString('pt-BR')} ({generation.inputTokens.toLocaleString('pt-BR')} de entrada, {generation.outputTokens.toLocaleString('pt-BR')} de saída)
-              {generation.estimatedTokens ? ' · estimado' : ''}
-            </dd>
-            <dt>Transcrição</dt>
-            <dd>{generation.transcriptionEngine ? (ENGINES.find(engine => engine.id === generation.transcriptionEngine)?.name ?? generation.transcriptionEngine) : '—'}</dd>
-            <dt>Idioma</dt>
-            <dd>{generation.language || 'o do material'}</dd>
+            {generation && (
+              <>
+                <dt>IA</dt>
+                <dd>
+                  {providerOf(generation.provider as never).name} · {generation.model}
+                </dd>
+                <dt>Data</dt>
+                <dd>{dateTime(generation.startedAt, timeZone)}</dd>
+                <dt>Levou</dt>
+                <dd>{duration(generation.durationMs / 1000)}</dd>
+                <dt>Tokens</dt>
+                <dd>
+                  {(generation.inputTokens + generation.outputTokens).toLocaleString('pt-BR')} ({generation.inputTokens.toLocaleString('pt-BR')} de entrada, {generation.outputTokens.toLocaleString('pt-BR')} de saída)
+                  {generation.estimatedTokens ? ' · estimado' : ''}
+                </dd>
+                <dt>Transcrição</dt>
+                <dd>{generation.transcriptionEngine ? (ENGINES.find(engine => engine.id === generation.transcriptionEngine)?.name ?? generation.transcriptionEngine) : '—'}</dd>
+                <dt>Idioma</dt>
+                <dd>{generation.language || 'o do material'}</dd>
+              </>
+            )}
+            {ataModel && (
+              <>
+                <dt>Modelo da ata</dt>
+                <dd>{ataModel.name}</dd>
+              </>
+            )}
           </dl>
         </div>
       )}

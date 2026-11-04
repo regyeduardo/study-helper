@@ -14,7 +14,9 @@ export type Overlay =
   | { kind: 'cards'; fileId: string }
   | { kind: 'mindmap'; fileId: string }
   | { kind: 'tutor'; fileId: string }
-  | { kind: 'ata-parts'; fileId: string }
+  | { kind: 'ata-parts'; fileId: string; again?: string }
+  | { kind: 'generate'; fileId: string; agent: 'meeting' | 'lesson'; redo?: boolean; again?: string }
+  | { kind: 'transcribe'; fileId: string }
   | { kind: 'folder-exam'; folderId: string | null; fileIds?: string[] }
   | { kind: 'account'; x?: number; y?: number }
   | { kind: 'new-folder'; parentId: string | null }

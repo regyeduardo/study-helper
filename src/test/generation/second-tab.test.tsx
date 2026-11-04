@@ -176,6 +176,15 @@ describe('"O que gerar" chooses only the second tab', () => {
     expect(memory.contents.get(id!)).toContain('Bruno [00:04]:')
   })
 
+  it('"Ata de reunião" with a model keeps the transcription and starts the Ata in that model, without parts', async () => {
+    const generateAta = vi.fn(async () => undefined)
+    useJobsStore.setState({ generateAta })
+    const id = await useJobsStore.getState().startNewContent({ ...recordingRequest('meeting'), ataParts: [], ataModel: 'cornell' })
+    await waitFor(() => expect(generateAta).toHaveBeenCalledWith(id, [], 'cornell'))
+    expect(useLibraryStore.getState().files.find(file => file.id === id)).toMatchObject({ type: 'reading', status: 'ready' })
+    expect(memory.contents.get(id!)).toContain('Bruno [00:04]:')
+  })
+
   it('renaming a speaker in the note is saved and reaches the Ata', async () => {
     const id = await noteFrom('reading')
     open(id)

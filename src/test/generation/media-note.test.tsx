@@ -19,6 +19,7 @@ vi.mock('@/components/reader/GithubMarkdownView', () => ({
   default: ({ markdown }: { markdown: string }) => <div data-testid="markdown">{markdown}</div>,
 }))
 
+import { Overlays } from '@/components/dialogs/Overlays'
 import { DocumentBody } from '@/components/reader/DocumentArticle'
 import { defaultIndex } from '@/lib/defaults'
 import { PROMPTS } from '@/lib/generation/prompts.data'
@@ -28,7 +29,20 @@ import { transcribe } from '@/lib/transcription'
 import { useJobsStore } from '@/stores/jobs'
 import { useLibraryStore } from '@/stores/library'
 import { type CapturedRequest, installFetch, openAiStream, systemPromptOf } from '@/test/ai/fake-provider'
-import type { FileSidecar } from '@/types/domain'
+import type { AiConfig, FileSidecar } from '@/types/domain'
+
+const mine = { id: 'mine', type: 'custom' as const, name: 'Minha IA', key: 'test-key', base: 'https://api.exemplo.dev/v1' }
+const di = { id: 'di', type: 'deepinfra' as const, name: 'DeepInfra', key: 'di-key', base: '' }
+const WRITER = { uid: 'mine::default', pid: 'mine', mid: 'default', name: 'default' }
+const WHISPER = { uid: 'di::openai/whisper-large-v3', pid: 'di', mid: 'openai/whisper-large-v3', name: 'whisper-large-v3' }
+const VOXTRAL = { uid: 'di::mistralai/Voxtral-Small-24B-2507', pid: 'di', mid: 'mistralai/Voxtral-Small-24B-2507', name: 'Voxtral-Small' }
+
+function withConfig(defaults: AiConfig['defaults']) {
+  const aiConfig: AiConfig = { providers: [mine, di], models: [WRITER, WHISPER, VOXTRAL], defaults: { estudo: WRITER.uid, ...defaults }, steps: {} }
+  useLibraryStore.setState(state => ({ index: { ...state.index, settings: { ...state.index.settings, aiConfig } } }))
+}
+
+const heardWith = () => vi.mocked(transcribe).mock.calls[0][1].credentials.deepinfra?.model
 
 function memoryRepository() {
   const sidecars = new Map<string, FileSidecar>()
@@ -113,6 +127,7 @@ const show = (id: string) =>
   render(
     <MemoryRouter>
       <DocumentBody fileId={id} />
+      <Overlays />
     </MemoryRouter>,
   )
 
@@ -128,16 +143,37 @@ describe('an audio note without transcription is only the media', () => {
     expect(transcribe).not.toHaveBeenCalled()
   })
 
-  it('Transcrever agora transcribes the kept media and the note shows the transcript, named by the subject', async () => {
+  it('Transcrever agora asks the model (the Transcrição default preselected), transcribes the kept media with the one picked and the note shows the transcript, named by the subject', async () => {
+    withConfig({ transcricao: WHISPER.uid })
     const id = await savedAudio()
     show(id)
     fireEvent.click(await screen.findByRole('button', { name: 'Transcrever agora' }))
+    expect(await screen.findByLabelText('Transcrição')).toHaveValue(WHISPER.uid)
+    expect(transcribe).not.toHaveBeenCalled()
+    fireEvent.change(screen.getByLabelText('Transcrição'), { target: { value: VOXTRAL.uid } })
+    fireEvent.click(screen.getByRole('button', { name: 'Transcrever' }))
     await waitFor(() => expect(transcribe).toHaveBeenCalledTimes(1))
     expect((vi.mocked(transcribe).mock.calls[0][0] as File).name).toBe('Conversa no corredor.webm')
+    expect(heardWith()).toBe(VOXTRAL.mid)
     await waitFor(() => expect(screen.getByRole('tab', { name: 'Transcrição' })).toBeInTheDocument())
     expect(screen.getByText('Vamos falar de limites.')).toBeInTheDocument()
     expect(screen.getByText(/· com transcrição/)).toBeInTheDocument()
     await waitFor(() => expect(useLibraryStore.getState().files.find(file => file.id === id)?.name).toBe('Conversa sobre limites'))
     expect(memory.contents.get(id)).toContain('Vamos falar de limites.')
+  })
+
+  it('without a Transcrição default, the person picks the model before transcribing', async () => {
+    withConfig({})
+    const id = await savedAudio()
+    show(id)
+    fireEvent.click(await screen.findByRole('button', { name: 'Transcrever agora' }))
+    const go = await screen.findByRole('button', { name: 'Transcrever' })
+    expect(go).toBeDisabled()
+    expect(screen.getByText('Sem modelo padrão para Transcrição: escolha um aqui.')).toBeInTheDocument()
+    fireEvent.change(screen.getByLabelText('Transcrição'), { target: { value: WHISPER.uid } })
+    expect(go).toBeEnabled()
+    fireEvent.click(go)
+    await waitFor(() => expect(transcribe).toHaveBeenCalledTimes(1))
+    expect(heardWith()).toBe(WHISPER.mid)
   })
 })
