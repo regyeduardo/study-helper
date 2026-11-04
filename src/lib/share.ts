@@ -6,6 +6,7 @@ import { FILE_TYPES, mediaOf } from '@/lib/file-types'
 import { newFileMeta, newFolderMeta } from '@/lib/defaults'
 import { newId, nowIso } from '@/lib/ids'
 import { keepLocalMedia, type LocalMedia, readLocalMedia } from '@/lib/recording/media-library'
+import { makeSeekable } from '@/lib/recording/seekable'
 import { bytesOf, type Repository, type StoredSize } from '@/lib/storage/repository'
 import { downloadStoredSource, sourceExpired, storeSource } from '@/lib/storage/source-storage'
 import { RECORDER, withRecorder } from '@/lib/transcription/turns'
@@ -114,6 +115,11 @@ async function blobOf(source: Blob | string): Promise<Blob> {
   return response.blob()
 }
 
+// a browser recording goes up with its duration and index: the link then jumps straight to a minute instead of downloading up to it
+async function seekableWebm(media: Blob, mime: string): Promise<Blob> {
+  return /webm/i.test(mime) ? makeSeekable(media) : media
+}
+
 export function shareMediaOf(content: ShareContent, files: FileMeta[], localMedia: LocalMedia[], repo: Repository | null): ShareMedia[] {
   const found: ShareMedia[] = []
   for (const shared of content.files) {
@@ -122,9 +128,13 @@ export function shareMediaOf(content: ShareContent, files: FileMeta[], localMedi
     const kind = meta ? mediaOf(meta) : 'text'
     const local = localMedia.find(item => item.fileIds.includes(shared.id))
     const fallback = `${kind === 'video' ? 'video' : 'audio'}/webm`
-    if (local) found.push({ fileId: shared.id, name: local.name, mime: local.mime || origin?.mime || fallback, size: local.size || null, read: () => readLocalMedia(local) })
-    else if (origin && repo && kind !== 'text' && (origin.storedFileId || origin.storedUrl) && !origin.removedAt && !sourceExpired(origin))
-      found.push({ fileId: shared.id, name: origin.name, mime: origin.mime || fallback, size: origin.sizeBytes ?? null, read: async () => blobOf(await downloadStoredSource(origin, repo)) })
+    if (local) {
+      const mime = local.mime || origin?.mime || fallback
+      found.push({ fileId: shared.id, name: local.name, mime, size: local.size || null, read: async () => seekableWebm(await readLocalMedia(local), mime) })
+    } else if (origin && repo && kind !== 'text' && (origin.storedFileId || origin.storedUrl) && !origin.removedAt && !sourceExpired(origin)) {
+      const mime = origin.mime || fallback
+      found.push({ fileId: shared.id, name: origin.name, mime, size: origin.sizeBytes ?? null, read: async () => seekableWebm(await blobOf(await downloadStoredSource(origin, repo)), mime) })
+    }
   }
   return found
 }

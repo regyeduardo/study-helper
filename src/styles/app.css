@@ -290,7 +290,14 @@ button.tr-time:hover{color:var(--accent);text-decoration:underline}
 .mplayer-shot[aria-expanded="true"]{position:fixed;z-index:60;left:50%;bottom:72px;transform:translateX(-50%);width:min(960px,calc(100vw - 32px));height:auto;aspect-ratio:16/9;box-shadow:var(--shadow);cursor:zoom-out}
 .mplayer-play{color:var(--fg)}
 .mplayer-time{font-family:var(--mono);font-size:11.5px;color:var(--fg-muted);font-variant-numeric:tabular-nums}
-.mplayer-bar{flex:1;min-width:0;height:20px;accent-color:var(--accent);cursor:pointer}
+.mplayer-bar{flex:1;min-width:0;height:20px;-webkit-appearance:none;appearance:none;background:none;cursor:pointer;--mplayer-loaded:color-mix(in srgb,var(--fg-muted) 45%,transparent)}
+.mplayer-bar::-webkit-slider-runnable-track{height:4px;border-radius:2px;background:linear-gradient(var(--accent),var(--accent)) 0/var(--played) 100% no-repeat,var(--loaded,none),var(--border)}
+.mplayer-bar::-moz-range-track{height:4px;border-radius:2px;background:linear-gradient(var(--accent),var(--accent)) 0/var(--played) 100% no-repeat,var(--loaded,none),var(--border)}
+.mplayer-bar::-webkit-slider-thumb{-webkit-appearance:none;width:12px;height:12px;margin-top:-4px;border-radius:50%;background:var(--accent)}
+.mplayer-bar::-moz-range-thumb{width:12px;height:12px;border:0;border-radius:50%;background:var(--accent)}
+.mplayer-bar:disabled{cursor:default}
+.mplayer-state{flex:none;font-size:11.5px;color:var(--fg-muted)}
+.mplayer-failure{flex:1;min-width:0;font-size:12.5px;color:var(--bad)}
 
 /* ---------- inspector / panels ---------- */
 .insp{border-left:1px solid var(--border-muted);display:flex;flex-direction:column;min-width:0;background:var(--bg)}

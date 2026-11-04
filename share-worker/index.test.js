@@ -30,6 +30,8 @@ function fakeBucket() {
   const view = (key, stored, range) => ({
     key,
     etag: stored.etag,
+    httpEtag: `"${stored.etag}"`,
+    uploaded: stored.uploaded,
     size: bytesOf(stored.body).length,
     customMetadata: stored.customMetadata,
     httpMetadata: stored.httpMetadata,
@@ -38,7 +40,7 @@ function fakeBucket() {
     text: async () => stored.body,
   })
   const store = (key, body, options = {}) => {
-    const stored = { body, etag: `e${++version}`, customMetadata: options.customMetadata ?? {}, httpMetadata: options.httpMetadata ?? {} }
+    const stored = { body, etag: `e${++version}`, uploaded: new Date('2026-11-03T12:00:00Z'), customMetadata: options.customMetadata ?? {}, httpMetadata: options.httpMetadata ?? {} }
     objects.set(key, stored)
     return view(key, stored)
   }
@@ -353,6 +355,17 @@ describe('media of a shared note', () => {
     expect(tail.headers.get('Access-Control-Allow-Origin')).toBe(ORIGIN)
     expect((await call('GET', `/media/${id}/f1`, { origin: null, range: 'bytes=20-' })).status).toBe(416)
     expect((await call('GET', `/media/${id}/f1`, { origin: 'https://evil.test' })).status).toBe(403)
+  })
+
+  it('the media carries validators, so the browser keeps the downloaded ranges and a second visit does not download again', async () => {
+    const { id } = await meetingShare()
+    await uploadMedia(id, 'f1', MEDIA)
+    const etag = (await env.BUCKET.head(`shared-media/${id}/f1`)).httpEtag
+    for (const range of [null, 'bytes=4-6']) {
+      const answer = await call('GET', `/media/${id}/f1`, { origin: null, range })
+      expect(answer.headers.get('ETag')).toBe(etag)
+      expect(answer.headers.get('Last-Modified')).toBe('Tue, 03 Nov 2026 12:00:00 GMT')
+    }
   })
 
   it('reads ranges like a browser asks them', () => {

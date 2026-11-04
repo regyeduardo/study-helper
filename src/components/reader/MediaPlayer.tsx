@@ -1,4 +1,4 @@
-import { type RefObject, type SyntheticEvent, useCallback, useEffect, useRef, useState } from 'react'
+import { type CSSProperties, type RefObject, type SyntheticEvent, useCallback, useEffect, useRef, useState } from 'react'
 
 import type { FileMeta } from '@/types/domain'
 import { readLocalMedia } from '@/lib/recording/media-library'
@@ -12,11 +12,19 @@ export interface MeetingMedia {
   available: boolean
   video: boolean
   remote?: boolean
+  size?: number
   notice?: string
   request(): Promise<void>
 }
 
 export const SHARED_MEDIA_EXPIRED = 'A mídia deste compartilhamento expirou (fica 3 dias).'
+
+const MEDIA_FAILURES: Record<number, string> = {
+  2: 'A mídia parou de baixar. Confira a internet.',
+  3: 'A mídia veio com defeito e não toca neste navegador.',
+  4: 'Este navegador não toca o formato desta mídia.',
+}
+const MB = 1024 * 1024
 
 /** Plays from a second; a player that failed to load (Chrome, while the app opens) is loaded again first. */
 export function playAt(element: HTMLMediaElement, seconds: number): void {
@@ -79,7 +87,7 @@ export function useMeetingMedia(meta: FileMeta | null): MeetingMedia {
     const video = (sharedMedia?.mime || origin?.mime || '').startsWith('video/')
     if (!sharedMedia) return { url: null, available: false, video, request: nothing }
     if (sharedItem.mediaExpiresAt && Date.parse(sharedItem.mediaExpiresAt) <= Date.now()) return { url: null, available: false, video, notice: SHARED_MEDIA_EXPIRED, request: nothing }
-    return { url: sharedMedia.url, available: true, video, remote: true, request: nothing }
+    return { url: sharedMedia.url, available: true, video, remote: true, size: sharedMedia.size, request: nothing }
   }
   return { url, available: Boolean(local) || kept, video: (local?.mime || origin?.mime || '').startsWith('video/'), request }
 }
@@ -105,6 +113,37 @@ function bothEars(element: HTMLMediaElement): void {
   void context.resume()
 }
 
+/** Why the media did not play: the share worker answers 404 while the upload did not finish and 410 once it expired. */
+async function failureOf(media: MeetingMedia, code: number): Promise<string> {
+  const fallback = MEDIA_FAILURES[code] ?? 'Não deu para tocar a mídia.'
+  if (!media.remote || !media.url) return fallback
+  const response = await fetch(media.url, { headers: { Range: 'bytes=0-0' } }).catch(() => null)
+  if (!response) return MEDIA_FAILURES[2]
+  if (response.status === 404) return 'A mídia não terminou de subir ou não existe.'
+  if (response.status === 410) return SHARED_MEDIA_EXPIRED
+  return fallback
+}
+
+/** The stretches already downloaded, as fractions of the duration. */
+function loadedOf(element: HTMLMediaElement): [number, number][] {
+  const total = element.duration
+  if (!Number.isFinite(total) || !total) return []
+  return Array.from({ length: element.buffered.length }, (_, index) => [element.buffered.start(index) / total, element.buffered.end(index) / total])
+}
+
+const percent = (fraction: number) => `${+(fraction * 100).toFixed(1)}%`
+
+function loadedLayer(loaded: [number, number][]): string | undefined {
+  if (!loaded.length) return undefined
+  return `linear-gradient(to right, ${loaded.map(([start, end], index) => `transparent ${percent(loaded[index - 1]?.[1] ?? 0)} ${percent(start)}, var(--mplayer-loaded) ${percent(start)} ${percent(end)}`).join(', ')}, transparent ${percent(loaded.at(-1)![1])})`
+}
+
+function loadedTitle(loaded: [number, number][], size: number | undefined): string {
+  const fraction = loaded.reduce((sum, [start, end]) => sum + end - start, 0)
+  const megabytes = (bytes: number) => (bytes / MB).toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 })
+  return `Baixado ${Math.round(fraction * 100)}%${size ? ` · ${megabytes(fraction * size)} de ${megabytes(size)} MB` : ''}`
+}
+
 function Glyph({ playing }: { playing: boolean }) {
   return (
     <svg className="ic" viewBox="0 0 24 24" aria-hidden="true">
@@ -118,12 +157,28 @@ export function MediaPlayer({ player, media, onTime, onPlayFrom }: MediaPlayerPr
   const [time, setTime] = useState(0)
   const [duration, setDuration] = useState(0)
   const [big, setBig] = useState(false)
+  const [waiting, setWaiting] = useState(Boolean(media.url))
+  const [ready, setReady] = useState(false)
+  const [loaded, setLoaded] = useState<[number, number][]>([])
+  const [failure, setFailure] = useState<string | null>(null)
   const reloads = useRef({ url: media.url, count: 0 })
-  if (reloads.current.url !== media.url) reloads.current = { url: media.url, count: 0 }
+  if (reloads.current.url !== media.url) {
+    reloads.current = { url: media.url, count: 0 }
+    setWaiting(Boolean(media.url))
+    setReady(false)
+    setLoaded([])
+    setFailure(null)
+  }
 
   const toggle = () => {
     if (playing) player.current?.pause()
     else onPlayFrom(time)
+  }
+  const retry = () => {
+    reloads.current.count = 0
+    setFailure(null)
+    setWaiting(true)
+    player.current?.load()
   }
   const moveTo = (seconds: number) => {
     if (player.current) player.current.currentTime = seconds
@@ -135,18 +190,41 @@ export function MediaPlayer({ player, media, onTime, onPlayFrom }: MediaPlayerPr
   // CORS and then refuses every seek of the remote media ("FFmpegDemuxer: demuxer seek failed")
   const events = {
     crossOrigin: media.remote ? ('anonymous' as const) : undefined,
-    preload: 'metadata',
+    // a shared media comes from the internet: downloading ahead keeps the play and the jumps from waiting
+    preload: media.remote ? 'auto' : 'metadata',
     src: media.url ?? undefined,
     onPlay: (event: SyntheticEvent<HTMLMediaElement>) => {
       bothEars(event.currentTarget)
       setPlaying(true)
     },
     onPause: () => setPlaying(false),
+    onLoadStart: () => setWaiting(true),
+    onCanPlay: () => {
+      setReady(true)
+      setWaiting(false)
+    },
+    onPlaying: () => {
+      setReady(true)
+      setWaiting(false)
+    },
+    onWaiting: () => setWaiting(true),
+    onSeeking: () => setWaiting(true),
+    onSeeked: () => setWaiting(false),
+    onStalled: (event: SyntheticEvent<HTMLMediaElement>) => void (!event.currentTarget.paused && setWaiting(true)),
+    // preload "metadata" stops after the start on purpose: that is not loading
+    onSuspend: (event: SyntheticEvent<HTMLMediaElement>) => void (event.currentTarget.readyState >= 1 && setWaiting(false)),
+    onProgress: (event: SyntheticEvent<HTMLMediaElement>) => setLoaded(loadedOf(event.currentTarget)),
     // Chrome sometimes fails the first load made while the app opens ("FFmpegDemuxer: demuxer seek failed",
     // MEDIA_ERR_NETWORK) and then never asks for more bytes; the same element loaded again a moment later plays and seeks.
     onError: (event: SyntheticEvent<HTMLMediaElement>) => {
       const element = event.currentTarget
-      if (element.error?.code !== 2 || reloads.current.count >= 3) return
+      const code = element.error?.code ?? 0
+      if (code !== 2 || reloads.current.count >= 3) {
+        const url = media.url
+        setWaiting(false)
+        void failureOf(media, code).then(reason => reloads.current.url === url && setFailure(reason))
+        return
+      }
       const count = ++reloads.current.count
       const at = element.currentTime
       setTimeout(() => {
@@ -155,7 +233,10 @@ export function MediaPlayer({ player, media, onTime, onPlayFrom }: MediaPlayerPr
         element.load()
       }, 1500 * 2 ** (count - 1))
     },
-    onDurationChange: (event: SyntheticEvent<HTMLMediaElement>) => setDuration(Number.isFinite(event.currentTarget.duration) ? event.currentTarget.duration : 0),
+    onDurationChange: (event: SyntheticEvent<HTMLMediaElement>) => {
+      setDuration(Number.isFinite(event.currentTarget.duration) ? event.currentTarget.duration : 0)
+      setLoaded(loadedOf(event.currentTarget))
+    },
     onTimeUpdate: (event: SyntheticEvent<HTMLMediaElement>) => {
       setTime(event.currentTarget.currentTime)
       onTime(event.currentTarget.currentTime)
@@ -174,9 +255,39 @@ export function MediaPlayer({ player, media, onTime, onPlayFrom }: MediaPlayerPr
       <button className="ibtn mplayer-play" onClick={toggle} aria-label={playing ? 'Pausar' : 'Tocar'} title={playing ? 'Pausar' : 'Tocar'}>
         <Glyph playing={playing} />
       </button>
-      <span className="mplayer-time">{clockTime(time)}</span>
-      <input className="mplayer-bar" type="range" aria-label="Posição na gravação" min={0} max={duration} step={1} value={Math.min(time, duration)} disabled={!duration} onChange={event => moveTo(Number(event.target.value))} />
-      <span className="mplayer-time">{clockTime(duration)}</span>
+      {failure ? (
+        <>
+          <span className="mplayer-failure" role="alert">
+            {failure}
+          </span>
+          <button className="btn quiet" onClick={retry}>
+            Tentar de novo
+          </button>
+        </>
+      ) : (
+        <>
+          <span className="mplayer-time">{clockTime(time)}</span>
+          <input
+            className="mplayer-bar"
+            type="range"
+            aria-label="Posição na gravação"
+            title={media.remote && duration ? loadedTitle(loaded, media.size) : undefined}
+            style={{ '--played': percent(duration ? Math.min(time, duration) / duration : 0), '--loaded': loadedLayer(loaded) } as CSSProperties}
+            min={0}
+            max={duration}
+            step={1}
+            value={Math.min(time, duration)}
+            disabled={!duration}
+            onChange={event => moveTo(Number(event.target.value))}
+          />
+          <span className="mplayer-time">{clockTime(duration)}</span>
+          {waiting && (
+            <span className="mplayer-state" role="status">
+              {ready ? 'Carregando…' : 'Carregando a mídia…'}
+            </span>
+          )}
+        </>
+      )}
     </section>
   )
 }

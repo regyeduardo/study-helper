@@ -336,7 +336,8 @@ async function serveMedia(request, env, headers, id, fileId) {
   if (!media) return json({ error: 'not_found' }, 404, headers)
   const size = media.size
   const range = rangeOf(request.headers.get('Range'), size)
-  const common = { ...headers, 'Content-Type': media.httpMetadata?.contentType ?? 'application/octet-stream', 'Accept-Ranges': 'bytes', 'Cache-Control': MEDIA_CACHE }
+  // without a validator Chrome does not keep ranges in its cache: every visit downloaded the media again
+  const common = { ...headers, 'Content-Type': media.httpMetadata?.contentType ?? 'application/octet-stream', 'Accept-Ranges': 'bytes', 'Cache-Control': MEDIA_CACHE, ETag: media.httpEtag, 'Last-Modified': media.uploaded.toUTCString() }
   if (range === 'unsatisfiable') return new Response(null, { status: 416, headers: { ...common, 'Content-Range': `bytes */${size}` } })
   const object = await env.BUCKET.get(key, range ? { range: { offset: range.start, length: range.end - range.start + 1 } } : undefined)
   if (!object) return json({ error: 'not_found' }, 404, headers)
