@@ -1,7 +1,7 @@
 import { useId, useState } from 'react'
 
 import type { AtaModelId, AtaPart } from '@/types/domain'
-import { FolderWindow, lastModel, madeLine, ReplaceOrNew, SaveIn, useNoteFolder } from '@/components/dialogs/FromNoteFields'
+import { FolderWindow, lastModel, madeLine, MoreOptions, ReplaceOrNew, SaveIn, useNoteFolder } from '@/components/dialogs/FromNoteFields'
 import { ModelPick, useModelChoice } from '@/components/dialogs/ModelPick'
 import { Dialog } from '@/components/ui/Dialog'
 import { mediaOf } from '@/lib/file-types'
@@ -14,7 +14,7 @@ export const toggledPart = (parts: AtaPart[], part: AtaPart): AtaPart[] => (part
 
 /**
  * "Modelo da ata" (Padrão = the parts) and the checkboxes of the parts that go into the ONE Ata document (Resumo checked by default).
- * The Ata is a note of its own; `again`: the Ata note made before, whose choices come back (Gerar de novo).
+ * The Ata is a note of its own; `again`: the Ata note made before, whose choices and instruction come back (Gerar de novo).
  */
 export function AtaPartsDialog({ fileId, again }: { fileId: string; again?: string }) {
   const close = useUiStore(state => state.close)
@@ -27,6 +27,7 @@ export function AtaPartsDialog({ fileId, again }: { fileId: string; again?: stri
   const choice = useModelChoice('ata', Boolean(file) && mediaOf(file!) !== 'text', lastModel(before, settings))
   const folder = useNoteFolder(fileId)
   const [replace, setReplace] = useState(Boolean(before))
+  const [instruction, setInstruction] = useState(before?.made?.instruction ?? '')
   const toggle = (part: AtaPart) => setParts(current => toggledPart(current, part))
   const ready = (Boolean(model) || parts.length > 0) && choice.ready
   const start = () => {
@@ -34,8 +35,10 @@ export function AtaPartsDialog({ fileId, again }: { fileId: string; again?: stri
     close()
     const ai = { model: choice.model || null, everyStep: choice.videoWrites }
     const place = replace && before ? { replace: before.id } : folder.place
-    if (model) void generateAta(fileId, [], model, ai, place)
-    else void generateAta(fileId, PART_ORDER.filter(part => parts.includes(part)), undefined, ai, place)
+    // the instruction goes only when there is one
+    const said = instruction.trim() ? ([instruction] as const) : []
+    if (model) void generateAta(fileId, [], model, ai, place, ...said)
+    else void generateAta(fileId, PART_ORDER.filter(part => parts.includes(part)), undefined, ai, place, ...said)
   }
   return (
     <>
@@ -67,6 +70,7 @@ export function AtaPartsDialog({ fileId, again }: { fileId: string; again?: stri
           <ModelPick choice={choice} />
           {before && <ReplaceOrNew replace={replace} onReplace={choice => (setReplace(choice), choice || folder.setOpen(true))} />}
           {!replace && <SaveIn folder={folder} />}
+          <MoreOptions instruction={instruction} onInstruction={setInstruction} placeholder="Ex.: foque nas decisões e nas tarefas" open={Boolean(before?.made?.instruction)} />
         </div>
       </Dialog>
       {folder.open && <FolderWindow folder={folder} noteName={`Ata: ${file?.name ?? ''}`} />}

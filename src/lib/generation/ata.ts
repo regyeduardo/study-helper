@@ -7,6 +7,7 @@ import { Cancelled } from '@/controllers/ai.controller'
 import type { AtaAi } from '@/lib/generation/ata-ai'
 import * as P from '@/lib/generation/ata-prompts'
 import type { Box, FrameSource, Mark, ScreenOcr } from '@/lib/generation/ata-types'
+import { withInstruction } from '@/lib/generation/instruction'
 import { askedMoments } from '@/lib/generation/frames'
 import { accentNames, clock, groupReadings, jsonIn, linkMoments, list, meetingMaterial, oneLine, pool, type ScreenGroup, short, type Speech, understandMeeting } from '@/lib/generation/meeting-material'
 import { browserOcr } from '@/lib/generation/screen-ocr'
@@ -63,6 +64,8 @@ export interface AtaRequest {
   /** A "Modelo da ata": the parts are ignored and ONE document comes out in the model's skeleton. */
   model?: AtaModelId
   startedAt: Date
+  /** "Instrução extra para a IA": where to focus. */
+  instruction?: string
   onProgress?(message: string): void
 }
 
@@ -193,7 +196,9 @@ export async function buildAta(request: AtaRequest, tools: AtaTools): Promise<At
   }
 
   const voices = documentNames(recording)
-  const material = meetingMaterial(voices, request.startedAt, screen, termsForGlossary(exact, voices.blocks.map(block => block.text).join('\n')))
+  const heard = meetingMaterial(voices, request.startedAt, screen, termsForGlossary(exact, voices.blocks.map(block => block.text).join('\n')))
+  // the instruction goes with the meeting's data: the context, every part and the passes of the tasks read it
+  const material = { ...heard, dados: withInstruction(heard.dados, request.instruction) }
   progress('Entendendo a reunião: contexto e glossário')
   const context = await stages.run('Contexto e glossário', () => understandMeeting(material, ai))
   const names = [...material.people, ...list(context.brief.pessoas).map(p => String(p.nome ?? '')), ...personNames(exact)]

@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useId, useMemo, useState } from 'react'
 
 import type { FileMeta, Settings } from '@/types/domain'
 import { FolderPicker } from '@/components/dialogs/SimpleDialogs'
@@ -137,5 +137,21 @@ export function ReplaceOrNew({ replace, onReplace }: { replace: boolean; onRepla
         ))}
       </div>
     </div>
+  )
+}
+
+/** "Mais opções": the instruction for the AI, as in Novo conteúdo; open when it comes from the last time. */
+export function MoreOptions({ instruction, onInstruction, placeholder, open = false }: { instruction: string; onInstruction(instruction: string): void; placeholder: string; open?: boolean }) {
+  const id = useId()
+  return (
+    <details open={open}>
+      <summary className="muted" style={{ fontSize: 13, cursor: 'pointer' }}>
+        Mais opções
+      </summary>
+      <div className="field" style={{ marginTop: 10 }}>
+        <label htmlFor={id}>Instrução extra para a IA (opcional)</label>
+        <textarea className="input" id={id} value={instruction} onChange={event => onInstruction(event.target.value)} placeholder={placeholder} />
+      </div>
+    </details>
   )
 }

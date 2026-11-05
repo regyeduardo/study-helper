@@ -17,6 +17,7 @@ import { defaultIndex } from '@/lib/defaults'
 import { ATA_MODELS, buildAta, withImages } from '@/lib/generation/ata'
 import { appAi, passSettings, withRetry } from '@/lib/generation/ata-ai'
 import * as P from '@/lib/generation/ata-prompts'
+import { INSTRUCTION_HEAD } from '@/lib/generation/instruction'
 import { jsonIn, linkMoments } from '@/lib/generation/meeting-material'
 import { sampleTimes } from '@/lib/generation/screen-reading'
 import { shapePart } from '@/lib/generation/summary'
@@ -173,6 +174,25 @@ describe('the Ata pipeline', () => {
   it('cancel stops the pipeline', async () => {
     const ai = fakeAi({ text: () => Promise.reject(new Cancelled()) })
     await expect(buildAta({ recording: meeting, parts: ['resumo'], startedAt }, { ai, frames: null, difference, renderPrint })).rejects.toBeInstanceOf(Cancelled)
+  })
+
+  it('the instruction of who asked goes, marked, to the context, the writing and the passes of the tasks; empty, every request is as before', async () => {
+    const focus = 'foque nas decisões sobre o reajuste do INCC e liste todas as tarefas do Henrique'
+    const asked = fakeAi({ vision: false })
+    await buildAta({ recording: meeting, parts: ['resumo', 'tarefas'], startedAt, instruction: focus }, { ai: asked, frames: null, difference, renderPrint })
+    const block = `${INSTRUCTION_HEAD}\n\n${focus}`
+    const reached = asked.calls.filter(call => call.user.includes(block)).map(call => call.system)
+    expect(reached).toEqual(expect.arrayContaining([P.ENTENDER, P.CANDIDATAS, P.JUNTAR, P.VERIFICAR, P.ESCREVER_GERAL, P.PENDENCIAS, `${P.BASE}\n\n${P.RESUMO}`]))
+    const model = fakeAi({ vision: false })
+    await buildAta({ recording: meeting, parts: [], model: 'fathom', startedAt, instruction: focus }, { ai: model, frames: null, difference, renderPrint })
+    expect(model.calls.find(call => call.system === ATA_MODELS.fathom.prompt)!.user).toContain(block)
+    const before = fakeAi({ vision: false })
+    const empty = fakeAi({ vision: false })
+    await buildAta({ recording: meeting, parts: ['resumo', 'tarefas'], startedAt }, { ai: before, frames: null, difference, renderPrint })
+    await buildAta({ recording: meeting, parts: ['resumo', 'tarefas'], startedAt, instruction: '  ' }, { ai: empty, frames: null, difference, renderPrint })
+    const sorted = (ai: typeof before) => ai.calls.map(call => `${call.system}\n${call.user}`).sort()
+    expect(sorted(empty)).toEqual(sorted(before))
+    expect(before.calls.some(call => call.user.includes(INSTRUCTION_HEAD))).toBe(false)
   })
 })
 

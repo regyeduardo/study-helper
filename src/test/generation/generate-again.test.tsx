@@ -14,12 +14,15 @@ vi.mock('@/lib/exports/pdf', () => ({ printMarkdownAsPdf: vi.fn(async () => unde
 
 import { AtaPartsDialog } from '@/components/dialogs/AtaPartsDialog'
 import { GenerateDialog } from '@/components/dialogs/GenerateDialog'
+import { NewContentDialog } from '@/components/dialogs/NewContentDialog'
 import { ItemMenu } from '@/components/library/ItemMenu'
 import { DocumentBody } from '@/components/reader/DocumentArticle'
 import { defaultIndex } from '@/lib/defaults'
 import { exportFileAsMarkdown } from '@/lib/exports/library-export'
 import { printMarkdownAsPdf } from '@/lib/exports/pdf'
 import { ATA_MODELS } from '@/lib/generation/ata'
+import * as P from '@/lib/generation/ata-prompts'
+import { INSTRUCTION_HEAD } from '@/lib/generation/instruction'
 import { PROMPTS } from '@/lib/generation/prompts.data'
 import { buildShareContent } from '@/lib/share'
 import type { Repository } from '@/lib/storage/repository'
@@ -379,5 +382,119 @@ describe('Gerar de novo', () => {
     await waitFor(() => expect(file(madeId).status).toBe('ready'))
     expect(useLibraryStore.getState().files).toHaveLength(2)
     expect(file(madeId)).toMatchObject({ name: 'Ata do lançamento', folderId: file(id).folderId })
+  })
+})
+
+describe('Instrução extra para a IA', () => {
+  const FOCUS = 'foque nas decisões sobre o reajuste do INCC e liste todas as tarefas do Henrique'
+  const BLOCK = `${INSTRUCTION_HEAD}\n\n${FOCUS}`
+  const PAUTA = '# Conteúdo\n\nVamos lançar em maio, eu mando a proposta.'
+  const LESSON = JSON.stringify({ markdown: { elements: [{ type: 'heading', level: 1, text: 'Lançamento' }, { type: 'paragraph', text: 'Em maio.' }], diagrams: [] } })
+  const writes = (request: CapturedRequest) => (systemPromptOf(request) === PROMPTS.LESSON_PROMPT || systemPromptOf(request) === PROMPTS.EXPLANATION_PROMPT ? openAiStream(LESSON) : provider(request))
+  const field = (dialog: HTMLElement) => within(dialog).getByLabelText('Instrução extra para a IA (opcional)')
+  const sent = (system: string) => calls.filter(call => systemPromptOf(call) === system).map(userContentOf)
+
+  it('Ata of a recording, through the transcription: typed in Mais opções, it reaches the context, the parts and the tasks, and the note keeps it', async () => {
+    const id = await recordingNote()
+    render(
+      <MemoryRouter>
+        <AtaPartsDialog fileId={id} />
+      </MemoryRouter>,
+    )
+    const dialog = screen.getByRole('dialog', { name: 'Gerar a Ata' })
+    expect(field(dialog).closest('details')).not.toHaveAttribute('open')
+    fireEvent.click(within(dialog).getByLabelText('Levantamento de tarefas'))
+    fireEvent.change(field(dialog), { target: { value: FOCUS } })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Gerar' }))
+    await waitFor(() => expect(useLibraryStore.getState().files).toHaveLength(2))
+    const reached = calls.filter(call => userContentOf(call).includes(BLOCK)).map(systemPromptOf)
+    expect(reached).toEqual(expect.arrayContaining([P.ENTENDER, P.CANDIDATAS, P.ESCREVER_GERAL, `${P.BASE}\n\n${P.RESUMO}`]))
+    expect(useLibraryStore.getState().files.find(item => item.id !== id)!.made).toMatchObject({ parts: ['resumo', 'tarefas'], instruction: FOCUS })
+  })
+
+  it('Gerar de novo comes with the last instruction, open to see; cleared, the request goes as before and the note forgets it', async () => {
+    const id = await recordingNote()
+    const ataId = (await useJobsStore.getState().generateAta(id, ['resumo'], undefined, undefined, 'home', FOCUS))!
+    render(
+      <MemoryRouter>
+        <AtaPartsDialog fileId={id} again={ataId} />
+      </MemoryRouter>,
+    )
+    const dialog = screen.getByRole('dialog', { name: 'Gerar de novo a Ata' })
+    expect(field(dialog)).toHaveValue(FOCUS)
+    expect(field(dialog).closest('details')).toHaveAttribute('open')
+    fireEvent.change(field(dialog), { target: { value: '' } })
+    const before = calls.length
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Gerar' }))
+    await waitFor(() => expect(useJobsStore.getState().jobs[0]).toMatchObject({ status: 'done', fileId: ataId }))
+    expect(calls.length).toBeGreaterThan(before)
+    expect(calls.slice(before).some(call => userContentOf(call).includes(INSTRUCTION_HEAD))).toBe(false)
+    expect(file(ataId).made).not.toHaveProperty('instruction')
+  })
+
+  it('Aula of a note: the instruction is the marked end of the request; empty, the request is the one of before', async () => {
+    calls = installFetch(writes).calls
+    const id = await textNote()
+    render(
+      <MemoryRouter>
+        <GenerateDialog fileId={id} agent="lesson" />
+      </MemoryRouter>,
+    )
+    const dialog = screen.getByRole('dialog', { name: 'Gerar a Aula' })
+    expect(field(dialog)).toHaveAttribute('placeholder', 'Ex.: foque na parte prática')
+    fireEvent.change(field(dialog), { target: { value: FOCUS } })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Gerar' }))
+    await waitFor(() => expect(useLibraryStore.getState().files.find(item => item.id !== id)?.status).toBe('ready'))
+    expect(sent(PROMPTS.LESSON_PROMPT)).toEqual([`${PAUTA}\n\n${BLOCK}`])
+    expect(useLibraryStore.getState().files.find(item => item.id !== id)!.made).toMatchObject({ instruction: FOCUS })
+    cleanup()
+    calls.length = 0
+    const plain = (await useJobsStore.getState().generateFromNote(id, 'lesson', null, { folderId: null }, ''))!
+    await waitFor(() => expect(file(plain).status).toBe('ready'))
+    expect(sent(PROMPTS.LESSON_PROMPT)).toEqual([PAUTA])
+    expect(file(plain).made).not.toHaveProperty('instruction')
+  })
+
+  it('the Ata of a text note and Refazer carry it too', async () => {
+    calls = installFetch(writes).calls
+    const id = await textNote()
+    render(
+      <MemoryRouter>
+        <GenerateDialog fileId={id} agent="meeting" />
+      </MemoryRouter>,
+    )
+    let dialog = screen.getByRole('dialog', { name: 'Gerar a Ata' })
+    expect(field(dialog)).toHaveAttribute('placeholder', 'Ex.: foque nas decisões e nas tarefas')
+    fireEvent.change(field(dialog), { target: { value: FOCUS } })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Gerar' }))
+    await waitFor(() => expect(sent(PROMPTS.MINUTES_EXTRACT_PROMPT)).toEqual([`${PAUTA}\n\n${BLOCK}`]))
+    cleanup()
+    const recorded = await recordingNote()
+    await useLibraryStore.getState().updateFile(recorded, { type: 'class' })
+    render(
+      <MemoryRouter>
+        <GenerateDialog fileId={recorded} agent="lesson" redo />
+      </MemoryRouter>,
+    )
+    dialog = screen.getByRole('dialog', { name: 'Refazer a Aula' })
+    fireEvent.change(field(dialog), { target: { value: FOCUS } })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Gerar' }))
+    await waitFor(() => expect(sent(PROMPTS.LESSON_PROMPT)).toHaveLength(1))
+    expect(sent(PROMPTS.LESSON_PROMPT)[0]).toMatch(/^# Conteúdo\n\nRegy Niles \[00:10\]/)
+    expect(sent(PROMPTS.LESSON_PROMPT)[0].endsWith(`\n\n${BLOCK}`)).toBe(true)
+  })
+
+  it('Explicação of a theme in Novo conteúdo: the instruction of Mais opções reaches the request', async () => {
+    calls = installFetch(writes).calls
+    render(
+      <MemoryRouter>
+        <NewContentDialog />
+      </MemoryRouter>,
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Tema' }))
+    fireEvent.change(screen.getByLabelText('Tema'), { target: { value: 'Buracos negros' } })
+    fireEvent.change(screen.getByLabelText('Instrução extra para a IA (opcional)'), { target: { value: FOCUS } })
+    fireEvent.click(screen.getByRole('button', { name: 'Gerar explicação' }))
+    await waitFor(() => expect(sent(PROMPTS.EXPLANATION_PROMPT)).toEqual([`Buracos negros\n\n${BLOCK}`]))
   })
 })

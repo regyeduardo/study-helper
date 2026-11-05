@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 
-import { FolderWindow, lastModel, madeLine, ReplaceOrNew, SaveIn, useNoteFolder } from '@/components/dialogs/FromNoteFields'
+import { FolderWindow, lastModel, madeLine, MoreOptions, ReplaceOrNew, SaveIn, useNoteFolder } from '@/components/dialogs/FromNoteFields'
 import { ModelPick, useModelChoice } from '@/components/dialogs/ModelPick'
 import { Dialog } from '@/components/ui/Dialog'
 import { mediaOf } from '@/lib/file-types'
@@ -12,7 +12,7 @@ import { useUiStore } from '@/stores/ui'
 
 /**
  * Gerar (or Refazer) the Aula or the Ata of a note: the model selector is always there, with the default preselected.
- * A new note says where it goes ("Salvar em", Trocar); `again`: the note made before, whose model comes back (Gerar de novo).
+ * A new note says where it goes ("Salvar em", Trocar); `again`: the note made before, whose model and instruction come back (Gerar de novo).
  */
 export function GenerateDialog({ fileId, agent, redo = false, again }: { fileId: string; agent: SecondTabAgent; redo?: boolean; again?: string }) {
   const close = useUiStore(state => state.close)
@@ -25,12 +25,13 @@ export function GenerateDialog({ fileId, agent, redo = false, again }: { fileId:
   const choice = useModelChoice(agent === 'meeting' ? 'ata' : 'aula', Boolean(file) && mediaOf(file!) !== 'text', lastModel(before, settings))
   const folder = useNoteFolder(fileId)
   const [replace, setReplace] = useState(Boolean(before))
+  const [instruction, setInstruction] = useState(before?.made?.instruction ?? '')
   const label = agent === 'meeting' ? 'Ata' : 'Aula'
   const start = () => {
     close()
     const model = choice.model || null
-    if (redo) void generateSecondTab(fileId, agent, model)
-    else void generateFromNote(fileId, agent, model, replace && before ? { replace: before.id } : folder.place).then(id => id && navigate(paths.file(id)))
+    if (redo) void generateSecondTab(fileId, agent, model, instruction)
+    else void generateFromNote(fileId, agent, model, replace && before ? { replace: before.id } : folder.place, instruction).then(id => id && navigate(paths.file(id)))
   }
   return (
     <>
@@ -63,6 +64,7 @@ export function GenerateDialog({ fileId, agent, redo = false, again }: { fileId:
           <ModelPick choice={choice} />
           {before && <ReplaceOrNew replace={replace} onReplace={choice => (setReplace(choice), choice || folder.setOpen(true))} />}
           {!redo && !replace && <SaveIn folder={folder} />}
+          <MoreOptions instruction={instruction} onInstruction={setInstruction} placeholder={agent === 'meeting' ? 'Ex.: foque nas decisões e nas tarefas' : 'Ex.: foque na parte prática'} open={Boolean(before?.made?.instruction)} />
         </div>
       </Dialog>
       {folder.open && <FolderWindow folder={folder} noteName={`${label}: ${file?.name ?? ''}`} />}

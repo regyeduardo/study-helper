@@ -15,6 +15,7 @@ import { renderPrint } from '@/lib/generation/prints'
 import { openVideoFrames, signatureDifference } from '@/lib/generation/video-source'
 import { courseLessonInput, courseOf, explanationName, selectionInput, selectionTitle } from '@/lib/generation/course-lesson'
 import { type ContentInput, mediaDuration, resolveInput, type ResolvedInput } from '@/lib/generation/inputs'
+import { withInstruction } from '@/lib/generation/instruction'
 import { buildMinutes, minutesFileName } from '@/lib/generation/minutes'
 import { generateContent, type GenerationEvent } from '@/lib/generation/pipeline'
 import { PROMPTS } from '@/lib/generation/prompts.data'
@@ -113,10 +114,10 @@ interface JobsState {
   acceptCourse(proposal: CourseProposal, folderId: string | null): Promise<string>
   declineCourse(proposal: CourseProposal): Promise<string>
   generatePending(fileId: string, model?: string | null): Promise<void>
-  generateSecondTab(fileId: string, agent: SecondTabAgent, model?: string | null): Promise<void>
+  generateSecondTab(fileId: string, agent: SecondTabAgent, model?: string | null, instruction?: string): Promise<void>
   redoTranscript(fileId: string, instruction: string): Promise<void>
-  generateFromNote(fileId: string, agent: SecondTabAgent, model?: string | null, place?: Target): Promise<string | null>
-  generateAta(fileId: string, parts: AtaPart[], model?: AtaModelId, ai?: AtaModels, place?: Target): Promise<string | undefined>
+  generateFromNote(fileId: string, agent: SecondTabAgent, model?: string | null, place?: Target, instruction?: string): Promise<string | null>
+  generateAta(fileId: string, parts: AtaPart[], model?: AtaModelId, ai?: AtaModels, place?: Target, instruction?: string): Promise<string | undefined>
   suggestTags(fileId: string): Promise<void>
   generateRemaining(folderId: string): Promise<void>
   regenerate(fileId: string): Promise<void>
@@ -209,6 +210,9 @@ export function homeFolderOf(source: FileMeta, folders: FolderMeta[]): Pick<Fold
   return live.find(folder => folder.parentId === source.folderId && folder.name === source.name) ?? { id: null, name: source.name, parentId: source.folderId }
 }
 
+/** The "Instrução extra para a IA" a note keeps for the next time; none when it was empty. */
+const instructionOf = (instruction?: string): Pick<GenerationChoice, 'instruction'> => (instruction?.trim() ? { instruction: instruction.trim() } : {})
+
 /** What a note made from another keeps of its generation: the model picked, else the default of that moment. */
 function choiceOf(use: AiUse, model: string | null | undefined, rest: Omit<GenerationChoice, 'model' | 'at'> = {}): GenerationChoice {
   const uid = model || uidFor(aiConfigOf(library().index.settings), use)
@@ -284,19 +288,20 @@ export const useJobsStore = create<JobsState>((set, get) => {
     systemPrompt?: string,
     recording?: RecordingData,
     media?: MediaParts,
+    instruction = '',
   ): Promise<{ markdown: string; name?: string }> => {
     if (media) {
       // straight from the audio: one call writes it, like the text path's first pass
       patchJob(jobId, { message: 'Escrevendo direto da mídia' })
-      return { markdown: await generateContent(media, systemPrompt ?? (agent === 'meeting' ? PROMPTS.MEETING_PROMPT : AGENT_PROMPTS[agent as 'lesson' | 'explanation']), session, liveEmit(fileId)) }
+      return { markdown: await generateContent(withInstruction(media, instruction), systemPrompt ?? (agent === 'meeting' ? PROMPTS.MEETING_PROMPT : AGENT_PROMPTS[agent as 'lesson' | 'explanation']), session, liveEmit(fileId)) }
     }
     if (agent === 'meeting' && !systemPrompt) {
       patchJob(jobId, { message: 'Escrevendo a ata (duas passadas)' })
-      const { markdown, subject } = await buildMinutes(content, session, liveEmit(fileId), recording)
+      const { markdown, subject } = await buildMinutes(content, session, liveEmit(fileId), recording, instruction)
       return { markdown, name: minutesFileName(subject) }
     }
     patchJob(jobId, { message: agent === 'lesson' ? 'Escrevendo a aula' : 'Escrevendo a explicação' })
-    const markdown = await generateContent(content, systemPrompt ?? AGENT_PROMPTS[agent as 'lesson' | 'explanation'], session, event => {
+    const markdown = await generateContent(withInstruction(content, instruction), systemPrompt ?? AGENT_PROMPTS[agent as 'lesson' | 'explanation'], session, event => {
       liveEmit(fileId)(event)
       if (event.type === 'phase1_complete') patchJob(jobId, { message: 'Desenhando os diagramas' })
     })
@@ -315,6 +320,7 @@ export const useJobsStore = create<JobsState>((set, get) => {
     pick?: string | null,
     keepName = false,
     media?: MediaParts,
+    instruction = '',
   ): Promise<void> => {
     const { job, controller } = openJob('generation', meta.name, meta.id)
     const activityId = await library().startActivity({ kind: agent, label: `${label}: ${meta.name}`, origin, destination: destinationName(meta.folderId), fileId: meta.id })
@@ -324,7 +330,7 @@ export const useJobsStore = create<JobsState>((set, get) => {
       const recording = heard ?? resolved?.transcription?.recording ?? (await library().openFile(meta.id).catch(() => null))?.sidecar.recording
       const clock = new StageClock()
       clock.add(resolved?.transcription?.stages)
-      const { markdown, name } = await clock.run(media ? 'Escrever direto da mídia' : 'Escrever', () => writeDocument(meta.id, agent, content, session, job.id, systemPrompt, recording, media))
+      const { markdown, name } = await clock.run(media ? 'Escrever direto da mídia' : 'Escrever', () => writeDocument(meta.id, agent, content, session, job.id, systemPrompt, recording, media, instruction))
       patchJob(job.id, { message: 'Salvando' })
       await library().saveContent(meta.id, markdown, { status: 'ready', pendingExcerpt: null, generation: generationMeta(session, resolved, clock.stages), ...(name && !keepName ? { name } : {}) })
       closeJob(job.id, 'done', 'Pronta e salva na Biblioteca.')
@@ -374,6 +380,8 @@ export const useJobsStore = create<JobsState>((set, get) => {
         status: agent === 'reading' ? 'ready' : 'generating',
         pendingExcerpt: agent === 'reading' ? null : resolved.content,
         origin: resolved.origin,
+        // kept for "Tentar de novo"
+        ...(agent !== 'reading' && request.prompt.trim() ? { made: choiceOf(AGENT_USE[agent], request.models?.write, instructionOf(request.prompt)) } : {}),
       },
       agent === 'reading' ? resolved.content.replace(/^# Conteúdo\n\n/, '') : '',
     )
@@ -420,14 +428,15 @@ export const useJobsStore = create<JobsState>((set, get) => {
         closeJob(job.id, 'done', 'Material lido.')
         const picked = request.models?.write
         const ai: AtaModels | undefined = picked ? { model: picked, everyStep: Boolean(request.models?.everyStep) } : undefined
-        if (ataModel) await (ai ? get().generateAta(meta.id, [], ataModel, ai) : get().generateAta(meta.id, [], ataModel))
+        if (request.prompt.trim()) await get().generateAta(meta.id, ataModel ? [] : ataParts, ataModel, ai, 'home', request.prompt)
+        else if (ataModel) await (ai ? get().generateAta(meta.id, [], ataModel, ai) : get().generateAta(meta.id, [], ataModel))
         else if (ataParts.length) await (ai ? get().generateAta(meta.id, ataParts, undefined, ai) : get().generateAta(meta.id, ataParts))
         return
       }
       await library().updateFile(meta.id, { name, description, pendingExcerpt: resolved.content })
       closeJob(job.id, 'done', 'Material lido.')
       const fresh = library().files.find(file => file.id === meta.id) ?? { ...meta, name, description }
-      await runOnFile(fresh, agent, resolved.content, resolved, AGENT_LABEL[agent], resolved.origin.url ?? resolved.origin.name, undefined, undefined, request.models?.write)
+      await runOnFile(fresh, agent, resolved.content, resolved, AGENT_LABEL[agent], resolved.origin.url ?? resolved.origin.name, undefined, undefined, request.models?.write, false, undefined, request.prompt)
     } catch (error) {
       const cancelled = signal.aborted
       await library().updateFile(meta.id, { status: 'pending' }).catch(() => undefined)
@@ -478,13 +487,13 @@ export const useJobsStore = create<JobsState>((set, get) => {
     await keepSource(request, resolved, meta)
     closeJob(job.id, 'done', 'Material lido.')
     if (!makesAta) {
-      void runOnFile(meta, agent, '', resolved, AGENT_LABEL[agent], file.name, undefined, undefined, request.models?.write, false, media)
+      void runOnFile(meta, agent, '', resolved, AGENT_LABEL[agent], file.name, undefined, undefined, request.models?.write, false, media, request.prompt)
       return meta.id
     }
     void get().transcribeNote(meta.id, file, request.models?.transcription)
     const picked = request.models?.write
     const ai: AtaModels | undefined = picked ? { model: picked, everyStep: Boolean(request.models?.everyStep) } : undefined
-    void get().generateAta(meta.id, request.ataModel ? [] : chosenParts(request.ataParts ?? []), request.ataModel, ai)
+    void get().generateAta(meta.id, request.ataModel ? [] : chosenParts(request.ataParts ?? []), request.ataModel, ai, 'home', request.prompt)
     return meta.id
   }
 
@@ -507,7 +516,8 @@ export const useJobsStore = create<JobsState>((set, get) => {
           const media = await directMedia(makesAta ? 'ata' : AGENT_USE[agent], request.models?.write, async () => file)
           if (media) return await startFromMedia(request, agent, file, media, makesAta, job)
         }
-        const read = request.input.kind === 'recording' ? await resolveRecording(request.input.file, progress, controller.signal, heardBy) : await resolveInput(request.input, library().index.settings, request.prompt, progress, controller.signal, heardBy)
+        // the instruction goes as its own block when writing, not inside the material
+        const read = request.input.kind === 'recording' ? await resolveRecording(request.input.file, progress, controller.signal, heardBy) : await resolveInput(request.input, library().index.settings, '', progress, controller.signal, heardBy)
         if (read.transcription?.recording && agent !== 'lesson') {
           patchJob(job.id, { title: request.name || read.title })
           const meta = await createNote(request, read, agent)
@@ -553,7 +563,7 @@ export const useJobsStore = create<JobsState>((set, get) => {
         if (polishing) await library().updateFile(meta.id, { generation: generationMeta(polishing, resolved, resolved.transcription?.stages) })
         return meta.id
       }
-      void runOnFile(meta, agent, resolved.content, resolved, AGENT_LABEL[agent], resolved.origin.url ?? resolved.origin.name, undefined, undefined, request.models?.write)
+      void runOnFile(meta, agent, resolved.content, resolved, AGENT_LABEL[agent], resolved.origin.url ?? resolved.origin.name, undefined, undefined, request.models?.write, false, undefined, request.prompt)
       return meta.id
     },
 
@@ -620,7 +630,7 @@ export const useJobsStore = create<JobsState>((set, get) => {
         for (const [position, plan] of plans.entries()) {
           created.push(
             await library().createFile(
-              { name: plan.title, type: 'class', folderId: parent.id, description: plan.covers, pendingExcerpt: plan.excerpt || null, status: 'pending', position: module.lessons.length ? position : index, origin: resolved.origin },
+              { name: plan.title, type: 'class', folderId: parent.id, description: plan.covers, pendingExcerpt: plan.excerpt || null, status: 'pending', position: module.lessons.length ? position : index, origin: resolved.origin, ...(proposal.request.prompt.trim() ? { made: choiceOf('aula', proposal.request.models?.write, instructionOf(proposal.request.prompt)) } : {}) },
               '',
             ),
           )
@@ -634,7 +644,7 @@ export const useJobsStore = create<JobsState>((set, get) => {
     declineCourse: async proposal => {
       set(state => ({ proposals: state.proposals.filter(item => item !== proposal) }))
       const meta = await createForRequest(proposal.request, proposal.resolved, 'lesson')
-      void runOnFile(meta, 'lesson', proposal.resolved.content, proposal.resolved, 'Aula', proposal.resolved.origin.url ?? proposal.resolved.origin.name, undefined, undefined, proposal.request.models?.write)
+      void runOnFile(meta, 'lesson', proposal.resolved.content, proposal.resolved, 'Aula', proposal.resolved.origin.url ?? proposal.resolved.origin.name, undefined, undefined, proposal.request.models?.write, false, undefined, proposal.request.prompt)
       return meta.id
     },
 
@@ -643,23 +653,23 @@ export const useJobsStore = create<JobsState>((set, get) => {
       const meta = files.find(file => file.id === fileId)
       if (!meta || get().jobs.some(job => job.fileId === fileId && job.status === 'running')) return
       if (courseOf(folders, meta.folderId)) {
-        await runOnFile(meta, 'lesson', courseLessonInput(meta, folders, files), null, 'Aula', meta.description || meta.name, undefined, undefined, model)
+        await runOnFile(meta, 'lesson', courseLessonInput(meta, folders, files), null, 'Aula', meta.description || meta.name, undefined, undefined, model, false, undefined, meta.made?.instruction)
         return
       }
       const agent: Agent = meta.type === 'explanation' ? 'explanation' : meta.type === 'meeting' ? 'meeting' : 'lesson'
-      await runOnFile(meta, agent, meta.pendingExcerpt ?? `# ${meta.name}`, null, 'Nova tentativa', meta.origin?.url ?? meta.origin?.name ?? meta.name)
+      await runOnFile(meta, agent, meta.pendingExcerpt ?? `# ${meta.name}`, null, 'Nova tentativa', meta.origin?.url ?? meta.origin?.name ?? meta.name, undefined, undefined, undefined, false, undefined, meta.made?.instruction)
     },
 
-    generateSecondTab: async (fileId, agent, model) => {
+    generateSecondTab: async (fileId, agent, model, instruction) => {
       const meta = library().files.find(file => file.id === fileId)
       if (!meta || get().jobs.some(job => job.fileId === fileId && job.status === 'running')) return
       const recording = (await library().openFile(fileId)).sidecar.recording
       if (!recording) return
       await library().updateFile(fileId, { type: FILE_TYPE[agent] })
-      await runOnFile({ ...meta, type: FILE_TYPE[agent] }, agent, `${CONTENT_HEADER}${transcriptText(recording)}`, null, AGENT_LABEL[agent], meta.origin?.name ?? meta.name, undefined, undefined, model)
+      await runOnFile({ ...meta, type: FILE_TYPE[agent] }, agent, `${CONTENT_HEADER}${transcriptText(recording)}`, null, AGENT_LABEL[agent], meta.origin?.name ?? meta.name, undefined, undefined, model, false, undefined, instruction)
     },
 
-    generateFromNote: async (fileId, agent, model, place = 'home') => {
+    generateFromNote: async (fileId, agent, model, place = 'home', instruction) => {
       const source = library().files.find(file => file.id === fileId)
       if (!source) return null
       const media = keptMedia(source) ? await directMedia(AGENT_USE[agent], model, () => mediaFileOf(source)) : null
@@ -669,23 +679,23 @@ export const useJobsStore = create<JobsState>((set, get) => {
       const recording = sidecar.recording?.blocks.length ? sidecar.recording : undefined
       const material = `${CONTENT_HEADER}${recording ? transcriptText(recording) : content}`
       if (!media && !material.replace(CONTENT_HEADER, '').trim()) return null
-      const made = choiceOf(AGENT_USE[agent], model)
+      const made = choiceOf(AGENT_USE[agent], model, instructionOf(instruction))
       if (typeof place === 'object' && 'replace' in place) {
         const meta = library().files.find(file => file.id === place.replace)
         if (!meta || get().jobs.some(job => job.fileId === meta.id && job.status === 'running')) return null
         await library().updateFile(meta.id, { made })
-        void runOnFile(meta, agent, material, null, AGENT_LABEL[agent], source.name, undefined, recording, model, true, media ?? undefined)
+        void runOnFile(meta, agent, material, null, AGENT_LABEL[agent], source.name, undefined, recording, model, true, media ?? undefined, instruction)
         return meta.id
       }
       const meta = await library().createFile(
         { name: `${AGENT_LABEL[agent]}: ${source.name}`, type: FILE_TYPE[agent], description: `gerado de ${source.name}`, folderId: await folderFor(source, place), parentFileId: source.id, status: 'generating', pendingExcerpt: material, origin: { input: 'text', name: source.name, storage: 'none' }, made },
         '',
       )
-      void runOnFile(meta, agent, material, null, AGENT_LABEL[agent], source.name, undefined, recording, model, false, media ?? undefined)
+      void runOnFile(meta, agent, material, null, AGENT_LABEL[agent], source.name, undefined, recording, model, false, media ?? undefined, instruction)
       return meta.id
     },
 
-    generateAta: async (fileId, parts, model, chosen, place = 'home') => {
+    generateAta: async (fileId, parts, model, chosen, place = 'home', instruction) => {
       const source = library().files.find(file => file.id === fileId)
       const replaced = typeof place === 'object' && 'replace' in place ? library().files.find(file => file.id === place.replace) : undefined
       // The job shows in the note being replaced, else in the recording until the new note exists.
@@ -711,7 +721,7 @@ export const useJobsStore = create<JobsState>((set, get) => {
           // the date and length the audio does not say (a model left alone invents them)
           const when = meetingStart(source).toLocaleString('pt-BR', { weekday: 'long', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })
           const facts = { type: 'text', text: `Dados da reunião: ${when}${source.origin?.durationSeconds ? `, ${Math.round(source.origin.durationSeconds / 60)} min` : ''}.` }
-          const raw = await clock.run('Ata direto da mídia', () => session.chat([...media, facts], ataPrompt(model, parts)))
+          const raw = await clock.run('Ata direto da mídia', () => session.chat([...media, facts], ataPrompt(model, parts, instruction)))
           if (!raw.trim()) throw new Error('A IA respondeu vazio.')
           return await saveAta({ markdown: ataDocument(raw, model), images: [], models: { write: modelOf(session.settings) }, stages: clock.stages })
         }
@@ -721,7 +731,7 @@ export const useJobsStore = create<JobsState>((set, get) => {
           const video = await mediaFileOf(source).catch(() => null)
           frames = video ? await openVideoFrames(video).catch(() => null) : null
         }
-        const done = await buildAta({ recording: heard!, parts, model, startedAt: meetingStart(source), onProgress: progress }, { ai, frames, difference: signatureDifference, renderPrint: (image, marks, caption) => renderPrint(image, marks, caption) })
+        const done = await buildAta({ recording: heard!, parts, model, startedAt: meetingStart(source), instruction, onProgress: progress }, { ai, frames, difference: signatureDifference, renderPrint: (image, marks, caption) => renderPrint(image, marks, caption) })
         if (done.recording !== heard) {
           await library().updateSidecar(fileId, sidecar => (sidecar.recording ? { ...sidecar, recording: { ...sidecar.recording, speakers: done.recording.speakers }, transcript: transcriptText({ ...sidecar.recording, speakers: done.recording.speakers }) } : sidecar))
           if (source.type === 'reading') await library().saveContent(fileId, transcriptText(done.recording).trim())
@@ -738,7 +748,7 @@ export const useJobsStore = create<JobsState>((set, get) => {
       async function saveAta(done: Pick<MeetingDocument, 'markdown' | 'images' | 'models' | 'costUsd' | 'stages'>): Promise<string> {
         progress('Salvando')
         const document: MeetingDocument = { id: newId(), kind: 'ata', parts: model ? [] : chosenParts(parts), ...(model ? { ataModel: { id: model, name: ATA_MODELS[model].name } } : {}), markdown: done.markdown, images: done.images, createdAt: new Date().toISOString(), models: done.models, ...(done.costUsd !== undefined ? { costUsd: done.costUsd } : {}), stages: done.stages }
-        const made = choiceOf('ata', chosen?.model, { ...(chosen?.everyStep ? { everyStep: true } : {}), ...(model ? { ataModel: model } : { parts: chosenParts(parts) }) })
+        const made = choiceOf('ata', chosen?.model, { ...(chosen?.everyStep ? { everyStep: true } : {}), ...(model ? { ataModel: model } : { parts: chosenParts(parts) }), ...instructionOf(instruction) })
         const fresh = library().files.find(file => file.id === fileId) ?? source!
         const note =
           replaced ??

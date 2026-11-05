@@ -120,6 +120,8 @@ export interface GenerationChoice {
   /** The Ata of a recording: its "Modelo da ata", or the parts of Padrão. */
   ataModel?: AtaModelId
   parts?: AtaPart[]
+  /** "Instrução extra para a IA": where to focus, as typed. */
+  instruction?: string
   at: string
 }
 

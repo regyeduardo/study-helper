@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 
 const kept = vi.hoisted(() => new Map<string, File>())
 
@@ -17,8 +17,11 @@ vi.mock('@/lib/generation/inputs', async importOriginal => ({ ...(await importOr
 vi.mock('@/lib/transcription/audio', async importOriginal => ({ ...(await importOriginal<typeof import('@/lib/transcription/audio')>()), decodeChannels16k: vi.fn(async () => [new Float32Array(16000).map((_, at) => Math.sin(at / 8) * 0.3)]) }))
 vi.mock('@/lib/transcription', async importOriginal => ({ ...(await importOriginal<typeof import('@/lib/transcription')>()), transcribe: vi.fn(() => new Promise(() => undefined)) }))
 
+import { AtaPartsDialog } from '@/components/dialogs/AtaPartsDialog'
 import { defaultIndex } from '@/lib/defaults'
 import * as P from '@/lib/generation/ata-prompts'
+import { ataPrompt } from '@/lib/generation/from-media'
+import { INSTRUCTION_HEAD } from '@/lib/generation/instruction'
 import type { Repository } from '@/lib/storage/repository'
 import { opusOgg } from '@/lib/transcription/opus'
 import { useJobsStore } from '@/stores/jobs'
@@ -50,6 +53,7 @@ function recordedVideo(): Uint8Array {
 }
 
 const UID = 'openrouter::google/gemini-2.5-flash-lite'
+const FOCUS = 'foque nas decisões sobre o reajuste do INCC e liste todas as tarefas do Henrique'
 const DIRECT = '# Ata: Tabela de Vendas\n\n## Resumo\n\nNatália ajusta a tabela [▸ 00:30].\n{{print 00:40 | campo}}\n'
 
 function memoryRepository() {
@@ -181,5 +185,37 @@ describe('generation straight from the media', () => {
     // one call hears the audio; the tags after it read the text
     expect(calls.filter(call => audioOf(call)?.format === 'ogg')).toHaveLength(1)
     expect(audioOf(calls[0])?.format).toBe('ogg')
+  })
+
+  it('the instruction typed in the Ata dialog goes, marked, in the ONE call; Gerar de novo brings it back', async () => {
+    hears(true)
+    const { calls } = installFetch(() => openAiStream(DIRECT))
+    const id = await recordingNote(false)
+    render(<AtaPartsDialog fileId={id} />)
+    const dialog = screen.getByRole('dialog', { name: 'Gerar a Ata' })
+    fireEvent.change(within(dialog).getByLabelText('Instrução extra para a IA (opcional)'), { target: { value: ` ${FOCUS} ` } })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Gerar' }))
+    await waitFor(() => expect(useLibraryStore.getState().files.find(file => file.parentFileId === id)).toBeDefined())
+    const heard = calls.filter(call => audioOf(call))
+    expect(heard).toHaveLength(1)
+    expect(systemPromptOf(heard[0])).toBe(`${ataPrompt(undefined, ['resumo'])}\n\n${INSTRUCTION_HEAD}\n\n${FOCUS}`)
+    expect(ataPrompt('fathom', [], '')).toBe(ataPrompt('fathom', []))
+    const ata = useLibraryStore.getState().files.find(file => file.parentFileId === id)!
+    expect(ata.made).toMatchObject({ parts: ['resumo'], instruction: FOCUS })
+    cleanup()
+    render(<AtaPartsDialog fileId={id} again={ata.id} />)
+    expect(within(screen.getByRole('dialog', { name: 'Gerar de novo a Ata' })).getByLabelText('Instrução extra para a IA (opcional)')).toHaveValue(FOCUS)
+  })
+
+  it('Aula straight from the media: the instruction is the last part of the call, after the audio', async () => {
+    hears(true)
+    const lesson = JSON.stringify({ markdown: { elements: [{ type: 'heading', level: 1, text: 'Tabela de Vendas' }, { type: 'paragraph', text: 'Campos alinhados.' }], diagrams: [] } })
+    const { calls } = installFetch(() => openAiStream(lesson))
+    const id = await recordingNote(false)
+    const lessonId = (await useJobsStore.getState().generateFromNote(id, 'lesson', null, 'home', FOCUS))!
+    await waitFor(() => expect(memory.contents.get(lessonId)).toContain('Tabela de Vendas'))
+    const user = ((calls[0].body?.messages ?? []) as { role: string; content: Record<string, unknown>[] }[]).find(message => message.role === 'user')!.content
+    expect(user[0].type).toBe('input_audio')
+    expect(user.at(-1)).toEqual({ type: 'text', text: `${INSTRUCTION_HEAD}\n\n${FOCUS}` })
   })
 })

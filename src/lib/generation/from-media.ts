@@ -3,6 +3,7 @@
 import type { AtaModelId, AtaPart } from '@/types/domain'
 import { ATA_MODELS, chosenParts, modelDocument, PART_LABEL } from '@/lib/generation/ata'
 import * as P from '@/lib/generation/ata-prompts'
+import { withInstruction } from '@/lib/generation/instruction'
 import { linkMoments } from '@/lib/generation/meeting-material'
 import { PART_PROMPTS } from '@/lib/generation/summary'
 import { base64Of, decodeChannels16k, mixedDown, SAMPLE_RATE } from '@/lib/transcription/audio'
@@ -47,11 +48,11 @@ export async function mediaParts(source: Blob, provider: string, limit = MAX_AUD
   return [{ type: 'input_audio', input_audio: { data: await base64Of(audio), format: mp3 ? 'mp3' : 'ogg' } }, { type: 'text', text: OUVIR }]
 }
 
-/** The Ata from the audio: the chosen model's skeleton, or the checked parts in order, each under its "## " title. */
-export function ataPrompt(model: AtaModelId | undefined, parts: AtaPart[]): string {
-  if (model) return ATA_MODELS[model].prompt
+/** The Ata from the audio: the chosen model's skeleton, or the checked parts in order, each under its "## " title; the instruction of who asked at the end. */
+export function ataPrompt(model: AtaModelId | undefined, parts: AtaPart[], instruction = ''): string {
+  if (model) return withInstruction(ATA_MODELS[model].prompt, instruction)
   const asked = chosenParts(parts).map(part => `## ${PART_LABEL[part]}\n${part === 'tarefas' ? TAREFAS : PART_PROMPTS[part]}`)
-  return `${P.BASE}\n\nEscreva estas partes, nesta ordem, cada uma abrindo com o título "## " dela (o título "# " de cada modelo vira "### "):\n\n${asked.join('\n\n')}`
+  return withInstruction(`${P.BASE}\n\nEscreva estas partes, nesta ordem, cada uma abrindo com o título "## " dela (o título "# " de cada modelo vira "### "):\n\n${asked.join('\n\n')}`, instruction)
 }
 
 /** No thinking or fences; no print slots (no frames here); the minutes of the parts become links that play the media. */

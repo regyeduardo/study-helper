@@ -1,4 +1,5 @@
 import type { RecordingData } from '@/types/domain'
+import { withInstruction } from '@/lib/generation/instruction'
 import { extractJson } from '@/lib/generation/mermaid'
 import type { Emit } from '@/lib/generation/pipeline'
 import { PROMPTS } from '@/lib/generation/prompts.data'
@@ -104,14 +105,15 @@ function markedTranscript(recording: RecordingData): string {
   return lines.join('')
 }
 
-export async function buildMinutes(transcript: string, session: GenerationSession, emit: Emit = () => {}, recording?: RecordingData): Promise<{ markdown: string; subject: string }> {
+/** `instruction`: the "Instrução extra para a IA", read by every pass. */
+export async function buildMinutes(transcript: string, session: GenerationSession, emit: Emit = () => {}, recording?: RecordingData, instruction = ''): Promise<{ markdown: string; subject: string }> {
   const pieces: Item[] = []
   for (const piece of transcriptChunks(recording ? markedTranscript(recording) : transcript)) {
-    const written = extractJson(await session.chat(piece, PROMPTS.MINUTES_EXTRACT_PROMPT))
+    const written = extractJson(await session.chat(withInstruction(piece, instruction), PROMPTS.MINUTES_EXTRACT_PROMPT))
     if (written) pieces.push(written)
   }
   const joined = { assunto: text(pieces[0]?.assunto), temas: pieces.flatMap(piece => list(piece.temas)), passos: pieces.flatMap(piece => list(piece.passos)) }
-  const minutes = pieces.length > 1 ? (extractJson(await session.chat(JSON.stringify({ partes: pieces }), PROMPTS.MINUTES_VERIFY_PROMPT)) ?? joined) : joined
+  const minutes = pieces.length > 1 ? (extractJson(await session.chat(withInstruction(JSON.stringify({ partes: pieces }), instruction), PROMPTS.MINUTES_VERIFY_PROMPT)) ?? joined) : joined
   const markdown = renderMinutes(minutes, recording)
   const subject = text(minutes.assunto).trim() || 'Reunião'
   emit({ type: 'phase1_complete', markdown })

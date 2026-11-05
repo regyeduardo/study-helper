@@ -6,11 +6,12 @@ import { MemoryRouter } from 'react-router-dom'
 import { ReaderRow } from '@/components/library/FileRows'
 import { InfoPanel } from '@/components/reader/Inspector'
 import { defaultIndex, newFileMeta } from '@/lib/defaults'
+import { INSTRUCTION_HEAD } from '@/lib/generation/instruction'
 import { PROMPTS } from '@/lib/generation/prompts.data'
 import type { Repository } from '@/lib/storage/repository'
 import { useJobsStore, type NewContentRequest } from '@/stores/jobs'
 import { useLibraryStore } from '@/stores/library'
-import { type CapturedRequest, installFetch, openAiStream, systemPromptOf } from '@/test/ai/fake-provider'
+import { type CapturedRequest, installFetch, openAiStream, systemPromptOf, userContentOf } from '@/test/ai/fake-provider'
 import type { FileMeta, FileSidecar, FolderMeta } from '@/types/domain'
 
 vi.mock('@/lib/transcription', () => ({
@@ -260,6 +261,20 @@ describe('course detection builds the hierarchy', () => {
     await readyFile(byName['Aula 1'].id)
     await readyFile(byName['Aula 2'].id)
     expect(useLibraryStore.getState().files.find(file => file.name === 'Módulo 2')!.status).toBe('pending')
+  })
+
+  it('the instruction of Novo conteúdo reaches every lesson, the later ones too', async () => {
+    const focus = 'foque na parte prática'
+    const { calls } = installFetch(provider({ is_course: true, name: 'Curso de Botânica', modules: [{ title: 'Módulo 1', lessons: [{ title: 'Aula 1', covers: 'luz' }] }, { title: 'Módulo 2', covers: 'solo' }] }))
+    await useJobsStore.getState().startNewContent(request({ prompt: focus }))
+    await useJobsStore.getState().acceptCourse(useJobsStore.getState().proposals[0], null)
+    const later = useLibraryStore.getState().files.find(file => file.name === 'Módulo 2')!
+    expect(later.made).toMatchObject({ instruction: focus })
+    await readyFile(useLibraryStore.getState().files.find(file => file.name === 'Aula 1')!.id)
+    await useJobsStore.getState().generatePending(later.id)
+    const lessons = calls.filter(call => systemPromptOf(call) === PROMPTS.LESSON_PROMPT).map(userContentOf)
+    expect(lessons).toHaveLength(2)
+    for (const user of lessons) expect(user.endsWith(`\n\n${INSTRUCTION_HEAD}\n\n${focus}`)).toBe(true)
   })
 })
 
