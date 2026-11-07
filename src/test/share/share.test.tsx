@@ -10,7 +10,7 @@ import { Overlays } from '@/components/dialogs/Overlays'
 import { SharedBadge } from '@/components/library/SharedBadge'
 import { SharingView } from '@/components/library/SharingLists'
 import { env } from '@/lib/env'
-import { buildShareContent, importSharedItem, readSharedAttempts, saveSharedAttempt, shareBytes } from '@/lib/share'
+import { buildShareContent, importSharedItem, readSharedAttempts, saveSharedAttempt, shareBytes, shareUrl } from '@/lib/share'
 import { MEDIA_PART_BYTES } from '@/controllers/share.controller'
 import { LocalRepository } from '@/lib/storage/local-repository'
 import { mergeKept } from '@/lib/sync/merge'
@@ -103,6 +103,12 @@ describe('diálogo de compartilhar', () => {
     expect(calls).toHaveLength(0)
   })
 
+  it('o link copiado abre a página do Worker, que agentes de IA leem; sem Worker, segue o link do app', () => {
+    expect(shareUrl('AbCdEfGhIjKlMnOpQrStUv')).toBe('https://share.test/s/AbCdEfGhIjKlMnOpQrStUv')
+    env.shareWorkerUrl = ''
+    expect(shareUrl('AbCdEfGhIjKlMnOpQrStUv', 'https://study.ryns.me')).toBe('https://study.ryns.me/shared/AbCdEfGhIjKlMnOpQrStUv')
+  })
+
   it('mostra o tamanho, sem cota do dia, com "Levar as provas" desmarcado', async () => {
     useGoogle()
     const note = await noteWithExam()
@@ -124,7 +130,7 @@ describe('diálogo de compartilhar', () => {
     const share = await screen.findByRole('button', { name: /^Compartilhar$/ })
     await waitFor(() => expect(share).toBeEnabled())
     fireEvent.click(share)
-    await screen.findByDisplayValue(/\/shared\/AbCdEfGhIjKlMnOpQrStU1$/)
+    await screen.findByDisplayValue('https://share.test/s/AbCdEfGhIjKlMnOpQrStU1')
     const plain = calls.find(call => call.method === 'POST')!.body as { turnstileToken: string; share: { files: { questions: unknown[] }[] } }
     expect(plain.turnstileToken).toBe('turnstile-ok')
     expect(plain.share.files[0].questions).toEqual([])
@@ -136,7 +142,7 @@ describe('diálogo de compartilhar', () => {
     const again = screen.getByRole('button', { name: /^Compartilhar$/ })
     await waitFor(() => expect(again).toBeEnabled())
     fireEvent.click(again)
-    await screen.findByDisplayValue(/\/shared\//)
+    await screen.findByDisplayValue(/\/s\//)
     const sent = calls.find(call => call.method === 'POST')!.body as { share: unknown }
     expect((sent.share as { files: { questions: unknown[] }[] }).files[0].questions).toEqual([QUESTION])
     const text = JSON.stringify(sent)
@@ -155,7 +161,7 @@ describe('diálogo de compartilhar', () => {
     const share = await screen.findByRole('button', { name: /^Compartilhar$/ })
     await waitFor(() => expect(share).toBeEnabled())
     fireEvent.click(share)
-    await screen.findByDisplayValue(/\/shared\/AtaAtaAtaAtaAtaAtaAta1$/)
+    await screen.findByDisplayValue(/\/s\/AtaAtaAtaAtaAtaAtaAta1$/)
     const sent = calls.find(call => call.method === 'POST')!.body as { share: { files: SharedFile[] } }
     expect(sent.share.files[0].documents).toEqual([ATA])
     const plain = await noteWithExam()
@@ -181,7 +187,7 @@ describe('diálogo de compartilhar', () => {
     await waitFor(() => expect(share).toBeEnabled())
     expect(screen.queryByText(/limite/)).not.toBeInTheDocument()
     fireEvent.click(share)
-    await screen.findByDisplayValue(/\/shared\/GrandeGrandeGrandeGran1$/)
+    await screen.findByDisplayValue(/\/s\/GrandeGrandeGrandeGran1$/)
     expect(useLibraryStore.getState().index.shares[0].bytes).toBe(2_400_000)
   })
 
@@ -221,7 +227,7 @@ describe('diálogo de compartilhar', () => {
     await waitFor(() => expect(bar).toHaveAttribute('aria-valuenow', '48'))
     expect(screen.getByText('Enviando a mídia (Reunião.webm): 48%')).toBeInTheDocument()
     release()
-    await screen.findByDisplayValue(new RegExp(`/shared/${id}$`))
+    await screen.findByDisplayValue(new RegExp(`/s/${id}$`))
     const puts = calls.filter(call => call.method === 'PUT')
     expect(puts.map(call => call.url)).toEqual([1, 2, 3].map(part => `${base}/${part}?uploadId=up-1`))
     expect(puts.map(call => (call.body as { size: number }).size)).toEqual([MEDIA_PART_BYTES, MEDIA_PART_BYTES, 1024 * 1024])
@@ -363,7 +369,7 @@ describe('importar', () => {
     expect(opened.sidecar.attempts).toHaveLength(1)
     expect(opened.sidecar.meta).toMatchObject({ questionCount: 1, mastery: 0 })
     expect(first.tags).toEqual(['mat'])
-    expect(first.origin).toMatchObject({ input: 'shared', name: 'Curso de frações', url: expect.stringContaining(`/shared/${item.id}`) })
+    expect(first.origin).toMatchObject({ input: 'shared', name: 'Curso de frações', url: shareUrl(item.id) })
   })
 
   it('importa uma nota solta pelo selo de compartilhado: sai do modo só leitura e vira sua', async () => {

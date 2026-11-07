@@ -16,6 +16,23 @@ const MEDIA_PATH = /^\/media\/([A-Za-z0-9_-]{16,64})\/([A-Za-z0-9_-]{1,64})$/
 const SHARED_FILE_PATH = /^\/shared\/([A-Za-z0-9_-]{16,64})\/(.+)$/
 const MANIFEST_NAME = 'share.json'
 const FOLDER_META_NAME = '.folder.json'
+const PAGE_PATH = /^\/s\/([A-Za-z0-9_-]{16,64})(?:\/arquivo\/([A-Za-z0-9_-]{1,64}))?(\.md)?$/
+const PAGE_HEADERS = { 'Cache-Control': SHARED_CACHE, 'X-Robots-Tag': 'noindex' }
+const PAGE_STYLE = 'body{margin:0;font:16px/1.6 system-ui,sans-serif;color:#1f2328;background:#fff}main{max-width:46rem;margin:0 auto;padding:1.5rem 1rem 4rem}h1,h2,h3,h4,h5,h6{line-height:1.3;margin:2rem 0 .5rem}pre{white-space:pre-wrap;overflow-wrap:anywhere;font:inherit;margin:0 0 1rem}a{color:#0969da}@media (prefers-color-scheme:dark){body{color:#e6edf3;background:#0d1117}a{color:#4493f8}}'
+const HTML_ESCAPES = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }
+const TYPE_LABELS = { class: 'Aula', explanation: 'Explicação', reading: 'Leitura', meeting: 'Reunião' }
+const NOTICES = {
+  404: { title: 'Link não encontrado', text: 'Esse compartilhamento não existe ou já foi apagado.' },
+  410: { title: 'O link expirou', text: `Os links do Estudo valem ${SHARE_DAYS} dias. Peça um novo a quem compartilhou.` },
+}
+const RIGHT_ANSWERS = {
+  unica: question => `${question.correta}) ${question.alternativas?.[question.correta] ?? ''}`,
+  multipla: question => (question.corretas ?? []).map(letter => `${letter}) ${question.alternativas?.[letter] ?? ''}`).join('; '),
+  certo_errado: question => (question.certo ? 'Certo' : 'Errado'),
+  ordenar: question => (question.passos ?? []).map((step, index) => `${index + 1}. ${step}`).join('; '),
+  associar: question => (question.pares ?? []).map(pair => `${pair.esquerda} → ${pair.direita}`).join('; '),
+  lacuna: question => (question.lacunas ?? []).map((gap, index) => `[${index + 1}] ${gap.correta}`).join('; '),
+}
 
 function allowedOrigin(origin, env) {
   if (!origin) return null
@@ -351,6 +368,210 @@ async function serveShared(env, headers, id, path) {
   return new Response(object.body, { status: 200, headers: { ...headers, 'Content-Type': object.httpMetadata?.contentType ?? 'application/json; charset=utf-8', 'Cache-Control': SHARED_CACHE } })
 }
 
+function escapeHtml(value) {
+  return String(value).replace(/[&<>"']/g, char => HTML_ESCAPES[char])
+}
+
+function heading(level, text) {
+  return { kind: 'heading', level: Math.min(level, 6), text }
+}
+
+function paragraph(text) {
+  return { kind: 'paragraph', text }
+}
+
+function preformatted(text) {
+  return { kind: 'text', text }
+}
+
+function link(label, text, href) {
+  return { kind: 'link', label, text, href }
+}
+
+function pad(value) {
+  return String(value).padStart(2, '0')
+}
+
+function clockTime(seconds) {
+  const total = Math.max(0, Math.floor(Number(seconds) || 0))
+  const rest = `${pad(Math.floor((total % 3600) / 60))}:${pad(total % 60)}`
+  return total >= 3600 ? `${Math.floor(total / 3600)}:${rest}` : rest
+}
+
+function dateText(iso) {
+  const date = new Date(iso)
+  if (Number.isNaN(date.getTime())) return '?'
+  return `${pad(date.getUTCDate())}/${pad(date.getUTCMonth() + 1)}/${date.getUTCFullYear()} ${pad(date.getUTCHours())}:${pad(date.getUTCMinutes())} UTC`
+}
+
+function sizeText(bytes) {
+  const value = Number(bytes) || 0
+  const [unit, step] = [['GB', 1024 ** 3], ['MB', 1024 ** 2], ['KB', 1024]].find(([, size]) => value >= size) ?? ['bytes', 1]
+  return `${String(Math.round((value / step) * 10) / 10).replace('.', ',')} ${unit}`
+}
+
+function speechLine(recording, turn) {
+  const speakers = Array.isArray(recording.speakers) ? recording.speakers : []
+  const name = speakers.find(speaker => speaker.id === turn.speaker)?.name ?? turn.speaker
+  return name ? `${name} [${clockTime(turn.start)}]: ${turn.text}` : `[${clockTime(turn.start)}] ${turn.text}`
+}
+
+function transcriptBlocks(file, level) {
+  const turns = Array.isArray(file.recording?.blocks) ? file.recording.blocks : []
+  const text = turns.length ? turns.map(turn => speechLine(file.recording, turn)).join('\n') : textOrEmpty(file.transcript)
+  return text.trim() ? [heading(level, 'Transcrição'), preformatted(text)] : []
+}
+
+function questionText(question, number) {
+  const alternatives = plainObject(question.alternativas) ?? {}
+  return [
+    `${number}. ${textOrEmpty(question.enunciado)}`,
+    ...Object.keys(alternatives).sort().map(letter => `${letter}) ${alternatives[letter]}`),
+    `Gabarito: ${(RIGHT_ANSWERS[question.tipo] ?? RIGHT_ANSWERS.unica)(question)}`,
+    ...(question.explicacao ? [`Explicação: ${question.explicacao}`] : []),
+    ...(question.fonte ? [`Fonte: ${question.fonte}`] : []),
+  ].join('\n')
+}
+
+function questionBlocks(questions, level) {
+  return questions.length ? [heading(level, 'Questões'), ...questions.map((question, index) => preformatted(questionText(question, index + 1)))] : []
+}
+
+function noteBlocks(file, level, mediaUrl) {
+  const media = file.media ? mediaUrl(file.id) : ''
+  return [
+    heading(level, file.name),
+    paragraph(`Tipo: ${TYPE_LABELS[file.type] ?? file.type}`),
+    ...(file.description ? [paragraph(file.description)] : []),
+    ...(file.tags.length ? [paragraph(`Tags: ${file.tags.join(', ')}`)] : []),
+    ...(media ? [link(`Mídia (${file.media.mime || 'tipo desconhecido'}, ${sizeText(file.media.size)})`, media, media)] : []),
+    ...(file.content.trim() ? [preformatted(file.content)] : []),
+    ...(Array.isArray(file.documents) ? file.documents : []).flatMap(document => [heading(level + 1, 'Ata'), preformatted(textOrEmpty(document.markdown))]),
+    ...transcriptBlocks(file, level + 1),
+    ...questionBlocks(file.questions, level + 1),
+  ]
+}
+
+function byPosition(a, b) {
+  return a.position - b.position
+}
+
+function treeBlocks(share, mediaUrl) {
+  const known = new Set(share.folders.map(folder => folder.id))
+  const notesOf = (files, level) => files.sort(byPosition).flatMap(file => noteBlocks(file, level, mediaUrl))
+  const folderBlocks = (folder, level) => [
+    heading(level, folder.name),
+    ...(folder.description ? [paragraph(folder.description)] : []),
+    ...notesOf(share.files.filter(file => file.folderId === folder.id), level + 1),
+    ...share.folders.filter(child => child.parentId === folder.id).sort(byPosition).flatMap(child => folderBlocks(child, level + 1)),
+  ]
+  return [...notesOf(share.files.filter(file => !known.has(file.folderId)), 2), ...share.folders.filter(folder => !known.has(folder.parentId)).sort(byPosition).flatMap(folder => folderBlocks(folder, 2))]
+}
+
+function shareDocument(share, { origin, appUrl, fileId }) {
+  const only = share.files.filter(file => file.id === fileId)
+  const shown = only.length ? { ...share, folders: [], files: only } : share
+  const appLink = `${appUrl}/shared/${share.id}${only.length ? `/arquivo/${fileId}` : ''}`
+  const count = shown.files.length
+  return {
+    title: share.title,
+    description: `${share.title}: ${count === 1 ? '1 nota compartilhada' : `${count} notas compartilhadas`} no Estudo, com o texto completo nesta página.`,
+    redirect: appLink,
+    blocks: [
+      heading(1, share.title),
+      paragraph(`Compartilhado em ${dateText(share.createdAt)} · expira em ${dateText(share.expiresAt)}`),
+      link('', 'Abrir no Estudo', appLink),
+      ...treeBlocks(shown, id => `${origin}/media/${share.id}/${encodeURIComponent(id)}`),
+    ],
+  }
+}
+
+function noticeDocument(status, appUrl) {
+  const notice = NOTICES[status]
+  return { title: notice.title, description: notice.text, redirect: null, blocks: [heading(1, notice.title), paragraph(notice.text), link('', 'Abrir o Estudo', appUrl || '/')] }
+}
+
+function htmlBlock(block) {
+  if (block.kind === 'heading') return `<h${block.level}>${escapeHtml(block.text)}</h${block.level}>`
+  // pre, not a div: agents turn the HTML into text ignoring the CSS, and keep the line breaks only inside pre
+  if (block.kind === 'text') return `<pre>${escapeHtml(block.text)}</pre>`
+  if (block.kind === 'link') return `<p>${block.label ? `${escapeHtml(block.label)}: ` : ''}<a href="${escapeHtml(block.href)}">${escapeHtml(block.text)}</a></p>`
+  return `<p>${escapeHtml(block.text)}</p>`
+}
+
+function markdownBlock(block) {
+  if (block.kind === 'heading') return `${'#'.repeat(block.level)} ${block.text}`
+  if (block.kind === 'link') return `${block.label ? `${block.label}: ` : ''}[${block.text}](${block.href})`
+  return block.text
+}
+
+function htmlPage(page) {
+  // agents do not run scripts and read the text; a person goes straight to the app
+  const redirect = page.redirect ? [`<script>location.replace(${JSON.stringify(page.redirect).replace(/</g, '\\u003c')})</script>`] : []
+  const head = ['<meta charset="utf-8">', '<meta name="viewport" content="width=device-width, initial-scale=1">', '<meta name="robots" content="noindex">', `<meta name="description" content="${escapeHtml(page.description)}">`, `<title>${escapeHtml(page.title)}</title>`, `<style>${PAGE_STYLE}</style>`, ...redirect]
+  return ['<!doctype html>', '<html lang="pt-BR">', '<head>', ...head, '</head>', '<body>', '<main>', ...page.blocks.map(htmlBlock), '</main>', '</body>', '</html>', ''].join('\n')
+}
+
+function markdownPage(page) {
+  return `${page.blocks.map(markdownBlock).join('\n\n')}\n`
+}
+
+export function renderSharePage(share, { origin, appUrl, format = 'html', fileId } = {}) {
+  const page = shareDocument(share, { origin, appUrl: (appUrl ?? '').replace(/\/+$/, ''), fileId })
+  return format === 'md' ? markdownPage(page) : htmlPage(page)
+}
+
+function isPast(date) {
+  return Date.parse(date ?? '') <= Date.now()
+}
+
+async function jsonAt(bucket, key) {
+  const object = await bucket.get(key)
+  return object ? object.json().catch(() => null) : null
+}
+
+async function sharedNote(bucket, root, entry) {
+  const [content, sidecar] = await Promise.all([bucket.get(`${root}${entry.path}.md`).then(object => (object ? object.text() : null)), jsonAt(bucket, `${root}${entry.path}.json`)])
+  const meta = sidecar?.meta
+  if (content === null || !meta) return null
+  return {
+    id: entry.id,
+    name: textOrEmpty(meta.name),
+    folderId: meta.folderId ?? null,
+    type: textOrEmpty(meta.type),
+    position: Number(meta.position) || 0,
+    description: textOrEmpty(meta.description),
+    tags: Array.isArray(meta.tags) ? meta.tags : [],
+    content,
+    questions: Array.isArray(sidecar.questions) ? sidecar.questions : [],
+    transcript: sidecar.transcript,
+    recording: sidecar.recording,
+    documents: sidecar.documents,
+    media: entry.media,
+  }
+}
+
+async function loadShare(bucket, id) {
+  const object = await bucket.get(manifestKey(id))
+  const manifest = object ? await object.json().catch(() => null) : null
+  if (!manifest || !Array.isArray(manifest.files)) return { status: 404 }
+  if (isPast(object.customMetadata?.expiresAt) || isPast(manifest.expiresAt)) return { status: 410 }
+  const root = `${SHARED_PREFIX}${id}/`
+  const folders = await Promise.all((Array.isArray(manifest.folders) ? manifest.folders : []).map(entry => jsonAt(bucket, `${root}${entry.path}${FOLDER_META_NAME}`)))
+  const files = await Promise.all(manifest.files.map(entry => sharedNote(bucket, root, entry)))
+  if (folders.includes(null) || files.includes(null)) return { status: 404 }
+  return { status: 200, share: { id, kind: manifest.kind, title: textOrEmpty(manifest.title), createdAt: manifest.createdAt, expiresAt: manifest.expiresAt, folders, files } }
+}
+
+async function serveSharePage(request, env, id, fileId, markdown) {
+  const appUrl = (env.APP_URL ?? '').replace(/\/+$/, '')
+  const format = markdown ? 'md' : 'html'
+  const { status, share } = await loadShare(env.BUCKET, id)
+  const notice = share ? null : noticeDocument(status, appUrl)
+  const body = share ? renderSharePage(share, { origin: new URL(request.url).origin, appUrl, format, fileId }) : markdown ? markdownPage(notice) : htmlPage(notice)
+  return new Response(body, { status, headers: { ...PAGE_HEADERS, 'Content-Type': `${markdown ? 'text/markdown' : 'text/html'}; charset=utf-8` } })
+}
+
 export default {
   async fetch(request, env) {
     const path = new URL(request.url).pathname
@@ -358,6 +579,8 @@ export default {
     const origin = allowedOrigin(asked, env)
     const mediaMatch = path.match(MEDIA_PATH)
     if (mediaMatch && request.method === 'GET' && (origin || !asked)) return serveMedia(request, env, origin ? corsHeaders(origin) : {}, mediaMatch[1], mediaMatch[2])
+    const pageMatch = path.match(PAGE_PATH)
+    if (pageMatch && request.method === 'GET') return serveSharePage(request, env, pageMatch[1], pageMatch[2], Boolean(pageMatch[3]))
     if (!origin) return new Response('Forbidden', { status: 403 })
     const headers = corsHeaders(origin)
     if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers })

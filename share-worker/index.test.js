@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import worker, { rangeOf } from './index.js'
+import worker, { rangeOf, renderSharePage } from './index.js'
 
 const ORIGIN = 'https://study.ryns.me'
+const APP_URL = 'https://study.ryns.me'
 const KB = 1024
 const MB = 1024 * KB
 const PASS_SECRET = '1x0000000000000000000000000000000AA'
@@ -167,7 +168,7 @@ beforeEach(() => {
   vi.useFakeTimers({ toFake: ['Date'] })
   vi.setSystemTime(new Date('2026-09-28T15:00:00Z'))
   vi.stubGlobal('fetch', vi.fn(fakeFetch))
-  env = { BUCKET: fakeBucket(), TURNSTILE_SECRET: PASS_SECRET, ALLOWED_ORIGINS: ORIGIN }
+  env = { BUCKET: fakeBucket(), TURNSTILE_SECRET: PASS_SECRET, ALLOWED_ORIGINS: ORIGIN, APP_URL }
 })
 
 afterEach(() => {
@@ -398,5 +399,165 @@ describe('media of a shared note', () => {
     expect((await call('DELETE', `/shares/${id}`, { token: 'token-ana' })).status).toBe(200)
     expect([...env.BUCKET.objects.keys()]).toEqual([])
     expect((await call('GET', `/media/${id}/f1`, { origin: null })).status).toBe(404)
+  })
+})
+
+describe('plain page of a share, for AI agents and people without login', () => {
+  const question = { storedId: 'q1', tipo: 'unica', enunciado: 'Quanto custou?', alternativas: { A: 'Mil', B: 'Dois mil', C: 'Três mil' }, correta: 'B', explicacao: 'Foi dito em 01:12.' }
+  const ataDocument = { id: 'ata-1', kind: 'ata', parts: ['resumo'], markdown: '## Resumo\n\nFechamos o preço em dois mil.', images: [], createdAt: '2026-09-28T12:00:00.000Z', models: {} }
+
+  async function noteShare(fields = {}, title = 'Reunião') {
+    const note = { id: 'f1', name: 'Reunião', folderId: null, type: 'meeting', position: 0, description: 'Preço do projeto', tags: ['vendas'], content: '# Ata\n\n- Preço [▸ 01:12](#t=72)', questions: [question], recording, documents: [ataDocument], ...fields }
+    const response = await call('POST', '/shares', { token: 'token-ana', body: { turnstileToken: 'ok', share: { kind: 'file', title, folders: [], files: [note] } } })
+    return (await response.json()).id
+  }
+
+  async function courseShare() {
+    const lesson = (id, name, folderId, position) => ({ id, name, folderId, type: 'class', position, description: '', tags: [], content: `Texto de ${name}`, questions: [] })
+    const course = {
+      kind: 'folder',
+      title: 'Curso',
+      folders: [{ id: 'root', name: 'Curso', parentId: null, position: 0, isCourse: true, description: '' }, { id: 'm2', name: 'Módulo 2', parentId: 'root', position: 1, isCourse: false, description: '' }, { id: 'm1', name: 'Módulo 1', parentId: 'root', position: 0, isCourse: false, description: '' }],
+      files: [lesson('b', 'Aula 2', 'm1', 1), lesson('c', 'Aula 3', 'm2', 0), lesson('a', 'Aula 1', 'm1', 0)],
+    }
+    const response = await call('POST', '/shares', { token: 'token-ana', body: { turnstileToken: 'ok', share: course } })
+    return (await response.json()).id
+  }
+
+  function open(path) {
+    return call('GET', path, { origin: null })
+  }
+
+  function inOrder(text, parts) {
+    const found = parts.map(part => text.indexOf(part))
+    expect(found.every(index => index >= 0)).toBe(true)
+    expect(found).toEqual([...found].sort((a, b) => a - b))
+  }
+
+  it('serves the whole note as plain HTML, with no login and no Origin', async () => {
+    const id = await noteShare()
+    await uploadMedia(id, 'f1', MEDIA)
+    const response = await open(`/s/${id}`)
+    expect(response.status).toBe(200)
+    expect(response.headers.get('Content-Type')).toBe('text/html; charset=utf-8')
+    expect(response.headers.get('Cache-Control')).toBe('public, max-age=60')
+    expect(response.headers.get('X-Robots-Tag')).toBe('noindex')
+    const html = await response.text()
+    expect(html).toContain('<html lang="pt-BR">')
+    expect(html).toContain('<title>Reunião</title>')
+    expect(html).toContain('<meta name="robots" content="noindex">')
+    expect(html).toMatch(/<meta name="description" content="[^"]+">/)
+    expect(html).toContain('<h1>Reunião</h1>')
+    expect(html).toContain('28/09/2026 15:00 UTC')
+    expect(html).toContain('01/10/2026 15:00 UTC')
+    inOrder(html, ['<h2>Reunião</h2>', 'Tipo: Reunião', 'Preço do projeto', 'Tags: vendas', '# Ata\n\n- Preço [▸ 01:12](#t=72)', '<h3>Ata</h3>', '<h3>Transcrição</h3>', '<h3>Questões</h3>'])
+    expect(html).toContain('## Resumo\n\nFechamos o preço em dois mil.')
+    expect(html).toContain('Você [00:00]: Bom dia.\nspeaker_0 [01:12]: Custou dois mil.')
+    expect(html).toContain('1. Quanto custou?\nA) Mil\nB) Dois mil\nC) Três mil\nGabarito: B) Dois mil\nExplicação: Foi dito em 01:12.')
+    expect(html).toContain(`Mídia (audio/webm, 10 bytes): <a href="https://share.test/media/${id}/f1">https://share.test/media/${id}/f1</a>`)
+    expect(html).toContain(`<script>location.replace("${APP_URL}/shared/${id}")</script>`)
+    expect(html).toContain(`<a href="${APP_URL}/shared/${id}">Abrir no Estudo</a>`)
+    expect(html).not.toMatch(/<link\b|<img\b|\ssrc=/)
+  })
+
+  it('lists a folder share under its folders, in the order of their positions', async () => {
+    const id = await courseShare()
+    const html = await (await open(`/s/${id}`)).text()
+    expect(html).toContain('<h1>Curso</h1>')
+    inOrder(html, ['<h2>Curso</h2>', '<h3>Módulo 1</h3>', '<h4>Aula 1</h4>', 'Texto de Aula 1', '<h4>Aula 2</h4>', '<h3>Módulo 2</h3>', '<h4>Aula 3</h4>'])
+  })
+
+  it('/s/<id>/arquivo/<fileId> shows only that note and sends people to it in the app', async () => {
+    const id = await courseShare()
+    const html = await (await open(`/s/${id}/arquivo/b`)).text()
+    expect(html).toContain('<h1>Curso</h1>')
+    expect(html).toContain('<h2>Aula 2</h2>')
+    expect(html).toContain('Texto de Aula 2')
+    expect(html).not.toContain('Aula 1')
+    expect(html).not.toContain('Módulo')
+    expect(html).toContain(`location.replace("${APP_URL}/shared/${id}/arquivo/b")`)
+    expect(await (await open(`/s/${id}/arquivo/outra`)).text()).toContain('Texto de Aula 1')
+  })
+
+  it('answers the same content as Markdown at /s/<id>.md', async () => {
+    const id = await noteShare()
+    await uploadMedia(id, 'f1', MEDIA)
+    const response = await open(`/s/${id}.md`)
+    expect(response.status).toBe(200)
+    expect(response.headers.get('Content-Type')).toBe('text/markdown; charset=utf-8')
+    expect(response.headers.get('X-Robots-Tag')).toBe('noindex')
+    const markdown = await response.text()
+    expect(markdown.startsWith('# Reunião\n')).toBe(true)
+    expect(markdown).toContain(`[Abrir no Estudo](${APP_URL}/shared/${id})`)
+    inOrder(markdown, ['## Reunião', 'Tipo: Reunião', '# Ata\n\n- Preço', '### Ata\n\n## Resumo\n\nFechamos o preço em dois mil.', '### Transcrição\n\nVocê [00:00]: Bom dia.\nspeaker_0 [01:12]: Custou dois mil.', '### Questões', 'Gabarito: B) Dois mil'])
+    expect(markdown).toContain(`Mídia (audio/webm, 10 bytes): [https://share.test/media/${id}/f1](https://share.test/media/${id}/f1)`)
+    expect(markdown).not.toContain('<')
+  })
+
+  it('an expired link answers 410 and an unknown one 404, with a short page', async () => {
+    const id = await noteShare()
+    const unknown = await open('/s/AbCdEfGhIjKlMnOpQrStUv')
+    expect(unknown.status).toBe(404)
+    expect(unknown.headers.get('Content-Type')).toBe('text/html; charset=utf-8')
+    expect(await unknown.text()).toContain('não existe')
+    const manifest = env.BUCKET.objects.get(`shared/${id}/share.json`)
+    manifest.customMetadata = { ...manifest.customMetadata, expiresAt: '2026-09-28T14:00:00.000Z' }
+    expect((await open(`/s/${id}`)).status).toBe(410)
+    manifest.customMetadata = { ...manifest.customMetadata, expiresAt: '2026-10-01T15:00:00.000Z' }
+    vi.setSystemTime(new Date('2026-10-01T15:00:00Z'))
+    const expired = await open(`/s/${id}`)
+    expect(expired.status).toBe(410)
+    expect(expired.headers.get('X-Robots-Tag')).toBe('noindex')
+    expect(expired.headers.get('Cache-Control')).toBe('public, max-age=60')
+    const html = await expired.text()
+    expect(html).toContain('O link expirou')
+    expect(html).not.toContain('Bom dia')
+    expect((await open(`/s/${id}.md`)).status).toBe(410)
+  })
+
+  it('escapes the HTML that comes in names and content', async () => {
+    const evil = '<img src=x onerror=alert(1)>'
+    const id = await noteShare({ name: evil, description: '"><script>alert(2)</script>', tags: ['<b>'], content: '</pre><script>alert(3)</script>' }, evil)
+    const html = await (await open(`/s/${id}`)).text()
+    expect(html).not.toContain('<img')
+    expect(html).not.toMatch(/<script>alert/)
+    expect(html).not.toContain('<b>')
+    expect(html).toContain('<title>&lt;img src=x onerror=alert(1)&gt;</title>')
+    expect(html).toContain('&lt;/pre&gt;&lt;script&gt;alert(3)&lt;/script&gt;')
+    expect(html).toContain('&quot;&gt;&lt;script&gt;alert(2)&lt;/script&gt;')
+  })
+
+  it('is open to any GET with or without Origin, and the other routes stay as they were', async () => {
+    const id = await noteShare()
+    expect((await call('GET', `/s/${id}`, { origin: 'https://evil.test' })).status).toBe(200)
+    expect((await call('POST', `/s/${id}`, { origin: null })).status).toBe(403)
+    expect((await call('GET', `/shared/${id}/share.json`, { origin: null })).status).toBe(403)
+    expect((await call('GET', `/shared/${id}/share.json`)).status).toBe(404)
+  })
+
+  it('renders every question type with its gabarito, and an old plain transcript', () => {
+    const share = {
+      id: 'AbCdEfGhIjKlMnOpQrStUv',
+      kind: 'file',
+      title: 'Prova',
+      createdAt: '2026-09-28T15:00:00.000Z',
+      expiresAt: '2026-10-01T15:00:00.000Z',
+      folders: [],
+      files: [{ id: 'f1', name: 'Prova', folderId: null, type: 'class', position: 0, description: '', tags: [], content: 'Texto', transcript: 'Professor [00:05]: Olá.', questions: [
+        { tipo: 'multipla', enunciado: 'Quais?', alternativas: { B: 'dois', A: 'um', C: 'três' }, corretas: ['A', 'C'], explicacao: '' },
+        { tipo: 'certo_errado', enunciado: 'A Terra é plana.', alternativas: {}, certo: false, explicacao: 'Não é.' },
+        { tipo: 'ordenar', enunciado: 'Ordene.', alternativas: {}, passos: ['abrir', 'ler', 'fechar'], explicacao: '' },
+        { tipo: 'associar', enunciado: 'Associe.', alternativas: {}, pares: [{ esquerda: 'H2O', direita: 'água' }], explicacao: '' },
+        { tipo: 'lacuna', enunciado: 'Metade é ___.', alternativas: {}, lacunas: [{ opcoes: ['1/2', '1/3'], correta: '1/2' }], explicacao: '', fonte: 'https://prova.test/1' },
+      ] }],
+    }
+    const markdown = renderSharePage(share, { origin: 'https://share.test', appUrl: APP_URL, format: 'md' })
+    expect(markdown).toContain('### Transcrição\n\nProfessor [00:05]: Olá.')
+    expect(markdown).toContain('1. Quais?\nA) um\nB) dois\nC) três\nGabarito: A) um; C) três\n\n')
+    expect(markdown).toContain('2. A Terra é plana.\nGabarito: Errado\nExplicação: Não é.')
+    expect(markdown).toContain('3. Ordene.\nGabarito: 1. abrir; 2. ler; 3. fechar')
+    expect(markdown).toContain('4. Associe.\nGabarito: H2O → água')
+    expect(markdown).toContain('5. Metade é ___.\nGabarito: [1] 1/2\nFonte: https://prova.test/1')
+    expect(renderSharePage(share, { origin: 'https://share.test', appUrl: APP_URL })).toContain('<pre>Professor [00:05]: Olá.</pre>')
   })
 })

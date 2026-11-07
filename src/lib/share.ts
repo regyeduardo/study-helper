@@ -25,6 +25,8 @@ export interface ShareTarget {
 export type SharedAttempts = Record<string, Attempt[]>
 
 export function shareUrl(id: string, origin: string = window.location.origin): string {
+  // the Worker page carries the whole content for AI agents, which do not run the app, and sends a person on to the app
+  if (env.shareWorkerUrl) return `${env.shareWorkerUrl}/s/${id}`
   return `${origin}${env.basePath.replace(/\/$/, '')}/shared/${id}`
 }
 
