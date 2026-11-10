@@ -324,13 +324,13 @@ describe('os filtros ativos acima da tabela (FR-044, FR-045)', () => {
   const pdf: SourceMeta = { input: 'file', name: 'stewart.pdf', mime: 'application/pdf', storage: 'none' }
 
   beforeEach(() => {
-    // no folders: the 5 of the root are the whole library, so "N de 5" can only mean one thing
+    // no folders: the 3 notes of the root are all the notes, so "N de 3" can only mean one thing; the 2 entradas are in Entradas (FR-073)
     seed(
       [],
       [
         note('derivadas', NOTA_DERIVADAS, null, { tags: ['derivadas'] }),
         note('limites', NOTA_LIMITES, null, { tags: ['limites'] }),
-        note('cadeia', NOTA_CADEIA, null, { tags: ['derivadas'] }),
+        note('cadeia', NOTA_CADEIA, null, { tags: ['derivadas'], type: 'class' }),
         note('aula', AULA, null, { role: 'entrada', kept: 'registro', origin: video, tags: ['derivadas'] }),
         note('stewart', STEWART, null, { role: 'entrada', kept: 'registro', origin: pdf }),
       ],
@@ -348,33 +348,34 @@ describe('os filtros ativos acima da tabela (FR-044, FR-045)', () => {
     expect(noActive()).toBeNull()
     expect(screen.queryByRole('button', { name: 'Limpar tudo' })).toBeNull()
 
+    // the folder's "Tipo" is the type of the note: "Regra da cadeia" is an Aula
     fireEvent.click(option(NOTA))
     expect(active()).toHaveTextContent(/Tipo\s*nota/)
-    expect(screen.getByText('3 de 5')).toBeInTheDocument()
-    expect(onTable()).toEqual(inOrder([NOTA_DERIVADAS, NOTA_LIMITES, NOTA_CADEIA]))
+    expect(screen.getByText('2 de 3')).toBeInTheDocument()
+    expect(onTable()).toEqual(inOrder([NOTA_DERIVADAS, NOTA_LIMITES]))
 
     fireEvent.click(option(TAG))
     expect(active()).toHaveTextContent(/Tipo\s*nota/)
     expect(active()).toHaveTextContent(/Etiqueta\s*derivadas/)
-    expect(screen.getByText('2 de 5')).toBeInTheDocument()
-    expect(onTable()).toEqual(inOrder([NOTA_DERIVADAS, NOTA_CADEIA]))
+    expect(screen.getByText('1 de 3')).toBeInTheDocument()
+    expect(onTable()).toEqual([NOTA_DERIVADAS])
 
     fireEvent.click(within(active()).getByRole('button', { name: /Tipo/ }))
     expect(active()).not.toHaveTextContent(/Tipo\s*nota/)
     expect(active()).toHaveTextContent(/Etiqueta\s*derivadas/)
     expect(option(NOTA)).not.toBeChecked()
     expect(option(TAG)).toBeChecked()
-    expect(screen.getByText('3 de 5')).toBeInTheDocument()
-    expect(onTable()).toEqual(inOrder([NOTA_DERIVADAS, NOTA_CADEIA, AULA]))
+    expect(screen.getByText('2 de 3')).toBeInTheDocument()
+    expect(onTable()).toEqual(inOrder([NOTA_DERIVADAS, NOTA_CADEIA]))
 
     fireEvent.click(option(NOTA))
-    expect(screen.getByText('2 de 5')).toBeInTheDocument()
+    expect(screen.getByText('1 de 3')).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: 'Limpar tudo' }))
     expect(noActive()).toBeNull()
     expect(screen.queryByRole('button', { name: 'Limpar tudo' })).toBeNull()
     expect(option(NOTA)).not.toBeChecked()
     expect(option(TAG)).not.toBeChecked()
-    expect(onTable()).toEqual(inOrder(NAMES))
+    expect(onTable()).toEqual(inOrder([NOTA_DERIVADAS, NOTA_LIMITES, NOTA_CADEIA]))
   })
 })

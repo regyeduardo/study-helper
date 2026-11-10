@@ -232,7 +232,10 @@ export function DocumentBody({ fileId, compact = false }: { fileId: string; comp
   const job = useJobsStore(state => state.jobs.find(item => item.fileId === fileId && item.status === 'running'))
   const cancel = useJobsStore(state => state.cancel)
   const generatePending = useJobsStore(state => state.generatePending)
-  const asked = Number(new URLSearchParams(useLocation().search).get('t'))
+  const search = new URLSearchParams(useLocation().search)
+  const asked = Number(search.get('t'))
+  // the words of the search that opened the note (FR-074)
+  const found = search.get('busca')
   const startAt = Number.isFinite(asked) && asked > 0 ? asked : undefined
   const redoTranscript = useJobsStore(state => state.redoTranscript)
   const updateSidecar = useLibraryStore(state => state.updateSidecar)
@@ -277,7 +280,7 @@ export function DocumentBody({ fileId, compact = false }: { fileId: string; comp
   const viewer = live ? (
     <GithubMarkdownView markdown={live} live />
   ) : opened && opened.content && !(recording && meta.type === 'reading') ? (
-    <GithubMarkdownView markdown={ataDocument && !recording ? withImages(forReading(opened.content), ataDocument.images) : opened.content} quotes={quotes} onSelection={setSelection} onQuoteClick={onQuoteClick} onHeadings={onHeadings} onHeading={setHeading} />
+    <GithubMarkdownView markdown={ataDocument && !recording ? withImages(forReading(opened.content), ataDocument.images) : opened.content} quotes={quotes} onSelection={setSelection} onQuoteClick={onQuoteClick} onHeadings={onHeadings} onHeading={setHeading} found={found} />
   ) : null
   const ataView = ataDocument ? <AtaTab markdown={withImages(forReading(ataDocument.markdown), ataDocument.images)} onHeadings={onHeadings} /> : undefined
   const rename = async (speakerId: string, name: string) => {

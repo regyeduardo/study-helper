@@ -17,6 +17,7 @@ import { FocusWorkspace } from '@/pages/workspace/container/focus'
 import { ReaderWorkspace } from '@/pages/workspace/container/reader'
 import { type Job, useJobsStore } from '@/stores/jobs'
 import { useLibraryStore } from '@/stores/library'
+import { useModelsStore } from '@/stores/models'
 import { useUiStore } from '@/stores/ui'
 import { type CapturedRequest, installFetch, openAiStream, systemPromptOf, userContentOf } from '@/test/ai/fake-provider'
 import { installBlobShim } from '@/test/imports/blob-shim'
@@ -701,7 +702,7 @@ describe('"Gerar desta entrada": o que a janela oferece', () => {
     await openDialog()
     await screen.findByRole('radiogroup', { name: 'O que gerar' })
     go()
-    expect(generateAta).toHaveBeenCalledWith('e', ['resumo'], undefined, { model: A.uid, everyStep: false }, { folderId: 'aurora' }, '', undefined, undefined)
+    expect(generateAta).toHaveBeenCalledWith('e', ['resumo'], undefined, { model: A.uid }, { folderId: 'aurora' }, '', undefined, 'transcricao')
   })
 
   describe('Modelo da ata', () => {
@@ -732,7 +733,7 @@ describe('"Gerar desta entrada": o que a janela oferece', () => {
       fireEvent.change(modelPick(), { target: { value: 'fathom' } })
       expect(parts()).not.toBeInTheDocument()
       go()
-      expect(generateAta).toHaveBeenCalledWith('e', [], 'fathom', { model: A.uid, everyStep: false }, { folderId: 'aurora' }, '', undefined, undefined)
+      expect(generateAta).toHaveBeenCalledWith('e', [], 'fathom', { model: A.uid }, { folderId: 'aurora' }, '', undefined, 'transcricao')
     })
 
     it('as partes marcadas do Padrão vão na ordem da ata; sem nenhuma, não gera', async () => {
@@ -747,7 +748,7 @@ describe('"Gerar desta entrada": o que a janela oferece', () => {
       fireEvent.click(questions)
       fireEvent.click(tasks)
       go()
-      expect(generateAta).toHaveBeenCalledWith('e', ['tarefas', 'perguntas'], undefined, { model: A.uid, everyStep: false }, { folderId: 'aurora' }, '', undefined, undefined)
+      expect(generateAta).toHaveBeenCalledWith('e', ['tarefas', 'perguntas'], undefined, { model: A.uid }, { folderId: 'aurora' }, '', undefined, 'transcricao')
     })
 
     it('começa no modelo da última Ata feita desta entrada', async () => {
@@ -815,6 +816,338 @@ describe('"Gerar desta entrada": o que a janela oferece', () => {
     expect(screen.getByRole('button', { name: 'Gerar' })).toBeEnabled()
     pick('Refazer a transcrição')
     expect(screen.getByRole('button', { name: 'Gerar' })).toBeDisabled()
+  })
+})
+
+// FR-072: the Ata of a video goes step by step with a model for each step; "Tudo numa chamada" only with a writer that sees video.
+describe('"Gerar desta entrada": a Ata de vídeo, passo a passo', () => {
+  const OR = { id: 'or', type: 'openrouter' as const, name: 'OpenRouter', key: 'k', base: '' }
+  const DI = { id: 'di', type: 'deepinfra' as const, name: 'DeepInfra', key: 'k', base: '' }
+  const GEMINI = { uid: 'or::google/gemini-3.8-flash', pid: 'or', mid: 'google/gemini-3.8-flash', name: 'Gemini 3.8 Flash' }
+  const LUNA = { uid: 'or::openai/gpt-6-luna', pid: 'or', mid: 'openai/gpt-6-luna', name: 'GPT-6 Luna' }
+  const DEEPSEEK = { uid: 'di::deepseek-ai/DeepSeek-V4-Flash-0731', pid: 'di', mid: 'deepseek-ai/DeepSeek-V4-Flash-0731', name: 'DeepSeek V4 Flash' }
+  const NEW = { uid: 'or::acme/novo', pid: 'or', mid: 'acme/novo', name: 'Novo da Acme' }
+  const generateAta = vi.fn(async (..._args: unknown[]) => undefined)
+  const generateFromNote = vi.fn(async (..._args: unknown[]) => 'nota')
+
+  function catalog() {
+    const text = { texto: true, imagem: true, audio: false, video: false, pdf: null }
+    const gemini = { id: GEMINI.mid, name: GEMINI.name, media: { texto: true, imagem: true, audio: true, video: true, pdf: null } }
+    const list = [gemini, { id: LUNA.mid, name: LUNA.name, media: text }, { id: NEW.mid, name: NEW.name, media: text }]
+    const only = [{ id: DEEPSEEK.mid, name: DEEPSEEK.name, media: { texto: true, imagem: false, audio: false, video: false, pdf: null } }]
+    const live = (items: typeof list) => ({ state: 'ok' as const, token: 1, at: Date.now(), list: items, byId: new Map(items.map(item => [item.id, item])) })
+    useModelsStore.setState({ live: { or: live(list), di: live(only) }, probes: {} } as never)
+  }
+
+  async function open(fields: { made?: FileMeta['made'] } = {}, entry: FileSidecar = withTranscript(entrada('e', 'v.mp4', VIDEO))) {
+    const extra = fields.made ? [item('velha', { name: 'Ata antiga', type: 'meeting', parentFileId: 'e', made: fields.made })] : []
+    seed([entry, ...extra])
+    useLibraryStore.setState(state => ({ index: { ...state.index, settings: { ...state.index.settings, aiConfig: { providers: [OR, DI], models: [GEMINI, LUNA, DEEPSEEK, NEW], defaults: { estudo: LUNA.uid, ata: LUNA.uid, midia: GEMINI.uid, tela: GEMINI.uid }, steps: {} } } } }))
+    catalog()
+    render(
+      <MemoryRouter>
+        <GenerateEntryDialog fileId="e" />
+      </MemoryRouter>,
+    )
+    await screen.findByRole('radiogroup', { name: 'O que gerar' })
+  }
+
+  const field = () => screen.getByRole('radiogroup', { name: 'O que a IA analisa' })
+  const labels = () => within(field()).getAllByRole('radio').map(radio => radio.querySelector('b')!.textContent)
+  const checked = () => within(field()).getAllByRole('radio').filter(radio => radio.getAttribute('aria-checked') === 'true').map(radio => radio.querySelector('b')!.textContent)
+  const option = (name: string) => within(field()).getByRole('radio', { name: new RegExp(`^${name}`) })
+  const section = () => screen.getByRole('group', { name: 'Modelos por passo' })
+  const reveal = () => {
+    const toggle = within(section()).getByRole('button', { name: /^Modelos por passo/ })
+    if (toggle.getAttribute('aria-expanded') !== 'true') fireEvent.click(toggle)
+  }
+  const step = (name: string) => within(section()).getByRole('group', { name })
+  const stepModel = (name: string) => within(step(name)).getByRole('combobox') as HTMLSelectElement
+  const setStep = (name: string, uid: string) => fireEvent.change(stepModel(name), { target: { value: uid } })
+  const writer = () => screen.getByLabelText('Modelo da IA') as HTMLSelectElement
+  const go = () => fireEvent.click(screen.getByRole('button', { name: 'Gerar' }))
+
+  beforeEach(() => {
+    generateAta.mockClear()
+    generateFromNote.mockClear()
+    useJobsStore.setState({ generateAta, generateFromNote } as never)
+    installFetch(() => new Response('{}'))
+  })
+
+  it('o padrão é "Transcrição + quadros do vídeo · passo a passo", que funciona com um modelo que só lê texto; "Só o texto" não existe', async () => {
+    await open()
+    expect(labels()).toEqual(['Transcrição + quadros do vídeo', 'Tudo numa chamada'])
+    expect(checked()).toEqual(['Transcrição + quadros do vídeo'])
+    expect(option('Transcrição \\+ quadros do vídeo')).toHaveTextContent('passo a passo')
+    expect(option('Transcrição \\+ quadros do vídeo')).toHaveTextContent('GPT-6 Luna')
+    expect(option('Transcrição \\+ quadros do vídeo')).toHaveAttribute('aria-disabled', 'false')
+    expect(within(field()).queryByRole('radio', { name: /Só o texto|Só a transcrição|Só o vídeo/ })).not.toBeInTheDocument()
+    expect(option('Transcrição \\+ quadros do vídeo')).toHaveTextContent('recomendado')
+  })
+
+  it('"Tudo numa chamada" fica visível, desligado e diz por quê quando o modelo da escrita não vê vídeo', async () => {
+    await open()
+    expect(option('Tudo numa chamada')).toHaveAttribute('aria-disabled', 'true')
+    expect(option('Tudo numa chamada')).toHaveTextContent('Só abre com um modelo que veja vídeo')
+    expect(option('Tudo numa chamada')).toHaveTextContent('GPT-6 Luna')
+    fireEvent.click(option('Tudo numa chamada'))
+    expect(checked()).toEqual(['Transcrição + quadros do vídeo'])
+  })
+
+  it('"Tudo numa chamada" abre com um modelo que vê vídeo e vai na geração; trocar de volta para um que não vê tira a escolha', async () => {
+    await open()
+    fireEvent.change(writer(), { target: { value: GEMINI.uid } })
+    expect(option('Tudo numa chamada')).toHaveAttribute('aria-disabled', 'false')
+    fireEvent.click(option('Tudo numa chamada'))
+    expect(checked()).toEqual(['Tudo numa chamada'])
+    go()
+    expect(generateAta).toHaveBeenCalledWith('e', ['resumo'], undefined, { model: GEMINI.uid }, { folderId: 'aurora' }, '', undefined, 'video')
+    generateAta.mockClear()
+    fireEvent.change(writer(), { target: { value: LUNA.uid } })
+    expect(checked()).toEqual(['Transcrição + quadros do vídeo'])
+  })
+
+  it('numa Aula ou Explicação a pergunta continua a de antes', async () => {
+    await open()
+    fireEvent.click(screen.getByRole('radio', { name: /^Aula/ }))
+    expect(labels()).toEqual(['Só o vídeo', 'Só a transcrição', 'Transcrição + vídeo'])
+    expect(screen.queryByRole('group', { name: 'Modelos por passo' })).not.toBeInTheDocument()
+  })
+
+  it('numa entrada de áudio não há os quadros do vídeo: nem a pergunta nem a seção', async () => {
+    await open({}, withTranscript(entrada('e', 'a.webm', AUDIO)))
+    expect(screen.queryByRole('radiogroup', { name: 'O que a IA analisa' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('group', { name: 'Modelos por passo' })).not.toBeInTheDocument()
+  })
+
+  it('a seção "Modelos por passo" traz Vídeo, Contexto e Escrita no modelo recomendado, com o selo e a nota', async () => {
+    await open()
+    reveal()
+    expect(stepModel('Vídeo').value).toBe(GEMINI.uid)
+    expect(stepModel('Contexto').value).toBe(LUNA.uid)
+    expect(stepModel('Escrita').value).toBe(LUNA.uid)
+    expect(step('Vídeo')).toHaveTextContent('recomendado · nota 9')
+    expect(step('Contexto')).toHaveTextContent('recomendado · nota 8')
+    expect(step('Escrita')).toHaveTextContent('recomendado · nota 8')
+    expect(step('Vídeo')).toHaveTextContent('Lê a tela e diz quem fala')
+    expect(step('Escrita')).toHaveTextContent('Igual ao Modelo da IA')
+    expect(section()).toHaveTextContent('Nota de 0 a 10, medido na aba Recomendações (10/11)')
+    expect(within(section()).queryByText(/Pode piorar/)).not.toBeInTheDocument()
+  })
+
+  it('cada passo só oferece o que serve a ele: o Vídeo precisa ler imagem', async () => {
+    await open()
+    reveal()
+    const names = (name: string) => within(stepModel(name)).getAllByRole('option').map(item => item.textContent)
+    expect(names('Vídeo')).toEqual(expect.arrayContaining(['Gemini 3.8 Flash · OpenRouter', 'GPT-6 Luna · OpenRouter']))
+    expect(names('Vídeo')).not.toContain('DeepSeek V4 Flash · DeepInfra')
+    expect(names('Contexto')).toContain('DeepSeek V4 Flash · DeepInfra')
+  })
+
+  it('um modelo com nota abaixo de 8 no passo avisa com a nota e o motivo, e o selo some', async () => {
+    await open()
+    reveal()
+    setStep('Contexto', DEEPSEEK.uid)
+    expect(step('Contexto')).toHaveTextContent('DeepSeek V4 Flash: nota 6 neste passo')
+    expect(step('Contexto')).toHaveTextContent('perdeu o prazo que caiu')
+    expect(step('Contexto')).toHaveTextContent('Pode piorar a ata')
+    expect(step('Contexto')).not.toHaveTextContent('recomendado')
+    expect(step('Vídeo')).toHaveTextContent('recomendado · nota 9')
+  })
+
+  it('um modelo sem nota medida no passo diz isso, sem selo e sem aviso', async () => {
+    await open()
+    reveal()
+    setStep('Contexto', NEW.uid)
+    expect(step('Contexto')).toHaveTextContent('Sem nota medida neste passo')
+    expect(step('Contexto')).not.toHaveTextContent('recomendado')
+    expect(step('Contexto')).not.toHaveTextContent('Pode piorar')
+  })
+
+  it('um modelo que passou, mas não é o recomendado, mostra a nota sem a estrela', async () => {
+    await open()
+    reveal()
+    setStep('Escrita', GEMINI.uid)
+    expect(step('Escrita')).toHaveTextContent('nota 8')
+    expect(step('Escrita')).not.toHaveTextContent('recomendado')
+    expect(step('Escrita')).not.toHaveTextContent('Pode piorar')
+  })
+
+  describe('"Usar recomendados" e "Desfazer"', () => {
+    const use = () => within(section()).getByRole('button', { name: 'Usar recomendados' })
+    const undo = () => within(section()).getByRole('button', { name: 'Desfazer' })
+    const models = () => [stepModel('Vídeo').value, stepModel('Contexto').value, stepModel('Escrita').value]
+
+    it('não há mais "Voltar aos recomendados"', async () => {
+      await open()
+      expect(within(section()).queryByRole('button', { name: 'Voltar aos recomendados' })).not.toBeInTheDocument()
+    })
+
+    it('com todos os passos já nos recomendados, "Usar recomendados" não é oferecido: só "Já nos recomendados", desligado', async () => {
+      await open()
+      expect(within(section()).queryByRole('button', { name: 'Usar recomendados' })).not.toBeInTheDocument()
+      expect(within(section()).queryByRole('button', { name: 'Desfazer' })).not.toBeInTheDocument()
+      expect(within(section()).getByRole('button', { name: 'Já nos recomendados' })).toBeDisabled()
+    })
+
+    it('os passos abrem nos modelos salvos da pessoa, e "Usar recomendados" os troca todos de uma vez', async () => {
+      await open({ made: { at: '2026-11-05T10:00:00.000Z', parts: ['resumo'], model: GEMINI.uid, analyze: 'transcricao', steps: { video: LUNA.uid, context: DEEPSEEK.uid } } })
+      expect(models()).toEqual([LUNA.uid, DEEPSEEK.uid, GEMINI.uid])
+      expect(within(section()).queryByRole('button', { name: 'Já nos recomendados' })).not.toBeInTheDocument()
+      expect(use()).toBeEnabled()
+      fireEvent.click(use())
+      expect(models()).toEqual([GEMINI.uid, LUNA.uid, LUNA.uid])
+      expect(writer().value).toBe(LUNA.uid)
+      expect(step('Vídeo')).toHaveTextContent('recomendado · nota 9')
+      expect(step('Contexto')).toHaveTextContent('recomendado · nota 8')
+      expect(step('Escrita')).toHaveTextContent('recomendado · nota 8')
+    })
+
+    it('depois de usar, aparece "Desfazer", que põe de volta exatamente os modelos de antes', async () => {
+      await open({ made: { at: '2026-11-05T10:00:00.000Z', parts: ['resumo'], model: GEMINI.uid, analyze: 'transcricao', steps: { video: LUNA.uid, context: DEEPSEEK.uid } } })
+      fireEvent.click(use())
+      expect(within(section()).queryByRole('button', { name: 'Usar recomendados' })).not.toBeInTheDocument()
+      fireEvent.click(undo())
+      expect(models()).toEqual([LUNA.uid, DEEPSEEK.uid, GEMINI.uid])
+      expect(writer().value).toBe(GEMINI.uid)
+      expect(within(section()).queryByRole('button', { name: 'Desfazer' })).not.toBeInTheDocument()
+      expect(use()).toBeEnabled()
+    })
+
+    it('"Desfazer" devolve também o que veio por padrão: sem a pessoa ter escolhido, a geração vai como se nada tivesse acontecido', async () => {
+      await open()
+      reveal()
+      setStep('Contexto', DEEPSEEK.uid)
+      fireEvent.click(use())
+      expect(stepModel('Contexto').value).toBe(LUNA.uid)
+      fireEvent.click(undo())
+      expect(models()).toEqual([GEMINI.uid, DEEPSEEK.uid, LUNA.uid])
+      go()
+      expect(generateAta).toHaveBeenCalledWith('e', ['resumo'], undefined, { model: LUNA.uid, context: DEEPSEEK.uid }, { folderId: 'aurora' }, '', undefined, 'transcricao')
+    })
+
+    it('"Usar recomendados" também vale para o que a pessoa trocou à mão, e vai para a geração', async () => {
+      await open()
+      reveal()
+      setStep('Vídeo', LUNA.uid)
+      setStep('Contexto', DEEPSEEK.uid)
+      setStep('Escrita', GEMINI.uid)
+      fireEvent.click(use())
+      expect(models()).toEqual([GEMINI.uid, LUNA.uid, LUNA.uid])
+      go()
+      expect(generateAta).toHaveBeenCalledWith('e', ['resumo'], undefined, { model: LUNA.uid, write: LUNA.uid, video: GEMINI.uid, context: LUNA.uid }, { folderId: 'aurora' }, '', undefined, 'transcricao')
+    })
+
+    it('trocar um passo à mão depois de usar tira o "Desfazer": o botão volta a "Usar recomendados"', async () => {
+      await open({ made: { at: '2026-11-05T10:00:00.000Z', parts: ['resumo'], model: GEMINI.uid, analyze: 'transcricao', steps: { context: DEEPSEEK.uid } } })
+      fireEvent.click(use())
+      setStep('Contexto', NEW.uid)
+      expect(within(section()).queryByRole('button', { name: 'Desfazer' })).not.toBeInTheDocument()
+      expect(use()).toBeEnabled()
+    })
+
+    it('trocar o "Modelo da IA" depois de usar também tira o "Desfazer"', async () => {
+      await open({ made: { at: '2026-11-05T10:00:00.000Z', parts: ['resumo'], model: GEMINI.uid, analyze: 'transcricao', steps: { context: DEEPSEEK.uid } } })
+      fireEvent.click(use())
+      fireEvent.change(writer(), { target: { value: GEMINI.uid } })
+      expect(within(section()).queryByRole('button', { name: 'Desfazer' })).not.toBeInTheDocument()
+      expect(use()).toBeEnabled()
+    })
+  })
+
+  it('a Escrita e o "Modelo da IA" são a mesma escolha', async () => {
+    await open()
+    reveal()
+    setStep('Escrita', GEMINI.uid)
+    expect(writer().value).toBe(GEMINI.uid)
+    fireEvent.change(writer(), { target: { value: LUNA.uid } })
+    expect(stepModel('Escrita').value).toBe(LUNA.uid)
+  })
+
+  describe('a caixa "o modelo de vídeo também escreve o documento"', () => {
+    const BOX = 'O modelo de vídeo (Gemini 3.8 Flash · OpenRouter) também escreve o documento'
+
+    it('na Ata não existe: cada passo tem o seu modelo', async () => {
+      await open()
+      expect(screen.queryByLabelText(/também escreve o documento/)).not.toBeInTheDocument()
+    })
+
+    it.each([
+      ['Aula', 'lesson'],
+      ['Explicação', 'explanation'],
+    ])('numa %s de um vídeo volta como era: marcada, o modelo de vídeo escreve e o "Modelo da IA" fica desligado', async (name, agent) => {
+      await open()
+      fireEvent.click(screen.getByRole('radio', { name: new RegExp(`^${name}`) }))
+      const box = screen.getByLabelText(BOX)
+      expect(box).not.toBeChecked()
+      expect(writer()).toBeEnabled()
+      fireEvent.click(box)
+      expect(box).toBeChecked()
+      expect(writer()).toBeDisabled()
+      go()
+      expect(generateFromNote).toHaveBeenCalledTimes(1)
+      expect(generateFromNote.mock.calls[0].slice(0, 3)).toEqual(['e', agent, GEMINI.uid])
+      expect(generateAta).not.toHaveBeenCalled()
+    })
+
+    it('numa Aula, sem marcar, escreve o "Modelo da IA" de sempre', async () => {
+      await open()
+      fireEvent.click(screen.getByRole('radio', { name: /^Aula/ }))
+      go()
+      expect(generateFromNote.mock.calls[0].slice(0, 3)).toEqual(['e', 'lesson', LUNA.uid])
+    })
+
+    it('numa entrada de áudio a Aula também oferece a caixa, como antes', async () => {
+      await open({}, withTranscript(entrada('e', 'a.webm', AUDIO)))
+      fireEvent.click(screen.getByRole('radio', { name: /^Aula/ }))
+      expect(screen.getByLabelText(BOX)).toBeInTheDocument()
+    })
+  })
+
+  it('sem trocar nada, vai o que foi mostrado: só o modelo da escrita e o passo a passo, como o padrão de hoje', async () => {
+    await open()
+    go()
+    expect(generateAta).toHaveBeenCalledWith('e', ['resumo'], undefined, { model: LUNA.uid }, { folderId: 'aurora' }, '', undefined, 'transcricao')
+  })
+
+  it('os modelos escolhidos vão para a geração, passo a passo', async () => {
+    await open()
+    reveal()
+    setStep('Vídeo', LUNA.uid)
+    setStep('Contexto', DEEPSEEK.uid)
+    setStep('Escrita', GEMINI.uid)
+    go()
+    expect(generateAta).toHaveBeenCalledWith('e', ['resumo'], undefined, { model: GEMINI.uid, write: GEMINI.uid, video: LUNA.uid, context: DEEPSEEK.uid }, { folderId: 'aurora' }, '', undefined, 'transcricao')
+  })
+
+  it('começa nos modelos da última Ata desta entrada ("Gerar de novo")', async () => {
+    await open({ made: { at: '2026-11-05T10:00:00.000Z', parts: ['resumo'], model: GEMINI.uid, analyze: 'transcricao', steps: { video: LUNA.uid, context: DEEPSEEK.uid } } })
+    reveal()
+    expect(stepModel('Vídeo').value).toBe(LUNA.uid)
+    expect(stepModel('Contexto').value).toBe(DEEPSEEK.uid)
+    expect(stepModel('Escrita').value).toBe(GEMINI.uid)
+    expect(step('Contexto')).toHaveTextContent('nota 6 neste passo')
+    go()
+    expect(generateAta.mock.calls[0][3]).toEqual({ model: GEMINI.uid, write: GEMINI.uid, video: LUNA.uid, context: DEEPSEEK.uid })
+  })
+
+  it('uma Ata antiga feita com "o modelo de vídeo também escreve" volta com ele no Contexto e na Escrita', async () => {
+    await open({ made: { at: '2026-11-05T10:00:00.000Z', parts: ['resumo'], model: GEMINI.uid, everyStep: true } })
+    reveal()
+    expect(stepModel('Contexto').value).toBe(GEMINI.uid)
+    expect(stepModel('Escrita').value).toBe(GEMINI.uid)
+  })
+
+  it('abre já aberta quando algum passo começa abaixo de 8, para o aviso não ficar escondido', async () => {
+    await open({ made: { at: '2026-11-05T10:00:00.000Z', parts: ['resumo'], steps: { context: DEEPSEEK.uid } } })
+    expect(within(section()).getByRole('button', { name: /^Modelos por passo/ })).toHaveAttribute('aria-expanded', 'true')
+    expect(step('Contexto')).toHaveTextContent('Pode piorar a ata')
+  })
+
+  it('fechada por padrão quando tudo está no recomendado', async () => {
+    await open()
+    expect(within(section()).getByRole('button', { name: /^Modelos por passo/ })).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByRole('group', { name: 'Vídeo' })).not.toBeInTheDocument()
   })
 })
 

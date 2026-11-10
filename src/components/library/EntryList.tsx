@@ -117,7 +117,7 @@ export function EntryList() {
           </thead>
           <tbody>
             {rows.map(file => (
-              <FileTableRow key={file.id} file={file} depth={0} to={paths.entry(file.id)} kindText={entryKind(file).label} folderName={(file.folderId && folderName.get(file.folderId)) || 'Biblioteca'} {...rowProps} />
+              <FileTableRow key={file.id} file={file} born to={paths.entry(file.id)} kindText={entryKind(file).label} folderName={(file.folderId && folderName.get(file.folderId)) || 'Biblioteca'} {...rowProps} />
             ))}
           </tbody>
         </table>

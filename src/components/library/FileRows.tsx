@@ -10,8 +10,8 @@ import { useFileActions } from '@/components/library/use-file-actions'
 import { useFileBytes, usePathName } from '@/hooks/use-library-view'
 import { familyCount, isNote } from '@/lib/family'
 import { MEDIA_LABEL, mediaLength, mediaOf } from '@/lib/file-types'
-import { type ItemKind, kindOf } from '@/lib/library-filters'
-import type { SearchHit } from '@/lib/library-search'
+import { type ItemKind, kindOf, type NoteKind, noteKindOf } from '@/lib/library-filters'
+import type { SearchHit, SnippetPart } from '@/lib/library-search'
 import { paths } from '@/lib/paths'
 import { clockTime } from '@/lib/transcription/export'
 import { useLibraryStore } from '@/stores/library'
@@ -286,6 +286,8 @@ interface TableRowProps {
 }
 
 const KIND_TEXT: Record<ItemKind, string> = { video: 'Vídeo', audio: 'Áudio', pdf: 'PDF', link: 'Link', texto: 'Texto', tema: 'Tema', arquivo: 'Arquivo', nota: 'Nota' }
+/** The type of the note, the same the folder filters by (FR-073). */
+const NOTE_TEXT: Record<NoteKind, string> = { ata: 'Ata', aula: 'Aula', explicacao: 'Explicação', leitura: 'Leitura', nota: 'Nota · escrita direto' }
 const KIND_ICON: Record<ItemKind, IconName> = { video: 'monitor', audio: 'mic', pdf: 'file', link: 'link', texto: 'text', tema: 'bulb', arquivo: 'file', nota: 'note' }
 
 function kindLine(file: FileMeta): string {
@@ -294,7 +296,7 @@ function kindLine(file: FileMeta): string {
     const length = mediaLength(file.origin?.durationSeconds)
     return length ? `${MEDIA_LABEL[media]} · ${length}` : MEDIA_LABEL[media]
   }
-  if (isNote(file)) return file.parentFileId || file.origin ? 'Nota' : 'Nota · escrita direto'
+  if (isNote(file)) return NOTE_TEXT[noteKindOf(file)]
   return KIND_TEXT[kindOf(file)]
 }
 
@@ -370,12 +372,22 @@ export function SortHead<Column extends string>({ column, label, sort, onSort }:
   )
 }
 
+function Marked({ parts }: { parts: SnippetPart[] }) {
+  return parts.map((part, index) => (part.hit ? <mark key={index}>{part.text}</mark> : <span key={index}>{part.text}</span>))
+}
+
+/** Where the words were found (FR-074): "no nome", "na nota", "na transcrição · mm:ss". */
+export function foundText(hit: Pick<SearchHit, 'where' | 'at'>): string {
+  if (hit.where === 'nome') return 'no nome'
+  if (hit.where === 'nota') return 'na nota'
+  return hit.at === null ? 'na transcrição' : `na transcrição · ${clockTime(hit.at)}`
+}
+
 function Snippet({ hit }: { hit: SearchHit }) {
-  if (!hit.parts.length && hit.at === null) return null
   return (
     <div className="ex-snip">
-      {hit.at !== null && <span className="ex-at">{clockTime(hit.at)} · </span>}
-      {hit.parts.map((part, index) => (part.hit ? <mark key={index}>{part.text}</mark> : <span key={index}>{part.text}</span>))}
+      <span className="ex-at">{foundText(hit)}</span>
+      {hit.parts.length > 0 && <span className="ex-snip-text"><Marked parts={hit.parts} /></span>}
     </div>
   )
 }
@@ -422,23 +434,27 @@ function CheckCell({ show, name, id, draggable }: { show: boolean; name: string;
   )
 }
 
-/** "O que nasceu": what came of it, where it came from, or "Nada ainda" for an entrada that gave nothing. */
-function Born({ file, nested }: { file: FileMeta; nested: boolean }) {
+/** "O que nasceu": what came of it, where it came from (1 click to the mother or the entrada), or "Nada ainda" for an entrada that gave nothing. */
+function Born({ file, quiet = false }: { file: FileMeta; quiet?: boolean }) {
   const files = useLibraryStore(state => state.files)
   const { notes, artifacts } = familyCount(files, file.id)
   return (
     <>
       <FamilyCount file={file} />
-      {!nested && <MotherBadge file={file} className="ex-mother" />}
-      {!notes && !artifacts && !isNote(file) && <span className="ex-none">Nada ainda</span>}
+      <MotherBadge file={file} className="ex-mother" />
+      {!quiet && !notes && !artifacts && !isNote(file) && <span className="ex-none">Nada ainda</span>}
     </>
   )
 }
 
 interface FileTableRowProps extends TableRowProps {
   file: FileMeta
-  depth: number
+  /** A search result: the name and an excerpt with the words marked, and where they were found. */
   hit?: SearchHit
+  /** What the click does in place of opening the item; a search result opens it at what was found. */
+  onOpen?(): void
+  /** The column "O que nasceu", only in the list of entradas; elsewhere the mother and the count go under the name. */
+  born?: boolean
   /** Where it is kept, when that needs saying. */
   place?: string | null
   /** The list of entradas: the name is a link to the page of the entrada, which is also where the row goes. */
@@ -449,20 +465,19 @@ interface FileTableRowProps extends TableRowProps {
   folderName?: string
 }
 
-export function FileTableRow({ file, depth, hit, place, to, kindText, folderName, narrow, selectable, draggable, actions }: FileTableRowProps) {
+export function FileTableRow({ file, hit, onOpen, born = false, place, to, kindText, folderName, narrow, selectable, draggable, actions }: FileTableRowProps) {
   const navigate = useNavigate()
   const selected = useUiStore(state => state.selection.has(file.id))
-  const open = () => (to ? navigate(to) : actions.openFile(file))
+  const open = onOpen ?? (() => (to ? navigate(to) : actions.openFile(file)))
   const name = (
     <>
       <Icon name={kindIcon(file)} />
-      <span className="ex-title">{file.name}</span>
+      <span className="ex-title">{hit ? <Marked parts={hit.name} /> : file.name}</span>
       {file.status !== 'ready' && <span className="pending">{file.status === 'generating' ? 'gerando…' : 'pendente'}</span>}
     </>
   )
-  const className = [hit && 'hit', depth > 0 && 'fam-nested', selected && 'sel'].filter(Boolean).join(' ') || undefined
   return (
-    <tr className={className} style={depth > 0 ? ({ '--fam-depth': depth } as React.CSSProperties) : undefined} aria-label={file.name} data-file-id={file.id} data-depth={depth} tabIndex={0} onClick={open} onKeyDown={onEnter(open)} {...(draggable ? actions.dragFile(file) : {})}>
+    <tr className={selected ? 'sel' : undefined} aria-label={file.name} data-file-id={file.id} tabIndex={0} onClick={open} onKeyDown={onEnter(open)} {...(draggable ? actions.dragFile(file) : {})}>
       <CheckCell show={selectable} name={file.name} id={file.id} draggable={draggable} />
       <td>
         {to ? (
@@ -475,6 +490,7 @@ export function FileTableRow({ file, depth, hit, place, to, kindText, folderName
         <div className="ex-sub">
           <span>{kindText ?? kindLine(file)}</span>
           {folderName && <span className="ex-where">{folderName}</span>}
+          {!born && <Born file={file} quiet />}
           {file.mastery !== null && <span>Prova {file.mastery}%</span>}
           {file.tags.map(tag => (
             <span key={tag}>#{tag}</span>
@@ -482,17 +498,17 @@ export function FileTableRow({ file, depth, hit, place, to, kindText, folderName
           {place && <span className="ex-place">{place}</span>}
           <SaveToDrive fileId={file.id} compact />
         </div>
+        {hit && <Snippet hit={hit} />}
         {narrow && (
           <div className="ex-sub">
-            <Born file={file} nested={depth > 0} />
+            {born && <Born file={file} />}
             <DateLine at={file.updated.at} />
           </div>
         )}
-        {hit && <Snippet hit={hit} />}
       </td>
-      {!narrow && (
+      {born && !narrow && (
         <td className="ex-born">
-          <Born file={file} nested={depth > 0} />
+          <Born file={file} />
         </td>
       )}
       {!narrow && <DateCell at={file.created.at} />}
@@ -509,17 +525,15 @@ export function FileTableRow({ file, depth, hit, place, to, kindText, folderName
 
 interface FolderTableRowProps extends TableRowProps {
   folder: FolderMeta
-  /** What is directly inside it. */
+  /** What is directly inside it: its notes and subfolders. */
   items: number
-  /** How many search results are inside it. */
-  found: number
 }
 
-export function FolderTableRow({ folder, items, found, narrow, selectable, draggable, actions }: FolderTableRowProps) {
+export function FolderTableRow({ folder, items, narrow, selectable, draggable, actions }: FolderTableRowProps) {
   const navigate = useNavigate()
   const selected = useUiStore(state => state.selection.has(folder.id))
   const open = () => navigate(paths.folder(folder.id))
-  const className = [found > 0 && 'hit', selected && 'sel'].filter(Boolean).join(' ') || undefined
+  const className = selected ? 'sel' : undefined
   return (
     <tr className={className} aria-label={folder.name} data-folder-id={folder.id} tabIndex={0} onClick={open} onKeyDown={onEnter(open)} {...(draggable ? actions.dragFolder(folder) : {})} {...(selectable ? actions.dropTarget(folder.id) : {})}>
       <CheckCell show={selectable} name={folder.name} id={folder.id} draggable={draggable} />
@@ -536,34 +550,12 @@ export function FolderTableRow({ folder, items, found, narrow, selectable, dragg
             <DateLine at={folder.updated.at} />
           </div>
         )}
-        {found > 0 && <div className="ex-snip">{found === 1 ? '1 resultado dentro' : `${found} resultados dentro`}</div>}
       </td>
-      {!narrow && <td className="ex-born" />}
       {!narrow && <DateCell at={folder.created.at} />}
       {!narrow && <DateCell at={folder.updated.at} />}
       <td className="ex-act">{selectable && <OptionsButton kind="folder" id={folder.id} name={folder.name} />}</td>
     </tr>
   )
-}
-
-/** A folder listing with each note right under its mother, when she is listed too, in the order given; the rest stays where it was. */
-export function nestFamilies(files: FileMeta[]): { file: FileMeta; depth: number }[] {
-  const listed = new Set(files.map(file => file.id))
-  const under = (file: FileMeta) => Boolean(file.parentFileId && file.parentFileId !== file.id && listed.has(file.parentFileId))
-  const children = new Map<string, FileMeta[]>()
-  for (const file of files) if (under(file)) children.set(file.parentFileId!, [...(children.get(file.parentFileId!) ?? []), file])
-  const nested: { file: FileMeta; depth: number }[] = []
-  const placed = new Set<string>()
-  const place = (file: FileMeta, depth: number) => {
-    if (placed.has(file.id)) return
-    placed.add(file.id)
-    nested.push({ file, depth })
-    for (const child of children.get(file.id) ?? []) place(child, depth + 1)
-  }
-  for (const file of files) if (!under(file)) place(file, 0)
-  // A cycle in the data has no top: what is left goes flat.
-  for (const file of files) place(file, 0)
-  return nested
 }
 
 export function excerptOf(content: string | undefined): string {

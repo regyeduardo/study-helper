@@ -201,22 +201,21 @@ describe('com conta do Google, o que está só neste navegador', () => {
       await waitFor(() => expect(rowOf('aula3')).not.toHaveTextContent(NOTICE))
     })
 
+    // the folder lists only notes (FR-073): the entradas are in the list of Entradas, below
     it('a pasta do explorador avisa na linha, só no que está só aqui', async () => {
       renderAt('/biblioteca/aurora')
       await screen.findByRole('table', { name: 'Notas e pastas' })
-      for (const id of ['aula3', 'gravada']) {
-        expect(rowOf(id)).toHaveTextContent(NOTICE)
-        expect(actionIn(rowOf(id))).toBeInTheDocument()
-      }
-      for (const id of ['kickoff', 'reuniao', 'guia', 'ata']) expectNoOffer(rowOf(id))
+      expect(rowOf('gravada')).toHaveTextContent(NOTICE)
+      expect(actionIn(rowOf('gravada'))).toBeInTheDocument()
+      expectNoOffer(rowOf('ata'))
     })
 
     it('a linha do explorador salva e o aviso some', async () => {
       renderAt('/biblioteca/aurora')
       await screen.findByRole('table', { name: 'Notas e pastas' })
-      await saveWith(actionIn(rowOf('aula3')))
-      expect(saveToDrive).toHaveBeenCalledWith('aula3')
-      await waitFor(() => expect(rowOf('aula3')).not.toHaveTextContent(NOTICE))
+      await saveWith(actionIn(rowOf('gravada')))
+      expect(saveToDrive).toHaveBeenCalledWith('gravada')
+      await waitFor(() => expect(rowOf('gravada')).not.toHaveTextContent(NOTICE))
     })
 
     it('a lista de Entradas avisa só em quem está só aqui', () => {

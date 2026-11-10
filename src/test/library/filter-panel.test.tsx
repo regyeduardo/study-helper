@@ -13,6 +13,7 @@ const folder = (id: string | null, label: string, depth: number, count = 1, sele
 const LONG = 'Curso completo de gestão de projetos, módulos 1 a 12, com os exercícios resolvidos'
 
 const BASE: Facets = {
+  noteKinds: [],
   kinds: [opt('video', 'Vídeo', 3), opt('audio', 'Áudio', 1), opt('pdf', 'PDF', 1), opt('link', 'Link', 2), opt('texto', 'Texto', 1), opt('tema', 'Tema', 0), opt('arquivo', 'Outro arquivo', 0), opt('nota', 'Nota', 2)],
   generated: [opt('ata', 'Ata', 2), opt('aula', 'Aula', 1), opt('explicacao', 'Explicação', 1), opt('leitura', 'Leitura', 0), opt('mapa', 'Mapa', 2), opt('cartoes', 'Cartões', 2), opt('tutor', 'Conversa do Tutor', 0), opt('nada', 'Nada ainda', 1)],
   period: [opt('hoje', 'Hoje', 4), opt('7dias', 'Últimos 7 dias', 7), opt('30dias', 'Últimos 30 dias', 8)],
@@ -53,8 +54,9 @@ describe('os grupos e as contagens à vista (FR-045)', () => {
   it('mostra os seis grupos, na ordem do desenho, sem abrir nada', () => {
     renderPanel()
     expect(screen.getByRole('complementary', { name: 'Filtros' })).toBeInTheDocument()
-    expect(screen.getAllByRole('group').map(item => within(item).getAllByRole('button')[0].textContent)).toEqual(Object.values(GROUP_LABELS))
-    expect(Object.values(GROUP_LABELS)).toEqual(['Tipo', 'O que gerou', 'Período', 'Etiqueta', 'Pasta', 'Guardado'])
+    expect(screen.getAllByRole('group').map(item => within(item).getAllByRole('button')[0].textContent)).toEqual(['Tipo', 'O que gerou', 'Período', 'Etiqueta', 'Pasta', 'Guardado'])
+    // the folder's "Tipo" is the type of the note (FR-073), with the same name
+    expect(Object.values(GROUP_LABELS)).toEqual(['Tipo', 'Tipo', 'O que gerou', 'Período', 'Etiqueta', 'Pasta', 'Guardado'])
   })
 
   it.each([

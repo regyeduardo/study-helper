@@ -116,10 +116,19 @@ export interface GenerationMeta {
 /** What the AI analyzes of a video (FR-046): only the media, only the transcription, or both in the same call. An audio always goes by its transcription. */
 export type MediaAnalysis = 'video' | 'transcricao' | 'ambos'
 
+/** "Modelos por passo" of the Ata of a video: the models of Vídeo (who speaks and the screen) and of Contexto, as uids. */
+export interface AtaStepModels {
+  video?: string
+  context?: string
+}
+
 export interface GenerationChoice {
-  /** "Modelo da IA" (uid): the one picked, or the default of that moment. */
+  /** "Modelo da IA" (uid): the one picked, or the default of that moment. In the Ata of a video it is the Escrita. */
   model?: string
+  /** Only in notes made before "Modelos por passo": the video model wrote every step of the Ata. "Gerar de novo" turns it into Contexto and Escrita on that model. */
   everyStep?: boolean
+  /** The Ata of a video, step by step: the model (uid) each step used. The Escrita is `model`. */
+  steps?: AtaStepModels
   /** The Ata of a recording: its "Modelo da ata", or the parts of Padrão. */
   ataModel?: AtaModelId
   parts?: AtaPart[]

@@ -50,6 +50,7 @@ export const APP_PALETTE = `
 .markdown-body mark.hl-yellow { background: var(--mark); color: inherit; border-radius: 2px; padding: 0 1px; }
 .markdown-body mark.hl-green { background: var(--ok-soft); box-shadow: inset 0 -1px 0 var(--ok); color: inherit; border-radius: 2px; padding: 0 1px; }
 .markdown-body mark.hl-pink { background: var(--bad-soft); box-shadow: inset 0 -1px 0 var(--bad); color: inherit; border-radius: 2px; padding: 0 1px; }
+.markdown-body mark.hl-found { background: #f5d34f; color: #1f2328; border-radius: 2px; padding: 0 1px; }
 .markdown-body mark.hl-explained { background: var(--acc1-soft); box-shadow: inset 0 -1px 0 var(--acc1); color: inherit; border-radius: 2px; padding: 0 1px; cursor: pointer; }
 
 .markdown-body .snippet-clipboard-content > pre,

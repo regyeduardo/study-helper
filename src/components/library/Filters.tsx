@@ -3,23 +3,8 @@ import { type ReactNode, useState } from 'react'
 import { FilterPanel } from '@/components/library/FilterPanel'
 import { Icon } from '@/components/ui/Icon'
 import { FILE_TYPES } from '@/lib/file-types'
-import { type ActiveFilter, type FilterGroup, type FilterResult, NO_FILTERS, type Scope, SCOPE_LABELS, withoutFilter } from '@/lib/library-filters'
+import { type ActiveFilter, type FilterGroup, type FilterResult, NO_FILTERS, withoutFilter } from '@/lib/library-filters'
 import { type SortKey, useUiStore } from '@/stores/ui'
-
-const SCOPES: Scope[] = ['tudo', 'entradas', 'notas']
-
-/** Tudo, Entradas ou Notas, each with how many there are. */
-export function ScopeTabs({ scope, counts, onChange }: { scope: Scope; counts: Record<Scope, number>; onChange(scope: Scope): void }) {
-  return (
-    <div className="ex-scope" role="group" aria-label="Mostrar">
-      {SCOPES.map(id => (
-        <button key={id} aria-pressed={scope === id} onClick={() => onChange(id)}>
-          {SCOPE_LABELS[id]} <span className="ex-scope-n">{counts[id]}</span>
-        </button>
-      ))}
-    </div>
-  )
-}
 
 interface ActiveFiltersProps {
   active: ActiveFilter[]
@@ -66,8 +51,8 @@ export function LowMasteryChip() {
 }
 
 /**
- * The explorer's filters in Colunas, Comandos and Foco (FR-041): the panel opens as a drawer, with Tudo, Entradas or Notas
- * and the active filters beside it. `result` is what `useLibraryView` counted.
+ * The explorer's filters in Colunas, Comandos and Foco (FR-041): the panel opens as a drawer, with the active filters beside it.
+ * The lists there are of notes, as the folder (FR-073). `result` is what `useLibraryView` counted.
  */
 export function LayoutFilters({ result, children }: { result: FilterResult; children?: ReactNode }) {
   const filters = useUiStore(state => state.filters)
@@ -83,7 +68,6 @@ export function LayoutFilters({ result, children }: { result: FilterResult; chil
           Filtros
           {result.active.length > 0 && <span className="ex-filters-n">{result.active.length}</span>}
         </button>
-        <ScopeTabs scope={filters.scope} counts={result.scopes} onChange={scope => setFilters({ ...filters, scope })} />
         <LowMasteryChip />
         {tag && (
           <button className="chip" aria-pressed="true" onClick={() => setTag(null)}>

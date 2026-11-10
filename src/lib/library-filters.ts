@@ -1,20 +1,27 @@
 // Filtros combináveis das listas da biblioteca (FR-044, FR-045): E entre os grupos, OU dentro de cada grupo, com a contagem de cada opção.
+// A pasta lista só notas, e o "Tipo" dela é o tipo da nota; o tipo da entrada e "O que gerou" são da lista de Entradas (FR-073).
 import type { FileMeta, FileType, FolderMeta } from '@/types/domain'
 import { descendantsOf, isNote } from '@/lib/family'
 import { mediaOf } from '@/lib/file-types'
 
 export type Scope = 'tudo' | 'entradas' | 'notas'
 export type ItemKind = 'video' | 'audio' | 'pdf' | 'link' | 'texto' | 'tema' | 'arquivo' | 'nota'
+/** The type of a note: "nota" is one written directly, born of nothing. */
+export type NoteKind = 'ata' | 'aula' | 'explicacao' | 'leitura' | 'nota'
 export type Generated = 'ata' | 'aula' | 'explicacao' | 'leitura' | 'mapa' | 'cartoes' | 'tutor' | 'nada'
 export type DateField = 'updated' | 'created'
 export type PeriodPreset = 'hoje' | '7dias' | '30dias'
 /** A preset, or the days of "Escolher datas…": YYYY-MM-DD, both inclusive, either may be missing. */
 export type Period = PeriodPreset | { from?: string; to?: string }
 export type Place = 'drive' | 'navegador' | 'temporario' | 'registro' | 'apagado'
-export type FilterGroup = 'kinds' | 'generated' | 'period' | 'tags' | 'folders' | 'places'
+export type FilterGroup = 'noteKinds' | 'kinds' | 'generated' | 'period' | 'tags' | 'folders' | 'places'
 
 export interface LibraryFilters {
+  /** "notas" is the folder (only notes), "entradas" the list of entradas; "tudo" mixes both. */
   scope: Scope
+  /** The "Tipo" of the folder: only with the scope "notas". */
+  noteKinds: NoteKind[]
+  /** The "Tipo" and "O que gerou" of the entradas: not with the scope "notas". */
   kinds: ItemKind[]
   generated: Generated[]
   /** The Atualizado/Criado switch: it stays when the period is cleared. */
@@ -27,10 +34,9 @@ export interface LibraryFilters {
   places: Place[]
 }
 
-export const NO_FILTERS: LibraryFilters = { scope: 'tudo', kinds: [], generated: [], dateField: 'updated', period: null, tags: [], folders: [], subfolders: true, places: [] }
+export const NO_FILTERS: LibraryFilters = { scope: 'tudo', noteKinds: [], kinds: [], generated: [], dateField: 'updated', period: null, tags: [], folders: [], subfolders: true, places: [] }
 
-export const GROUP_LABELS: Record<FilterGroup, string> = { kinds: 'Tipo', generated: 'O que gerou', period: 'Período', tags: 'Etiqueta', folders: 'Pasta', places: 'Guardado' }
-export const SCOPE_LABELS: Record<Scope, string> = { tudo: 'Tudo', entradas: 'Entradas', notas: 'Notas' }
+export const GROUP_LABELS: Record<FilterGroup, string> = { noteKinds: 'Tipo', kinds: 'Tipo', generated: 'O que gerou', period: 'Período', tags: 'Etiqueta', folders: 'Pasta', places: 'Guardado' }
 export const DATE_FIELD_LABELS: Record<DateField, string> = { updated: 'Atualizado', created: 'Criado' }
 
 export interface PlaceContext {
@@ -52,6 +58,8 @@ export interface FilterSource {
   timeZone?: string
   /** The search hits, while searching: nothing else appears or is counted, but the total stays the library's. */
   only?: ReadonlySet<string> | null
+  /** While searching, an entrada found passes the list of notes too (FR-074). */
+  foundEntries?: boolean
 }
 
 export interface FacetOption<Id> {
@@ -67,7 +75,11 @@ export interface FolderOption extends FacetOption<string | null> {
 }
 
 export interface Facets {
+  /** The note types; empty unless the scope is "notas". */
+  noteKinds: FacetOption<NoteKind>[]
+  /** Empty with the scope "notas". */
   kinds: FacetOption<ItemKind>[]
+  /** Empty with the scope "notas". */
   generated: FacetOption<Generated>[]
   period: FacetOption<PeriodPreset>[]
   /** How many are in the chosen days; null when no days are chosen. */
@@ -90,7 +102,7 @@ export interface FilterResult {
   /** What passes everything, in the order received. */
   items: FileMeta[]
   shown: number
-  /** Everything alive in the library. */
+  /** Everything alive in the library; only its notes with the scope "notas". */
   total: number
   /** "8 de 214" */
   summary: string
@@ -114,6 +126,14 @@ const KINDS: Option<ItemKind>[] = [
   { id: 'texto', label: 'Texto', chip: 'texto' },
   { id: 'tema', label: 'Tema', chip: 'tema' },
   { id: 'arquivo', label: 'Outro arquivo', chip: 'outro arquivo' },
+  { id: 'nota', label: 'Nota', chip: 'nota' },
+]
+
+const NOTE_KINDS: Option<NoteKind>[] = [
+  { id: 'ata', label: 'Ata', chip: 'ata' },
+  { id: 'aula', label: 'Aula', chip: 'aula' },
+  { id: 'explicacao', label: 'Explicação', chip: 'explicação' },
+  { id: 'leitura', label: 'Leitura', chip: 'leitura' },
   { id: 'nota', label: 'Nota', chip: 'nota' },
 ]
 
@@ -160,6 +180,12 @@ export function kindOf(file: FileMeta): ItemKind {
   const media = mediaOf(file)
   if (media !== 'text') return media
   return origin.mime === 'application/pdf' || /\.pdf$/i.test(origin.name) ? 'pdf' : 'arquivo'
+}
+
+/** Ata, Aula, Explicação, Leitura, or Nota for one written directly (FR-022): no entrada, no mother, never generated. */
+export function noteKindOf(file: FileMeta): NoteKind {
+  if (file.type === 'reading' && !file.parentFileId && !file.origin && !file.generation) return 'nota'
+  return NOTE_GENERATED[file.type] as NoteKind
 }
 
 /** Where it is kept now. A note is where the library is, unless its media is only here; `storage: 'drive'` means the library's own store. */
@@ -285,8 +311,10 @@ function periodChip(period: Period): string {
 function activeFilters(filters: LibraryFilters, folders: FolderMeta[]): ActiveFilter[] {
   const active: ActiveFilter[] = []
   const add = (group: FilterGroup, value: string, label = GROUP_LABELS[group]) => active.push({ group, label, value })
-  if (filters.kinds.length) add('kinds', chipsOf(KINDS, filters.kinds))
-  if (filters.generated.length) add('generated', chipsOf(GENERATED, filters.generated))
+  const notes = filters.scope === 'notas'
+  if (notes && filters.noteKinds.length) add('noteKinds', chipsOf(NOTE_KINDS, filters.noteKinds))
+  if (!notes && filters.kinds.length) add('kinds', chipsOf(KINDS, filters.kinds))
+  if (!notes && filters.generated.length) add('generated', chipsOf(GENERATED, filters.generated))
   if (isActivePeriod(filters.period)) add('period', periodChip(filters.period), DATE_FIELD_LABELS[filters.dateField])
   if (filters.tags.length) add('tags', [...filters.tags].sort((a, b) => a.localeCompare(b, 'pt-BR')).join(', '))
   if (filters.folders.length) {
@@ -304,6 +332,7 @@ type Group = 'scope' | FilterGroup
 interface Facts {
   file: FileMeta
   note: boolean
+  noteKind: NoteKind | null
   kind: ItemKind
   generated: Set<Generated>
   day: string
@@ -332,8 +361,10 @@ export function filterLibrary(source: FilterSource, filters: LibraryFilters): Fi
     (file): Facts => ({
       file,
       note: isNote(file),
+      noteKind: isNote(file) ? noteKindOf(file) : null,
       kind: kindOf(file),
-      generated: generatedOf(files, file, isLive),
+      // what the entradas gave, only where "O que gerou" is offered
+      generated: filters.scope === 'notas' ? new Set() : generatedOf(files, file, isLive),
       day: dayOf(filters.dateField === 'created' ? file.created.at : file.updated.at, timeZone),
       chain: file.folderId ? (chains.get(file.folderId) ?? []) : [],
       place: placeOf(file, where),
@@ -350,10 +381,12 @@ export function filterLibrary(source: FilterSource, filters: LibraryFilters): Fi
   const belowChosen = ({ chain }: Facts) => chosenFolders.has(null) || chain.some(id => chosenFolders.has(id))
   const generatedMatches = ({ generated }: Facts) => (generated.size ? [...generated].some(item => filters.generated.includes(item)) : filters.generated.includes('nada'))
 
+  const notesList = filters.scope === 'notas'
   const passes: Record<Group, (item: Facts) => boolean> = {
-    scope: item => filters.scope === 'tudo' || item.note === (filters.scope === 'notas'),
-    kinds: item => !filters.kinds.length || filters.kinds.includes(item.kind),
-    generated: item => !filters.generated.length || generatedMatches(item),
+    scope: item => filters.scope === 'tudo' || item.note === notesList || (notesList && Boolean(source.foundEntries)),
+    noteKinds: item => !notesList || !filters.noteKinds.length || (item.noteKind !== null && filters.noteKinds.includes(item.noteKind)),
+    kinds: item => notesList || !filters.kinds.length || filters.kinds.includes(item.kind),
+    generated: item => notesList || !filters.generated.length || generatedMatches(item),
     period: item => (typeof filters.period === 'string' ? inPreset(item.day, filters.period) : !days || inDays(item.day)),
     tags: item => !filters.tags.length || item.file.tags.some(tag => filters.tags.includes(tag)),
     folders: item => !chosenFolders.size || (filters.subfolders ? belowChosen(item) : chosenFolders.has(item.file.folderId)),
@@ -372,11 +405,16 @@ export function filterLibrary(source: FilterSource, filters: LibraryFilters): Fi
     for (const group of failed.length ? failed : groups) countedFor.get(group)!.push(item)
   }
 
+  // the folder counts its notes; the other lists, everything alive
+  const total = notesList ? facts.filter(item => item.note).length : facts.length
   const scopes: Record<Scope, number> = { tudo: 0, entradas: 0, notas: 0 }
   for (const item of countedFor.get('scope')!) {
     scopes.tudo++
     scopes[item.note ? 'notas' : 'entradas']++
   }
+
+  const noteKindCounts = new Map<NoteKind, number>()
+  for (const item of countedFor.get('noteKinds')!) if (item.noteKind) tally(noteKindCounts, item.noteKind)
 
   const kindCounts = new Map<ItemKind, number>()
   for (const item of countedFor.get('kinds')!) tally(kindCounts, item.kind)
@@ -414,12 +452,13 @@ export function filterLibrary(source: FilterSource, filters: LibraryFilters): Fi
   return {
     items: shown,
     shown: shown.length,
-    total: facts.length,
-    summary: `${shown.length} de ${facts.length}`,
+    total,
+    summary: `${shown.length} de ${total}`,
     scopes,
     facets: {
-      kinds: facetOf(KINDS, kindCounts, filters.kinds),
-      generated: facetOf(GENERATED, generatedCounts, filters.generated),
+      noteKinds: notesList ? facetOf(NOTE_KINDS, noteKindCounts, filters.noteKinds) : [],
+      kinds: notesList ? [] : facetOf(KINDS, kindCounts, filters.kinds),
+      generated: notesList ? [] : facetOf(GENERATED, generatedCounts, filters.generated),
       period: facetOf(PRESETS, presetCounts, typeof filters.period === 'string' ? [filters.period] : []),
       periodCustom,
       tags: facetOf(tagNames.map(tag => ({ id: tag, label: tag })), tagCounts, filters.tags),
@@ -434,6 +473,7 @@ export function filterLibrary(source: FilterSource, filters: LibraryFilters): Fi
 /* ---------- changing the filters ---------- */
 
 const CLEARED: Record<FilterGroup, Partial<LibraryFilters>> = {
+  noteKinds: { noteKinds: [] },
   kinds: { kinds: [] },
   generated: { generated: [] },
   period: { period: null },
@@ -452,7 +492,7 @@ export function clearFilters(filters: LibraryFilters): LibraryFilters {
   return { ...NO_FILTERS, scope: filters.scope, dateField: filters.dateField }
 }
 
-type ListGroup = 'kinds' | 'generated' | 'tags' | 'folders' | 'places'
+type ListGroup = 'noteKinds' | 'kinds' | 'generated' | 'tags' | 'folders' | 'places'
 
 /** Checks or unchecks an option of a group that takes several. */
 export function toggleOption<G extends ListGroup>(filters: LibraryFilters, group: G, id: LibraryFilters[G][number]): LibraryFilters {

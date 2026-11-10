@@ -1,7 +1,9 @@
 import { useId, useState } from 'react'
 
 import type { AtaModelId, AtaPart } from '@/types/domain'
-import { FolderWindow, lastModel, madeLine, MoreOptions, ReplaceOrNew, SaveIn, useNoteFolder } from '@/components/dialogs/FromNoteFields'
+import { AtaStepsField, useAtaSteps } from '@/components/dialogs/AtaSteps'
+import { FolderWindow, lastModel, lastSteps, madeLine, MoreOptions, ReplaceOrNew, SaveIn, useNoteFolder } from '@/components/dialogs/FromNoteFields'
+import { MediaAnalysisField, useMediaAnalysis } from '@/components/dialogs/MediaAnalysisField'
 import { ModelPick, useModelChoice } from '@/components/dialogs/ModelPick'
 import { Dialog } from '@/components/ui/Dialog'
 import { mediaOf } from '@/lib/file-types'
@@ -24,7 +26,11 @@ export function AtaPartsDialog({ fileId, again }: { fileId: string; again?: stri
   const settings = useLibraryStore(state => state.index.settings)
   const [parts, setParts] = useState<AtaPart[]>(before?.made?.parts ?? ['resumo'])
   const [model, setModel] = useState<AtaModelId | null>(before?.made?.ataModel ?? null)
-  const choice = useModelChoice('ata', Boolean(file) && mediaOf(file!) !== 'text', lastModel(before, settings))
+  const choice = useModelChoice('ata', false, lastModel(before, settings))
+  // the Ata of a video goes step by step, each step with its model, or all in one call (FR-072)
+  const isVideo = Boolean(file) && mediaOf(file!) === 'video'
+  const analysis = useMediaAnalysis(choice, isVideo, null, { ata: true, initial: before?.made?.analyze })
+  const steps = useAtaSteps(choice, isVideo, lastSteps(before, settings), model ? ATA_MODELS[model].name : undefined)
   const folder = useNoteFolder(fileId)
   const [replace, setReplace] = useState(Boolean(before))
   const [instruction, setInstruction] = useState(before?.made?.instruction ?? '')
@@ -33,10 +39,10 @@ export function AtaPartsDialog({ fileId, again }: { fileId: string; again?: stri
   const start = () => {
     if (!ready) return
     close()
-    const ai = { model: choice.model || null, everyStep: choice.videoWrites }
+    const ai = { model: choice.model || null, ...(isVideo && analysis.value === 'transcricao' ? steps.sent : {}) }
     const place = replace && before ? { replace: before.id } : folder.place
-    // the instruction goes only when there is one
-    const said = instruction.trim() ? ([instruction] as const) : []
+    // the instruction goes only when there is one; a video always says what the AI analyzes
+    const said = isVideo ? ([instruction.trim(), undefined, analysis.sent] as const) : instruction.trim() ? ([instruction] as const) : []
     if (model) void generateAta(fileId, [], model, ai, place, ...said)
     else void generateAta(fileId, PART_ORDER.filter(part => parts.includes(part)), undefined, ai, place, ...said)
   }
@@ -68,6 +74,8 @@ export function AtaPartsDialog({ fileId, again }: { fileId: string; again?: stri
           )}
           <AtaPartsFields parts={parts} onToggle={toggle} model={model} onModel={setModel} />
           <ModelPick choice={choice} />
+          {isVideo && <MediaAnalysisField analysis={analysis} />}
+          {isVideo && analysis.value === 'transcricao' && <AtaStepsField steps={steps} />}
           {before && <ReplaceOrNew replace={replace} onReplace={choice => (setReplace(choice), choice || folder.setOpen(true))} />}
           {!replace && <SaveIn folder={folder} />}
           <MoreOptions instruction={instruction} onInstruction={setInstruction} placeholder="Ex.: foque nas decisões e nas tarefas" open={Boolean(before?.made?.instruction)} />

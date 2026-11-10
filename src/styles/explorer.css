@@ -11,12 +11,6 @@
 .ex-main{display:grid;grid-template-columns:minmax(0,1fr);gap:10px;align-content:start;min-width:0}
 
 /* ---------- tools ---------- */
-.ex-scope{display:inline-flex;gap:2px;height:30px;padding:2px;background:var(--bg);border:1px solid var(--border);border-radius:9px}
-.ex-scope button{display:inline-flex;align-items:center;gap:6px;padding:0 10px;border-radius:6px;font-size:13px;color:var(--fg-muted);white-space:nowrap}
-.ex-scope button:hover{color:var(--fg)}
-.ex-scope button[aria-pressed="true"]{background:var(--bg-muted);color:var(--fg);font-weight:500}
-.ex-scope-n{font-size:12px;font-weight:600;color:var(--fg-faint);font-variant-numeric:tabular-nums}
-.ex-scope button[aria-pressed="true"] .ex-scope-n{color:var(--accent)}
 .ex-search .kbd{flex:none}
 .ex-filters-n{font-size:12px;font-weight:600;color:var(--accent);font-variant-numeric:tabular-nums}
 
@@ -36,8 +30,6 @@
 /* ---------- the table ---------- */
 .ex-browser .ex-table td:first-child,.ex-browser .ex-table th:first-child{width:36px}
 .ex-browser .ex-table td:nth-child(2){color:var(--fg);width:auto}
-.ex-browser .ex-table tr.fam-nested>td:first-child{padding-left:10px}
-.ex-browser .ex-table tr.fam-nested>td:nth-child(2){padding-left:calc(10px + var(--fam-depth,1) * 24px)}
 .ex-browser .ex-table tr.sel td{background:var(--accent-soft)}
 .ex-browser .ex-table tr.drop-on td{background:var(--accent-soft)}
 @media (min-width:761px){.ex-browser .ex-table th:nth-last-child(3),.ex-browser .ex-table th:nth-last-child(2){width:96px}}
@@ -75,6 +67,23 @@ th .ex-box{margin:0}
   .ex-grip{display:none}
   .ex-box{width:20px;height:20px;margin-top:0}
   .ex-browser .ex-table .ex-check{padding-right:4px}
+}
+
+/* ---------- the search (FR-074): only what was found, the words marked, and where ---------- */
+.ex-found{margin:0;font-size:13px;color:var(--fg-muted)}
+.ex-found b{font-weight:600;color:var(--fg);font-variant-numeric:tabular-nums}
+.ex-reading{color:var(--fg-muted)}
+.ex-title mark{background:#f5d34f;color:#1f2328;border-radius:2px;padding:0 1px}
+/* where it was found: a label, so above the faint text's 3.45:1 (WCAG AA asks 4.5:1) */
+.ex-snip .ex-at{margin-right:6px;color:var(--fg-muted);font-weight:500}
+.ex-snip-text{overflow-wrap:anywhere}
+.ex-more{justify-self:start}
+.ex-no-notes{display:flex;flex-wrap:wrap;align-items:center;justify-content:center;gap:10px}
+.ex-no-notes .btn{text-decoration:none;color:var(--fg)}
+@media (pointer:coarse){
+  .ex-no-notes .btn,.ex-more{min-height:44px}
+  /* the "de: <mãe>" link of a row: a taller hit area, without moving the lines around it */
+  .ex-browser .ex-sub .fam-selo{padding:8px 0;margin:-8px 0}
 }
 
 /* ---------- selection bar, floating at the foot of the table ---------- */

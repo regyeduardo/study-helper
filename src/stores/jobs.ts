@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 
-import type { AiSettings, AiStep, AiUse, AtaModelId, AtaPart, CourseAnalysis, FileMeta, FileType, FolderMeta, GenerationChoice, GenerationMeta, MediaAnalysis, MeetingDocument, RecordingData, RecordingMark, SourceMeta, SourceStorage, StageTime, StoredQuestion } from '@/types/domain'
+import type { AiSettings, AiStep, AiUse, AtaModelId, AtaPart, AtaStepModels, CourseAnalysis, FileMeta, FileType, FolderMeta, GenerationChoice, GenerationMeta, MediaAnalysis, MeetingDocument, RecordingData, RecordingMark, SourceMeta, SourceStorage, StageTime, StoredQuestion } from '@/types/domain'
 import { Cancelled } from '@/controllers/ai.controller'
 import type { LitterboxTime } from '@/controllers/hosting.controller'
 import { storedFromRaw } from '@/lib/exam'
@@ -95,11 +95,12 @@ export interface NewContentRequest {
   analyze?: MediaAnalysis
 }
 
-/** What the generation dialog picked: who writes, who transcribes; `everyStep`: the video model writes every step of the Ata. */
+/** What the generation dialog picked: who writes, who transcribes; `everyStep`: the video model writes the document (Aula and Explicação); `steps`: what was picked in "Modelos por passo" for the Ata of a video. */
 export interface GenerationModels {
   write?: string | null
   transcription?: string | null
   everyStep?: boolean
+  steps?: Omit<AtaModels, 'model'>
 }
 
 export interface SaveRecordingRequest {
@@ -236,6 +237,15 @@ const instructionOf = (instruction?: string): Pick<GenerationChoice, 'instructio
 function choiceOf(use: AiUse, model: string | null | undefined, rest: Omit<GenerationChoice, 'model' | 'at'> = {}): GenerationChoice {
   const uid = model || uidFor(aiConfigOf(library().index.settings), use)
   return { ...rest, ...(uid ? { model: uid } : {}), at: nowIso() }
+}
+
+/** What the Ata of a video kept of "Modelos por passo": the model each step used, the picked one or the default it had. The Escrita is the `model` of the note. */
+function stepsOf(chosen: AtaModels | undefined): AtaStepModels {
+  const config = aiConfigOf(library().index.settings)
+  const own = config.models.some(model => model.uid === config.steps.contexto) ? config.steps.contexto : undefined
+  const video = chosen?.video || uidFor(config, 'tela')
+  const context = chosen?.context || own || chosen?.model || uidFor(config, 'ata')
+  return { ...(video ? { video } : {}), ...(context ? { context } : {}) }
 }
 
 /** The use's model hears audio: the provider's list says so, or "Testar" saw it (unknown is not enough). */
@@ -593,7 +603,7 @@ export const useJobsStore = create<JobsState>((set, get) => {
           return
         }
         const picked = request.models?.write
-        const ai: AtaModels | undefined = picked ? { model: picked, everyStep: Boolean(request.models?.everyStep) } : undefined
+        const ai: AtaModels | undefined = picked || request.models?.steps ? { model: picked, ...request.models?.steps } : undefined
         const { analyze } = requestChoice(request)
         // the choice goes with the media in hand: an Ata may not keep it
         if (analyze && makesAta) await get().generateAta(meta.id, ataModel ? [] : ataParts, ataModel, ai, 'home', request.prompt, request.input.kind === 'file' || request.input.kind === 'recording' ? request.input.file : undefined, analyze)
@@ -663,7 +673,7 @@ export const useJobsStore = create<JobsState>((set, get) => {
       return (note ?? holder).id
     }
     const picked = request.models?.write
-    const ai: AtaModels | undefined = picked ? { model: picked, everyStep: Boolean(request.models?.everyStep) } : undefined
+    const ai: AtaModels | undefined = picked || request.models?.steps ? { model: picked, ...request.models?.steps } : undefined
     void get().transcribeNote(holder.id, file, request.models?.transcription)
     // the media in hand: the Ata hears it now, kept or not ("Só o registro")
     void get().generateAta(holder.id, request.ataModel ? [] : chosenParts(request.ataParts ?? []), request.ataModel, ai, 'home', request.prompt, file, requestChoice(request).analyze)
@@ -953,7 +963,7 @@ export const useJobsStore = create<JobsState>((set, get) => {
       async function saveAta(done: Pick<MeetingDocument, 'markdown' | 'images' | 'models' | 'costUsd' | 'stages'>): Promise<string> {
         progress('Salvando')
         const document: MeetingDocument = { id: newId(), kind: 'ata', parts: model ? [] : chosenParts(parts), ...(model ? { ataModel: { id: model, name: ATA_MODELS[model].name } } : {}), markdown: done.markdown, images: done.images, createdAt: new Date().toISOString(), models: done.models, ...(done.costUsd !== undefined ? { costUsd: done.costUsd } : {}), stages: done.stages }
-        const made = choiceOf('ata', chosen?.model, { ...(chosen?.everyStep ? { everyStep: true } : {}), ...(model ? { ataModel: model } : { parts: chosenParts(parts) }), ...instructionOf(instruction), ...analyzedOf(mediaOf(source!), asked) })
+        const made = choiceOf('ata', chosen?.model, { ...(!media && mediaOf(source!) === 'video' ? { steps: stepsOf(chosen) } : {}), ...(model ? { ataModel: model } : { parts: chosenParts(parts) }), ...instructionOf(instruction), ...analyzedOf(mediaOf(source!), asked) })
         const fresh = library().files.find(file => file.id === fileId) ?? source!
         const note =
           replaced ??

@@ -60,11 +60,9 @@ describe.each(LAYOUTS)('%s: filtros do explorador (FR-044, FR-041)', (_name, Wor
     expect(ids(container)).toEqual(expect.arrayContaining(['limites', 'derivadas']))
   })
 
-  it('"Entradas" e "Notas" separam o que a lista mostra; não sobram os balões só de tipo', () => {
+  it('a lista é de notas, como a pasta: sem as abas "Tudo / Entradas / Notas" e sem os balões só de tipo (FR-073)', () => {
     renderLayout(Workspace, '/biblioteca/calc')
-    const scope = within(screen.getByRole('group', { name: 'Mostrar' }))
-    expect(scope.getByRole('button', { name: /^Notas/ })).toBeInTheDocument()
-    expect(scope.getByRole('button', { name: /^Entradas/ })).toBeInTheDocument()
+    expect(screen.queryByRole('group', { name: 'Mostrar' })).toBeNull()
     expect(screen.queryByRole('button', { name: 'Limpar filtros' })).toBeNull()
   })
 

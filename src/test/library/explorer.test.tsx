@@ -114,9 +114,9 @@ describe('explorer side bar', () => {
 })
 
 describe('explorer table', () => {
-  it('lists folders and notes with Nome, O que nasceu, Criado and Atualizado', () => {
+  it('lists folders and notes with Nome, Criado and Atualizado (FR-073: no "O que nasceu")', () => {
     renderAt('/biblioteca/calc')
-    expect(headers()).toEqual(['', 'Nome', 'O que nasceu', 'Criado', 'Atualizado', ''])
+    expect(headers()).toEqual(['', 'Nome', 'Criado', 'Atualizado', ''])
     expect(names()).toEqual(['Integrais', 'Exercícios', 'Aula gravada: derivadas', 'Derivadas pela definição', 'Limites laterais e continuidade', 'Monitoria de limites'])
     expect(nameCell('Integrais')).toHaveTextContent('Pasta · 1 item')
     expect(nameCell('Exercícios')).toHaveTextContent('Pasta · 0 itens')
@@ -142,12 +142,12 @@ describe('explorer table', () => {
     expect(within(rowNamed('Exercícios')).queryByRole('img')).toBeNull()
   })
 
-  it('"O que nasceu" says what the entrada gave, and "Nada ainda" only for an entrada that gave nothing', () => {
+  it('an entrada is not a row of the folder: it is in Entradas, with "O que nasceu" (FR-073)', () => {
     change(files => [...files, entrada('video', 'Aula sem notas', 'calc', VIDEO)])
     renderAt('/biblioteca/calc')
-    expect(within(rowNamed('Aula sem notas')).getAllByRole('cell')[2]).toHaveTextContent('Nada ainda')
-    expect(within(rowNamed('Integrais')).getAllByRole('cell')[2]).toHaveTextContent('')
-    expect(within(rowNamed('Limites laterais e continuidade')).getAllByRole('cell')[2]).toHaveTextContent('')
+    expect(screen.queryByRole('row', { name: 'Aula sem notas' })).toBeNull()
+    expect(table()).not.toHaveTextContent('Nada ainda')
+    expect(rows()).toHaveLength(6)
   })
 
   it('the panel filters what is here: the folders go, and what is elsewhere stays out', () => {
@@ -174,21 +174,11 @@ describe('explorer table', () => {
     expect(option(/^Cálculo I\b/)).not.toBeChecked()
   })
 
-  it('Tudo, Entradas and Notas split the table, each with its count', () => {
+  it('no Tudo, Entradas and Notas tabs: the folder lists its notes (FR-073)', () => {
     change(files => [...files, entrada('video', 'Aula em vídeo', 'calc', VIDEO), entrada('video2', 'Outra aula', 'calc', VIDEO)])
     renderAt('/biblioteca/calc')
-    const scope = screen.getByRole('group', { name: 'Mostrar' })
-    expect(within(scope).getByRole('button', { name: /^Tudo/ })).toHaveAttribute('aria-pressed', 'true')
-    expect(within(scope).getByRole('button', { name: /^Tudo/ })).toHaveTextContent('6')
-    expect(within(scope).getByRole('button', { name: /^Entradas/ })).toHaveTextContent('2')
-    expect(within(scope).getByRole('button', { name: /^Notas/ })).toHaveTextContent('4')
-    fireEvent.click(within(scope).getByRole('button', { name: /^Entradas/ }))
-    expect(names()).toEqual(['Aula em vídeo', 'Outra aula'])
-    expect(screen.queryByRole('group', { name: 'Filtros ativos' })).toBeNull()
-    fireEvent.click(within(scope).getByRole('button', { name: /^Notas/ }))
-    expect(rows()).toHaveLength(4)
-    fireEvent.click(within(scope).getByRole('button', { name: /^Tudo/ }))
-    expect(rows()).toHaveLength(8)
+    expect(screen.queryByRole('group', { name: 'Mostrar' })).toBeNull()
+    expect(rows()).toHaveLength(6)
   })
 
   it('"Domínio abaixo de 60%" stays in the toolbar, and is cleared with the rest', () => {
@@ -204,21 +194,22 @@ describe('explorer table', () => {
     expect(rows()).toHaveLength(6)
   })
 
-  it('a search hides no row, and the count is of what it found', async () => {
+  it('a search shows only what it found, with the panel filters still on (FR-074)', async () => {
     useLibraryStore.setState({ opened: {} })
     renderAt('/biblioteca/calc')
     fireEvent.click(option(/^limites\b/))
     expect(screen.getByText('2 de 6')).toBeInTheDocument()
-    fireEvent.change(screen.getByRole('searchbox', { name: 'Buscar' }), { target: { value: 'Monitoria' } })
-    await waitFor(() => expect(screen.getByText('1 de 6')).toBeInTheDocument())
-    expect(names()).toEqual(['Limites laterais e continuidade', 'Monitoria de limites'])
-    expect(rowNamed('Monitoria de limites')).toHaveClass('hit')
+    fireEvent.change(screen.getByRole('searchbox', { name: 'Buscar' }), { target: { value: 'limites' } })
+    const found = () => within(screen.getByRole('table', { name: 'Resultados da busca' })).getAllByRole('row').slice(1).map(row => row.getAttribute('aria-label'))
+    // "Stewart, capítulo 2" has the tag, in Integrais, and no "limites" in its name or text
+    await waitFor(() => expect(found()).toEqual(['Limites laterais e continuidade', 'Monitoria de limites']))
+    expect(screen.getByText(/2 resultados/)).toBeInTheDocument()
   })
 
   it('what changed today says "Hoje", with the time below', () => {
     change(files => files.map(file => (file.id === 'limites' ? { ...file, updated: { ...file.updated, at: new Date().toISOString() } } : file)))
     renderAt('/biblioteca/calc')
-    const cell = within(rowNamed('Limites laterais e continuidade')).getAllByRole('cell')[4]
+    const cell = within(rowNamed('Limites laterais e continuidade')).getAllByRole('cell')[3]
     expect(within(cell).getByText('Hoje')).toBeInTheDocument()
     expect(within(cell).getByText(/^\d{2}:\d{2}$/)).toBeInTheDocument()
   })
@@ -252,12 +243,21 @@ describe('"Guardado" in the row, only when it is not with the library', () => {
     ])
   })
 
-  it('says where it is, and stays quiet about what is in the Drive', () => {
+  it('the entradas are not rows of the folder, and a note never says it is with the library', () => {
     renderAt('/biblioteca/calc')
-    expect(nameCell('Sem mídia')).toHaveTextContent('Mídia apagada')
-    expect(nameCell('Só anotado')).toHaveTextContent('Só o registro')
-    expect(nameCell('No Drive')).not.toHaveTextContent('No meu Drive')
+    expect(names()).not.toContain('Sem mídia')
     expect(nameCell('Limites laterais e continuidade')).not.toHaveTextContent('No meu Drive')
+  })
+
+  it('a search result says where an entrada is, and stays quiet about what is in the Drive', async () => {
+    renderAt('/biblioteca/calc')
+    const result = (name: string) => within(within(screen.getByRole('table', { name: 'Resultados da busca' })).getByRole('row', { name })).getAllByRole('cell')[1]
+    fireEvent.change(screen.getByRole('searchbox', { name: 'Buscar' }), { target: { value: 'Sem mídia' } })
+    await waitFor(() => expect(result('Sem mídia')).toHaveTextContent('Mídia apagada'))
+    fireEvent.change(screen.getByRole('searchbox', { name: 'Buscar' }), { target: { value: 'Só anotado' } })
+    await waitFor(() => expect(result('Só anotado')).toHaveTextContent('Só o registro'))
+    fireEvent.change(screen.getByRole('searchbox', { name: 'Buscar' }), { target: { value: 'No Drive' } })
+    await waitFor(() => expect(result('No Drive')).not.toHaveTextContent('No meu Drive'))
   })
 })
 

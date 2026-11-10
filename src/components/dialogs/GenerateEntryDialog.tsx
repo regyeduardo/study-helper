@@ -1,20 +1,20 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useState } from 'react'
 
-import type { AtaModelId, AtaPart, FileMeta, MediaAnalysis } from '@/types/domain'
+import type { AtaModelId, AtaPart, FileMeta } from '@/types/domain'
 import { AtaPartsFields, toggledPart } from '@/components/dialogs/AtaPartsDialog'
+import { AtaStepsField, useAtaSteps } from '@/components/dialogs/AtaSteps'
 import { FolderField } from '@/components/dialogs/FolderChooser'
-import { MoreOptions } from '@/components/dialogs/FromNoteFields'
+import { lastModel, lastSteps, MoreOptions } from '@/components/dialogs/FromNoteFields'
+import { MediaAnalysisField, useMediaAnalysis } from '@/components/dialogs/MediaAnalysisField'
 import { type ModelChoice, ModelPick, useModelChoice } from '@/components/dialogs/ModelPick'
 import { Dialog } from '@/components/ui/Dialog'
 import { Icon } from '@/components/ui/Icon'
 import { useDocument } from '@/hooks/use-document'
-import { aiConfigOf } from '@/lib/ai/config'
 import { mediaOf } from '@/lib/file-types'
-import { PART_ORDER } from '@/lib/generation/ata'
+import { ATA_MODELS, PART_ORDER } from '@/lib/generation/ata'
 import { sourceExpired } from '@/lib/storage/source-storage'
 import { type NoteAgent, useJobsStore } from '@/stores/jobs'
 import { type OpenedFile, useLibraryStore } from '@/stores/library'
-import { mediaOfModel, useModelsStore } from '@/stores/models'
 import { useUiStore } from '@/stores/ui'
 
 type Goal = NoteAgent | 'transcribe'
@@ -25,57 +25,7 @@ const WRITES: { id: NoteAgent; label: string; hint: string }[] = [
   { id: 'explanation', label: 'Explicação', hint: 'Direto ao ponto' },
 ]
 
-const ANALYSES: { id: MediaAnalysis; label: string; hint: string }[] = [
-  { id: 'video', label: 'Só o vídeo', hint: 'A mídia vai direto ao modelo.' },
-  { id: 'transcricao', label: 'Só a transcrição', hint: 'Só o texto; se faltar, ela é feita antes.' },
-  { id: 'ambos', label: 'Transcrição + vídeo', hint: 'Os dois na mesma chamada.' },
-]
-
-const NOT_HEARD = 'O modelo escolhido não ouve a mídia.'
 const NOTHING_HELD = 'não há o que a IA ler.'
-
-/** "O que a IA analisa" (FR-046): comes with the media when the model hears it, else the transcription. `unavailable`: why the media cannot go. `sent`: only what the person marked, so that untouched the request stays as today. */
-export function useMediaAnalysis(choice: ModelChoice | null, on: boolean, unavailable: string | null = null) {
-  const settings = useLibraryStore(state => state.index.settings)
-  const live = useModelsStore(state => state.live)
-  const probes = useModelsStore(state => state.probes)
-  const readStale = useModelsStore(state => state.readStale)
-  const config = useMemo(() => aiConfigOf(settings), [settings])
-  const [picked, setPicked] = useState<MediaAnalysis | null>(null)
-  useEffect(() => {
-    if (on) readStale(config.providers.filter(provider => config.models.some(model => model.pid === provider.id)))
-  }, [config, on, readStale])
-  const hears = Boolean(choice?.model) && mediaOfModel(config, live, probes, choice!.model)?.audio === true
-  const reason = unavailable ?? (hears ? null : NOT_HEARD)
-  const value: MediaAnalysis = picked && (picked === 'transcricao' || !reason) ? picked : reason ? 'transcricao' : 'video'
-  return { value, reason, pick: setPicked, sent: picked === value ? value : undefined }
-}
-
-/** Options the model or the entrada cannot do stay visible, disabled, saying why. */
-export function MediaAnalysisField({ analysis }: { analysis: ReturnType<typeof useMediaAnalysis> }) {
-  return (
-    <div className="field">
-      <span className="lab">O que a IA analisa</span>
-      <div className="opts says-why" role="radiogroup" aria-label="O que a IA analisa">
-        {ANALYSES.map(item => {
-          const blocked = item.id === 'transcricao' ? null : analysis.reason
-          return (
-            <button key={item.id} className="opt" role="radio" aria-checked={analysis.value === item.id} aria-disabled={Boolean(blocked)} onClick={() => !blocked && analysis.pick(item.id)}>
-              <span className="radio" />
-              <span>
-                <b>{item.label}</b>
-                <span>
-                  {item.hint}
-                  {blocked && <> <span className="lim">{blocked}</span></>}
-                </span>
-              </span>
-            </button>
-          )
-        })}
-      </div>
-    </div>
-  )
-}
 
 function missingFile({ origin, kept }: FileMeta): string {
   if (origin?.removedAt) return 'O arquivo foi apagado'
@@ -93,12 +43,13 @@ function nothingToRead(entry: FileMeta, opened: OpenedFile, file: boolean): stri
   return `O texto desta entrada não foi guardado: ${NOTHING_HELD}`
 }
 
-/** "Modelo da ata" of the last time: the newest Ata made from this entrada, else the newest made from any entrada; Padrão with the Resumo when there is none. */
-function lastAta(files: FileMeta[], fileId: string): { model: AtaModelId | null; parts: AtaPart[] } {
+/** "Modelo da ata" and parts of the last time: the newest Ata made from this entrada, else the newest made from any entrada; Padrão with the Resumo when there is none. `note`: the Ata of this entrada, whose models and analysis also come back. */
+function lastAta(files: FileMeta[], fileId: string): { model: AtaModelId | null; parts: AtaPart[]; note: FileMeta | null } {
   const atas = files.filter(file => !file.deletedAt && (file.made?.ataModel || file.made?.parts?.length))
   const newest = (list: FileMeta[]) => list.reduce<FileMeta | null>((best, file) => (!best || file.made!.at > best.made!.at ? file : best), null)
-  const last = newest(atas.filter(file => file.parentFileId === fileId)) ?? newest(atas)
-  return { model: last?.made?.ataModel ?? null, parts: last?.made?.parts?.length ? last.made.parts : ['resumo'] }
+  const own = newest(atas.filter(file => file.parentFileId === fileId))
+  const last = own ?? newest(atas)
+  return { model: last?.made?.ataModel ?? null, parts: last?.made?.parts?.length ? last.made.parts : ['resumo'], note: own }
 }
 
 /** "Gerar desta entrada": only what makes sense for its kind and for what it keeps; the note is the entrada's child, and the page stays open. */
@@ -112,13 +63,15 @@ export function GenerateEntryDialog({ fileId }: { fileId: string }) {
   const running = useJobsStore(state => state.jobs.some(job => job.fileId === fileId && job.status === 'running'))
   const writing = useJobsStore(state => state.jobs.some(job => job.fileId === fileId && job.status === 'running' && job.kind !== 'transcription'))
   const isMedia = Boolean(entry) && mediaOf(entry!) !== 'text'
-  const choices: Record<Goal, ModelChoice> = { meeting: useModelChoice('ata', isMedia), lesson: useModelChoice('aula', isMedia), explanation: useModelChoice('explicacao', isMedia), transcribe: useModelChoice('transcricao') }
+  const files = useLibraryStore(state => state.files)
+  const settings = useLibraryStore(state => state.index.settings)
+  const [ata, setAta] = useState(() => lastAta(files, fileId))
+  // the Escrita of the Ata comes back as it was the last time ("Gerar de novo")
+  const choices: Record<Goal, ModelChoice> = { meeting: useModelChoice('ata', false, lastModel(ata.note ?? undefined, settings)), lesson: useModelChoice('aula', isMedia), explanation: useModelChoice('explicacao', isMedia), transcribe: useModelChoice('transcricao') }
   const [picked, setPicked] = useState<Goal | null>(null)
   const [folderId, setFolderId] = useState<string | null | undefined>(undefined)
   const [choosing, setChoosing] = useState(false)
   const [instruction, setInstruction] = useState('')
-  const files = useLibraryStore(state => state.files)
-  const [ata, setAta] = useState(() => lastAta(files, fileId))
 
   const origin = entry?.origin ?? null
   const hasFile = Boolean(origin && !origin.removedAt && (inBrowser || ((origin.storedFileId || origin.storedUrl) && !sourceExpired(origin))))
@@ -130,13 +83,17 @@ export function GenerateEntryDialog({ fileId }: { fileId: string }) {
   const goal: Goal = goals.find(item => item.id === picked)?.id ?? goals[0].id
   const choice = choices[goal]
   const writes = goal !== 'transcribe'
+  const ataOfMedia = goal === 'meeting' && isMedia && (spoken || !transcribed)
+  // the Ata of a video goes step by step, each step with its model, or all in one call (FR-072)
+  const ataOfVideo = ataOfMedia && Boolean(entry) && mediaOf(entry!) === 'video'
   // a video chooses what the AI analyzes; an audio always goes by its transcription
-  const analysis = useMediaAnalysis(choice, writes && Boolean(entry) && mediaOf(entry!) === 'video', canHear || !entry ? null : `${missingFile(entry)}.`)
+  const analysis = useMediaAnalysis(choice, writes && Boolean(entry) && mediaOf(entry!) === 'video', canHear || !entry ? null : `${missingFile(entry)}.`, { ata: ataOfVideo, initial: ataOfVideo ? ata.note?.made?.analyze : undefined })
+  const steps = useAtaSteps(choices.meeting, ataOfVideo, lastSteps(ata.note ?? undefined, settings), ata.model ? ATA_MODELS[ata.model].name : undefined)
+  const stepByStep = ataOfVideo && analysis.value === 'transcricao'
 
   if (!entry) return null
 
   const blocked = opened && nothingToRead(entry, opened, canHear || (!isMedia && hasFile))
-  const ataOfMedia = goal === 'meeting' && isMedia && (spoken || !transcribed)
   // the Ata of a media needs a model or at least one part
   const ataEmpty = ataOfMedia && !ata.model && !ata.parts.length
   // the store ignores these, so the window says it instead of doing nothing
@@ -147,7 +104,7 @@ export function GenerateEntryDialog({ fileId }: { fileId: string }) {
     close()
     if (goal === 'transcribe') return void transcribeNote(fileId, undefined, choice.model || null)
     const place = { folderId: destination }
-    if (ataOfMedia) return void generateAta(fileId, ata.model ? [] : PART_ORDER.filter(part => ata.parts.includes(part)), ata.model ?? undefined, { model: choice.model || null, everyStep: choice.videoWrites }, place, instruction, undefined, analysis.sent)
+    if (ataOfMedia) return void generateAta(fileId, ata.model ? [] : PART_ORDER.filter(part => ata.parts.includes(part)), ata.model ?? undefined, { model: choice.model || null, ...(stepByStep ? steps.sent : {}) }, place, instruction, undefined, analysis.sent)
     void generateFromNote(fileId, goal, choice.model || null, place, instruction, analysis.sent)
   }
 
@@ -197,6 +154,7 @@ export function GenerateEntryDialog({ fileId }: { fileId: string }) {
             {ataOfMedia && <AtaPartsFields parts={ata.parts} onToggle={part => setAta(current => ({ ...current, parts: toggledPart(current.parts, part) }))} model={ata.model} onModel={model => setAta(current => ({ ...current, model }))} />}
             <ModelPick choice={choice} />
             {writes && mediaOf(entry) === 'video' && <MediaAnalysisField analysis={analysis} />}
+            {stepByStep && <AtaStepsField steps={steps} />}
             {writes && (
               <div className="field">
                 <span className="lab">Salvar em</span>

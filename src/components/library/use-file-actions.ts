@@ -41,7 +41,8 @@ export function useFileActions() {
   const library = useLibraryStore()
   const jobs = useJobsStore()
 
-  const openFile = (file: FileMeta) => {
+  /** `found`: the words of the search that led to it, marked in the note (FR-074). */
+  const openFile = (file: FileMeta, found?: string) => {
     if (file.status === 'pending' && courseOfFolders(library.folders, file.folderId) && !library.sharedView) {
       ui.open({
         kind: 'confirm',
@@ -57,7 +58,7 @@ export function useFileActions() {
     }
     library.markOpened(file.id)
     ui.set({ peekId: null, columnsPane: 'doc', columnsSheet: false, focusPop: null })
-    navigate(paths.file(file.id))
+    navigate(found ? `${paths.file(file.id)}?busca=${encodeURIComponent(found)}` : paths.file(file.id))
   }
 
   const toggleFavorite = async (file: FileMeta) => {

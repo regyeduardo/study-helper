@@ -59,11 +59,12 @@ describe('revisão, painel inicial, busca por conteúdo e prova consideram só n
   it('a busca não acha a entrada pelo conteúdo, só pelo nome', async () => {
     renderAt('/biblioteca/calc')
     const search = screen.getByRole('searchbox', { name: 'Buscar' })
+    const found = () => within(screen.getByRole('table', { name: 'Resultados da busca' })).getAllByRole('row').slice(1)
     fireEvent.change(search, { target: { value: 'limite não existe' } })
-    await waitFor(() => expect(rows().filter(row => row.classList.contains('hit'))).toHaveLength(3))
-    expect(entryRow()?.classList.contains('hit')).toBe(false)
+    await waitFor(() => expect(found()).toHaveLength(3))
+    expect(found().some(row => row.textContent?.includes(ENTRY_NAME))).toBe(false)
     fireEvent.change(search, { target: { value: 'corredor' } })
-    await waitFor(() => expect(entryRow()?.classList.contains('hit')).toBe(true))
+    await waitFor(() => expect(found().map(row => row.getAttribute('aria-label'))).toEqual([ENTRY_NAME]))
   })
 
   it('a paleta não acha a entrada pelo conteúdo, só pelo nome', () => {

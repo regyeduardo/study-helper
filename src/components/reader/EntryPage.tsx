@@ -1,6 +1,6 @@
 // Página da entrada: a fonte, a transcrição e tudo o que nasceu dela, cada parte num card que rola por dentro.
 import { type CSSProperties, Fragment, type ReactNode, useEffect, useMemo, useRef, useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
 
 import type { ArtifactKind, FileMeta, SourceMeta, SourceStorage } from '@/types/domain'
 import { entryKind } from '@/components/library/EntryList'
@@ -270,6 +270,9 @@ function Failure({ text, onRetry }: { text: string; onRetry?(): void }) {
 }
 
 function Transcript({ entry, opened, canTranscribe, canPlay, playback }: { entry: FileMeta; opened: OpenedFile | null; canTranscribe: boolean; canPlay: boolean; playback: ReturnType<typeof usePlayback> }) {
+  // "?t=95": the speech a search found (FR-074), or a moment of the Ata
+  const asked = new URLSearchParams(useLocation().search).get('t')
+  const found = asked !== null && Number.isFinite(Number(asked)) ? Number(asked) : null
   const openOverlay = useUiStore(state => state.open)
   const readOnly = useLibraryStore(state => Boolean(state.sharedView))
   const job = useJobsStore(state => state.jobs.find(item => item.fileId === entry.id && item.kind === 'transcription' && (item.status === 'running' || item.status === 'error')))
@@ -281,7 +284,7 @@ function Transcript({ entry, opened, canTranscribe, canPlay, playback }: { entry
     return (
       <>
         {status}
-        <TranscriptTab recording={withRecorder(recording, readOnly ? '' : recorderName(useAccountStore.getState().active()))} name={entry.name} time={playback.time} onPlay={canPlay ? playback.playFrom : undefined} />
+        <TranscriptTab recording={withRecorder(recording, readOnly ? '' : recorderName(useAccountStore.getState().active()))} name={entry.name} time={playback.time} onPlay={canPlay ? playback.playFrom : undefined} found={found} />
       </>
     )
   }

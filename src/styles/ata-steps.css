@@ -1,0 +1,28 @@
+/* "Gerar desta entrada", a Ata de vídeo (FR-072): as duas formas de analisar e "Modelos por passo". */
+.opts.ata-opts{gap:12px}
+.opts.ata-opts .opt{position:relative}
+.opts.ata-opts .opt .opt-tag{display:inline-block;margin:0;font-size:12.5px;color:var(--fg-muted);white-space:nowrap}
+.opts.ata-opts .opt .opt-rec{position:absolute;top:-9px;right:12px;display:inline-flex;align-items:center;gap:4px;margin:0;padding:1px 8px;border-radius:10px;font-size:11.5px;font-weight:600;line-height:1.5;color:var(--ok);background:var(--ok-soft);border:1px solid var(--bg)}
+.opts.ata-opts .opt .opt-rec .ic{width:11px;height:11px}
+.ata-steps{gap:0;border:1px solid var(--border);border-radius:9px;background:var(--bg)}
+.ata-steps-head{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:2px 12px 2px 4px}
+.ata-steps-toggle{display:inline-flex;align-items:center;gap:6px;min-height:36px;padding:0 8px;text-align:left;white-space:nowrap;border:0;background:none;color:var(--fg);font-size:13.5px;font-weight:600;cursor:pointer;border-radius:6px}
+.ata-steps-toggle:hover{background:var(--bg-hover)}
+.ata-steps-toggle .ic{width:14px;height:14px;color:var(--fg-muted)}
+/* the button is the app's own: .btn (secondary) for "Usar recomendados", .btn.quiet (ghost) for "Desfazer" and the disabled "Já nos recomendados" */
+.ata-steps .ata-steps-action{flex:none;height:36px}
+.ata-steps-body{display:grid;border-top:1px solid var(--border-muted)}
+.ata-step{display:grid;gap:6px;padding:12px;border-top:1px solid var(--border-muted)}
+.ata-step:first-child{border-top:0}
+.ata-step-top{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap}
+.ata-step-name{font-size:13.5px;font-weight:600;color:var(--fg)}
+.ata-step-hint,.ata-step-none,.ata-steps-source{margin:0;font-size:12.5px;line-height:1.4;color:var(--fg-muted)}
+.ata-steps-source{padding:10px 12px;border-top:1px solid var(--border-muted)}
+.ata-badge{display:inline-flex;align-items:center;gap:4px;padding:1px 8px;border-radius:10px;font-size:11.5px;font-weight:600;line-height:1.5;color:var(--fg-muted);background:var(--bg-subtle);border:1px solid var(--border-muted);white-space:nowrap}
+.ata-badge.ok{color:var(--ok);background:var(--ok-soft);border-color:transparent}
+.ata-badge .ic{width:11px;height:11px}
+.ata-step .banner{overflow-wrap:anywhere}
+@media (max-width:560px){
+  .ata-step select.input{min-height:40px}
+  .ata-steps-head{padding-right:8px;flex-wrap:wrap}
+}

@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react'
 
 import type { HighlightColor } from '@/types/domain'
 import { renderMarkdownController } from '@/controllers/github.controller'
+import { markFound } from '@/lib/found-marks'
 import { copyButtons, headingAnchors } from '@/lib/github/chrome'
 import { mountDiagrams } from '@/lib/github/diagrams'
 import { APP_PALETTE } from '@/lib/github/palette'
@@ -26,6 +27,8 @@ interface GithubMarkdownViewProps {
   onQuoteClick?: (targetId: string) => void
   onHeadings?: (headings: { id: string; level: number; text: string }[]) => void
   onHeading?: (heading: ReaderSelection | null) => void
+  /** The words of the search that opened the note (FR-074): marked where they are, and scrolled to. */
+  found?: string | null
 }
 
 const HEADINGS = 'h1, h2, h3, h4, h5, h6'
@@ -119,7 +122,7 @@ function markQuote(container: HTMLElement, quote: PaintedQuote): void {
   }
 }
 
-export default function GithubMarkdownView({ markdown, live = false, quotes = [], onSelection, onQuoteClick, onHeadings, onHeading }: GithubMarkdownViewProps) {
+export default function GithubMarkdownView({ markdown, live = false, quotes = [], onSelection, onQuoteClick, onHeadings, onHeading, found }: GithubMarkdownViewProps) {
   const [html, setHtml] = useState('')
   const [error, setError] = useState('')
   const host = useRef<HTMLDivElement>(null)
@@ -178,6 +181,12 @@ export default function GithubMarkdownView({ markdown, live = false, quotes = []
     clearMarks(body)
     for (const quote of quotes) markQuote(body, quote)
   }, [quotes, painted])
+
+  useEffect(() => {
+    const body = article.current
+    if (!body || !found) return
+    markFound(body, found)?.scrollIntoView?.({ block: 'center' })
+  }, [found, painted])
 
   useEffect(() => {
     const element = host.current

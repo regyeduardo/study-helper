@@ -1,5 +1,5 @@
 import { diffWords } from 'diff'
-import { type MouseEvent, type ReactNode, useState } from 'react'
+import { type MouseEvent, type ReactNode, useEffect, useRef, useState } from 'react'
 
 import type { RecordingData, RecordingMark, RecordingSpeaker, TranscriptBlock } from '@/types/domain'
 import { type MarkActions, MarkGlyph, Markers } from '@/components/reader/Markers'
@@ -18,6 +18,8 @@ interface TranscriptTabProps {
   onRename?(speakerId: string, name: string): void
   onMarks?(marks: RecordingMark[]): void
   onRedo?(instruction: string): void
+  /** The second of the speech a search found (FR-074): marked, and scrolled to. */
+  found?: number | null
 }
 
 const apart = (event: MouseEvent) => event.stopPropagation()
@@ -137,11 +139,17 @@ function RedoBox({ onRedo, onClose }: { onRedo(instruction: string): void; onClo
   )
 }
 
-export function TranscriptTab({ recording, name = 'reunião', time = null, onPlay, onRename, onMarks, onRedo }: TranscriptTabProps) {
+export function TranscriptTab({ recording, name = 'reunião', time = null, onPlay, onRename, onMarks, onRedo, found = null }: TranscriptTabProps) {
   const [editing, setEditing] = useState<string | null>(null)
   const [redoing, setRedoing] = useState(false)
   const ids = recording.speakers.map(speaker => speaker.id)
   const playing = time === null ? -1 : recording.blocks.findLastIndex(block => block.start <= time)
+  const foundAt = found === null ? -1 : recording.blocks.findLastIndex(block => block.start <= found)
+  const foundSpeech = useRef<HTMLLIElement>(null)
+  useEffect(() => {
+    // a block: newer browsers return a promise from scrollIntoView, and an effect may return only its clean-up
+    foundSpeech.current?.scrollIntoView?.({ block: 'center' })
+  }, [foundAt])
   const marked = new Map<number, RecordingMark[]>()
   for (const mark of recording.marks) {
     const at = Math.max(0, recording.blocks.findLastIndex(block => block.start <= mark.at))
@@ -197,7 +205,8 @@ export function TranscriptTab({ recording, name = 'reunião', time = null, onPla
           return (
             <li
               key={`${block.start}-${block.speaker}`}
-              className={onPlay ? 'tr-block playable' : 'tr-block'}
+              ref={index === foundAt ? foundSpeech : undefined}
+              className={['tr-block', onPlay && 'playable', index === foundAt && 'tr-found'].filter(Boolean).join(' ')}
               data-tone={block.speaker ? (Math.max(position, 0) % TONES) + 1 : 0}
               aria-current={index === playing ? 'true' : undefined}
               onClick={() => play(block.start)}

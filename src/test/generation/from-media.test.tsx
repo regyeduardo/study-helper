@@ -193,6 +193,8 @@ describe('generation straight from the media', () => {
     const id = await recordingNote(false)
     render(<AtaPartsDialog fileId={id} />)
     const dialog = screen.getByRole('dialog', { name: 'Gerar a Ata' })
+    // step by step is the default (FR-072); "Tudo numa chamada" is the media straight to the writer
+    fireEvent.click(within(dialog).getByRole('radio', { name: /^Tudo numa chamada/ }))
     fireEvent.change(within(dialog).getByLabelText('Instrução extra para a IA (opcional)'), { target: { value: ` ${FOCUS} ` } })
     fireEvent.click(within(dialog).getByRole('button', { name: 'Gerar' }))
     await waitFor(() => expect(useLibraryStore.getState().files.find(file => file.parentFileId === id)).toBeDefined())

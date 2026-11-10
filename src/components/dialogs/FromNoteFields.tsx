@@ -1,6 +1,6 @@
 import { useId, useMemo, useState } from 'react'
 
-import type { FileMeta, Settings } from '@/types/domain'
+import type { AtaStepModels, FileMeta, Settings } from '@/types/domain'
 import { FolderChooserDialog } from '@/components/dialogs/FolderChooser'
 import { usePathName } from '@/hooks/use-library-view'
 import { aiConfigOf, modelByUid } from '@/lib/ai/config'
@@ -33,6 +33,15 @@ export function lastModel(file: FileMeta | undefined, settings: Settings): { pic
   const config = aiConfigOf(settings)
   const uid = file?.made?.model ?? config.models.find(model => model.mid === file?.generation?.model)?.uid
   return { ...(uid && modelByUid(config, uid) ? { pick: uid } : {}), ...(file?.made?.everyStep ? { videoWrites: true } : {}) }
+}
+
+/** "Modelos por passo" of the last time: what each step used, while it is still in "Meus modelos". A note made when the video model wrote every step comes back with it in Contexto too. */
+export function lastSteps(file: FileMeta | undefined, settings: Settings): AtaStepModels {
+  const config = aiConfigOf(settings)
+  const still = (uid: string | undefined) => (uid && modelByUid(config, uid) ? uid : undefined)
+  const video = still(file?.made?.steps?.video)
+  const context = still(file?.made?.steps?.context) ?? (file?.made?.everyStep ? still(file.made.model) : undefined)
+  return { ...(video ? { video } : {}), ...(context ? { context } : {}) }
 }
 
 /** "Salvar em" of a note made from another: the folder named after the source comes chosen; "Trocar" opens the folder window. */

@@ -3,7 +3,7 @@ import { type CSSProperties, type ReactNode, useEffect, useId, useRef, useState 
 import { createPortal } from 'react-dom'
 
 import { Icon, type IconName } from '@/components/ui/Icon'
-import { DATE_FIELD_LABELS, GROUP_LABELS, toggleOption, type DateField, type FacetOption, type Facets, type FilterGroup, type FolderOption, type ItemKind, type LibraryFilters } from '@/lib/library-filters'
+import { DATE_FIELD_LABELS, GROUP_LABELS, toggleOption, type DateField, type FacetOption, type Facets, type FilterGroup, type FolderOption, type ItemKind, type LibraryFilters, type NoteKind } from '@/lib/library-filters'
 import '@/styles/filter-panel.css'
 
 export interface FilterPanelProps {
@@ -27,6 +27,7 @@ const LONG_LIST = 5
 const MAX_INDENT = 5
 const DATE_FIELDS: DateField[] = ['updated', 'created']
 const KIND_ICONS: Record<ItemKind, IconName> = { video: 'monitor', audio: 'mic', pdf: 'file', link: 'link', texto: 'text', tema: 'bulb', arquivo: 'file', nota: 'note' }
+const NOTE_KIND_ICONS: Record<NoteKind, IconName> = { ata: 'list', aula: 'book', explicacao: 'bulb', leitura: 'file', nota: 'pen' }
 
 const itemsLabel = (count: number) => (count === 1 ? '1 item' : `${count} itens`)
 const activeLabel = (count: number) => (count === 1 ? '1 ativo' : `${count} ativos`)
@@ -34,9 +35,10 @@ const activeLabel = (count: number) => (count === 1 ? '1 ativo' : `${count} ativ
 /** "Escolher datas…" with no day yet is not a filter. */
 const periodIsActive = (facets: Facets) => facets.period.some(preset => preset.selected) || facets.periodCustom !== null
 
-/** Groups in use, the same that become chips above the table. */
+/** Groups in use, the same that become chips above the table; a group this list does not offer is not in use. */
 function activeGroups(filters: LibraryFilters, facets: Facets): number {
-  const lists = [filters.kinds, filters.generated, filters.tags, filters.folders, filters.places].filter(list => list.length).length
+  const offered = (list: unknown[], options: unknown[]) => (options.length ? list : [])
+  const lists = [offered(filters.noteKinds, facets.noteKinds), offered(filters.kinds, facets.kinds), offered(filters.generated, facets.generated), filters.tags, filters.folders, filters.places].filter(list => list.length).length
   return lists + (periodIsActive(facets) ? 1 : 0)
 }
 
@@ -216,8 +218,9 @@ function PanelBody({ filters, facets, onChange }: BodyProps) {
   const shared = { filters, onChange }
   return (
     <div className="fp-body">
-      <OptionGroup group="kinds" options={facets.kinds} icons={KIND_ICONS} {...shared} />
-      <OptionGroup group="generated" options={facets.generated} {...shared} />
+      {facets.noteKinds.length > 0 && <OptionGroup group="noteKinds" options={facets.noteKinds} icons={NOTE_KIND_ICONS} {...shared} />}
+      {facets.kinds.length > 0 && <OptionGroup group="kinds" options={facets.kinds} icons={KIND_ICONS} {...shared} />}
+      {facets.generated.length > 0 && <OptionGroup group="generated" options={facets.generated} {...shared} />}
       <PeriodGroup filters={filters} facets={facets} change={patch => onChange({ ...filters, ...patch })} />
       <OptionGroup group="tags" options={facets.tags} long {...shared} />
       <OptionGroup group="folders" options={facets.folders} long summary={folderSummary(facets.folders)} {...shared}>

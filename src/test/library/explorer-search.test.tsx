@@ -15,10 +15,11 @@ beforeEach(() => {
   seedLibrary()
 })
 
-const rows = () => within(screen.getByRole('table', { name: 'Notas e pastas' })).getAllByRole('row').slice(1)
-const lit = () => rows().filter(row => row.classList.contains('hit')).map(row => row.textContent)
+/** The search shows only what it found, in the whole library (FR-074). */
+const found = () => within(screen.getByRole('table', { name: 'Resultados da busca' })).getAllByRole('row').slice(1)
+const lit = () => found().map(row => row.textContent)
 
-describe('search lights up the explorer itself', () => {
+describe('the search of the explorer', () => {
   it('finds the words ignoring accents and case, in the text and in what was said, with the minute', () => {
     const recording = { blocks: [{ speaker: 'mic', start: 40, end: 52, text: 'Aí o LIMITE da função não existe.' }], speakers: [], marks: [] }
     const hit = searchFile(FILES[1], { content: '', sidecar: { recording } as never }, 'limite nao existe')
@@ -28,20 +29,26 @@ describe('search lights up the explorer itself', () => {
     expect(searchFile(FILES[3], { content: 'A derivada é um limite.', sidecar: {} as never }, 'limite nao existe')).toBeNull()
   })
 
-  it('the rows that match light up with the excerpt, the others stay, and a folder shows how many are inside', async () => {
+  it('the excerpt is the paragraph with every word, even when the name already has some of them', () => {
+    const lesson = { ...FILES[3], name: 'Aula 3: limites laterais' }
+    const hit = searchFile(lesson, { content: '# Limites\n\n## Quando não existe\n\nSe os laterais diferem, o limite não existe.', sidecar: {} as never }, 'limite nao existe')
+    expect(hit?.parts.map(part => part.text).join('')).toBe('Se os laterais diferem, o limite não existe.')
+    expect(hit?.name.filter(part => part.hit).map(part => part.text)).toEqual(['limite'])
+  })
+
+  it('shows only what matches, from the whole library, with the excerpt; the side tree counts what is in each folder', async () => {
     renderAt('/biblioteca/calc')
     fireEvent.change(screen.getByRole('searchbox', { name: 'Buscar' }), { target: { value: 'limite não existe' } })
     await waitFor(() => expect(lit()).toHaveLength(3))
-    expect(rows()).toHaveLength(6)
-    const [integrais, limites, monitoria] = lit()
-    expect(integrais).toContain('1 resultado dentro')
+    const [limites, monitoria, stewart] = lit()
     expect(limites).toContain('Se os laterais diferem, o limite não existe.')
-    expect(monitoria).toContain('00:40')
+    expect(monitoria).toContain('na transcrição · 00:40')
     expect(monitoria).toContain('Pode, e aí o limite da função não existe.')
-    expect(within(rows()[4]).getAllByText(/./, { selector: 'mark' }).map(mark => mark.textContent)).toEqual(['limite', 'não', 'existe'])
+    expect([...found()[1].querySelectorAll('.ex-snip mark')].map(mark => mark.textContent)).toEqual(['limite', 'não', 'existe'])
+    expect(stewart).toContain('Página 14: o limite não existe quando os laterais diferem.')
     expect(within(screen.getByRole('tree', { name: 'Pastas' })).getByRole('treeitem', { name: 'Integrais' })).toHaveTextContent('(1)')
     fireEvent.change(screen.getByRole('searchbox', { name: 'Buscar' }), { target: { value: '' } })
-    expect(lit()).toHaveLength(0)
+    await waitFor(() => expect(screen.queryByRole('table', { name: 'Resultados da busca' })).toBeNull())
   })
 })
 
@@ -84,9 +91,10 @@ describe('the transcription of a media entrada is searched (FR-053)', () => {
     await waitFor(() => expect(lit()).toHaveLength(2))
     const [terca, seminario] = lit()
     expect(terca).toContain('Aula de terça')
-    expect(terca).toContain('01:35')
+    expect(terca).toContain('na transcrição · 01:35')
     expect(terca).toContain('A assíntota vertical aparece quando o denominador zera.')
     expect(seminario).toContain('Seminário de quinta')
+    expect(seminario).toContain('na transcrição')
     expect(seminario).toContain('No seminário a turma resolveu a assíntota vertical do exercício 3.')
   })
 

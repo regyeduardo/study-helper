@@ -5,24 +5,27 @@ import { aiConfigOf, compatible, modelByUid, providerById, uidFor, useInfo } fro
 import { useLibraryStore } from '@/stores/library'
 import { mediaOfModel, useModelsStore } from '@/stores/models'
 
-/** What a generation dialog sends: who writes (or transcribes) and whether the video model writes every step. */
+/** What a generation dialog sends: who writes (or transcribes) and whether the video model writes the document. */
 export interface ModelChoice {
   use: AiUse
   /** The model picked: the default comes preselected. */
   pick: string
-  setPick(uid: string): void
+  /** `null` goes back to the default coming preselected. */
+  setPick(uid: string | null): void
+  /** The person (or the last time) chose a model, instead of the default coming preselected. */
+  touched: boolean
   /** The Vídeo e áudio model, offered only when the source is a video or an audio. */
   video: string | undefined
   videoWrites: boolean
   setVideoWrites(on: boolean): void
-  /** Who writes: the video model when it also writes, else the pick. */
+  /** Who writes: the video model when it also writes, else the pick (or nothing when it is no longer one of "Meus modelos"). */
   model: string
   options: string[]
   /** False while there are models to choose and none is chosen. */
   ready: boolean
 }
 
-/** State of the model selector of a generation dialog, for one use. `media`: the source is a video or an audio; `last`: what comes chosen instead of the default ("Gerar de novo"). */
+/** State of the model selector of a generation dialog, for one use. `media`: the source is a video or an audio (the Ata does not ask: each step has its model); `last`: what comes chosen instead of the default ("Gerar de novo"). */
 export function useModelChoice(use: AiUse, media = false, last: { pick?: string; videoWrites?: boolean } = {}): ModelChoice {
   const settings = useLibraryStore(state => state.index.settings)
   const live = useModelsStore(state => state.live)
@@ -43,7 +46,7 @@ export function useModelChoice(use: AiUse, media = false, last: { pick?: string;
   const options = config.models.filter(model => model.uid === chosen || compatible(mediaOfModel(config, live, probes, model.uid), needs)).map(model => model.uid)
   const video = media && use !== 'transcricao' ? uidFor(config, 'midia') : undefined
   const model = videoWrites && video ? video : modelByUid(config, chosen) ? chosen : ''
-  return { use, pick: chosen, setPick, video, videoWrites: Boolean(videoWrites && video), setVideoWrites, model, options, ready: Boolean(model) || options.length === 0 }
+  return { use, pick: chosen, setPick, touched: pick !== null, video, videoWrites: Boolean(videoWrites && video), setVideoWrites, model, options, ready: Boolean(model) || options.length === 0 }
 }
 
 /** The selector itself ("Modelo"), always there at generation time; the video option only for media sources. */

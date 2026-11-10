@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import type { ArtifactSummary, FileMeta, FolderMeta, SourceMeta } from '@/types/domain'
 import { newFileMeta, newFolderMeta } from '@/lib/defaults'
-import { clearFilters, type FilterResult, type FilterSource, filterLibrary, kindOf, type LibraryFilters, NO_FILTERS, placeOf, toggleOption, withoutFilter } from '@/lib/library-filters'
+import { clearFilters, type FilterResult, type FilterSource, filterLibrary, kindOf, type LibraryFilters, NO_FILTERS, noteKindOf, placeOf, toggleOption, withoutFilter } from '@/lib/library-filters'
 
 /* ---------- a library like the mock (b-painel-de-filtros.svg) ---------- */
 
@@ -299,8 +299,46 @@ describe('Tudo, Entradas ou Notas', () => {
     expect(run({ scope: 'notas' }).shown).toBe(7)
     expect(run({ scope: 'entradas' }).shown).toBe(12)
     expect(run({ scope: 'notas' }).scopes).toEqual({ tudo: 19, entradas: 12, notas: 7 })
-    expect(counts(run({ scope: 'notas' }).facets.kinds)).toMatchObject({ nota: 7, video: 0 })
+    expect(counts(run({ scope: 'notas' }).facets.noteKinds)).toEqual({ ata: 3, aula: 2, explicacao: 1, leitura: 1, nota: 0 })
     expect(run({ scope: 'notas', tags: ['contrato'] }).scopes).toEqual({ tudo: 2, entradas: 1, notas: 1 })
+  })
+})
+
+describe('a pasta é uma lista de notas: o "Tipo" dela é o tipo da nota (FR-073)', () => {
+  it('as notas, contadas e filtradas por Ata, Aula, Explicação, Leitura e Nota; o total é o das notas', () => {
+    const result = run({ scope: 'notas', noteKinds: ['ata'] })
+    expect(ids(result)).toEqual(['ata', 'ata-plan', 'ata-youtube'])
+    expect(result.summary).toBe('3 de 7')
+    expect(result.active).toEqual([{ group: 'noteKinds', label: 'Tipo', value: 'ata' }])
+    expect(result.facets.noteKinds.map(option => option.label)).toEqual(['Ata', 'Aula', 'Explicação', 'Leitura', 'Nota'])
+  })
+
+  it('o tipo da entrada e "O que gerou" não são da pasta: não aparecem, não contam e não filtram', () => {
+    const result = run({ scope: 'notas', kinds: ['video'], generated: ['mapa'] })
+    expect(result.shown).toBe(7)
+    expect(result.active).toEqual([])
+    expect(result.facets.kinds).toEqual([])
+    expect(result.facets.generated).toEqual([])
+  })
+
+  it('e o tipo da nota não é da lista de Entradas', () => {
+    const result = run({ scope: 'entradas', noteKinds: ['ata'] })
+    expect(result.shown).toBe(12)
+    expect(result.facets.noteKinds).toEqual([])
+    expect(result.active).toEqual([])
+  })
+
+  it('"Nota" é a escrita direto: sem entrada, sem mãe e sem geração', () => {
+    expect(noteKindOf(newFileMeta({ name: 'à mão', type: 'reading' }))).toBe('nota')
+    expect(noteKindOf(FILES.find(file => file.id === 'resumo-contrato')!)).toBe('leitura')
+    expect(noteKindOf(FILES.find(file => file.id === 'ideias')!)).toBe('aula')
+  })
+
+  it('na busca, a entrada achada entra na lista, e sai quando o tipo da nota é escolhido', () => {
+    const only = new Set(['kickoff', 'ata', 'ideias'])
+    expect(ids(run({ scope: 'notas' }, { only, foundEntries: true }))).toEqual(['kickoff', 'ata', 'ideias'])
+    expect(ids(run({ scope: 'notas' }, { only }))).toEqual(['ata', 'ideias'])
+    expect(ids(run({ scope: 'notas', noteKinds: ['ata'] }, { only, foundEntries: true }))).toEqual(['ata'])
   })
 })
 

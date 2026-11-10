@@ -33,52 +33,54 @@ const fileOf = (id: string) => useLibraryStore.getState().files.find(file => fil
 const table = () => screen.getByRole('table', { name: 'Notas e pastas' })
 const fileRows = () => within(table()).getAllByRole('row').filter(row => row.dataset.fileId)
 const rowOf = (id: string) => fileRows().find(row => row.dataset.fileId === id)!
-/** The order of the notes in the table, with how deep each one is nested. */
-const listing = () => fileRows().map(row => `${row.dataset.fileId}:${row.dataset.depth}`)
+/** The order of the notes in the table. */
+const listing = () => fileRows().map(row => row.dataset.fileId)
 
 beforeEach(() => {
   seedLibrary()
   change(files => [...files, ...FAMILY])
 })
 
-describe('lista da pasta: mãe e filha na mesma pasta aparecem aninhadas (FR-025)', () => {
-  it('a filha vem logo embaixo da mãe, recuada, e não se repete solta na pasta', () => {
+// FR-073 replaces the nesting of FR-025 in the folder: each note on its own line, in the order of the table, and its mother 1 click away.
+describe('lista da pasta: cada nota na sua linha, sem recuo (FR-073)', () => {
+  it('a filha fica no lugar dela na ordem da tabela, sem recuo, com o selo que leva à mãe', () => {
     renderAt('/biblioteca/calc')
-    expect(listing()).toEqual(['aula-pdf:0', 'derivadas-video:0', 'derivadas:0', 'limites:0', 'filha:1', 'monitoria:0'])
-    expect(rowOf('filha')).toHaveTextContent('Exercícios resolvidos de limites')
-    expect(within(rowOf('filha')).queryByRole('link', { name: /^de:/ })).not.toBeInTheDocument()
+    expect(listing()).toEqual(['aula-pdf', 'derivadas-video', 'derivadas', 'filha', 'limites', 'monitoria'])
+    expect(rowOf('filha')).not.toHaveClass('fam-nested')
+    expect(within(rowOf('filha')).getByRole('link', { name: 'de: Limites laterais e continuidade' })).toHaveAttribute('href', '/arquivo/limites')
   })
 
-  it('a neta vem embaixo da filha, um degrau mais para dentro', () => {
+  it('a neta também fica no lugar dela', () => {
     change(files => [...files, item('neta', 'Resumo dos exercícios', 'calc', { parentFileId: 'filha' })])
     renderAt('/biblioteca/calc')
-    expect(listing()).toEqual(['aula-pdf:0', 'derivadas-video:0', 'derivadas:0', 'limites:0', 'filha:1', 'neta:2', 'monitoria:0'])
+    expect(listing()).toEqual(['aula-pdf', 'derivadas-video', 'derivadas', 'filha', 'limites', 'monitoria', 'neta'])
   })
 
   it('um ciclo nos dados não faz nenhuma nota sumir da pasta', () => {
     change(files => files.map(file => (file.id === 'limites' ? { ...file, parentFileId: 'filha' } : file)))
     renderAt('/biblioteca/calc')
-    expect(listing().map(entry => entry.split(':')[0]).sort()).toEqual(['aula-pdf', 'derivadas', 'derivadas-video', 'filha', 'limites', 'monitoria'])
+    expect([...listing()].sort()).toEqual(['aula-pdf', 'derivadas', 'derivadas-video', 'filha', 'limites', 'monitoria'])
   })
 
-  it('ordenar a tabela mantém a filha embaixo da mãe', () => {
+  it('ordenar a tabela ordena todas as notas, mães e filhas juntas', () => {
     renderAt('/biblioteca/calc')
     fireEvent.click(within(table()).getByRole('button', { name: 'Nome' }))
-    expect(listing()).toEqual(['monitoria:0', 'limites:0', 'filha:1', 'derivadas:0', 'derivadas-video:0', 'aula-pdf:0'])
+    expect(listing()).toEqual(['monitoria', 'limites', 'filha', 'derivadas', 'derivadas-video', 'aula-pdf'])
   })
 
-  it('a busca acende a filha no lugar dela, embaixo da mãe', async () => {
+  it('a busca traz a filha sozinha, com o termo marcado no nome', async () => {
     renderAt('/biblioteca/calc')
     fireEvent.change(screen.getByRole('searchbox', { name: 'Buscar' }), { target: { value: 'Exercícios resolvidos' } })
-    await waitFor(() => expect(rowOf('filha')).toHaveClass('hit'))
-    expect(listing()).toEqual(['aula-pdf:0', 'derivadas-video:0', 'derivadas:0', 'limites:0', 'filha:1', 'monitoria:0'])
+    const found = () => within(screen.getByRole('table', { name: 'Resultados da busca' })).getAllByRole('row').slice(1)
+    await waitFor(() => expect(found().map(row => row.dataset.fileId)).toEqual(['filha']))
+    expect([...found()[0].querySelectorAll('mark')].map(mark => mark.textContent)).toEqual(['Exercícios', 'resolvidos'])
   })
 })
 
 describe('selo "de: <mãe>" quando a mãe mora em outra pasta (FR-025)', () => {
   it('a filha aparece na sua pasta com o selo, que leva à mãe com 1 clique', async () => {
     renderAt('/biblioteca/fis')
-    expect(listing()).toContain('fora:0')
+    expect(listing()).toContain('fora')
     const badge = within(rowOf('fora')).getByRole('link', { name: 'de: Limites laterais e continuidade' })
     expect(badge).toHaveAttribute('href', '/arquivo/limites')
     fireEvent.click(badge)
@@ -93,7 +95,7 @@ describe('selo "de: <mãe>" quando a mãe mora em outra pasta (FR-025)', () => {
   it('com a mãe na Lixeira, a filha sai de baixo dela e o selo diz que a mãe foi apagada', () => {
     trashed('limites')
     renderAt('/biblioteca/calc')
-    expect(listing()).toEqual(['aula-pdf:0', 'derivadas-video:0', 'derivadas:0', 'filha:0', 'monitoria:0'])
+    expect(listing()).toEqual(['aula-pdf', 'derivadas-video', 'derivadas', 'filha', 'monitoria'])
     expect(rowOf('filha')).toHaveTextContent('de: Limites laterais e continuidade · mãe apagada')
     expect(within(rowOf('filha')).queryByRole('link', { name: /^de:/ })).not.toBeInTheDocument()
   })
@@ -108,14 +110,14 @@ describe('selo "de: <mãe>" quando a mãe mora em outra pasta (FR-025)', () => {
     change(files => files.map(file => (file.id === 'filha' ? { ...file, parentFileId: 'monitoria', tags: ['resolvidos'] } : file)))
     renderAt('/biblioteca/calc')
     fireEvent.click(screen.getByRole('checkbox', { name: /^resolvidos\b/ }))
-    expect(listing()).toContain('filha:0')
+    expect(listing()).toContain('filha')
     expect(within(rowOf('filha')).getByRole('link', { name: 'de: Monitoria de limites' })).toHaveAttribute('href', '/arquivo/monitoria')
   })
 
   it('numa lista sem aninhamento, como Favoritos, tudo fica solto e quem tem mãe mostra o selo', () => {
     change(files => files.map(file => (['limites', 'filha', 'fora'].includes(file.id) ? { ...file, favorite: true } : file)))
     renderAt('/favoritos')
-    expect(listing()).toEqual(['filha:0', 'limites:0', 'fora:0'])
+    expect(listing()).toEqual(['filha', 'limites', 'fora'])
     expect(within(rowOf('fora')).getByRole('link', { name: 'de: Limites laterais e continuidade' })).toBeInTheDocument()
     expect(within(rowOf('filha')).getByRole('link', { name: 'de: Limites laterais e continuidade' })).toBeInTheDocument()
     expect(within(rowOf('limites')).queryByRole('link', { name: /^de:/ })).not.toBeInTheDocument()
@@ -130,9 +132,15 @@ describe('contagem nas mães e nas entradas (FR-024)', () => {
     expect(rowOf('derivadas')).not.toHaveTextContent(/\d+ notas?\b/)
   })
 
-  it('a entrada aparece na pasta como item, com a sua contagem', () => {
+  it('a entrada não é linha da pasta; em Entradas, aparece com a sua contagem (FR-073)', () => {
     renderAt('/biblioteca/fis')
-    expect(within(rowOf('pdf')).getByText('1 nota')).toBeInTheDocument()
+    expect(listing()).not.toContain('pdf')
+  })
+
+  it('em Entradas, a entrada mostra a sua contagem', () => {
+    renderAt('/entradas')
+    const row = within(screen.getByRole('table', { name: 'Entradas' })).getAllByRole('row').find(item => item.dataset.fileId === 'pdf')!
+    expect(within(row).getByText('1 nota')).toBeInTheDocument()
   })
 })
 

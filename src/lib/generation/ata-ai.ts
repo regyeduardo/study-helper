@@ -48,18 +48,28 @@ export function tokensFor(model: string, max: number): number {
 
 const PASS_STEP: Record<TextPass, AiStep> = { context: 'contexto', candidates: 'tarefas', review: 'revisar', pending: 'semdono', write: 'escrever' }
 
-/** The model chosen at generation time for the Ata; `everyStep`: it writes every step (the video model writing everything). */
+/**
+ * The models chosen at generation time for the steps of the Ata (uids). `model` is the Escrita, the "Modelo da IA" of the window.
+ * The others are only what the person picked in "Modelos por passo"; a step left out keeps the default it had before.
+ */
 export interface AtaModels {
   model?: string | null
-  everyStep?: boolean
+  /** Vídeo: who speaks and the screen, read by the frames. */
+  video?: string | null
+  /** Contexto: the context and the final state of the meeting. */
+  context?: string | null
+  /** Escrita picked now: it also beats the own models of the writing steps (Padrões por uso › Avançado). */
+  write?: string | null
 }
 
-/** A step uses its own model (Padrões por uso › Avançado), else the Ata model (picked now, or the default). */
+/** A step uses the model picked for it now, else its own (Padrões por uso › Avançado), else the Ata model (picked now, or the default). */
 export function passSettings(settings: Settings, pass: TextPass, chosen: AtaModels = {}): AiSettings {
   const step = PASS_STEP[pass]
   const config = aiConfigOf(settings)
+  const picked = pass === 'context' ? chosen.context : chosen.write
+  if (picked) return targetFor(settings, 'ata', picked)
   const own = config.models.some(model => model.uid === config.steps[step])
-  return own && !(chosen.model && chosen.everyStep) ? targetFor(settings, step) : targetFor(settings, 'ata', chosen.model)
+  return own ? targetFor(settings, step) : targetFor(settings, 'ata', chosen.model)
 }
 
 // DeepSeek in JSON mode sometimes answers empty: read as "nothing found", it emptied the Levantamento de tarefas.
@@ -108,9 +118,9 @@ export async function withRetry<T>(run: (signal: AbortSignal) => Promise<T>, opt
   throw last
 }
 
-/** The app's AI for the Ata: text passes use the Ata model (or each step's own), vision uses Leitura de tela. */
+/** The app's AI for the Ata: text passes use the model of their step (picked now, or its own, or the Ata model), vision the Vídeo model picked, else Leitura de tela. */
 export function appAi(settings: Settings, signal?: AbortSignal, timeouts: { text: number; vision: number; backoffMs?: number } = { text: TEXT_TIMEOUT_MS, vision: VISION_TIMEOUT_MS }, chosen: AtaModels = {}): AtaAi {
-  const vision = visionSettingsOf(settings)
+  const vision = visionSettingsOf(settings, chosen.video)
   const used: Record<string, string> = {}
   let dollars = 0
   let priced = false

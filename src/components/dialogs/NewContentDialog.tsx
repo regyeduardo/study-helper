@@ -4,14 +4,15 @@ import { useNavigate } from 'react-router-dom'
 import type { AtaModelId, AtaPart, SourceStorage } from '@/types/domain'
 import { AtaPartsFields, toggledPart } from '@/components/dialogs/AtaPartsDialog'
 import { FolderField } from '@/components/dialogs/FolderChooser'
-import { MediaAnalysisField, useMediaAnalysis } from '@/components/dialogs/GenerateEntryDialog'
+import { AtaStepsField, useAtaSteps } from '@/components/dialogs/AtaSteps'
+import { MediaAnalysisField, useMediaAnalysis } from '@/components/dialogs/MediaAnalysisField'
 import { ModelPick, useModelChoice } from '@/components/dialogs/ModelPick'
 import { Dialog } from '@/components/ui/Dialog'
 import { Icon } from '@/components/ui/Icon'
 import { KeepLevelPicker, SourceStoragePicker } from '@/components/dialogs/SourceStoragePicker'
 import type { LitterboxTime } from '@/controllers/hosting.controller'
 import { youtubeId } from '@/controllers/sources.controller'
-import { PART_ORDER } from '@/lib/generation/ata'
+import { ATA_MODELS, PART_ORDER } from '@/lib/generation/ata'
 import type { ContentInput } from '@/lib/generation/inputs'
 import { detectKind } from '@/lib/generation/uploads'
 import { paths } from '@/lib/paths'
@@ -122,12 +123,16 @@ export function NewContentDialog({ folderId: initialFolder }: { folderId?: strin
   const isYoutube = Boolean(youtubeId(url))
   const choosesParts = agent === 'meeting' && tab === 'file' && Boolean(file) && isMedia
   const media = tab === 'file' && Boolean(file) && isMedia
-  const choices = { aula: useModelChoice('aula', media), explicacao: useModelChoice('explicacao', media), ata: useModelChoice('ata', media) }
+  const choices = { aula: useModelChoice('aula', media), explicacao: useModelChoice('explicacao', media), ata: useModelChoice('ata') }
   const heardBy = useModelChoice('transcricao')
   const writer = agent === 'reading' ? null : (tab === 'topic' && agent === 'lesson') || agent === 'explanation' ? choices.explicacao : agent === 'meeting' ? choices.ata : choices.aula
   // only a video has the choice; the type is what the store goes by too
   const analyzes = media && Boolean(writer) && Boolean(file?.type.startsWith('video/'))
-  const analysis = useMediaAnalysis(writer, analyzes)
+  // the Ata of a video goes step by step, each step with its model, or all in one call (FR-072)
+  const ataOfVideo = analyzes && agent === 'meeting'
+  const analysis = useMediaAnalysis(writer, analyzes, null, { ata: ataOfVideo })
+  const steps = useAtaSteps(choices.ata, ataOfVideo, {}, ataModel ? ATA_MODELS[ataModel].name : undefined)
+  const stepByStep = ataOfVideo && analysis.value === 'transcricao'
 
   const pickFile = async (picked: File | null) => {
     setFile(picked)
@@ -149,7 +154,7 @@ export function NewContentDialog({ folderId: initialFolder }: { folderId?: strin
     const content = contentInput()
     if (!content) return
     const fileId = await startNewContent(
-      { agent: writes, input: content, name, description, folderId, prompt, keep: level, storage: level === 'arquivo' ? chosen : 'none', litterboxTime, ...(choosesParts ? (ataModel ? { ataParts: [], ataModel } : { ataParts: PART_ORDER.filter(part => ataParts.includes(part)) }) : {}), models: { write: writer?.model || null, transcription: media ? heardBy.model || null : null, everyStep: Boolean(writer?.videoWrites) }, ...(analyzes && analysis.sent ? { analyze: analysis.sent } : {}) },
+      { agent: writes, input: content, name, description, folderId, prompt, keep: level, storage: level === 'arquivo' ? chosen : 'none', litterboxTime, ...(choosesParts ? (ataModel ? { ataParts: [], ataModel } : { ataParts: PART_ORDER.filter(part => ataParts.includes(part)) }) : {}), models: { write: writer?.model || null, transcription: media ? heardBy.model || null : null, ...(writer?.videoWrites ? { everyStep: true } : {}), ...(stepByStep ? { steps: steps.sent } : {}) }, ...(analyzes && analysis.sent ? { analyze: analysis.sent } : {}) },
       setJobId,
     )
     if (fileId) {
@@ -265,6 +270,7 @@ export function NewContentDialog({ folderId: initialFolder }: { folderId?: strin
         )}
         {writer && <ModelPick choice={writer} />}
         {analyzes && <MediaAnalysisField analysis={analysis} />}
+        {stepByStep && <AtaStepsField steps={steps} />}
         {choosesParts && <AtaPartsFields parts={ataParts} onToggle={part => setAtaParts(current => toggledPart(current, part))} model={ataModel} onModel={setAtaModel} />}
         {(tab !== 'file' || file) && (
           <KeepLevelPicker level={level} onLevel={setKeep} traceless={writes !== 'meeting'} fileReason={fileReason}>

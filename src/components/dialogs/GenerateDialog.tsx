@@ -22,7 +22,7 @@ export function GenerateDialog({ fileId, agent, redo = false, again }: { fileId:
   const settings = useLibraryStore(state => state.index.settings)
   const generateFromNote = useJobsStore(state => state.generateFromNote)
   const generateSecondTab = useJobsStore(state => state.generateSecondTab)
-  const choice = useModelChoice(agent === 'meeting' ? 'ata' : 'aula', Boolean(file) && mediaOf(file!) !== 'text', lastModel(before, settings))
+  const choice = useModelChoice(agent === 'meeting' ? 'ata' : 'aula', agent !== 'meeting' && Boolean(file) && mediaOf(file!) !== 'text', lastModel(before, settings))
   const folder = useNoteFolder(fileId)
   const [replace, setReplace] = useState(Boolean(before))
   const [instruction, setInstruction] = useState(before?.made?.instruction ?? '')
