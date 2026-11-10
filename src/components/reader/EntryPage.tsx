@@ -17,7 +17,8 @@ import { mediaLength, mediaOf } from '@/lib/file-types'
 import { courseOf } from '@/lib/generation/course-lesson'
 import { paths } from '@/lib/paths'
 import { downloadStoredSource, sourceExpired } from '@/lib/storage/source-storage'
-import { withRecorder } from '@/lib/transcription/turns'
+import { transcriptText } from '@/lib/transcription/export'
+import { renameSpeaker, withRecorder } from '@/lib/transcription/turns'
 import { recorderName, useAccountStore } from '@/stores/account'
 import { type Job, useJobsStore } from '@/stores/jobs'
 import { type OpenedFile, useLibraryStore } from '@/stores/library'
@@ -281,10 +282,17 @@ function Transcript({ entry, opened, canTranscribe, canPlay, playback }: { entry
   const running = job?.status === 'running'
   const status = job && (running ? <JobProgress job={job} /> : job.error && <Failure text={job.error} />)
   if (recording?.blocks.length) {
+    // The same rename as in the note: every speech of that voice, the transcript and the entry's text
+    const rename = async (speakerId: string, name: string) => {
+      const renamed = renameSpeaker(recording, speakerId, name)
+      const library = useLibraryStore.getState()
+      await library.updateSidecar(entry.id, sidecar => ({ ...sidecar, recording: renamed, transcript: transcriptText(renamed).trim() }))
+      if (entry.type === 'reading' && opened.content.trim()) await library.saveContent(entry.id, transcriptText(renamed).trim())
+    }
     return (
       <>
         {status}
-        <TranscriptTab recording={withRecorder(recording, readOnly ? '' : recorderName(useAccountStore.getState().active()))} name={entry.name} time={playback.time} onPlay={canPlay ? playback.playFrom : undefined} found={found} />
+        <TranscriptTab recording={withRecorder(recording, readOnly ? '' : recorderName(useAccountStore.getState().active()))} name={entry.name} time={playback.time} onPlay={canPlay ? playback.playFrom : undefined} onRename={readOnly ? undefined : (speakerId, name) => void rename(speakerId, name)} found={found} />
       </>
     )
   }

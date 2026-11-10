@@ -295,6 +295,20 @@ describe('Transcrição', () => {
     expect(screen.getAllByRole('region').filter(region => region.tagName === 'SECTION' && region.classList.contains('ep-card')).map(region => region.getAttribute('aria-label'))).toEqual(['Original', 'Transcrição', 'O que nasceu daqui'])
   })
 
+  it('clicar no nome de quem fala abre o campo e troca o nome em todas as falas, sem tocar o trecho', async () => {
+    seed([withTranscript(entrada('video', 'Reunião de kickoff.mp4', VIDEO))])
+    renderEntry('video')
+    const trans = within(card('Transcrição'))
+    fireEvent.click(await trans.findByRole('button', { name: 'Renomear Marina' }))
+    const field = trans.getByRole('textbox', { name: 'Nome do falante' })
+    fireEvent.change(field, { target: { value: 'Marina Costa' } })
+    fireEvent.keyDown(field, { key: 'Enter' })
+    expect(await trans.findByText('Marina Costa')).toBeInTheDocument()
+    const saved = await useLibraryStore.getState().repo!.readSidecar('video')
+    expect(saved.recording?.speakers.find(speaker => speaker.id === 's1')?.name).toBe('Marina Costa')
+    expect(saved.transcript).toContain('Marina Costa')
+  })
+
   it('transcrição só em texto, sem falas: mostra o texto', async () => {
     seed([{ ...entrada('video', 'Seminário.mp4', VIDEO), transcript: 'No seminário a turma resolveu o exercício 3.' }])
     renderEntry('video')
