@@ -21,6 +21,8 @@ const PAGE_HEADERS = { 'Cache-Control': SHARED_CACHE, 'X-Robots-Tag': 'noindex' 
 const PAGE_STYLE = 'body{margin:0;font:16px/1.6 system-ui,sans-serif;color:#1f2328;background:#fff}main{max-width:46rem;margin:0 auto;padding:1.5rem 1rem 4rem}h1,h2,h3,h4,h5,h6{line-height:1.3;margin:2rem 0 .5rem}pre{white-space:pre-wrap;overflow-wrap:anywhere;font:inherit;margin:0 0 1rem}a{color:#0969da}@media (prefers-color-scheme:dark){body{color:#e6edf3;background:#0d1117}a{color:#4493f8}}'
 const HTML_ESCAPES = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }
 const TYPE_LABELS = { class: 'Aula', explanation: 'Explicação', reading: 'Leitura', meeting: 'Reunião' }
+const ARTIFACT_LABELS = { mapa: 'Mapa mental', cartoes: 'Cartões', tutor: 'Conversa do Tutor' }
+const TURN_LABELS = { você: 'Você', tutor: 'Tutor' }
 const NOTICES = {
   404: { title: 'Link não encontrado', text: 'Esse compartilhamento não existe ou já foi apagado.' },
   410: { title: 'O link expirou', text: `Os links do Estudo valem ${SHARE_DAYS} dias. Peça um novo a quem compartilhou.` },
@@ -117,7 +119,8 @@ function cleanFolder(folder) {
 }
 
 function plainObject(value) {
-  return value && typeof value === 'object' && !Array.isArray(value) && !hasBinary(JSON.stringify(value)) ? value : null
+  // JSON.stringify writes a NUL byte as the text \u0000, never as the byte itself
+  return value && typeof value === 'object' && !Array.isArray(value) && !JSON.stringify(value).includes('\\u0000') ? value : null
 }
 
 function cleanFile(file) {
@@ -130,12 +133,14 @@ function cleanFile(file) {
   if (file.transcript !== undefined && !isText(file.transcript)) return null
   if (file.recording !== undefined && !plainObject(file.recording)) return null
   if (file.documents !== undefined && (!Array.isArray(file.documents) || file.documents.some(item => !plainObject(item)))) return null
+  if (file.artifacts !== undefined && (!Array.isArray(file.artifacts) || file.artifacts.some(item => !plainObject(item)))) return null
   return {
     meta: plainObject(file.meta) ?? {},
     highlights,
     transcript: isText(file.transcript) ? file.transcript : undefined,
     recording: file.recording,
     documents: file.documents,
+    artifacts: file.artifacts,
     id: file.id,
     name: file.name,
     folderId: isText(file.folderId) ? file.folderId : null,
@@ -191,7 +196,7 @@ export function shareTree(share, id, createdAt, expiresAt, mediaExpiresAt) {
     const base = file.folderId ? (folderPaths.get(file.folderId) ?? '') : ''
     const path = `${base}${uniqueName(file.name, namesIn(base))}`
     const meta = { ...file.meta, id: file.id, name: file.name, folderId: file.folderId, type: file.type, position: file.position, description: file.description, tags: file.tags, mastery: null, lastReviewedAt: null, questionCount: file.questions.length }
-    const sidecar = { meta, questions: file.questions, attempts: [], highlights: file.highlights, ...(file.transcript !== undefined ? { transcript: file.transcript } : {}), ...(file.recording !== undefined ? { recording: file.recording } : {}), ...(file.documents !== undefined ? { documents: file.documents } : {}) }
+    const sidecar = { meta, questions: file.questions, attempts: [], highlights: file.highlights, ...(file.transcript !== undefined ? { transcript: file.transcript } : {}), ...(file.recording !== undefined ? { recording: file.recording } : {}), ...(file.documents !== undefined ? { documents: file.documents } : {}), ...(file.artifacts !== undefined ? { artifacts: file.artifacts } : {}) }
     objects.push({ key: `${root}${path}.md`, body: file.content, type: 'text/markdown' })
     objects.push({ key: `${root}${path}.json`, body: JSON.stringify(sidecar, null, 2), type: 'application/json' })
     return { id: file.id, path }
@@ -384,6 +389,10 @@ function preformatted(text) {
   return { kind: 'text', text }
 }
 
+function code(text, language) {
+  return { kind: 'code', text, language }
+}
+
 function link(label, text, href) {
   return { kind: 'link', label, text, href }
 }
@@ -437,6 +446,22 @@ function questionBlocks(questions, level) {
   return questions.length ? [heading(level, 'Questões'), ...questions.map((question, index) => preformatted(questionText(question, index + 1)))] : []
 }
 
+function listOf(value) {
+  return Array.isArray(value) ? value : []
+}
+
+// the app sends the Mermaid code ready, so the page only prints it; a map never brings its conversation
+function artifactBlocks(artifact, level) {
+  const label = ARTIFACT_LABELS[artifact.kind]
+  if (!label) return []
+  const name = textOrEmpty(artifact.name)
+  const title = heading(level, name ? `${label}: ${name}` : label)
+  if (artifact.kind === 'mapa') return [title, ...(textOrEmpty(artifact.mermaid).trim() ? [code(artifact.mermaid, 'mermaid')] : [])]
+  if (artifact.kind === 'cartoes') return [title, ...listOf(artifact.cards).map(card => preformatted(`Frente: ${textOrEmpty(card?.front)}\nVerso: ${textOrEmpty(card?.back)}`))]
+  const turns = listOf(artifact.turns).map(turn => `${TURN_LABELS[turn?.who] ?? textOrEmpty(turn?.who)}: ${textOrEmpty(turn?.text)}`)
+  return [title, ...(turns.length ? [preformatted(turns.join('\n'))] : [])]
+}
+
 function noteBlocks(file, level, mediaUrl) {
   const media = file.media ? mediaUrl(file.id) : ''
   return [
@@ -446,6 +471,7 @@ function noteBlocks(file, level, mediaUrl) {
     ...(file.tags.length ? [paragraph(`Tags: ${file.tags.join(', ')}`)] : []),
     ...(media ? [link(`Mídia (${file.media.mime || 'tipo desconhecido'}, ${sizeText(file.media.size)})`, media, media)] : []),
     ...(file.content.trim() ? [preformatted(file.content)] : []),
+    ...listOf(file.artifacts).flatMap(artifact => artifactBlocks(artifact, level + 1)),
     ...(Array.isArray(file.documents) ? file.documents : []).flatMap(document => [heading(level + 1, 'Ata'), preformatted(textOrEmpty(document.markdown))]),
     ...transcriptBlocks(file, level + 1),
     ...questionBlocks(file.questions, level + 1),
@@ -494,7 +520,7 @@ function noticeDocument(status, appUrl) {
 function htmlBlock(block) {
   if (block.kind === 'heading') return `<h${block.level}>${escapeHtml(block.text)}</h${block.level}>`
   // pre, not a div: agents turn the HTML into text ignoring the CSS, and keep the line breaks only inside pre
-  if (block.kind === 'text') return `<pre>${escapeHtml(block.text)}</pre>`
+  if (block.kind === 'text' || block.kind === 'code') return `<pre>${escapeHtml(block.text)}</pre>`
   if (block.kind === 'link') return `<p>${block.label ? `${escapeHtml(block.label)}: ` : ''}<a href="${escapeHtml(block.href)}">${escapeHtml(block.text)}</a></p>`
   return `<p>${escapeHtml(block.text)}</p>`
 }
@@ -502,6 +528,7 @@ function htmlBlock(block) {
 function markdownBlock(block) {
   if (block.kind === 'heading') return `${'#'.repeat(block.level)} ${block.text}`
   if (block.kind === 'link') return `${block.label ? `${block.label}: ` : ''}[${block.text}](${block.href})`
+  if (block.kind === 'code') return `\`\`\`${block.language}\n${block.text}\n\`\`\``
   return block.text
 }
 
@@ -547,6 +574,7 @@ async function sharedNote(bucket, root, entry) {
     transcript: sidecar.transcript,
     recording: sidecar.recording,
     documents: sidecar.documents,
+    artifacts: sidecar.artifacts,
     media: entry.media,
   }
 }

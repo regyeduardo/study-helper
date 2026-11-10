@@ -4,8 +4,10 @@ import { Icon } from '@/components/ui/Icon'
 import { FocusShell } from '@/components/layout/OtherShells'
 import { Crumbs, UpButton } from '@/components/library/Crumbs'
 import { EmptyList } from '@/components/library/EmptyList'
+import { EntryList } from '@/components/library/EntryList'
 import { FocusRow } from '@/components/library/FileRows'
-import { FilterChips, SortSelect } from '@/components/library/Filters'
+import { LayoutFilters, SortSelect } from '@/components/library/Filters'
+import { FavoriteFolders } from '@/components/library/FolderTree'
 import { FolderTiles } from '@/components/library/FolderTiles'
 import { SelectionBar } from '@/components/library/SelectionBar'
 import { SHARING_TITLES, SharingView } from '@/components/library/SharingLists'
@@ -14,6 +16,7 @@ import { SharedStatus } from '@/pages/shared'
 import { TrashList } from '@/components/library/TrashList'
 import { useFileActions } from '@/components/library/use-file-actions'
 import { DocumentBody } from '@/components/reader/DocumentArticle'
+import { EntryPage } from '@/components/reader/EntryPage'
 import { InspectorBody } from '@/components/reader/Inspector'
 import { useLibraryView } from '@/hooks/use-library-view'
 import type { ViewRoute } from '@/hooks/use-view-route'
@@ -109,6 +112,7 @@ function Library({ route }: { route: ViewRoute }) {
         <TrashList />
       ) : (
         <>
+          {data.browsing && <FavoriteFolders inline current={route.folderId} />}
           <FolderTiles tiles={data.tiles} />
           {!data.hideFiles && (
             <section className="blk">
@@ -116,10 +120,9 @@ function Library({ route }: { route: ViewRoute }) {
                 <Icon name="file" />
                 Arquivos <span>{data.files.length}</span>
               </h3>
-              <div className="fl">
-                <FilterChips />
+              <LayoutFilters result={data.result}>
                 <SortSelect />
-              </div>
+              </LayoutFilters>
               <SelectionBar />
               <div>
                 {data.files.map(file => <FocusRow key={file.id} file={file} showWhere={!data.browsing} />)}
@@ -193,10 +196,17 @@ function Dock({ fileId }: { fileId: string }) {
 export function FocusWorkspace({ route }: { route: ViewRoute }) {
   const scroller = useScrollerRef()
   const isDoc = route.view === 'doc' && route.fileId
+  if (route.view === 'entry' && route.fileId) {
+    return (
+      <FocusShell>
+        <EntryPage fileId={route.fileId} />
+      </FocusShell>
+    )
+  }
   return (
     <FocusShell dock={isDoc ? <Dock fileId={route.fileId!} /> : undefined}>
       <div className="scroll" ref={scroller}>
-        {isDoc ? <DocumentBody fileId={route.fileId!} /> : route.view === 'shared' ? <SharedStatus unavailable={Boolean(route.unavailable)} /> : route.view === 'home' ? <Home /> : <Library route={route} />}
+        {isDoc ? <DocumentBody fileId={route.fileId!} /> : route.view === 'shared' ? <SharedStatus unavailable={Boolean(route.unavailable)} /> : route.view === 'home' ? <Home /> : route.view === 'entries' ? <div className="lib"><EntryList /></div> : <Library route={route} />}
       </div>
     </FocusShell>
   )

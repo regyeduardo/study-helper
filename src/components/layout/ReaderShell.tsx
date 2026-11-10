@@ -4,17 +4,18 @@ import { useNavigate } from 'react-router-dom'
 import { Icon } from '@/components/ui/Icon'
 import { AvatarButton, SyncPill, UsageLine } from '@/components/layout/Chrome'
 import { Crumbs } from '@/components/library/Crumbs'
-import { FolderTree } from '@/components/library/FolderTree'
+import { FavoriteFolders, FolderTree } from '@/components/library/FolderTree'
 import { SHARING_TITLES } from '@/components/library/SharingLists'
 import { folderHitCounts, useLiveLibrary, useSearchHits } from '@/hooks/use-library-view'
 import { useViewRoute } from '@/hooks/use-view-route'
+import { isNote } from '@/lib/family'
 import { REVIEW_BELOW } from '@/lib/file-types'
 import { paths, type View } from '@/lib/paths'
 import { activeLinks } from '@/lib/share'
 import { useLibraryStore } from '@/stores/library'
 import { useUiStore } from '@/stores/ui'
 
-const VIEW_NAME: Record<View, string> = { home: 'Início', folder: 'Biblioteca', review: 'Para revisar', favorites: 'Favoritos', trash: 'Lixeira', doc: 'Documento', ...SHARING_TITLES }
+const VIEW_NAME: Record<View, string> = { home: 'Início', folder: 'Biblioteca', review: 'Para revisar', entries: 'Entradas', entry: 'Entrada', favorites: 'Favoritos', trash: 'Lixeira', doc: 'Documento', ...SHARING_TITLES }
 
 export function useCounts() {
   const { files } = useLiveLibrary()
@@ -24,7 +25,8 @@ export function useCounts() {
     shares: index.shares.length,
     sharedWithMe: activeLinks(index.sharedWithMe).length,
     library: files.length,
-    review: files.filter(file => file.mastery !== null && file.mastery < REVIEW_BELOW).length,
+    entries: files.filter(file => !isNote(file)).length,
+    review: files.filter(file => isNote(file) && file.mastery !== null && file.mastery < REVIEW_BELOW).length,
     favorites: files.filter(file => file.favorite).length,
     trash: trashCount,
   }
@@ -44,7 +46,7 @@ export function ReaderShell({ children, docActions }: { children: ReactNode; doc
   const tags = [...tagCounts].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], 'pt-BR'))
 
   const nav = (target: View, icon: Parameters<typeof Icon>[0]['name'], label: string, to: string, count?: number) => (
-    <button className="nv" aria-current={view === target} onClick={() => (navigate(to), ui.set({ drawer: false }))}>
+    <button className="nv" aria-current={view === target || (target === 'entries' && view === 'entry')} onClick={() => (navigate(to), ui.set({ drawer: false }))}>
       <Icon name={icon} />
       {label}
       <span className="n">{count ?? ''}</span>
@@ -63,6 +65,8 @@ export function ReaderShell({ children, docActions }: { children: ReactNode; doc
         <nav className="nav">
           {nav('home', 'home', 'Início', paths.home)}
           {nav('review', 'warn', 'Para revisar', paths.review, counts.review)}
+          {nav('entries', 'upload', 'Entradas', paths.entries, counts.entries)}
+          <FavoriteFolders current={view === 'folder' ? folderId : undefined} onGo={() => ui.set({ drawer: false })} />
           <div className="nh">Pastas</div>
           <FolderTree folders={folders} current={view === 'folder' ? folderId : view === 'doc' ? (doc?.folderId ?? null) : undefined} hits={hitCounts} onGo={() => ui.set({ drawer: false })} />
           {tags.length > 0 && (

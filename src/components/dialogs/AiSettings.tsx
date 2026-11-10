@@ -2,6 +2,7 @@ import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 
 import type { AiConfig, AiProvider, AiProviderId, AiStep, AiUse } from '@/types/domain'
+import { RecommendationsTab } from '@/components/dialogs/RecommendationsTab'
 import { Icon } from '@/components/ui/Icon'
 import { type CatalogModel, fetchModelList, type ModelPrice, ReadError } from '@/controllers/models.controller'
 import { errAdvice, errLong, errShort, eLista, keyMask, nem, nextSort, NO_PRICE, PER_TOKEN, plain, plural, priceSide, type SortState, sortedModels, validUrl } from '@/lib/ai/catalog'
@@ -14,6 +15,7 @@ const TABS: [AiTab, string][] = [
   ['provedores', 'Provedores'],
   ['modelos', 'Modelos'],
   ['padroes', 'Padrões por uso'],
+  ['recomendacoes', 'Recomendações'],
 ]
 
 const LEGEND = 'azul = aceita · cinza = não aceita · ? = o provedor não informa'
@@ -1024,6 +1026,7 @@ export function AiSettings() {
         {ui.tab === 'provedores' && <ProvidersTab key="provedores" config={config} save={save} />}
         {ui.tab === 'modelos' && <ModelsTab config={config} save={save} />}
         {ui.tab === 'padroes' && <DefaultsTab config={config} save={save} />}
+        {ui.tab === 'recomendacoes' && <RecommendationsTab config={config} save={save} />}
       </div>
     </>
   )

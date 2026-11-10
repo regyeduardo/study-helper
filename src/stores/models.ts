@@ -1,9 +1,11 @@
 import { create } from 'zustand'
 
-import type { AiConfig, AiProvider, AiSettings } from '@/types/domain'
+import type { AiConfig, AiProvider, AiSettings, AiUse } from '@/types/domain'
 import { type CatalogModel, fetchModelList, ReadError } from '@/controllers/models.controller'
-import { type Media, type MediaInfo, modelByUid } from '@/lib/ai/config'
+import { aiConfigOf, type Media, type MediaInfo, modelByUid } from '@/lib/ai/config'
+import { type DiagnosisDeps, type DiagnosisPlan, type DiagnosisProgress, type DiagnosisResult, liveDiagnosisDeps, planDiagnosis, runDiagnosis } from '@/lib/ai/diagnosis'
 import { probeMedia, probeWeb, type ProbeResult } from '@/lib/ai/probe'
+import { useLibraryStore } from '@/stores/library'
 
 export type Live =
   | { state: 'reading'; token: number }
@@ -13,7 +15,7 @@ export type Live =
 export type ProbeKey = Media | 'web'
 export type ProbeState = { state: 'busy' } | ProbeResult
 
-export type AiTab = 'provedores' | 'modelos' | 'padroes'
+export type AiTab = 'provedores' | 'modelos' | 'padroes' | 'recomendacoes'
 
 export interface AiUiState {
   tab: AiTab
@@ -22,7 +24,18 @@ export interface AiUiState {
   advShut?: boolean
   /** Last provider chosen in "Adicionar modelo". */
   addPid?: string
+  /** The use whose ladder is open in Recomendações; none: "Geral". */
+  recUse?: AiUse | null
 }
+
+/** The diagnosis of Recomendações. `scope`: the one use it covers; null: all of them. It lives here so a run goes on when the tab is left. */
+export type DiagnosisState =
+  | { state: 'idle' }
+  | { state: 'planning'; scope: AiUse | null }
+  | { state: 'ready'; scope: AiUse | null; plan: DiagnosisPlan }
+  | { state: 'running'; scope: AiUse | null; plan: DiagnosisPlan; progress: DiagnosisProgress | null }
+  | { state: 'done'; scope: AiUse | null; result: DiagnosisResult; at: string }
+  | { state: 'failed'; scope: AiUse | null; message: string }
 
 interface ModelsState {
   /** What each provider answered: only in memory, never saved. */
@@ -34,6 +47,13 @@ interface ModelsState {
   /** "Adicionar modelo" is open over the settings (they go inert). */
   adding: boolean
   setAdding(open: boolean): void
+  diagnosis: DiagnosisState
+  /** Reads the catalogs (free) and says what the run would cost. Nothing paid happens here. */
+  diagnosisPlan(scope: AiUse | null): Promise<void>
+  diagnosisRun(): Promise<void>
+  /** "Parar": what ran stays saved, nothing else is spent. */
+  diagnosisStop(): void
+  diagnosisClose(): void
   read(provider: AiProvider, loud: boolean): Promise<void>
   readStale(providers: AiProvider[]): void
   forget(providerId: string): void
@@ -42,6 +62,15 @@ interface ModelsState {
 
 export const FRESH_MS = 30000
 
+/** While a run goes, the results are saved at most this often, and always at the end. */
+const SAVE_EVERY_MS = 5000
+
+let diagnosisDeps: DiagnosisDeps | null = null
+let diagnosisAbort: AbortController | null = null
+
+const saveDiagnosis = (records: DiagnosisResult['records']) => void useLibraryStore.getState().updateSettings({ aiDiagnosis: records })
+const messageOf = (error: unknown) => (error instanceof Error ? error.message : String(error))
+
 export const useModelsStore = create<ModelsState>((set, get) => ({
   live: {},
   probes: {},
@@ -49,6 +78,56 @@ export const useModelsStore = create<ModelsState>((set, get) => ({
   setUi: patch => set(state => ({ ui: { ...state.ui, ...patch } })),
   adding: false,
   setAdding: adding => set({ adding }),
+
+  diagnosis: { state: 'idle' },
+
+  diagnosisPlan: async scope => {
+    set({ diagnosis: { state: 'planning', scope } })
+    try {
+      const settings = useLibraryStore.getState().index.settings
+      const providers = aiConfigOf(settings).providers
+      diagnosisDeps = liveDiagnosisDeps(providers)
+      const plan = await planDiagnosis({ providers, ...(scope ? { uses: [scope] } : {}), previous: settings.aiDiagnosis ?? [] }, diagnosisDeps)
+      // "Cancelar" while it read the catalogs
+      if (get().diagnosis.state === 'planning') set({ diagnosis: { state: 'ready', scope, plan } })
+    } catch (error) {
+      if (get().diagnosis.state === 'planning') set({ diagnosis: { state: 'failed', scope, message: messageOf(error) } })
+    }
+  },
+
+  diagnosisRun: async () => {
+    const current = get().diagnosis
+    if (current.state !== 'ready' || !diagnosisDeps) return
+    const { scope, plan } = current
+    const deps = diagnosisDeps
+    diagnosisAbort = new AbortController()
+    set({ diagnosis: { state: 'running', scope, plan, progress: null } })
+    let savedAt = Date.now()
+    try {
+      const result = await runDiagnosis(plan, deps, {
+        signal: diagnosisAbort.signal,
+        onProgress: progress => {
+          set({ diagnosis: { state: 'running', scope, plan, progress } })
+          if (Date.now() - savedAt > SAVE_EVERY_MS) {
+            savedAt = Date.now()
+            saveDiagnosis(progress.records)
+          }
+        },
+      })
+      saveDiagnosis(result.records)
+      set({ diagnosis: { state: 'done', scope, result, at: result.fresh[0]?.at ?? (deps.now?.() ?? new Date()).toISOString() } })
+    } catch (error) {
+      set({ diagnosis: { state: 'failed', scope, message: messageOf(error) } })
+    } finally {
+      diagnosisAbort = null
+    }
+  },
+
+  diagnosisStop: () => diagnosisAbort?.abort(),
+
+  diagnosisClose: () => {
+    if (get().diagnosis.state !== 'running') set({ diagnosis: { state: 'idle' } })
+  },
 
   read: async (provider, loud) => {
     const current = get().live[provider.id]

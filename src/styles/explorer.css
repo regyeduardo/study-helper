@@ -1,0 +1,110 @@
+/* Explorador (FR-036 a FR-045): the filter panel beside the table, the tools and active filters above it, checks and dates in it. */
+
+/* ---------- the panel beside the heading and the table; only the table scrolls ---------- */
+@media (min-width:761px){
+  .c1 .libwrap:has(>.ex-browser){display:grid;grid-template-columns:auto minmax(0,1fr);grid-template-rows:auto minmax(0,1fr);overflow:hidden;padding:0}
+  .explorer.ex-browser{display:contents}
+  .ex-browser>.fp{grid-column:1;grid-row:1/span 2;height:auto;min-height:0}
+  .c1 .libwrap:has(>.ex-browser)>.libhead{grid-column:2;grid-row:1;width:100%;max-width:none;margin:0;padding:16px clamp(16px,2vw,24px) 0}
+  .ex-browser>.ex-main{grid-column:2;grid-row:2;min-height:0;overflow:auto;padding:12px clamp(16px,2vw,24px) 24px}
+}
+.ex-main{display:grid;grid-template-columns:minmax(0,1fr);gap:10px;align-content:start;min-width:0}
+
+/* ---------- tools ---------- */
+.ex-scope{display:inline-flex;gap:2px;height:30px;padding:2px;background:var(--bg);border:1px solid var(--border);border-radius:9px}
+.ex-scope button{display:inline-flex;align-items:center;gap:6px;padding:0 10px;border-radius:6px;font-size:13px;color:var(--fg-muted);white-space:nowrap}
+.ex-scope button:hover{color:var(--fg)}
+.ex-scope button[aria-pressed="true"]{background:var(--bg-muted);color:var(--fg);font-weight:500}
+.ex-scope-n{font-size:12px;font-weight:600;color:var(--fg-faint);font-variant-numeric:tabular-nums}
+.ex-scope button[aria-pressed="true"] .ex-scope-n{color:var(--accent)}
+.ex-search .kbd{flex:none}
+.ex-filters-n{font-size:12px;font-weight:600;color:var(--accent);font-variant-numeric:tabular-nums}
+
+/* ---------- active filters ---------- */
+.ex-active{display:flex;flex-wrap:wrap;align-items:center;gap:7px;min-width:0}
+.ex-count{flex:none;font-size:14px;font-weight:600;color:var(--fg);font-variant-numeric:tabular-nums}
+.ex-fchips{display:flex;flex-wrap:wrap;gap:7px;min-width:0}
+.ex-fchip{display:inline-flex;align-items:center;gap:6px;height:25px;max-width:100%;padding:0 4px 0 9px;background:var(--bg-muted);border:1px solid var(--border-muted);border-radius:7px;font-size:12.5px;color:var(--fg-muted);min-width:0}
+.ex-fchip b{font-weight:500;color:var(--fg);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.ex-fchip>span{flex:none}
+.ex-fchip button{flex:none;display:grid;place-items:center;width:18px;height:18px;border-radius:4px;color:var(--fg-muted)}
+.ex-fchip button:hover{background:var(--bg-hover);color:var(--fg)}
+.ex-fchip .ic{width:12px;height:12px}
+.ex-clear{margin-left:auto;font-size:12.5px;font-weight:500;color:var(--accent);white-space:nowrap}
+.ex-clear:hover{text-decoration:underline}
+
+/* ---------- the table ---------- */
+.ex-browser .ex-table td:first-child,.ex-browser .ex-table th:first-child{width:36px}
+.ex-browser .ex-table td:nth-child(2){color:var(--fg);width:auto}
+.ex-browser .ex-table tr.fam-nested>td:first-child{padding-left:10px}
+.ex-browser .ex-table tr.fam-nested>td:nth-child(2){padding-left:calc(10px + var(--fam-depth,1) * 24px)}
+.ex-browser .ex-table tr.sel td{background:var(--accent-soft)}
+.ex-browser .ex-table tr.drop-on td{background:var(--accent-soft)}
+@media (min-width:761px){.ex-browser .ex-table th:nth-last-child(3),.ex-browser .ex-table th:nth-last-child(2){width:96px}}
+/* app.css hides the third column of a narrow table: here it is the actions */
+@media (max-width:760px){.ex-browser .ex-table th:nth-child(3),.ex-browser .ex-table td:nth-child(3){display:table-cell}}
+.ex-browser .ex-table th.ex-plain{padding:8px 10px;width:178px}
+.ex-browser .ex-table .ex-check{position:relative;padding-left:10px;padding-right:0;vertical-align:top}
+.ex-browser .ex-table th.ex-check{vertical-align:middle}
+.ex-box{appearance:none;-webkit-appearance:none;display:block;width:16px;height:16px;margin:2px 0 0;background:transparent;border:1.2px solid var(--border);border-radius:5px;cursor:pointer}
+th .ex-box{margin:0}
+.ex-box:checked{background:var(--accent) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23fff' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m5 12 5 5L20 7'/%3E%3C/svg%3E") center/12px no-repeat;border-color:var(--accent)}
+.ex-box:indeterminate{background:var(--accent) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23fff' stroke-width='3' stroke-linecap='round'%3E%3Cpath d='M6 12h12'/%3E%3C/svg%3E") center/12px no-repeat;border-color:var(--accent)}
+.ex-grip{position:absolute;left:-4px;top:11px;width:14px;height:14px;color:var(--fg-faint);opacity:0}
+.ex-browser tr:hover .ex-grip{opacity:1}
+.ex-title{min-width:0;overflow-wrap:anywhere}
+.ex-name>.ic,.ex-name>.folder-ic{flex:none}
+.ex-sub{display:flex;flex-wrap:wrap;align-items:center;gap:3px 8px;margin:3px 0 0 24px;font-size:12px;color:var(--fg-muted);line-height:1.4}
+.ex-place{padding:1px 7px;background:var(--bg-muted);border-radius:9px;font-size:11.5px;color:var(--fg-muted);white-space:nowrap}
+.ex-dates{font-variant-numeric:tabular-nums;color:var(--fg-faint);text-wrap:balance}
+.ex-date{white-space:nowrap;font-variant-numeric:tabular-nums}
+.ex-day{display:block;font-size:13px}
+.ex-time{display:block;margin-top:3px;font-size:12px;color:var(--fg-faint)}
+.ex-born{font-size:12.5px}
+.ex-born .fam-count{display:block;padding:0;border:0;font-size:12.5px;white-space:normal}
+.ex-none{color:var(--fg-faint)}
+.fam-selo.ex-mother{display:inline-block;max-width:100%;padding:1px 7px;font-size:12px;border:1px solid var(--border-muted);border-radius:6px}
+.ex-sub .fam-count{padding:0;border:0;font-size:12px}
+.ex-sub .fam-selo.ex-mother{padding:0;border:0}
+@media (hover:hover){
+  .ex-browser .ex-act .ibtn:not(.on){opacity:0}
+  .ex-browser tr:hover .ex-act .ibtn,.ex-browser tr:focus-within .ex-act .ibtn{opacity:1}
+}
+@media (hover:none){
+  .ex-search .kbd{display:none}
+  .ex-grip{display:none}
+  .ex-box{width:20px;height:20px;margin-top:0}
+  .ex-browser .ex-table .ex-check{padding-right:4px}
+}
+
+/* ---------- selection bar, floating at the foot of the table ---------- */
+.explorer .selwrap.ex-selwrap{position:sticky;top:auto;bottom:12px;z-index:5;display:flex;justify-content:center;max-width:none;margin:0;pointer-events:none}
+.ex-selwrap:empty{display:none}
+.ex-selwrap .selbar{pointer-events:auto;background:var(--bg-muted);color:var(--fg);border:1px solid var(--border);border-radius:12px;box-shadow:var(--shadow)}
+.ex-selwrap .selbar .btn{border-color:transparent}
+.ex-selwrap .selbar .btn:hover{background:var(--bg-hover)}
+.ex-selwrap .selbar .sel-move{background:var(--bg-hover);border-color:var(--border)}
+.ex-selwrap .selbar .sel-danger{color:var(--bad)}
+
+/* ---------- the destination folder in the tree ---------- */
+.tree-move{flex:none;padding:0 6px;font-size:12px;font-weight:500;color:var(--accent);white-space:nowrap}
+.tree-row.drop-on{border-radius:7px}
+.tree-row.drop-on .tree-it{background:none}
+
+/* ---------- Favoritos in the side bar, and the color of a folder ---------- */
+.fav-nav{list-style:none;margin:0;padding:0;display:grid;gap:1px}
+.fav-nav .nv{width:100%;text-align:left}
+.fav-nav li.drop-on .nv{background:var(--accent-soft);color:var(--accent)}
+.mi-colors{display:flex;flex-wrap:wrap;gap:6px;padding:6px 9px}
+.swatch{width:22px;height:22px;border-radius:50%;border:2px solid transparent;display:inline-grid;place-items:center;color:#fff;cursor:pointer;padding:0}
+.swatch svg{width:12px;height:12px}
+.swatch:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.swatch[aria-pressed="true"]{border-color:var(--fg)}
+.swatch.none{background:var(--bg-muted);border:1px dashed var(--border);color:var(--fg-muted)}
+.swatch.none[aria-pressed="true"]{border:2px solid var(--fg)}
+@media (pointer:coarse){.swatch{width:32px;height:32px}}
+.fav-chips{display:flex;flex-wrap:wrap;gap:6px}
+.fav-chips .chip{gap:6px}
+.fav-chips li.drop-on .chip{background:var(--accent-soft);color:var(--accent)}
+.fav-strip{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:8px 4px 0}
+.fav-strip-t{font-size:11px;letter-spacing:.07em;text-transform:uppercase;color:var(--fg-faint);font-weight:600}

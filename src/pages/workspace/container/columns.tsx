@@ -4,8 +4,9 @@ import { Icon } from '@/components/ui/Icon'
 import { ColumnsShell } from '@/components/layout/OtherShells'
 import { Crumbs, UpButton } from '@/components/library/Crumbs'
 import { EmptyList } from '@/components/library/EmptyList'
+import { EntryList } from '@/components/library/EntryList'
 import { ColumnsCard, excerptOf } from '@/components/library/FileRows'
-import { FilterChips } from '@/components/library/Filters'
+import { LayoutFilters } from '@/components/library/Filters'
 import { FolderTiles } from '@/components/library/FolderTiles'
 import { SelectionBar } from '@/components/library/SelectionBar'
 import { SHARING_TITLES, SharingView } from '@/components/library/SharingLists'
@@ -14,6 +15,7 @@ import { SharedStatus } from '@/pages/shared'
 import { TrashList } from '@/components/library/TrashList'
 import { useFileActions } from '@/components/library/use-file-actions'
 import { DocumentBody } from '@/components/reader/DocumentArticle'
+import { EntryPage } from '@/components/reader/EntryPage'
 import { InspectorBody, InspectorTabs } from '@/components/reader/Inspector'
 import { useLibraryView } from '@/hooks/use-library-view'
 import type { ViewRoute } from '@/hooks/use-view-route'
@@ -22,7 +24,7 @@ import { useLibraryStore } from '@/stores/library'
 import { type InspectorTab, useUiStore } from '@/stores/ui'
 import { useScrollerRef } from '@/pages/workspace/container/shared'
 
-const TITLES: Record<View, string> = { folder: 'Biblioteca', review: 'Para revisar', favorites: 'Favoritos', trash: 'Lixeira', home: 'Biblioteca', doc: 'Biblioteca', ...SHARING_TITLES }
+const TITLES: Record<View, string> = { folder: 'Biblioteca', review: 'Para revisar', favorites: 'Favoritos', trash: 'Lixeira', home: 'Biblioteca', doc: 'Biblioteca', entries: 'Entradas', entry: 'Entrada', ...SHARING_TITLES }
 
 function ListColumn({ view, folderId, currentId }: { view: View; folderId: string | null; currentId: string | null }) {
   const ui = useUiStore()
@@ -75,9 +77,7 @@ function ListColumn({ view, folderId, currentId }: { view: View; folderId: strin
               <Icon name="search" />
               <input aria-label="Buscar" placeholder="Buscar no título e no texto" value={ui.query} onChange={event => ui.setQuery(event.target.value)} />
             </label>
-            <div className="fl">
-              <FilterChips />
-            </div>
+            <LayoutFilters result={data.result} />
           </>
         )}
       </div>
@@ -202,10 +202,58 @@ function DocColumn({ fileId }: { fileId: string | null }) {
   )
 }
 
+/** Entradas and the entrada's page need the whole width; `col-list` keeps them visible when the narrow screen shows one pane. */
+function EntriesColumn() {
+  const ui = useUiStore()
+  return (
+    <section className="col-list ep-wide" aria-label="Entradas">
+      <div className="lh">
+        <div className="t">
+          <button className="ibtn back-mob" onClick={() => ui.set({ columnsPane: 'nav' })} aria-label="Coleções">
+            <Icon name="back" />
+          </button>
+          <h2>Entradas</h2>
+        </div>
+      </div>
+      <div className="items">
+        <EntryList />
+      </div>
+    </section>
+  )
+}
+
+function EntryColumn({ fileId }: { fileId: string }) {
+  const navigate = useNavigate()
+  return (
+    <section className="col-list ep-wide" aria-label="Entrada">
+      <div className="dtop">
+        <button className="ibtn" onClick={() => navigate(-1)} aria-label="Voltar">
+          <Icon name="back" />
+        </button>
+      </div>
+      <EntryPage fileId={fileId} />
+    </section>
+  )
+}
+
 export function ColumnsWorkspace({ route }: { route: ViewRoute }) {
   const docFolder = useLibraryStore(state => (route.fileId ? (state.files.find(file => file.id === route.fileId)?.folderId ?? null) : null))
   const view: View = route.view === 'doc' ? 'folder' : route.view === 'home' ? 'folder' : route.view
   const folderId = route.view === 'doc' ? docFolder : route.folderId
+  if (route.view === 'entries') {
+    return (
+      <ColumnsShell>
+        <EntriesColumn />
+      </ColumnsShell>
+    )
+  }
+  if (route.view === 'entry' && route.fileId) {
+    return (
+      <ColumnsShell>
+        <EntryColumn fileId={route.fileId} />
+      </ColumnsShell>
+    )
+  }
   if (route.view === 'shared') {
     return (
       <ColumnsShell>

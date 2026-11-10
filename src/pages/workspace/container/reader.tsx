@@ -5,6 +5,7 @@ import type { FileMeta } from '@/types/domain'
 import { Icon } from '@/components/ui/Icon'
 import { ReaderShell } from '@/components/layout/ReaderShell'
 import { EmptyList } from '@/components/library/EmptyList'
+import { EntryList } from '@/components/library/EntryList'
 import { Explorer } from '@/components/library/Explorer'
 import { ReaderRow } from '@/components/library/FileRows'
 import { FilterChips, SortSelect } from '@/components/library/Filters'
@@ -16,6 +17,7 @@ import { SharedStatus } from '@/pages/shared'
 import { TrashList } from '@/components/library/TrashList'
 import { UpButton } from '@/components/library/Crumbs'
 import { DocumentBody } from '@/components/reader/DocumentArticle'
+import { EntryPage } from '@/components/reader/EntryPage'
 import { hasGenerated, Inspector } from '@/components/reader/Inspector'
 import { useLibraryView } from '@/hooks/use-library-view'
 import type { ViewRoute } from '@/hooks/use-view-route'
@@ -26,7 +28,7 @@ import { useLibraryStore } from '@/stores/library'
 import { useUiStore } from '@/stores/ui'
 import { ContinueCard, greeting, QuickActions, reviewSentence, todayText, useHomeData, useScrollerRef, WelcomeEmpty } from '@/pages/workspace/container/shared'
 
-const TITLES = { folder: 'Biblioteca', review: 'Para revisar', favorites: 'Favoritos', trash: 'Lixeira', home: 'Início', doc: '', ...SHARING_TITLES }
+const TITLES = { folder: 'Biblioteca', review: 'Para revisar', favorites: 'Favoritos', trash: 'Lixeira', home: 'Início', doc: '', entries: 'Entradas', entry: 'Entrada', ...SHARING_TITLES }
 
 function HomeBlock({ title, hint, children }: { title: string; hint?: string; children: React.ReactNode }) {
   return (
@@ -115,7 +117,8 @@ export function Library({ route }: { route: ViewRoute }) {
   const shared = useLibraryStore(state => state.sharedView)
   const q = ui.query.trim()
   const explorer = route.view === 'folder' || route.view === 'review' || route.view === 'favorites'
-  const title = q && !explorer ? `Resultados para “${ui.query}”` : route.view === 'folder' ? (data.folder?.name ?? 'Biblioteca') : TITLES[route.view]
+  const entries = route.view === 'entries'
+  const title = q && !explorer && !entries ? `Resultados para “${ui.query}”` : route.view === 'folder' ? (data.folder?.name ?? 'Biblioteca') : TITLES[route.view]
   return (
     <>
       <div className="libhead">
@@ -128,7 +131,7 @@ export function Library({ route }: { route: ViewRoute }) {
         {shared && <SharedBadge label />}
         <span style={{ marginLeft: 'auto', display: 'flex', gap: 6, flexWrap: 'wrap' }}>
           {shared && <SharedBadge button />}
-          {route.view !== 'trash' && !explorer && (
+          {route.view !== 'trash' && !explorer && !entries && (
             <input className="input lib-search" style={{ height: 30 }} placeholder="Buscar no título e no texto" aria-label="Buscar" value={ui.query} onChange={event => ui.setQuery(event.target.value)} />
           )}
           {data.browsing && !shared && !explorer && (
@@ -147,6 +150,8 @@ export function Library({ route }: { route: ViewRoute }) {
       </div>
       {route.view === 'trash' ? (
         <TrashList />
+      ) : entries ? (
+        <EntryList />
       ) : explorer ? (
         <Explorer view={route.view} folderId={route.folderId} />
       ) : (
@@ -223,6 +228,13 @@ export function ReaderWorkspace({ route }: { route: ViewRoute }) {
     if (generated) setUi({ inspectorTab: 'mine' })
     else if (useUiStore.getState().inspectorTab === 'mine') setUi({ inspectorTab: 'toc' })
   }, [route.fileId, generated])
+  if (route.view === 'entry' && route.fileId) {
+    return (
+      <ReaderShell>
+        <EntryPage fileId={route.fileId} />
+      </ReaderShell>
+    )
+  }
   if (route.view === 'doc' && route.fileId) {
     return (
       <ReaderShell docActions={<DocActions fileId={route.fileId} />}>

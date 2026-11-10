@@ -25,7 +25,7 @@ function SharedWorkspace({ shareId }: { shareId: string }) {
 export default function WorkspacePage() {
   const route = useViewRoute()
   const navigate = useNavigate()
-  const trashed = useLibraryStore(state => route.view === 'doc' && Boolean(state.files.find(file => file.id === route.fileId)?.deletedAt))
+  const trashed = useLibraryStore(state => (route.view === 'doc' || route.view === 'entry') && Boolean(state.files.find(file => file.id === route.fileId)?.deletedAt))
   useEffect(() => {
     if (trashed) navigate(paths.library, { replace: true })
   }, [trashed])

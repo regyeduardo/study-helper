@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 
-import type { ShareContent, ShareKind, ShareRecord } from '@/types/domain'
+import type { ArtifactKind, ShareContent, ShareKind, ShareRecord } from '@/types/domain'
 import { Dialog } from '@/components/ui/Dialog'
 import { Icon } from '@/components/ui/Icon'
 import { createShareController, isShareConfigured, uploadShareMediaController } from '@/controllers/share.controller'
@@ -38,6 +38,12 @@ function TurnstileBox({ onToken }: { onToken(token: string): void }) {
     </>
   )
 }
+
+const ARTIFACT_BOXES: { kind: ArtifactKind; title: string; text: string }[] = [
+  { kind: 'mapa', title: 'Levar os mapas', text: 'Vai o desenho de cada mapa. As conversas ficam com você.' },
+  { kind: 'cartoes', title: 'Levar os cartões', text: 'Vão a frente e o verso. O seu progresso de revisão fica com você.' },
+  { kind: 'tutor', title: 'Levar as conversas do Tutor', text: 'Vão as perguntas e as respostas de cada conversa.' },
+]
 
 interface MediaProgress {
   name: string
@@ -89,6 +95,7 @@ export function ShareDialog({ target, id }: { target: ShareKind; id: string }) {
   const localMedia = useLibraryStore(state => state.localMedia)
   const repo = useLibraryStore(state => state.repo)
   const [withExams, setWithExams] = useState(false)
+  const [kinds, setKinds] = useState<ArtifactKind[]>(['mapa'])
   const [content, setContent] = useState<ShareContent | null>(null)
   const [questions, setQuestions] = useState(0)
   const [progress, setProgress] = useState<MediaProgress | null>(null)
@@ -107,17 +114,18 @@ export function ShareDialog({ target, id }: { target: ShareKind; id: string }) {
     if (!google || !configured) return
     let alive = true
     setContent(null)
-    void buildShareContent({ kind: target, id }, folders, files, openFile, withExams, recorderName(useAccountStore.getState().active())).then(built => alive && setContent(built))
+    void buildShareContent({ kind: target, id }, folders, files, openFile, withExams, recorderName(useAccountStore.getState().active()), kinds).then(built => alive && setContent(built))
     return () => {
       alive = false
     }
-  }, [withExams, google, configured, target, id])
+  }, [withExams, kinds, google, configured, target, id])
 
   useEffect(() => {
     if (!google || !configured) return
     void questionCountOf({ kind: target, id }, folders, files).then(setQuestions)
   }, [google, configured])
 
+  const toggleKind = (kind: ArtifactKind) => setKinds(list => (list.includes(kind) ? list.filter(item => item !== kind) : [...list, kind]))
   const bytes = content ? shareBytes(content) : null
   const media = content ? shareMediaOf(content, files, localMedia, repo) : []
   const mediaBytes = media.every(item => item.size !== null) ? media.reduce((sum, item) => sum + (item.size ?? 0), 0) : null
@@ -227,6 +235,18 @@ export function ShareDialog({ target, id }: { target: ShareKind; id: string }) {
                 <span>{questions === 1 ? 'Vai só a questão' : questions ? `Vão só as ${questions} questões` : 'Vão só as questões'}. Suas tentativas, notas e destaques ficam com você.</span>
               </span>
             </button>
+            {ARTIFACT_BOXES.map(box => {
+              const on = kinds.includes(box.kind)
+              return (
+                <button key={box.kind} className="opt" role="checkbox" aria-checked={on} onClick={() => toggleKind(box.kind)}>
+                  <span className={`check ${on ? 'on' : ''}`}>{on && <Icon name="check" />}</span>
+                  <span>
+                    <b>{box.title}</b>
+                    <span>{box.text}</span>
+                  </span>
+                </button>
+              )
+            })}
             <div className="share-size" aria-label="Tamanho">
               <div>
                 <span className="faint">Texto</span>

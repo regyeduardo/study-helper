@@ -1,9 +1,12 @@
-import { Fragment, useEffect, useState } from 'react'
+import { Fragment, useEffect, useId, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 
-import type { FileMeta, Highlight } from '@/types/domain'
-import { Icon } from '@/components/ui/Icon'
+import type { Artifact, ArtifactKind, ArtifactSummary, FileMeta, Highlight, Settings, StudyCard } from '@/types/domain'
+import { madeModelName } from '@/components/dialogs/ArtifactGenerateDialog'
+import { Icon, type IconName } from '@/components/ui/Icon'
+import { Popover } from '@/components/ui/Popover'
 import { NoteParts } from '@/components/reader/Details'
+import { artifactsOf } from '@/lib/artifacts'
 import { dueCount } from '@/lib/generation/cards'
 import { scrollToHeading } from '@/components/reader/GithubMarkdownView'
 import { providerOf } from '@/lib/ai/providers'
@@ -17,9 +20,9 @@ import { ENGINES } from '@/lib/transcription'
 import { isNarrowScreen } from '@/hooks/use-is-narrow'
 import { useDocumentStore } from '@/stores/document'
 import { useLibraryStore } from '@/stores/library'
-import { type InspectorTab, useUiStore } from '@/stores/ui'
+import { type InspectorTab, type Overlay, useUiStore } from '@/stores/ui'
 import { downloadBlob } from '@/utils/download'
-import { dateTime, duration, formatBytes } from '@/utils/format'
+import { dateTime, duration, formatBytes, shortDate } from '@/utils/format'
 
 const INPUT_LABEL: Record<string, string> = { file: 'Arquivo', url: 'Link', youtube: 'YouTube', topic: 'Tema', text: 'Texto', recording: 'Gravação', import: 'Importado', shared: 'Compartilhamento' }
 const STORAGE_LABEL: Record<string, string> = { drive: 'Google Drive', gofile: 'Gofile', litterbox: 'Litterbox', filebin: 'filebin', tmpfiles: 'tmpfiles', onlyfiles: 'OnlyFiles', none: 'Não guardada' }
@@ -487,31 +490,243 @@ function TagEditor({ meta }: { meta: FileMeta }) {
   )
 }
 
+/* ---------- "Desta nota": the artifacts by type (the Prova is the note's own, so it stays out) ---------- */
+
+/** The artifact itself once the note is open; until then, its summary in the meta. */
+type Listed = Artifact | ArtifactSummary
+
+const KINDS: { kind: ArtifactKind; title: string; add: string; addWord: string; all: (count: number) => string }[] = [
+  { kind: 'mapa', title: 'Mapas mentais', add: 'Novo mapa mental', addWord: 'Novo', all: count => `Ver todos os ${count}` },
+  { kind: 'cartoes', title: 'Cartões', add: 'Novo baralho de cartões', addWord: 'Novo', all: count => `Ver todos os ${count}` },
+  { kind: 'tutor', title: 'Conversas do Tutor', add: 'Nova conversa do Tutor', addWord: 'Nova', all: count => `Ver todas as ${count}` },
+]
+const KIND_ICON: Record<ArtifactKind, IconName> = { mapa: 'layers', cartoes: 'note', tutor: 'bulb' }
+// Each section shows the newest few; the rest wait behind "Ver todos".
+const SHOWN = 3
+
+const counted = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`
+
+/** Newest first; on a tie, the later in the list goes on top. */
+function newestFirst(list: Listed[]): Listed[] {
+  return list
+    .map((item, index) => ({ item, index }))
+    .sort((a, b) => b.item.updatedAt.localeCompare(a.item.updatedAt) || b.index - a.index)
+    .map(({ item }) => item)
+}
+
+function deckLine(cards: StudyCard[]): string {
+  const due = dueCount(cards.map(card => card.due))
+  return due ? `${due} para hoje de ${cards.length}` : `nada para hoje · ${counted(cards.length, 'cartão', 'cartões')}`
+}
+
+/** "4 para hoje de 18 · 30/10 · DeepSeek V3": what it holds, when it changed, the model that made it. */
+function lineOf(item: Listed, settings: Settings): string {
+  const full = 'createdAt' in item ? item : null
+  const holds = full?.kind === 'cartoes' ? deckLine(full.cards) : full?.kind === 'tutor' ? counted(full.turns.length, 'mensagem', 'mensagens') : ''
+  return [holds, shortDate(item.updatedAt, settings.timezone), full?.made?.model ? madeModelName(full.made.model, settings) : ''].filter(Boolean).join(' · ')
+}
+
+function opening(fileId: string, item: Listed): Overlay {
+  if (item.kind === 'mapa') return { kind: 'mindmap', fileId, artifactId: item.id }
+  if (item.kind === 'cartoes') return { kind: 'cards', fileId, deckId: item.id }
+  return { kind: 'tutor', fileId, conversationId: item.id }
+}
+
+function goneText(kind: ArtifactKind, talk: number): string {
+  if (kind === 'mapa') return talk ? `O mapa e a conversa dele (${counted(talk, 'mensagem', 'mensagens')}) saem desta nota e não voltam.` : 'O mapa sai desta nota e não volta.'
+  if (kind === 'cartoes') return 'O baralho e o progresso de revisão dele saem desta nota e não voltam.'
+  return 'A conversa sai desta nota e não volta.'
+}
+
+function ArtifactRow({ fileId, item, readOnly }: { fileId: string; item: Listed; readOnly: boolean }) {
+  const open = useUiStore(state => state.open)
+  const toast = useUiStore(state => state.toast)
+  const settings = useLibraryStore(state => state.index.settings)
+  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null)
+  const [naming, setNaming] = useState<string | null>(null)
+  const dropping = useRef(false)
+  const lineId = useId()
+  const talk = 'createdAt' in item && item.kind === 'mapa' ? item.chat.length : 0
+  const remade = item.kind === 'tutor' ? null : item.kind
+  const openIt = () => open(opening(fileId, item))
+  const act = (run: () => unknown) => () => {
+    setMenu(null)
+    void run()
+  }
+  const failed = (failure: unknown) => toast(failure instanceof Error ? failure.message : String(failure))
+
+  const finishNaming = () => {
+    const said = naming?.trim() ?? ''
+    const dropped = dropping.current
+    dropping.current = false
+    setNaming(null)
+    if (!dropped && said && said !== item.name) void useLibraryStore.getState().renameArtifact(fileId, item.id, said).catch(failed)
+  }
+
+  const askToDelete = () =>
+    open({
+      kind: 'confirm',
+      title: `Apagar “${item.name}”?`,
+      text: goneText(item.kind, talk),
+      ok: 'Apagar',
+      danger: true,
+      onConfirm: async () => {
+        try {
+          await useLibraryStore.getState().deleteArtifact(fileId, item.id)
+          toast(`“${item.name}” saiu da nota`)
+        } catch (failure) {
+          failed(failure)
+        }
+      },
+    })
+
+  return (
+    <li className="art">
+      {naming === null ? (
+        <button className="art-open" title={item.name} aria-label={item.name} aria-describedby={lineId} onClick={openIt}>
+          <b>{item.name}</b>
+          <span className="faint" id={lineId}>
+            {lineOf(item, settings)}
+          </span>
+        </button>
+      ) : (
+        <input
+          className="input"
+          aria-label="Novo nome"
+          autoFocus
+          value={naming}
+          onChange={event => setNaming(event.target.value)}
+          onBlur={finishNaming}
+          onKeyDown={event => {
+            if (event.key === 'Escape') {
+              event.stopPropagation()
+              dropping.current = true
+            }
+            if (event.key === 'Enter' || event.key === 'Escape') event.currentTarget.blur()
+          }}
+        />
+      )}
+      {!readOnly && (
+        <button
+          className="ibtn"
+          aria-label={`Opções de ${item.name}`}
+          aria-haspopup="menu"
+          aria-expanded={Boolean(menu)}
+          onClick={event => {
+            const box = event.currentTarget.getBoundingClientRect()
+            setMenu({ x: box.right - 240, y: box.bottom + 4 })
+          }}
+        >
+          <Icon name="dots" />
+        </button>
+      )}
+      {talk > 0 && (
+        <button className="art-sub" onClick={openIt}>
+          <span aria-hidden="true">↳</span> Conversa do mapa · {counted(talk, 'mensagem', 'mensagens')}
+        </button>
+      )}
+      {menu && (
+        <Popover x={menu.x} y={menu.y} onClose={() => setMenu(null)} label={`Opções de ${item.name}`}>
+          <div className="mh">{item.name}</div>
+          <button className="mi" role="menuitem" onClick={act(openIt)}>
+            <Icon name={KIND_ICON[item.kind]} />
+            Abrir
+          </button>
+          <button className="mi" role="menuitem" onClick={act(() => setNaming(item.name))}>
+            <Icon name="pen" />
+            Renomear
+          </button>
+          {remade && (
+            <button className="mi" role="menuitem" onClick={act(() => open({ kind: 'generate-artifact', fileId, artifact: remade, again: item.id }))}>
+              <Icon name="sync" />
+              Gerar de novo…
+            </button>
+          )}
+          <div className="sep" />
+          <button className="mi danger" role="menuitem" onClick={act(askToDelete)}>
+            <Icon name="trash" />
+            Apagar
+          </button>
+        </Popover>
+      )}
+    </li>
+  )
+}
+
+function ArtifactSection({ fileId, section, items, readOnly }: { fileId: string; section: (typeof KINDS)[number]; items: Listed[]; readOnly: boolean }) {
+  const open = useUiStore(state => state.open)
+  const [all, setAll] = useState(false)
+  const shown = all ? items : items.slice(0, SHOWN)
+  const { kind } = section
+  return (
+    <section className="sec" aria-label={section.title}>
+      <div className="arts-h">
+        <h4>{items.length ? `${section.title} · ${items.length}` : section.title}</h4>
+        {!readOnly && (
+          <button className="btn quiet arts-new" aria-label={section.add} onClick={() => open(kind === 'tutor' ? { kind: 'tutor', fileId, conversationId: null } : { kind: 'generate-artifact', fileId, artifact: kind })}>
+            <Icon name="plus" />
+            {section.addWord}
+          </button>
+        )}
+      </div>
+      {shown.length > 0 && (
+        <ul className="arts">
+          {shown.map(item => (
+            <ArtifactRow key={item.id} fileId={fileId} item={item} readOnly={readOnly} />
+          ))}
+        </ul>
+      )}
+      {items.length > SHOWN && (
+        <button className="btn quiet arts-more" aria-expanded={all} onClick={() => setAll(!all)}>
+          {all ? 'Ver menos' : section.all(items.length)}
+        </button>
+      )}
+    </section>
+  )
+}
+
+/** Highlights and notes, one more row: it leads to the Notas tab. */
+function Marks({ highlights }: { highlights: Highlight[] }) {
+  const lineId = useId()
+  if (!highlights.length) return null
+  const marks = highlights.filter(item => item.kind === 'highlight').length
+  const toNotes = () => {
+    const { focusPop, set } = useUiStore.getState()
+    set({ inspectorTab: 'notes', ...(focusPop ? { focusPop: 'notes' as const } : {}) })
+  }
+  return (
+    <ul className="arts" aria-label="Marcações">
+      <li className="art">
+        <button className="art-open" aria-label="Marcações" aria-describedby={lineId} onClick={toNotes}>
+          <b>Marcações</b>
+          <span className="faint" id={lineId}>
+            {counted(marks, 'destaque', 'destaques')} · {counted(highlights.length - marks, 'nota', 'notas')} · na aba Notas
+          </span>
+        </button>
+        <span className="ibtn" aria-hidden="true">
+          <Icon name="chevr" />
+        </span>
+      </li>
+    </ul>
+  )
+}
+
 function ThisNote({ fileId }: { fileId: string }) {
   const meta = useLibraryStore(state => state.files.find(file => file.id === fileId))
+  const sidecar = useLibraryStore(state => state.opened[fileId]?.sidecar)
+  const readOnly = useLibraryStore(state => Boolean(state.sharedView))
   const open = useUiStore(state => state.open)
+  useEffect(() => {
+    if (!sidecar) void useLibraryStore.getState().openFile(fileId).catch(() => undefined)
+  }, [fileId, sidecar])
   if (!meta) return null
-  const cards = meta.cardDue ?? []
+  const list: Listed[] = sidecar ? artifactsOf(sidecar) : (meta.artifacts ?? [])
   return (
     <>
-      {cards.length > 0 && (
-        <div className="sec">
-          <h4>Cartões</h4>
-          <button className="btn" onClick={() => open({ kind: 'cards', fileId })}>
-            <Icon name="note" />
-            {cards.length} cartões · {dueCount(cards)} para hoje
-          </button>
-        </div>
-      )}
-      {meta.hasMindmap && (
-        <div className="sec">
-          <h4>Mapa mental</h4>
-          <button className="btn" onClick={() => open({ kind: 'mindmap', fileId })}>
-            <Icon name="layers" />
-            Abrir o mapa
-          </button>
-        </div>
-      )}
+      {KINDS.map(section => (
+        <ArtifactSection key={section.kind} fileId={fileId} section={section} items={newestFirst(list.filter(item => item.kind === section.kind))} readOnly={readOnly} />
+      ))}
+      <Marks highlights={sidecar?.highlights ?? []} />
       {meta.questionCount > 0 && (
         <div className="sec">
           <h4>Prova</h4>
@@ -532,8 +747,9 @@ function ThisNote({ fileId }: { fileId: string }) {
   )
 }
 
+/** The note has something for "Desta nota": a map, a deck, a Tutor conversation or a Prova (the Prova is the note's own, outside the artifact list). */
 export function hasGenerated(meta: FileMeta | undefined): boolean {
-  return Boolean(meta && (meta.questionCount > 0 || (meta.cardDue?.length ?? 0) > 0 || meta.hasMindmap))
+  return Boolean(meta && (meta.questionCount > 0 || (meta.artifacts?.length ?? 0) > 0 || (meta.cardDue?.length ?? 0) > 0 || meta.hasMindmap))
 }
 
 export function InspectorTabs({ tab, onTab, onClose, fileId }: { tab: InspectorTab; onTab(tab: InspectorTab): void; onClose?: () => void; fileId?: string }) {

@@ -2,7 +2,7 @@ import { create } from 'zustand'
 
 import type { Attempt, FileType, ShareKind, StoredQuestion } from '@/types/domain'
 import { isNarrowScreen } from '@/hooks/use-is-narrow'
-import type { NoteMedia } from '@/lib/file-types'
+import { clearFilters as withFiltersCleared, type LibraryFilters, NO_FILTERS } from '@/lib/library-filters'
 
 export type Overlay =
   | { kind: 'palette' }
@@ -11,11 +11,16 @@ export type Overlay =
   | { kind: 'media' }
   | { kind: 'settings'; tab?: SettingsTab }
   | { kind: 'exam'; fileId: string }
-  | { kind: 'cards'; fileId: string }
-  | { kind: 'mindmap'; fileId: string }
-  | { kind: 'tutor'; fileId: string }
+  | { kind: 'cards'; fileId: string; deckId?: string }
+  | { kind: 'mindmap'; fileId: string; artifactId?: string }
+  /** `conversationId`: that conversation; `null`: a new one; absent: the last one. */
+  | { kind: 'tutor'; fileId: string; conversationId?: string | null }
+  /** "+ Novo" of a map or a deck; `again`: the one made before ("Gerar de novo"). */
+  | { kind: 'generate-artifact'; fileId: string; artifact: 'mapa' | 'cartoes'; again?: string }
   | { kind: 'ata-parts'; fileId: string; again?: string }
   | { kind: 'generate'; fileId: string; agent: 'meeting' | 'lesson'; redo?: boolean; again?: string }
+  /** "Gerar desta entrada": what makes sense for its kind and for what it keeps. */
+  | { kind: 'generate-entry'; fileId: string }
   | { kind: 'transcribe'; fileId: string }
   | { kind: 'folder-exam'; folderId: string | null; fileIds?: string[] }
   | { kind: 'account'; x?: number; y?: number }
@@ -23,6 +28,8 @@ export type Overlay =
   | { kind: 'rename'; target: 'file' | 'folder'; id: string }
   | { kind: 'move'; fileIds: string[]; folderIds: string[] }
   | { kind: 'confirm'; title: string; text: string; ok: string; danger?: boolean; onConfirm: () => void | Promise<void>; alt?: { label: string; onConfirm: () => void | Promise<void> } }
+  /** "Apagar" with the family tree when the item has descendants; `fileIds`: a whole selection, by the same choice. */
+  | { kind: 'delete-family'; fileId: string; fileIds?: string[] }
   | { kind: 'explain'; fileId: string; excerpt: string }
   | { kind: 'order'; folderId: string }
   | { kind: 'activity' }
@@ -50,16 +57,28 @@ export interface Toast {
   text: string
 }
 
+/** What is being dragged to a folder. `over`: the folder under the pointer, `null` being the root; absent, none. */
+export interface DragState {
+  fileIds: string[]
+  folderIds: string[]
+  over?: string | null
+}
+
 interface UiState {
   overlay: Overlay | null
   menu: ItemMenu | null
   toasts: Toast[]
+  /** The checked items: files and, in the table, folders. */
   selection: Set<string>
+  drag: DragState | null
   query: string
   types: Set<FileType>
   lowMastery: boolean
+  /** The tag of the side bar: also in `filters.tags`, and it looks in the whole library. */
   tag: string | null
-  media: NoteMedia | null
+  /** The filter panel of the lists (FR-044). */
+  filters: LibraryFilters
+  filtersCollapsed: boolean
   sort: SortKey
   group: GroupKey
   leftOpen: boolean
@@ -84,26 +103,28 @@ interface UiState {
   toggleType(type: FileType): void
   toggleLowMastery(): void
   setTag(tag: string | null): void
-  setMedia(media: NoteMedia | null): void
+  setFilters(filters: LibraryFilters): void
   clearFilters(): void
   setSort(sort: SortKey): void
   setGroup(group: GroupKey): void
-  set(patch: Partial<Pick<UiState, 'leftOpen' | 'rightOpen' | 'drawer' | 'inspectorTab' | 'peekId' | 'columnsPane' | 'columnsSheet' | 'focusPop' | 'reorder' | 'handoffFileId' | 'panelAsked'>>): void
+  set(patch: Partial<Pick<UiState, 'leftOpen' | 'rightOpen' | 'drawer' | 'inspectorTab' | 'peekId' | 'columnsPane' | 'columnsSheet' | 'focusPop' | 'reorder' | 'handoffFileId' | 'panelAsked' | 'drag' | 'filtersCollapsed'>>): void
 }
 
 let toastSeq = 0
 const TOAST_MS = 2600
 
-export const useUiStore = create<UiState>((set, get) => ({
+export const useUiStore = create<UiState>(set => ({
   overlay: null,
   menu: null,
   toasts: [],
   selection: new Set(),
+  drag: null,
   query: '',
   types: new Set(),
   lowMastery: false,
   tag: null,
-  media: null,
+  filters: NO_FILTERS,
+  filtersCollapsed: false,
   sort: 'recent',
   group: 'none',
   leftOpen: true,
@@ -144,9 +165,13 @@ export const useUiStore = create<UiState>((set, get) => ({
       return { types }
     }),
   toggleLowMastery: () => set(state => ({ lowMastery: !state.lowMastery })),
-  setTag: tag => set({ tag: tag && get().tag !== tag ? tag : null }),
-  setMedia: media => set({ media }),
-  clearFilters: () => set({ types: new Set(), lowMastery: false, tag: null, media: null, query: '' }),
+  setTag: tag =>
+    set(state => {
+      const next = tag && state.tag !== tag ? tag : null
+      return { tag: next, filters: { ...state.filters, tags: next ? [next] : state.filters.tags.filter(item => item !== state.tag) } }
+    }),
+  setFilters: filters => set(state => ({ filters, tag: state.tag && filters.tags.includes(state.tag) ? state.tag : null })),
+  clearFilters: () => set(state => ({ types: new Set(), lowMastery: false, tag: null, query: '', filters: withFiltersCleared(state.filters) })),
   setSort: sort => set({ sort }),
   setGroup: group => set({ group }),
   set: patch => set(patch),

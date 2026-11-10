@@ -1,8 +1,11 @@
-import type { Attempt, FileMeta, FolderMeta, ShareContent, SharedFile, SharedFolder, SharedItem, SharedLink, SharedMedia, ShareKind, SourceMeta } from '@/types/domain'
+import type { Artifact, ArtifactKind, Attempt, FileMeta, FolderMeta, ShareContent, SharedFile, SharedFolder, SharedItem, SharedLink, SharedMedia, ShareKind, SourceMeta } from '@/types/domain'
+import { artifactMeta, artifactsOf } from '@/lib/artifacts'
 import { currentDevice } from '@/lib/device'
 import { env } from '@/lib/env'
 import { masteryOf } from '@/lib/exam'
 import { FILE_TYPES, mediaOf } from '@/lib/file-types'
+import { today } from '@/lib/generation/cards'
+import { mapToMermaid } from '@/lib/generation/map-render'
 import { newFileMeta, newFolderMeta } from '@/lib/defaults'
 import { newId, nowIso } from '@/lib/ids'
 import { keepLocalMedia, type LocalMedia, readLocalMedia } from '@/lib/recording/media-library'
@@ -23,6 +26,8 @@ export interface ShareTarget {
 }
 
 export type SharedAttempts = Record<string, Attempt[]>
+
+export type SharedArtifact = NonNullable<SharedFile['artifacts']>[number]
 
 export function shareUrl(id: string, origin: string = window.location.origin): string {
   // the Worker page carries the whole content for AI agents, which do not run the app, and sends a person on to the app
@@ -62,8 +67,20 @@ function folderTree(folders: FolderMeta[], rootId: string): FolderMeta[] {
   return walk(rootId)
 }
 
-/** `recorder`: name of who shares, for the microphone voice of notes transcribed back when it was "Você". */
-export async function buildShareContent(target: ShareTarget, folders: FolderMeta[], files: FileMeta[], open: (id: string) => Promise<OpenedFile>, withExams: boolean, recorder = ''): Promise<ShareContent> {
+/** What of an artifact goes in a link: the map without its conversation, versions or highlight, with its Mermaid code; the cards without their review progress. */
+function sharedArtifact(artifact: Artifact): SharedArtifact {
+  if (artifact.kind === 'mapa') return { id: artifact.id, kind: 'mapa', name: artifact.name, diagram: artifact.diagram, mermaid: mapToMermaid(artifact.diagram) }
+  if (artifact.kind === 'cartoes') return { id: artifact.id, kind: 'cartoes', name: artifact.name, cards: artifact.cards.map(({ id, front, back }) => ({ id, front, back })) }
+  return { id: artifact.id, kind: 'tutor', name: artifact.name, turns: artifact.turns.map(({ who, text }) => ({ who, text })) }
+}
+
+// the summary of every artifact and the due dates of the cards stay home: only the chosen artifacts go, in their own field
+function sharedMeta({ artifacts: _artifacts, cardDue: _cardDue, hasMindmap: _hasMindmap, ...meta }: FileMeta): Partial<FileMeta> {
+  return { ...meta, mastery: null, lastReviewedAt: null }
+}
+
+/** `recorder`: name of who shares, for the microphone voice of notes transcribed back when it was "Você". `kinds`: the artifact types that go. */
+export async function buildShareContent(target: ShareTarget, folders: FolderMeta[], files: FileMeta[], open: (id: string) => Promise<OpenedFile>, withExams: boolean, recorder = '', kinds: ArtifactKind[] = []): Promise<ShareContent> {
   const tree = target.kind === 'folder' ? folderTree(folders, target.id) : []
   const folderIds = new Set(tree.map(folder => folder.id))
   const chosen = target.kind === 'file' ? files.filter(file => file.id === target.id) : files.filter(file => !file.deletedAt && file.folderId !== null && folderIds.has(file.folderId)).sort((a, b) => a.position - b.position)
@@ -81,6 +98,9 @@ export async function buildShareContent(target: ShareTarget, folders: FolderMeta
     const recording = opened.sidecar.recording && withRecorder(opened.sidecar.recording, recorder)
     // only the speaker label at the start of a line: "Você" inside what was said stays
     const named = (text: string) => (recording !== opened.sidecar.recording ? text.replace(/^Você(?= \[)/gm, recorder.trim() || RECORDER) : text)
+    const artifacts = artifactsOf(opened.sidecar)
+      .filter(artifact => kinds.includes(artifact.kind))
+      .map(sharedArtifact)
     sharedFiles.push({
       id: file.id,
       name: file.name,
@@ -95,7 +115,8 @@ export async function buildShareContent(target: ShareTarget, folders: FolderMeta
       ...(opened.sidecar.transcript !== undefined ? { transcript: named(opened.sidecar.transcript) } : {}),
       ...(recording ? { recording } : {}),
       ...(opened.sidecar.documents ? { documents: opened.sidecar.documents } : {}),
-      meta: { ...file, mastery: null, lastReviewedAt: null },
+      ...(artifacts.length ? { artifacts } : {}),
+      meta: sharedMeta(file),
     })
   }
   const title = target.kind === 'folder' ? (tree[0]?.name ?? '') : (chosen[0]?.name ?? '')
@@ -219,6 +240,18 @@ async function keepSharedMedia(file: SharedFile, media: SharedMedia, fileId: str
   return origin
 }
 
+/** A shared artifact as the app keeps it: the map starts with an empty conversation, the cards start their review over. */
+function ownArtifacts(list: SharedFile['artifacts'], at: string): Artifact[] {
+  const day = today()
+  return (list ?? []).flatMap((shared): Artifact[] => {
+    const base = { id: shared.id, name: shared.name, createdAt: at, updatedAt: at }
+    if (shared.kind === 'mapa') return shared.diagram?.root ? [{ ...base, kind: 'mapa', diagram: shared.diagram, versions: [], chat: [] }] : []
+    if (shared.kind === 'cartoes') return [{ ...base, kind: 'cartoes', cards: (shared.cards ?? []).map(({ id, front, back }) => ({ id, front, back, box: 0, due: day })) }]
+    if (shared.kind === 'tutor') return [{ ...base, kind: 'tutor', turns: (shared.turns ?? []).map(({ who, text }) => ({ who, text })) }]
+    return []
+  })
+}
+
 export async function importSharedItem(item: SharedItem, attempts: SharedAttempts, actions: ImportActions, media?: MediaImport): Promise<{ folderId: string | null; fileId: string | null }> {
   const withMedia = media && hasSharedMedia(item) ? media : null
   const folderIds = new Map<string, string>()
@@ -244,6 +277,7 @@ export async function importSharedItem(item: SharedItem, attempts: SharedAttempt
     firstFileId ??= meta.id
     const fileAttempts = attempts[file.id] ?? []
     const last = fileAttempts[fileAttempts.length - 1]
+    const artifacts = ownArtifacts(file.artifacts, item.createdAt)
     await actions.updateSidecar(meta.id, sidecar => ({
       ...sidecar,
       questions: file.questions,
@@ -252,7 +286,8 @@ export async function importSharedItem(item: SharedItem, attempts: SharedAttempt
       ...(file.transcript !== undefined ? { transcript: file.transcript } : {}),
       ...(file.recording ? { recording: file.recording } : {}),
       ...(file.documents ? { documents: file.documents } : {}),
-      meta: { ...sidecar.meta, questionCount: file.questions.length, ...(last ? { mastery: masteryOf(last.correct, last.total), lastReviewedAt: last.createdAt } : {}) },
+      ...(artifacts.length ? { artifacts } : {}),
+      meta: { ...sidecar.meta, questionCount: file.questions.length, ...(last ? { mastery: masteryOf(last.correct, last.total), lastReviewedAt: last.createdAt } : {}), ...(artifacts.length ? artifactMeta(artifacts) : {}) },
     }))
     if (withMedia && file.media) {
       const task = withMedia.track(`Guardar a mídia: ${meta.name}`)
@@ -282,6 +317,7 @@ export function sharedLibrary(item: SharedItem, attempts: SharedAttempts): Share
   const files = item.files.map(file => {
     const done = attempts[file.id] ?? []
     const last = done[done.length - 1]
+    const artifacts = ownArtifacts(file.artifacts, item.createdAt)
     const meta: FileMeta = {
       ...newFileMeta({ name: file.name, type: knownType(file.type), folderId: file.folderId, position: file.position, description: file.description, tags: file.tags }),
       ...file.meta,
@@ -296,8 +332,11 @@ export function sharedLibrary(item: SharedItem, attempts: SharedAttempts): Share
       lastReviewedAt: last?.createdAt ?? null,
       words: wordCount(file.content),
       readingMinutes: file.content ? readingMinutes(file.content) : 0,
+      // only what came in the link, never the summary of the sharer's note; read only, so no card is due
+      ...artifactMeta(artifacts),
+      cardDue: [],
     }
-    opened[file.id] = { content: file.content, sidecar: { meta, questions: file.questions, attempts: done, highlights: file.highlights ?? [], ...(file.transcript !== undefined ? { transcript: file.transcript } : {}), ...(file.recording ? { recording: file.recording } : {}), ...(file.documents ? { documents: file.documents } : {}) } }
+    opened[file.id] = { content: file.content, sidecar: { meta, questions: file.questions, attempts: done, highlights: file.highlights ?? [], ...(file.transcript !== undefined ? { transcript: file.transcript } : {}), ...(file.recording ? { recording: file.recording } : {}), ...(file.documents ? { documents: file.documents } : {}), artifacts } }
     return meta
   })
   const sizes = Object.fromEntries(files.map(meta => [meta.id, { noteBytes: bytesOf(opened[meta.id].content) + bytesOf(JSON.stringify(opened[meta.id].sidecar)), sourceBytes: 0 }]))

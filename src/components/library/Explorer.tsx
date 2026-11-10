@@ -1,198 +1,193 @@
-import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useEffect, useMemo, useRef, useState } from 'react'
 
 import type { FileMeta, FolderMeta } from '@/types/domain'
+import { FileTableRow, FolderTableRow, nestFamilies, SortHead, TableCheck } from '@/components/library/FileRows'
+import { FilterPanel } from '@/components/library/FilterPanel'
+import { ActiveFilters, LowMasteryChip, ScopeTabs } from '@/components/library/Filters'
+import { SelectionBar } from '@/components/library/SelectionBar'
+import { isTouchScreen, useFileActions } from '@/components/library/use-file-actions'
 import { Icon } from '@/components/ui/Icon'
-import { useFileActions } from '@/components/library/use-file-actions'
-import { folderHitCounts, useLiveLibrary, useSearchHits } from '@/hooks/use-library-view'
-import { MEDIA_LABEL, mediaLength, mediaOf, type NoteMedia, REVIEW_BELOW } from '@/lib/file-types'
-import type { SearchHit } from '@/lib/library-search'
-import { paths, type View } from '@/lib/paths'
-import { clockTime } from '@/lib/transcription/export'
+import { useIsNarrow } from '@/hooks/use-is-narrow'
+import { folderHitCounts, useFilterSource, useLiveLibrary, useSearchHits } from '@/hooks/use-library-view'
+import { isNote } from '@/lib/family'
+import { LOW_MASTERY_BELOW, REVIEW_BELOW } from '@/lib/file-types'
+import { filterLibrary, type LibraryFilters, placeOf, withoutFilter } from '@/lib/library-filters'
+import { searchWords } from '@/lib/library-search'
+import type { View } from '@/lib/paths'
 import { useLibraryStore } from '@/stores/library'
 import { useUiStore } from '@/stores/ui'
+import '@/styles/explorer.css'
 
-type SortColumn = 'name' | 'media' | 'tags' | 'prova'
-
-const COLUMNS: [SortColumn, string][] = [
-  ['name', 'Nome'],
-  ['media', 'Mídia'],
-  ['tags', 'Etiquetas'],
-  ['prova', 'Prova'],
-]
-
-const MEDIA_FILTERS: [NoteMedia | null, string][] = [
-  [null, 'Tudo'],
-  ['text', 'Texto'],
-  ['audio', 'Áudio'],
-  ['video', 'Vídeo'],
-]
-
-function mediaCell(file: FileMeta): string {
-  const media = mediaOf(file)
-  const length = mediaLength(file.origin?.durationSeconds)
-  return media === 'text' || !length ? MEDIA_LABEL[media] : `${MEDIA_LABEL[media]} · ${length}`
+export type SortColumn = 'name' | 'created' | 'updated'
+export interface SortState {
+  column: SortColumn
+  ascending: boolean
 }
 
-function sortFiles(files: FileMeta[], column: SortColumn, ascending: boolean): FileMeta[] {
+export function sortFiles(files: FileMeta[], { column, ascending }: SortState): FileMeta[] {
   const byName = (a: FileMeta, b: FileMeta) => a.name.localeCompare(b.name, 'pt-BR')
-  const compare: Record<SortColumn, (a: FileMeta, b: FileMeta) => number> = {
-    name: byName,
-    media: (a, b) => mediaCell(a).localeCompare(mediaCell(b), 'pt-BR') || byName(a, b),
-    tags: (a, b) => a.tags.join(',').localeCompare(b.tags.join(','), 'pt-BR') || byName(a, b),
-    prova: (a, b) => (a.mastery === null ? 1 : 0) - (b.mastery === null ? 1 : 0) || (a.mastery ?? 0) - (b.mastery ?? 0) || byName(a, b),
-  }
-  const sorted = [...files].sort(compare[column])
-  return ascending ? sorted : sorted.reverse()
+  const order = (a: FileMeta, b: FileMeta) => (column === 'name' ? byName(a, b) : a[column].at.localeCompare(b[column].at))
+  return [...files].sort((a, b) => (ascending ? order(a, b) : order(b, a)) || byName(a, b))
 }
 
-function Snippet({ hit }: { hit: SearchHit }) {
-  if (!hit.parts.length && hit.at === null) return null
-  return (
-    <div className="ex-snip">
-      {hit.at !== null && <span className="ex-at">{clockTime(hit.at)} · </span>}
-      {hit.parts.map((part, index) => (part.hit ? <mark key={index}>{part.text}</mark> : <span key={index}>{part.text}</span>))}
-    </div>
-  )
+/** What this screen lists before the filters. The tag of the side bar and the Pasta filter look beyond the folder being browsed. */
+function inView(view: View, folderId: string | null, tag: string | null, filters: LibraryFilters): (file: FileMeta) => boolean {
+  if (tag) return () => true
+  if (view === 'review') return file => isNote(file) && file.mastery !== null && file.mastery < REVIEW_BELOW
+  if (view === 'favorites') return file => file.favorite
+  return filters.folders.length ? () => true : file => file.folderId === folderId
 }
 
-function rowsFor(view: View, folderId: string | null, files: FileMeta[], folders: FolderMeta[], media: NoteMedia | null, tag: string | null) {
-  let list = files
-  if (tag) list = list.filter(file => file.tags.includes(tag))
-  else if (view === 'review') list = list.filter(file => file.mastery !== null && file.mastery < REVIEW_BELOW)
-  else if (view === 'favorites') list = list.filter(file => file.favorite)
-  else list = list.filter(file => file.folderId === folderId)
-  if (media) list = list.filter(file => mediaOf(file) === media)
-  const subfolders = view === 'folder' && !tag && !media ? folders.filter(folder => folder.parentId === folderId).sort((a, b) => a.position - b.position || a.name.localeCompare(b.name, 'pt-BR')) : []
-  return { list, subfolders }
-}
+const byPosition = (a: FolderMeta, b: FolderMeta) => a.position - b.position || a.name.localeCompare(b.name, 'pt-BR')
 
 export function Explorer({ view, folderId }: { view: View; folderId: string | null }) {
-  const navigate = useNavigate()
   const ui = useUiStore()
+  const { filters, tag, lowMastery, query, selection } = ui
   const { files, folders } = useLiveLibrary()
-  const { openFile, toggleFavorite } = useFileActions()
+  const actions = useFileActions()
   const shared = useLibraryStore(state => Boolean(state.sharedView))
-  const [sort, setSort] = useState<{ column: SortColumn; ascending: boolean }>({ column: 'name', ascending: true })
-  const hits = useSearchHits(ui.query)
+  const source = useFilterSource()
+  const narrow = useIsNarrow()
+  const selectable = !shared
+  const draggable = selectable && !isTouchScreen()
+  const [sort, setSort] = useState<SortState>({ column: 'name', ascending: true })
+  const [drawerOpen, setDrawerOpen] = useState(false)
+  const searchBox = useRef<HTMLInputElement>(null)
+  const hits = useSearchHits(query)
+  const searching = searchWords(query).length > 0
   const inside = folderHitCounts(hits, files, folders)
-  const { list, subfolders } = rowsFor(view, folderId, files, folders, ui.media, ui.tag)
-  const rows = sortFiles(list, sort.column, sort.ascending)
-  const tested = list.filter(file => file.mastery !== null)
-  const average = tested.length ? Math.round(tested.reduce((sum, file) => sum + (file.mastery ?? 0), 0) / tested.length) : null
-  const sortBy = (column: SortColumn) => setSort(current => ({ column, ascending: current.column === column ? !current.ascending : true }))
-  const menu = (kind: 'file' | 'folder', id: string) => (event: React.MouseEvent<HTMLElement>) => {
-    event.stopPropagation()
-    const box = event.currentTarget.getBoundingClientRect()
-    ui.openMenu({ kind, id, x: box.left - 200, y: box.bottom + 4 })
+
+  const { result, listed } = useMemo(() => {
+    const here = inView(view, folderId, tag, filters)
+    const candidates = new Set(files.filter(file => here(file) && (!lowMastery || (file.mastery !== null && file.mastery < LOW_MASTERY_BELOW))).map(file => file.id))
+    // a search lights rows up and hides none: the numbers are of what it found, the rows are all
+    const counted = filterLibrary({ ...source, only: searching ? new Set([...candidates].filter(id => hits.has(id))) : candidates }, filters)
+    return { result: counted, listed: searching ? filterLibrary({ ...source, only: candidates }, filters).items : counted.items }
+  }, [source, files, view, folderId, tag, filters, lowMastery, searching, hits])
+
+  const hasFilters = result.active.length > 0 || lowMastery
+  const narrowed = hasFilters || filters.scope !== 'tudo'
+  // Only the listing of a folder nests; a tag, Para revisar, Favoritos and the Pasta filter mix folders and stay flat.
+  const nests = view === 'folder' && !tag && !filters.folders.length
+  const rows = useMemo(() => {
+    const sorted = sortFiles(listed, sort)
+    return nests ? nestFamilies(sorted) : sorted.map(file => ({ file, depth: 0 }))
+  }, [listed, sort, nests])
+  const subfolders = useMemo(() => (view === 'folder' && !narrowed ? folders.filter(folder => folder.parentId === folderId).sort(byPosition) : []), [view, narrowed, folders, folderId])
+  const childCounts = useMemo(() => {
+    const counts = new Map<string, number>()
+    for (const parent of [...files.map(file => file.folderId), ...folders.map(folder => folder.parentId)]) if (parent) counts.set(parent, (counts.get(parent) ?? 0) + 1)
+    return counts
+  }, [files, folders])
+  const visible = useMemo(() => new Set([...subfolders.map(folder => folder.id), ...rows.map(({ file }) => file.id)]), [subfolders, rows])
+
+  // What leaves the table leaves the selection: "Apagar" never acts on what is out of sight.
+  useEffect(() => {
+    const { selection: current, setSelection } = useUiStore.getState()
+    const kept = [...current].filter(id => visible.has(id))
+    if (kept.length < current.size) setSelection(kept)
+  }, [visible])
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== '/' || event.ctrlKey || event.metaKey || event.altKey || useUiStore.getState().overlay) return
+      if ((event.target as HTMLElement).closest?.('input, textarea, select, [contenteditable="true"]')) return
+      event.preventDefault()
+      searchBox.current?.focus()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
+
+  const where = useMemo(() => ({ localMedia: new Set(source.localMedia), library: source.library, now: source.now }), [source])
+  const placeLabels = new Map(result.facets.places.map(option => [option.id, option.label]))
+  // said only when it differs from the library; "Só neste navegador" is the SaveToDrive notice, in the same line
+  const placeNote = (file: FileMeta) => {
+    const place = placeOf(file, where)
+    return shared || place === where.library || place === 'navegador' ? null : placeLabels.get(place)
   }
-  // Enter on the row itself (not on its star or ⋯) opens it, like the click.
-  const onEnter = (open: () => void) => (event: React.KeyboardEvent<HTMLElement>) => event.key === 'Enter' && event.target === event.currentTarget && open()
+
+  const tested = listed.filter(file => file.mastery !== null)
+  const average = tested.length ? Math.round(tested.reduce((sum, file) => sum + (file.mastery ?? 0), 0) / tested.length) : null
+  const marked = [...visible].filter(id => selection.has(id)).length
+  const allChecked = marked === 0 ? false : marked === visible.size ? true : 'some'
+  const sortBy = (column: SortColumn) => setSort(current => ({ column, ascending: current.column === column ? !current.ascending : column === 'name' }))
+  const folderMenu = (event: React.MouseEvent<HTMLElement>) => {
+    const box = event.currentTarget.getBoundingClientRect()
+    if (folderId) ui.openMenu({ kind: 'folder', id: folderId, x: box.left - 200, y: box.bottom + 4 })
+  }
+  const rowProps = { narrow, selectable, draggable, actions }
+
   return (
-    <section className="explorer">
-      <div className="ex-tools">
-        <label className="ex-search">
-          <Icon name="search" />
-          <input type="search" aria-label="Buscar" placeholder="Buscar em tudo, até no que foi falado" value={ui.query} onChange={event => ui.setQuery(event.target.value)} />
-        </label>
-        <div className="ex-chips" role="group" aria-label="Mídia">
-          {MEDIA_FILTERS.map(([media, label]) => (
-            <button key={label} className="chip" aria-pressed={ui.media === media} onClick={() => ui.setMedia(media)}>
-              {label}
+    <section className="explorer ex-browser">
+      <FilterPanel filters={filters} facets={result.facets} onChange={ui.setFilters} collapsed={ui.filtersCollapsed} onCollapsedChange={filtersCollapsed => ui.set({ filtersCollapsed })} drawer={narrow} open={drawerOpen} onClose={() => setDrawerOpen(false)} />
+      <div className="ex-main">
+        <div className="ex-tools">
+          {narrow && (
+            <button className="btn" onClick={() => setDrawerOpen(true)}>
+              <Icon name="filter" />
+              Filtros
+              {result.active.length > 0 && <span className="ex-filters-n">{result.active.length}</span>}
             </button>
-          ))}
+          )}
+          <ScopeTabs scope={filters.scope} counts={result.scopes} onChange={scope => ui.setFilters({ ...filters, scope })} />
+          <LowMasteryChip />
+          <span className="spacer" />
+          {view === 'folder' && !shared && (
+            <button className="btn" onClick={() => ui.open({ kind: 'new-folder', parentId: folderId })}>
+              <Icon name="folder" />
+              Nova pasta
+            </button>
+          )}
+          {view === 'folder' && folderId && !shared && (
+            <button className="ibtn" aria-label="Opções da pasta" onClick={folderMenu}>
+              <Icon name="dots" />
+            </button>
+          )}
+          <label className="ex-search">
+            <Icon name="search" />
+            <input ref={searchBox} type="search" aria-label="Buscar" placeholder="Buscar em nomes, transcrições e notas" value={query} onChange={event => ui.setQuery(event.target.value)} />
+            <span className="kbd" aria-hidden="true">
+              /
+            </span>
+          </label>
         </div>
-        {ui.tag && (
-          <button className="chip" aria-pressed="true" onClick={() => ui.setTag(null)}>
-            #{ui.tag} <Icon name="x" />
-          </button>
+        {hasFilters && <ActiveFilters active={result.active} summary={result.summary} onRemove={group => ui.setFilters(withoutFilter(filters, group))} onClear={ui.clearFilters} />}
+        {average !== null && view === 'folder' && (
+          <div className="ex-strip">
+            <span className="muted">Desta pasta:</span>
+            <button className="chip" onClick={() => folderId && ui.open({ kind: 'folder-exam', folderId })}>
+              Prova · {average}%
+            </button>
+          </div>
         )}
-        <span className="spacer" />
-        {view === 'folder' && !shared && (
-          <button className="btn" onClick={() => ui.open({ kind: 'new-folder', parentId: folderId })}>
-            <Icon name="folder" />
-            Nova pasta
-          </button>
-        )}
-        {view === 'folder' && folderId && !shared && (
-          <button className="ibtn" aria-label="Opções da pasta" onClick={menu('folder', folderId)}>
-            <Icon name="dots" />
-          </button>
+        <table className="ex-table" aria-label="Notas e pastas">
+          <thead>
+            <tr>
+              <th className="ex-check">{selectable && <TableCheck checked={allChecked} label="Marcar todos" onToggle={() => (allChecked === true ? ui.clearSelection() : ui.setSelection([...visible]))} />}</th>
+              <SortHead column="name" label="Nome" sort={sort} onSort={sortBy} />
+              {!narrow && <th className="ex-plain">O que nasceu</th>}
+              {!narrow && <SortHead column="created" label="Criado" sort={sort} onSort={sortBy} />}
+              {!narrow && <SortHead column="updated" label="Atualizado" sort={sort} onSort={sortBy} />}
+              <th />
+            </tr>
+          </thead>
+          <tbody>
+            {subfolders.map(folder => (
+              <FolderTableRow key={folder.id} folder={folder} items={childCounts.get(folder.id) ?? 0} found={inside.get(folder.id) ?? 0} {...rowProps} />
+            ))}
+            {rows.map(({ file, depth }) => (
+              <FileTableRow key={file.id} file={file} depth={depth} hit={hits.get(file.id)} place={placeNote(file)} {...rowProps} />
+            ))}
+          </tbody>
+        </table>
+        {!visible.size && <div className="empty">{narrowed ? 'Nada com esse filtro aqui.' : 'Pasta vazia. Use Novo ou Gravar para começar.'}</div>}
+        {selectable && (
+          <div className="selwrap ex-selwrap">
+            <SelectionBar />
+          </div>
         )}
       </div>
-      {average !== null && view === 'folder' && (
-        <div className="ex-strip">
-          <span className="muted">Desta pasta:</span>
-          <button className="chip" onClick={() => folderId && ui.open({ kind: 'folder-exam', folderId })}>
-            Prova · {average}%
-          </button>
-        </div>
-      )}
-      <table className="ex-table" aria-label="Notas e pastas">
-        <thead>
-          <tr>
-            {COLUMNS.map(([column, label]) => (
-              <th key={column} aria-sort={sort.column === column ? (sort.ascending ? 'ascending' : 'descending') : undefined}>
-                <button onClick={() => sortBy(column)}>{label}</button>
-              </th>
-            ))}
-            <th />
-          </tr>
-        </thead>
-        <tbody>
-          {subfolders.map(folder => {
-            const count = inside.get(folder.id) ?? 0
-            return (
-              <tr key={folder.id} className={count ? 'hit' : undefined} tabIndex={0} onClick={() => navigate(paths.folder(folder.id))} onKeyDown={onEnter(() => navigate(paths.folder(folder.id)))}>
-                <td>
-                  <div className="ex-name">
-                    <Icon name="folder" />
-                    {folder.name}
-                  </div>
-                  {count > 0 && <div className="ex-snip">{count === 1 ? '1 resultado dentro' : `${count} resultados dentro`}</div>}
-                </td>
-                <td>pasta</td>
-                <td />
-                <td />
-                <td className="ex-act">
-                  {!shared && (
-                    <button className="ibtn" aria-label={`Opções de ${folder.name}`} onClick={menu('folder', folder.id)}>
-                      <Icon name="dots" />
-                    </button>
-                  )}
-                </td>
-              </tr>
-            )
-          })}
-          {rows.map(file => {
-            const hit = hits.get(file.id)
-            return (
-              <tr key={file.id} className={hit ? 'hit' : undefined} data-file-id={file.id} tabIndex={0} onClick={() => openFile(file)} onKeyDown={onEnter(() => openFile(file))}>
-                <td>
-                  <div className="ex-name">
-                    <Icon name={mediaOf(file) === 'text' ? 'file' : mediaOf(file) === 'video' ? 'monitor' : 'mic'} />
-                    {file.name}
-                    {file.status !== 'ready' && <span className="pending">{file.status === 'generating' ? 'gerando…' : 'pendente'}</span>}
-                  </div>
-                  {hit && <Snippet hit={hit} />}
-                </td>
-                <td>{mediaCell(file)}</td>
-                <td>{file.tags.join(', ')}</td>
-                <td>{file.mastery === null ? '' : `${file.mastery}%`}</td>
-                <td className="ex-act">
-                  <button className={`ibtn star ${file.favorite ? 'on' : ''}`} onClick={event => (event.stopPropagation(), void toggleFavorite(file))} aria-label={file.favorite ? 'Tirar dos favoritos' : 'Favoritar'}>
-                    <Icon name="star" />
-                  </button>
-                  <button className="ibtn" aria-label={`Opções de ${file.name}`} onClick={menu('file', file.id)}>
-                    <Icon name="dots" />
-                  </button>
-                </td>
-              </tr>
-            )
-          })}
-        </tbody>
-      </table>
-      {!rows.length && !subfolders.length && <div className="empty">{ui.media || ui.tag ? 'Nada com esse filtro aqui.' : 'Pasta vazia. Use Novo ou Gravar para começar.'}</div>}
     </section>
   )
 }

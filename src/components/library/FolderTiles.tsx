@@ -1,5 +1,6 @@
 import { useNavigate } from 'react-router-dom'
 
+import { FolderIcon } from '@/components/ui/FolderIcon'
 import { Icon } from '@/components/ui/Icon'
 import { DRAG_FOLDER, useFileActions } from '@/components/library/use-file-actions'
 import type { FolderTile } from '@/hooks/use-library-view'
@@ -40,7 +41,7 @@ export function FolderTiles({ tiles }: { tiles: FolderTile[] }) {
             {...dropTarget(folder.id)}
           >
             <span className="tile-ic">
-              <Icon name="folder" />
+              <FolderIcon color={folder.color} />
             </span>
             <span className="tile-t">
               {folder.name}

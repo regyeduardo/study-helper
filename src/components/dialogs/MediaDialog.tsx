@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 
+import { SaveToDrive, useOnlyHere } from '@/components/library/SaveToDrive'
 import { Dialog } from '@/components/ui/Dialog'
 import { Icon } from '@/components/ui/Icon'
 import { transcriptFileName, transcriptOf } from '@/lib/generation/transcript'
@@ -23,6 +24,8 @@ function MediaItem({ item, onRemoved }: { item: LocalMedia; onRemoved(): void })
   const [confirming, setConfirming] = useState(false)
   useEffect(() => () => void (url && URL.revokeObjectURL(url)), [url])
   const notes = item.fileIds.map(id => files.find(file => file.id === id && !file.deletedAt)).filter(file => file !== undefined)
+  const onlyHere = useOnlyHere()
+  const toSave = notes.find(onlyHere)
   const video = item.mime.startsWith('video')
   const load = async (): Promise<File | null> => {
     try {
@@ -98,6 +101,7 @@ function MediaItem({ item, onRemoved }: { item: LocalMedia; onRemoved(): void })
           'Ainda não virou nota.'
         )}
       </span>
+      {toSave && <SaveToDrive fileId={toSave.id} />}
       {missing && <span className="lim">O arquivo não está mais neste navegador.</span>}
       {url && (video ? <video src={url} controls playsInline style={{ width: '100%', borderRadius: 8 }} /> : <audio src={url} controls style={{ width: '100%' }} />)}
       <div className="acts">

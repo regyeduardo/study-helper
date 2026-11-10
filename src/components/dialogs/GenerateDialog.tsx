@@ -31,7 +31,7 @@ export function GenerateDialog({ fileId, agent, redo = false, again }: { fileId:
     close()
     const model = choice.model || null
     if (redo) void generateSecondTab(fileId, agent, model, instruction)
-    else void generateFromNote(fileId, agent, model, replace && before ? { replace: before.id } : folder.place, instruction).then(id => id && navigate(paths.file(id)))
+    else void generateFromNote(fileId, agent, model, replace && before ? { replace: before.id } : folder.place, instruction, before?.made?.analyze).then(id => id && navigate(paths.file(id)))
   }
   return (
     <>

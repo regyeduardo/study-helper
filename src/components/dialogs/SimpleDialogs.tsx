@@ -1,10 +1,9 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 
-import type { FolderMeta } from '@/types/domain'
+import { FolderChooserDialog } from '@/components/dialogs/FolderChooser'
 import { Dialog } from '@/components/ui/Dialog'
-import { Icon } from '@/components/ui/Icon'
-import { useLiveLibrary, usePathName } from '@/hooks/use-library-view'
+import { usePathName } from '@/hooks/use-library-view'
 import { paths } from '@/lib/paths'
 import { useLibraryStore } from '@/stores/library'
 import { type Overlay, useUiStore } from '@/stores/ui'
@@ -130,69 +129,16 @@ export function RenameDialog({ target, id }: { target: 'file' | 'folder'; id: st
   )
 }
 
-/** `extra`: a folder not made yet, listed in its place as "(pasta nova)". */
-export function FolderPicker({ value, onChange, exclude = [], extra }: { value: string | null; onChange(id: string | null): void; exclude?: string[]; extra?: Pick<FolderMeta, 'id' | 'name' | 'parentId'> }) {
-  const { folders } = useLiveLibrary()
-  const all: Pick<FolderMeta, 'id' | 'name' | 'parentId'>[] = extra ? [...folders, extra] : folders
-  const flat: { id: string; name: string; depth: number }[] = []
-  const walk = (parentId: string | null, depth: number) => {
-    for (const folder of all.filter(item => item.parentId === parentId).sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'))) {
-      if (exclude.includes(folder.id)) continue
-      flat.push({ id: folder.id, name: folder === extra ? `${folder.name} (pasta nova)` : folder.name, depth })
-      walk(folder.id, depth + 1)
-    }
-  }
-  walk(null, 0)
-  return (
-    <select className="input" value={value ?? ''} onChange={event => onChange(event.target.value || null)} aria-label="Pasta">
-      <option value="">Biblioteca (raiz)</option>
-      {flat.map(item => (
-        <option key={item.id} value={item.id}>
-          {'   '.repeat(item.depth + 1)}
-          {item.name}
-        </option>
-      ))}
-    </select>
-  )
-}
-
 export function MoveDialog({ fileIds, folderIds }: { fileIds: string[]; folderIds: string[] }) {
   const ui = useUiStore()
   const library = useLibraryStore()
-  const [target, setTarget] = useState<string | null>(null)
-  const descendants = (id: string): string[] => [id, ...library.folders.filter(folder => folder.parentId === id).flatMap(folder => descendants(folder.id))]
-  const exclude = folderIds.flatMap(descendants)
   const count = fileIds.length + folderIds.length
-  const move = async () => {
+  const move = async (target: string | null) => {
     await library.moveFiles(fileIds, target)
     for (const id of folderIds) await library.updateFolder(id, { parentId: target })
     ui.close()
     ui.clearSelection()
     ui.toast(`Movido para ${library.folders.find(folder => folder.id === target)?.name ?? 'Biblioteca'}`)
   }
-  return (
-    <Dialog
-      title={`Mover ${count} ${count === 1 ? 'item' : 'itens'}`}
-      size="narrow"
-      onClose={ui.close}
-      footer={
-        <>
-          <button className="btn quiet" onClick={ui.close}>
-            Cancelar
-          </button>
-          <button className="btn primary" onClick={() => void move()}>
-            <Icon name="move" />
-            Mover
-          </button>
-        </>
-      }
-    >
-      <div className="db">
-        <div className="field">
-          <span className="lab">Para qual pasta</span>
-          <FolderPicker value={target} onChange={setTarget} exclude={exclude} />
-        </div>
-      </div>
-    </Dialog>
-  )
+  return <FolderChooserDialog value={null} exclude={folderIds} title={`Mover ${count} ${count === 1 ? 'item' : 'itens'}`} confirmLabel="Mover" onConfirm={id => void move(id)} onClose={ui.close} />
 }

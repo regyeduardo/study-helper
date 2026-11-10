@@ -113,6 +113,9 @@ export interface GenerationMeta {
 }
 
 /** What the generation dialog picked for a note made from another. */
+/** What the AI analyzes of a video (FR-046): only the media, only the transcription, or both in the same call. An audio always goes by its transcription. */
+export type MediaAnalysis = 'video' | 'transcricao' | 'ambos'
+
 export interface GenerationChoice {
   /** "Modelo da IA" (uid): the one picked, or the default of that moment. */
   model?: string
@@ -122,6 +125,8 @@ export interface GenerationChoice {
   parts?: AtaPart[]
   /** "Instrução extra para a IA": where to focus, as typed. */
   instruction?: string
+  /** What the AI analyzed of a video, for "Gerar de novo". Absent: the note did not come from a choice. */
+  analyze?: MediaAnalysis
   at: string
 }
 
@@ -134,6 +139,12 @@ export interface StampedChange {
 export interface FileMeta {
   id: string
   name: string
+  /** Ausente = nota. */
+  role?: 'entrada'
+  /** Só em entrada: o que foi guardado da fonte. */
+  kept?: 'registro' | 'arquivo'
+  /** Id da raiz de um "Apagar tudo": restaurar traz todos com a mesma marca. */
+  trashedWith?: string
   folderId: string | null
   type: FileType
   description: string
@@ -142,8 +153,10 @@ export interface FileMeta {
   favorite: boolean
   tags: string[]
   suggestedTags?: string[]
+  /** Due dates of the cards of every deck of the note. */
   cardDue?: string[]
   hasMindmap?: boolean
+  artifacts?: ArtifactSummary[]
   parentFileId: string | null
   sourceExcerpt: string | null
   pendingExcerpt: string | null
@@ -242,9 +255,12 @@ export interface FileSidecar {
   highlights: Highlight[]
   transcript?: string
   recording?: RecordingData
+  /** Old single deck: read once and moved into `artifacts`. */
   cards?: StudyCard[]
+  /** Old single map: read once and moved into `artifacts`. */
   mindmap?: MindNode
   documents?: MeetingDocument[]
+  artifacts?: Artifact[]
 }
 
 export interface StudyCard {
@@ -260,12 +276,90 @@ export interface MindNode {
   children: MindNode[]
 }
 
+/** How a map is drawn: the AI picks it per note, from what the content asks for. */
+export type MapForm = 'radial' | 'arvore' | 'fluxo' | 'linha-do-tempo'
+
+/** A node of a map. The shape is free: any depth, any number of children; `mark` only when the content has one (✅, 📌…). */
+export interface MapNode {
+  id: string
+  text: string
+  mark?: string
+  /** Drawn as a box around its children in the "fluxo" form. */
+  group?: boolean
+  /** Extra arrows to other nodes, in the "fluxo" form. */
+  links?: { to: string; label?: string }[]
+  children: MapNode[]
+}
+
+export interface MapDiagram {
+  form: MapForm
+  root: MapNode
+}
+
+export interface MapChatTurn {
+  who: 'você' | 'ia'
+  text: string
+  at: string
+  /** Ids of the nodes this answer changed in the map. */
+  changed?: string[]
+}
+
+export type ArtifactKind = 'mapa' | 'cartoes' | 'tutor'
+
+interface ArtifactBase {
+  id: string
+  kind: ArtifactKind
+  name: string
+  /** True while the name is the placeholder ("Mapa mental"), until the AI names it. */
+  provisionalName?: boolean
+  createdAt: string
+  updatedAt: string
+  /** Model and instruction of its last generation, for "Gerar de novo". */
+  made?: GenerationChoice
+}
+
+export interface MapArtifact extends ArtifactBase {
+  kind: 'mapa'
+  diagram: MapDiagram
+  /** Earlier diagrams, newest last: "Desfazer" pops one. */
+  versions: MapDiagram[]
+  /** The map's own conversation (a subartefato). */
+  chat: MapChatTurn[]
+  /** Nodes changed by the last request: they blink until the next one. */
+  highlight?: string[]
+}
+
+export interface CardsArtifact extends ArtifactBase {
+  kind: 'cartoes'
+  cards: StudyCard[]
+}
+
+export interface TutorArtifact extends ArtifactBase {
+  kind: 'tutor'
+  turns: { who: 'você' | 'tutor'; text: string }[]
+}
+
+export type Artifact = MapArtifact | CardsArtifact | TutorArtifact
+
+/** What the library knows of a note's artifacts without opening it. */
+export interface ArtifactSummary {
+  id: string
+  kind: ArtifactKind
+  name: string
+  updatedAt: string
+}
+
+/** Ausente = cor padrão. */
+export type FolderColor = 'vermelho' | 'laranja' | 'amarelo' | 'verde' | 'azul' | 'roxo' | 'cinza'
+
 export interface FolderMeta {
   id: string
   name: string
   parentId: string | null
   position: number
   description: string
+  favorite?: boolean
+  color?: FolderColor
   isCourse: boolean
   courseOrigin: string | null
   courseDescription: string | null
@@ -384,9 +478,24 @@ export interface AiPassModels {
   write?: string
 }
 
+/** One result of "Rodar meu diagnóstico" (data-model.md): one per use + provider + model. */
+export interface DiagnosisRecord {
+  use: AiUse
+  provider: AiProviderId
+  model: string
+  /** 0 to 10; null when the model was out before the miniature test (catalog or research). */
+  score: number | null
+  /** US$ per typical note, by the use's ruler; null when the provider does not report a price ("?"). */
+  costPerNote: number | null
+  at: string
+  /** Why it passed or was left out, in one sentence. */
+  reason?: string
+}
+
 export interface Settings {
   /** Providers, models and defaults per use. Absent in old indexes: derived from the old fields below on load. */
   aiConfig?: AiConfig
+  aiDiagnosis?: DiagnosisRecord[]
   /** Old single AI: now kept in step with the Tutor model of aiConfig (read only by old code). */
   ai: AiSettings
   aiCredentials: Partial<Record<AiProviderId, AiCredential>>
@@ -456,6 +565,12 @@ export interface SharedFile {
   transcript?: string
   recording?: RecordingData
   documents?: MeetingDocument[]
+  /** Só os tipos marcados ao compartilhar: o mapa vai sem conversa, versões nem destaque, com o código Mermaid pronto; os cartões, sem o progresso de revisão. */
+  artifacts?: (
+    | (Pick<MapArtifact, 'id' | 'kind' | 'name' | 'diagram'> & { mermaid: string })
+    | (Pick<CardsArtifact, 'id' | 'kind' | 'name'> & { cards: Pick<StudyCard, 'id' | 'front' | 'back'>[] })
+    | Pick<TutorArtifact, 'id' | 'kind' | 'name' | 'turns'>
+  )[]
   media?: SharedMedia
   meta?: Partial<FileMeta>
 }
@@ -482,6 +597,8 @@ export interface LibraryIndex {
   activities: Activity[]
   shares: ShareRecord[]
   sharedWithMe: SharedLink[]
+  /** Marca a migração de entradas como feita. */
+  entriesMigratedAt?: string
   updated: StampedChange
 }
 

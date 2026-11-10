@@ -1,0 +1,79 @@
+/* ---------- filter panel (FR-044, FR-045): groups and counts in view, beside the table; a drawer on the phone ---------- */
+.fp{display:flex;flex-direction:column;flex:none;width:220px;height:100%;min-height:0;background:var(--bg);border-right:1px solid var(--border-muted)}
+.fp-head{flex:none;display:flex;align-items:center;gap:10px;height:48px;padding:0 8px 0 16px;border-bottom:1px solid var(--border-muted)}
+.fp-title{margin:0;font-size:14px;font-weight:600;color:var(--fg)}
+.fp-active{font-size:12px;font-weight:500;color:var(--accent);white-space:nowrap}
+.fp-toggle{margin-left:auto}
+.fp-body{flex:1;min-height:0;overflow-x:hidden;overflow-y:auto;overscroll-behavior:contain;padding:0 14px 16px 16px}
+
+/* ---------- group ---------- */
+.fp-group{padding:10px 0 8px;border-bottom:1px solid var(--border-muted)}
+.fp-group:last-child{border-bottom:0}
+.fp-ghead{position:relative;display:flex;align-items:center;gap:8px;min-width:0;min-height:20px;margin-bottom:5px}
+.fp-gh{margin:0;font-size:13px;font-weight:600;flex:none}
+.fp-gtitle{color:var(--fg);white-space:nowrap}
+/* the whole heading folds the group; "Ver as N" stays above it */
+.fp-gtitle::after{content:"";position:absolute;inset:0}
+.fp-gside{display:flex;align-items:center;justify-content:flex-end;gap:8px;flex:1;min-width:0}
+.fp-chev{flex:none;width:13px;height:13px;color:var(--fg-faint);pointer-events:none;transition:transform .12s}
+.fp-chev.fp-shut{transform:rotate(-90deg)}
+.fp-num{flex:none;font-size:12px;font-weight:600;color:var(--accent);font-variant-numeric:tabular-nums}
+/* above the heading's click area, so its title shows on hover */
+.fp-sum{position:relative;z-index:1;flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;color:var(--fg-muted)}
+.fp-more{position:relative;z-index:1;flex:none;font-size:12px;color:var(--fg-muted);white-space:nowrap}
+.fp-more:hover{color:var(--fg);text-decoration:underline}
+.fp-all{max-height:264px;margin:0 -6px;padding:0 6px;overflow-x:hidden;overflow-y:auto;overscroll-behavior:contain}
+
+/* ---------- option ---------- */
+.fp-row{position:relative;margin:0 -6px;padding:0 6px;border-radius:5px}
+.fp-row:hover{background:var(--bg-hover)}
+.fp-opt{display:flex;align-items:center;gap:8px;min-width:0;min-height:21px;padding-left:calc(var(--fp-depth,0) * 12px);font-size:13px;color:var(--fg-muted);cursor:pointer}
+.fp-opt .ic{flex:none;width:14px;height:14px;margin-right:-2px;color:var(--fg-faint)}
+.fp-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fp-count{flex:none;font-size:12px;color:var(--fg-faint);font-variant-numeric:tabular-nums}
+.fp-on .fp-opt{color:var(--fg)}
+.fp-on .fp-opt .ic,.fp-on .fp-count{color:var(--fg-muted)}
+.fp-zero .fp-opt{color:var(--fg-faint)}
+.fp-box,.fp-radio{appearance:none;-webkit-appearance:none;flex:none;margin:0;background:transparent;border:1.2px solid var(--border);cursor:pointer}
+/* two classes: the global :focus-visible radius loads after this file */
+.fp-opt .fp-box{border-radius:4px}
+.fp-opt .fp-radio{border-radius:50%}
+.fp-box{width:14px;height:14px}
+.fp-box:checked{background:var(--accent) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23fff' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m5 12 5 5L20 7'/%3E%3C/svg%3E") center/11px no-repeat;border-color:var(--accent)}
+.fp-radio{display:grid;place-items:center;width:13px;height:13px;margin:0 .5px}
+.fp-radio:checked{border-color:var(--accent)}
+.fp-radio:checked::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--accent)}
+.fp-zero .fp-box,.fp-zero .fp-radio{border-color:var(--border-muted)}
+/* clears a count of up to three digits */
+.fp-only{position:absolute;top:0;bottom:0;right:calc(6px + 3ch);padding:0 4px;background:var(--bg-hover);border-radius:4px;font-size:12px;font-weight:500;color:var(--accent);white-space:nowrap;opacity:0}
+.fp-row:hover .fp-only,.fp-only:focus-visible{opacity:1}
+@media (hover:none){.fp-only{display:none}.fp-row:hover{background:none}}
+
+/* ---------- Período ---------- */
+.fp-seg{display:grid;grid-template-columns:1fr 1fr;gap:2px;height:25px;padding:2px;margin-bottom:4px;background:var(--bg);border:1px solid var(--border);border-radius:7px}
+.fp-segb{position:relative;display:grid;place-items:center;border-radius:5px;font-size:12px;color:var(--fg-muted);cursor:pointer}
+.fp-segb.fp-on{background:var(--bg-muted);color:var(--fg);font-weight:500}
+.fp-segb:has(:focus-visible){outline:2px solid var(--accent);outline-offset:1px}
+.fp-sr{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip-path:inset(50%);appearance:none;-webkit-appearance:none;border:0}
+.fp-dates{display:grid;gap:4px;margin-top:4px;padding-left:21px}
+.fp-date{display:flex;align-items:center;gap:6px;min-width:0;font-size:12px;color:var(--fg-muted)}
+.fp-date>span{flex:none;width:22px}
+.fp-date .input{flex:1;width:auto;min-width:0;height:26px;padding:2px 5px;font-size:12px}
+
+/* ---------- collapsed ---------- */
+.fp-rail{width:44px;align-items:center;gap:6px;padding-top:9px}
+
+/* ---------- drawer ---------- */
+.scrim.fp-scrim{place-items:stretch start;padding:0;overflow:hidden}
+.fp-drawer{width:min(320px,88vw);height:100vh;height:100dvh;padding-bottom:env(safe-area-inset-bottom);border-right:1px solid var(--border);box-shadow:var(--shadow)}
+.fp-drawer .ibtn{width:44px;height:44px}
+.fp-drawer .fp-gtitle,.fp-drawer .fp-more{min-height:40px}
+.fp-drawer .fp-opt{min-height:44px;font-size:14px}
+.fp-drawer .fp-box,.fp-drawer .fp-radio{width:18px;height:18px}
+.fp-drawer .fp-box{background-size:14px}
+.fp-drawer .fp-radio:checked::before{width:10px;height:10px}
+.fp-drawer .fp-seg{height:40px}
+.fp-drawer .fp-segb{font-size:13px}
+.fp-drawer .fp-date{font-size:13px}
+.fp-drawer .fp-date .input{height:40px}
+.fp-drawer .fp-all{max-height:50vh;max-height:50dvh}

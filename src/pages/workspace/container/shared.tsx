@@ -7,6 +7,7 @@ import { useFileActions } from '@/components/library/use-file-actions'
 import { useLiveLibrary } from '@/hooks/use-library-view'
 import { useReadingProgress, useTrackReading } from '@/hooks/use-reading-progress'
 import { useViewRoute } from '@/hooks/use-view-route'
+import { isNote } from '@/lib/family'
 import { mediaOf, REVIEW_BELOW } from '@/lib/file-types'
 import { dueCount } from '@/lib/generation/cards'
 import { useAccountStore } from '@/stores/account'
@@ -29,7 +30,8 @@ export function useScrollerRef() {
 }
 
 export function useHomeData() {
-  const { files } = useLiveLibrary()
+  const live = useLiveLibrary().files
+  const files = live.filter(isNote)
   const openedAt = useLibraryStore(state => state.openedAt)
   const ready = files.filter(file => file.status === 'ready')
   const byOpened = [...ready].sort((a, b) => (openedAt[b.id] ?? 0) - (openedAt[a.id] ?? 0))
@@ -41,7 +43,8 @@ export function useHomeData() {
     .map(file => ({ file, due: dueCount(file.cardDue) }))
     .filter(item => item.due > 0)
     .sort((a, b) => b.due - a.due)
-  const untranscribed = ready.filter(file => mediaOf(file) !== 'text' && file.words === 0)
+  // an audio or video entrada still without transcription too (FR-053)
+  const untranscribed = live.filter(file => file.status === 'ready' && mediaOf(file) !== 'text' && file.words === 0)
   const latest = [...files].sort((a, b) => b.updated.at.localeCompare(a.updated.at)).slice(0, 5)
   return { continueReading, review, recent, pending, cards, untranscribed, latest, empty: files.length === 0 }
 }

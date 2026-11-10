@@ -5,12 +5,14 @@ import { Icon } from '@/components/ui/Icon'
 import { Avatar, AvatarButton, RecentList, SyncPill, UsageLine } from '@/components/layout/Chrome'
 import { useCounts } from '@/components/layout/ReaderShell'
 import { Crumbs, UpButton } from '@/components/library/Crumbs'
+import { FavoriteFolders } from '@/components/library/FolderTree'
 import { SHARING_TITLES } from '@/components/library/SharingLists'
 import { useViewRoute } from '@/hooks/use-view-route'
 import { paths, type View } from '@/lib/paths'
 import { useAccountStore } from '@/stores/account'
 import { useLibraryStore } from '@/stores/library'
 import { useUiStore } from '@/stores/ui'
+import '@/styles/entry-list.css'
 
 
 function anchorBelow(element: HTMLElement) {
@@ -19,14 +21,14 @@ function anchorBelow(element: HTMLElement) {
 }
 
 export function ColumnsShell({ children }: { children: ReactNode }) {
-  const { view, fileId } = useViewRoute()
+  const { view, fileId, folderId } = useViewRoute()
   const navigate = useNavigate()
   const ui = useUiStore()
   const counts = useCounts()
   const account = useAccountStore(state => state.active())
   const pane = view === 'doc' ? ui.columnsPane : ui.columnsPane === 'doc' ? 'list' : ui.columnsPane
   const nav = (target: View, icon: Parameters<typeof Icon>[0]['name'], label: string, to: string, count?: number) => (
-    <button className="nv" aria-current={view === target} onClick={() => (navigate(to), ui.set({ columnsPane: 'list' }))}>
+    <button className="nv" aria-current={view === target || (target === 'entries' && view === 'entry')} onClick={() => (navigate(to), ui.set({ columnsPane: 'list' }))}>
       <Icon name={icon} />
       {label}
       <span className="n">{count ?? ''}</span>
@@ -46,6 +48,7 @@ export function ColumnsShell({ children }: { children: ReactNode }) {
         <nav className="nav">
           {nav('folder', 'book', 'Biblioteca', paths.library, counts.library)}
           {nav('review', 'warn', 'Para revisar', paths.review, counts.review)}
+          {nav('entries', 'upload', 'Entradas', paths.entries, counts.entries)}
           {nav('favorites', 'star', 'Favoritos', paths.favorites, counts.favorites)}
           {nav('trash', 'trash', 'Lixeira', paths.trash, counts.trash)}
           {nav('shares', 'link', SHARING_TITLES.shares, paths.shares, counts.shares)}
@@ -54,6 +57,7 @@ export function ColumnsShell({ children }: { children: ReactNode }) {
             <Icon name="mic" />
             Mídias
           </button>
+          <FavoriteFolders current={view === 'folder' ? folderId : undefined} onGo={() => ui.set({ columnsPane: 'list' })} />
           <div className="nh">Recentes</div>
           <RecentList currentId={fileId} />
         </nav>
@@ -121,7 +125,8 @@ export function FocusShell({ children, dock }: { children: ReactNode; dock?: Rea
   const { view } = useViewRoute()
   const navigate = useNavigate()
   const ui = useUiStore()
-  const top = view === 'doc' ? 'doc' : view === 'home' ? 'home' : 'lib'
+  const counts = useCounts()
+  const top = view === 'doc' ? 'doc' : view === 'home' ? 'home' : view === 'entries' || view === 'entry' ? 'entries' : 'lib'
   return (
     <div className="app c4">
       <header className="top">
@@ -132,6 +137,10 @@ export function FocusShell({ children, dock }: { children: ReactNode; dock?: Rea
           </button>
           <button aria-current={top === 'lib'} onClick={() => navigate(paths.library)}>
             Biblioteca
+          </button>
+          <button aria-current={top === 'entries'} onClick={() => navigate(paths.entries)}>
+            Entradas
+            <span className="n">{counts.entries}</span>
           </button>
         </nav>
         <span className="spacer" />

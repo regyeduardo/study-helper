@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
-import type { Attempt, FileSidecar, Highlight, StoredQuestion } from '@/types/domain'
+import type { AiProviderId, AiUse, Attempt, DiagnosisRecord, FileSidecar, Highlight, StoredQuestion } from '@/types/domain'
 import { newFileMeta, newSidecar } from '@/lib/defaults'
-import { applyFieldChoices, hasTextConflict, joinHunks, mergeSidecar, mergeText } from '@/lib/sync/merge'
+import { applyFieldChoices, hasTextConflict, joinHunks, mergeDiagnosis, mergeSidecar, mergeText } from '@/lib/sync/merge'
 
 function numbered(count: number): string[] {
   return Array.from({ length: count }, (_, index) => `linha ${index + 1}`)
@@ -87,6 +87,28 @@ describe('mergeSidecar (.json da nota)', () => {
     expect(merged.questions.map(item => item.storedId).sort()).toEqual(['q0', 'qm', 'qt'])
   })
 
+  it('a transcrição, as Atas antigas, o mapa e os cartões antigos sobrevivem à junção', () => {
+    const card = { id: 'c1', front: 'frente', back: 'verso', box: 1, due: '2026-11-06' }
+    const document = { id: 'ata-1', kind: 'ata', parts: [], markdown: '## Ata', images: [], createdAt: '2026-11-01T00:00:00.000Z', models: {} } as unknown as NonNullable<FileSidecar['documents']>[number]
+    const base = { ...baseSidecar(), transcript: 'Ana [00:01]: Bom dia.', documents: [document], cards: [card], mindmap: { title: 'Centro', children: [] } }
+    const mine = { ...base, highlights: [highlight('hm', 'meu')] }
+    const theirs = { ...base, transcript: 'Ana [00:01]: Bom dia, pessoal.' }
+    const { merged } = mergeSidecar(base, mine, theirs)
+    expect(merged.transcript).toBe('Ana [00:01]: Bom dia, pessoal.')
+    expect(merged.documents).toEqual([document])
+    expect(merged.cards).toEqual([card])
+    expect(merged.mindmap).toEqual({ title: 'Centro', children: [] })
+  })
+
+  it('os campos novos da nota (papel, guarda, apagada junto) que só o outro aparelho gravou chegam à junção', () => {
+    const base = baseSidecar()
+    const mine = { ...base, highlights: [highlight('hm', 'meu')] }
+    const theirs = { ...base, meta: { ...base.meta, role: 'entrada' as const, kept: 'registro' as const, trashedWith: 'raiz-1' } }
+    const { merged, conflicts } = mergeSidecar(base, mine, theirs)
+    expect(conflicts).toEqual([])
+    expect(merged.meta).toMatchObject({ role: 'entrada', kept: 'registro', trashedWith: 'raiz-1' })
+  })
+
   it('remover de um lado e adicionar do outro também junta sozinho', () => {
     const base = { ...baseSidecar(), highlights: [highlight('h0', 'zero'), highlight('h1', 'um')] }
     const mine = { ...base, highlights: [highlight('h1', 'um')] }
@@ -123,5 +145,28 @@ describe('mergeSidecar (.json da nota)', () => {
     const { merged, conflicts } = mergeSidecar(base, mine, theirs)
     expect(conflicts.map(item => item.path)).toEqual(['highlights.h'])
     expect(applyFieldChoices(merged, conflicts, { 'highlights.h': 'theirs' }).highlights[0].text).toBe('nota dele')
+  })
+})
+
+describe('mergeDiagnosis (Settings.aiDiagnosis entre aparelhos)', () => {
+  const record = (use: AiUse, provider: AiProviderId, model: string, at: string, score: number): DiagnosisRecord => ({ use, provider, model, score, costPerNote: 0.01, at })
+
+  it('fica o registro mais novo de cada uso + provedor + modelo, dos dois lados', () => {
+    const mine = [record('estudo', 'deepinfra', 'a', '2026-11-08T10:00:00.000Z', 9), record('estudo', 'deepinfra', 'b', '2026-11-01T10:00:00.000Z', 7)]
+    const theirs = [record('estudo', 'deepinfra', 'a', '2026-11-02T10:00:00.000Z', 5), record('estudo', 'deepinfra', 'b', '2026-11-05T10:00:00.000Z', 8), record('aula', 'deepinfra', 'a', '2026-11-03T10:00:00.000Z', 6)]
+    expect(mergeDiagnosis(mine, theirs)).toEqual([mine[0], theirs[1], theirs[2]])
+  })
+
+  it('o mesmo modelo em dois provedores são dois registros', () => {
+    const mine = [record('estudo', 'deepinfra', 'a', '2026-11-08T10:00:00.000Z', 9)]
+    const theirs = [record('estudo', 'openrouter', 'a', '2026-11-01T10:00:00.000Z', 7)]
+    expect(mergeDiagnosis(mine, theirs)).toEqual([mine[0], theirs[0]])
+  })
+
+  it('sem nada de nenhum lado, continua sem o campo', () => {
+    expect(mergeDiagnosis(undefined, undefined)).toBeUndefined()
+    const only = [record('estudo', 'deepinfra', 'a', '2026-11-08T10:00:00.000Z', 9)]
+    expect(mergeDiagnosis(undefined, only)).toEqual(only)
+    expect(mergeDiagnosis(only, undefined)).toEqual(only)
   })
 })

@@ -11,7 +11,9 @@ import {
   uploadToOnlyfilesController,
   uploadToTmpfilesController,
 } from '@/controllers/hosting.controller'
+import { readLocalMedia } from '@/lib/recording/media-library'
 import type { Repository } from '@/lib/storage/repository'
+import { useLibraryStore } from '@/stores/library'
 
 export interface StorageOption {
   id: SourceStorage
@@ -68,6 +70,28 @@ export async function storeSource(
   }
   const hosted = await upload[choice as HostId]()
   return { storage: choice, storedUrl: hosted.url, expiresAt: hosted.expiresAt }
+}
+
+/** FR-043: uploads what is kept in this browser and gives the item its Drive address. The copy in Mídias stays. */
+export async function saveToDrive(fileId: string): Promise<void> {
+  const library = useLibraryStore.getState()
+  const { repo } = library
+  if (repo?.kind !== 'drive') throw new Error('Entre com o Google para guardar no Drive.')
+  const origin = library.files.find(file => file.id === fileId)?.origin
+  const local = library.localMedia.find(item => item.fileIds.includes(fileId))
+  const gone = new Error('O arquivo não está mais neste navegador.')
+  if (!origin || !local) throw gone
+  const media = await readLocalMedia(local).catch(() => {
+    throw gone
+  })
+  const stored = await storeSource(media, 'drive', fileId, repo, '72h')
+  try {
+    await library.updateFile(fileId, { origin: { ...origin, ...stored, removedAt: undefined } })
+  } catch (error) {
+    // without the address nothing would ever find this copy, and it would keep using the person's space
+    await repo.removeSource(stored.storedFileId!).catch(() => undefined)
+    throw error
+  }
 }
 
 export function sourceExpired(origin: SourceMeta | null): boolean {

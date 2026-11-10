@@ -2,9 +2,10 @@ import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } fro
 import { useLocation, useNavigate } from 'react-router-dom'
 
 import type { FileMeta, FileSidecar, FileType, HighlightColor, RecordingMark } from '@/types/domain'
+import { SaveToDrive } from '@/components/library/SaveToDrive'
 import { SharedBadge } from '@/components/library/SharedBadge'
 import { Icon } from '@/components/ui/Icon'
-import { MasteryMeter, TypeDot } from '@/components/library/Badges'
+import { MasteryMeter, MotherBadge, TypeDot } from '@/components/library/Badges'
 import { DocumentNav } from '@/components/reader/DocumentNav'
 import GithubMarkdownView, { type PaintedQuote, type ReaderSelection } from '@/components/reader/GithubMarkdownView'
 import { MediaPlayer, type MeetingMedia, playAt, useMeetingMedia } from '@/components/reader/MediaPlayer'
@@ -117,6 +118,7 @@ export function DocumentHead({ meta, onInfo, transcribed = false }: { meta: File
         </div>
       )}
       <div className="doc-meta">
+        <MotherBadge file={meta} />
         <TypeDot type={meta.type} />
         {!(shared && meta.folderId === null) && (
           <button onClick={() => navigate(paths.folder(meta.folderId))}>
@@ -144,6 +146,7 @@ export function DocumentHead({ meta, onInfo, transcribed = false }: { meta: File
           </button>
         ))}
       </div>
+      <SaveToDrive fileId={meta.id} />
     </div>
   )
 }

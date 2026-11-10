@@ -1,15 +1,28 @@
 import { useNavigate } from 'react-router-dom'
 
+import type { FolderColor } from '@/types/domain'
+import { mediaChoice } from '@/components/dialogs/DeleteFamilyDialog'
 import { againOf, madeLine } from '@/components/dialogs/FromNoteFields'
 import { Icon } from '@/components/ui/Icon'
 import { Popover } from '@/components/ui/Popover'
 import { exportFileAsMarkdown, exportFileAsPdf, exportFileAsZip } from '@/lib/exports/library-export'
+import { descendantsOf } from '@/lib/family'
 import { mediaOf } from '@/lib/file-types'
 import { isCourseFolder } from '@/lib/generation/course-lesson'
 import { paths } from '@/lib/paths'
 import { useJobsStore } from '@/stores/jobs'
 import { useLibraryStore } from '@/stores/library'
 import { useUiStore } from '@/stores/ui'
+
+const FOLDER_COLORS: [FolderColor, string][] = [
+  ['vermelho', 'Vermelho'],
+  ['laranja', 'Laranja'],
+  ['amarelo', 'Amarelo'],
+  ['verde', 'Verde'],
+  ['azul', 'Azul'],
+  ['roxo', 'Roxo'],
+  ['cinza', 'Cinza'],
+]
 
 export function ItemMenu() {
   const ui = useUiStore()
@@ -43,6 +56,20 @@ export function ItemMenu() {
           <Icon name="move" />
           Mover para…
         </button>
+        <button className="mi" onClick={act(() => library.updateFolder(folder.id, { favorite: !folder.favorite }))}>
+          <Icon name="star" />
+          {folder.favorite ? 'Tirar dos favoritos' : 'Favoritar'}
+        </button>
+        <div className="mi-colors" role="group" aria-label="Cor da pasta">
+          {FOLDER_COLORS.map(([color, label]) => (
+            <button key={color} className="swatch" aria-label={label} title={label} aria-pressed={folder.color === color} style={{ background: `var(--folder-${color})` }} onClick={act(() => library.updateFolder(folder.id, { color }))}>
+              {folder.color === color && <Icon name="check" />}
+            </button>
+          ))}
+          <button className="swatch none" aria-label="Sem cor" title="Sem cor" aria-pressed={!folder.color} onClick={act(() => library.updateFolder(folder.id, { color: undefined }))}>
+            {!folder.color && <Icon name="check" />}
+          </button>
+        </div>
         <button className="mi" onClick={act(() => ui.open({ kind: 'new-folder', parentId: folder.id }))}>
           <Icon name="plus" />
           Nova pasta dentro
@@ -172,20 +199,13 @@ export function ItemMenu() {
       <button
         className="mi danger"
         onClick={act(() => {
+          if (descendantsOf(library.files, file.id).length) return ui.open({ kind: 'delete-family', fileId: file.id })
           const trash = async (media: boolean) => {
             await library.trashFiles([file.id], { media })
             ui.toast(`"${file.name}" foi para a lixeira${media ? ', com a mídia' : ''}`)
           }
           if (!library.hasMedia(file.id)) return trash(false)
-          ui.open({
-            kind: 'confirm',
-            title: `Apagar "${file.name}"?`,
-            text: `A nota vai para a lixeira e dá para restaurar. ${mediaOf(file) === 'video' ? 'O vídeo' : 'O áudio'} pode ir junto, mas aí não volta.`,
-            ok: 'Apagar a nota e a mídia',
-            danger: true,
-            onConfirm: () => trash(true),
-            alt: { label: 'Apagar só a nota', onConfirm: () => trash(false) },
-          })
+          ui.open(mediaChoice(file, trash))
         })}
       >
         <Icon name="trash" />

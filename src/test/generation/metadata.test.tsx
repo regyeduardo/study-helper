@@ -156,23 +156,30 @@ describe('generation fills metadata', () => {
     const file = new NodeFile([new Uint8Array(2048)], 'reuniao.webm', { type: 'audio/webm' }) as unknown as File
     const id = await useJobsStore.getState().startNewContent(request({ agent: 'meeting', input: { kind: 'recording', file }, storage: 'drive' }))
     const meta = await readyFile(id!)
+    // the recording is stored with its entrada; the Ata is the entrada's child
+    const entry = useLibraryStore.getState().files.find(file => file.id === meta.parentFileId)!
 
     expect(meta.type).toBe('meeting')
     expect(meta.name).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}-\d{2} - Lançamento$/)
-    expect(meta.origin).toEqual({ input: 'recording', name: 'reuniao.webm', sizeBytes: 2048, mime: 'audio/webm', durationSeconds: 125, storage: 'drive', storedFileId: `drive-${id}`, expiresAt: null })
+    expect(entry.origin).toEqual({ input: 'recording', name: 'reuniao.webm', sizeBytes: 2048, mime: 'audio/webm', durationSeconds: 125, storage: 'drive', storedFileId: `drive-${entry.id}`, expiresAt: null })
+    expect(meta.origin).toEqual({ input: 'text', name: entry.name, storage: 'none' })
     expect(meta.generation).toMatchObject({ provider: 'custom', model: 'default', inputTokens: 90, outputTokens: 50, estimatedTokens: false, transcriptionEngine: 'groq', language: 'pt' })
     expect(memory.contents.get(id!)).toContain('### Data\n- Lançar em maio')
   })
 
-  it('keeps the meeting transcription next to the note and offers it for download in the note panel', async () => {
+  it('keeps the meeting transcription in its entrada and offers it for download in the panel of the entrada', async () => {
     installFetch(provider())
     const file = new NodeFile([new Uint8Array(2048)], 'reuniao.webm', { type: 'audio/webm' }) as unknown as File
     const id = await useJobsStore.getState().startNewContent(request({ agent: 'meeting', input: { kind: 'recording', file }, storage: 'none' }))
-    await readyFile(id!)
-    expect(memory.sidecars.get(id!)?.transcript).toBe('Ana: vamos lançar em maio. Bruno: eu mando a proposta.')
+    const note = await readyFile(id!)
+    // the transcription is part of the media: the Ata is the entrada's child and keeps only its own text
+    const entry = useLibraryStore.getState().files.find(item => item.id === note.parentFileId)!
+    expect(entry.role).toBe('entrada')
+    expect(memory.sidecars.get(entry.id)?.transcript).toBe('Ana: vamos lançar em maio. Bruno: eu mando a proposta.')
+    expect(memory.sidecars.get(id!)?.transcript).toBeUndefined()
     render(
       <MemoryRouter>
-        <InfoPanel fileId={id!} />
+        <InfoPanel fileId={entry.id} />
       </MemoryRouter>,
     )
     expect(await screen.findByRole('button', { name: 'Baixar a transcrição' })).toBeInTheDocument()
@@ -186,7 +193,7 @@ describe('generation fills metadata', () => {
     const file = new NodeFile([new Uint8Array(2048)], 'reuniao.webm', { type: 'audio/webm' }) as unknown as File
     expect(await useJobsStore.getState().startNewContent(request({ agent: 'meeting', input: { kind: 'recording', file }, storage: 'drive' }))).toBeNull()
 
-    const meta = useLibraryStore.getState().files[0]
+    const meta = useLibraryStore.getState().files.find(file => file.role !== 'entrada')!
     expect(meta).toMatchObject({ status: 'pending', origin: { storage: 'none' } })
     expect(meta.pendingExcerpt).toContain('vamos lançar em maio')
     expect(useJobsStore.getState().jobs[0]).toMatchObject({ status: 'error' })

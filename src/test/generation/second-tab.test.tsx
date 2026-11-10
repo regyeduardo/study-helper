@@ -3,6 +3,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { Blob as NodeBlob, File as NodeFile } from 'node:buffer'
 import { MemoryRouter } from 'react-router-dom'
 
+import { ItemMenu } from '@/components/library/ItemMenu'
 import { DocumentBody } from '@/components/reader/DocumentArticle'
 import { defaultIndex } from '@/lib/defaults'
 import { PROMPTS } from '@/lib/generation/prompts.data'
@@ -90,6 +91,12 @@ async function noteFrom(agent: NewContentRequest['agent']): Promise<string> {
   return id!
 }
 
+/** The Ata of a recording: the note born of its entrada. */
+async function ataOf(entryId: string) {
+  await waitFor(() => expect(useLibraryStore.getState().files.find(file => file.parentFileId === entryId)?.status).toBe('ready'))
+  return useLibraryStore.getState().files.find(file => file.parentFileId === entryId)!
+}
+
 const tabs = () => screen.getAllByRole('tab').map(tab => `${tab.textContent}${tab.getAttribute('aria-selected') === 'true' ? '*' : ''}`)
 const open = (id: string) =>
   render(
@@ -159,12 +166,29 @@ describe('"O que gerar" chooses only the second tab', () => {
     expect(useJobsStore.getState().jobs.filter(job => job.status === 'running')).toHaveLength(0)
   })
 
-  it('"Ata de reunião" gives the two tabs at once, the Ata pointing to the speech', async () => {
+  it('"Ata de reunião" keeps the transcription in the entrada and makes the Ata its child, pointing to the speech', async () => {
     const id = await noteFrom('meeting')
-    expect(memory.contents.get(id)).toContain('[▸ 00:04](#t=4)')
-    open(id)
+    const ata = await ataOf(id)
+    expect(ata).toMatchObject({ type: 'meeting', parentFileId: id })
+    expect(memory.contents.get(ata.id)).toContain('[▸ 00:04](#t=4)')
+    expect(memory.sidecars.get(ata.id)!.recording).toBeUndefined()
+    expect(memory.contents.get(id)).toContain('Bruno [00:04]:')
+    const { unmount } = open(id)
+    await waitFor(() => expect(tabs()).toEqual(['Transcrição*']))
+    unmount()
+    open(ata.id)
+    expect(await screen.findByTestId('markdown')).toHaveTextContent('[▸ 00:04](#t=4)')
+    expect(screen.queryAllByRole('tab')).toHaveLength(0)
+  })
+
+  it('an old note that keeps the transcription and the Ata together still has the two tabs', async () => {
+    const meta = await useLibraryStore.getState().createFile({ name: 'Antiga', type: 'meeting', description: '', folderId: null, status: 'ready', pendingExcerpt: null }, '# Ata antiga')
+    await useLibraryStore.getState().updateSidecar(meta.id, sidecar => ({ ...sidecar, recording: { ...heard, speakers: [] } }))
+    open(meta.id)
     await waitFor(() => expect(tabs()).toEqual(['Transcrição', 'Ata*']))
     expect(screen.queryByRole('button', { name: 'Gerar a Ata' })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Refazer a Ata' }))
+    expect(useUiStore.getState().overlay).toEqual({ kind: 'ata-parts', fileId: meta.id })
   })
 
   it('"Ata de reunião" with the parts chosen keeps the transcription and starts the Ata with those parts', async () => {
@@ -196,14 +220,19 @@ describe('"O que gerar" chooses only the second tab', () => {
     expect(memory.contents.get(id)).toContain('Quem gravou [00:09]: Valeu, Bruno.')
   })
 
-  it('"Refazer a Ata" opens the checkboxes of the parts, without writing anything yet', async () => {
+  it('redoing the Ata ("Gerar de novo…" in its menu) opens the checkboxes of the parts, without writing anything yet', async () => {
     const id = await noteFrom('meeting')
-    const before = memory.contents.get(id)
-    open(id)
-    await waitFor(() => expect(tabs()).toEqual(['Transcrição', 'Ata*']))
-    fireEvent.click(screen.getByRole('button', { name: 'Refazer a Ata' }))
-    expect(useUiStore.getState().overlay).toEqual({ kind: 'ata-parts', fileId: id })
-    expect(memory.contents.get(id)).toBe(before)
+    const ata = await ataOf(id)
+    const before = memory.contents.get(ata.id)
+    useUiStore.getState().openMenu({ kind: 'file', id: ata.id, x: 10, y: 10 })
+    render(
+      <MemoryRouter>
+        <ItemMenu />
+      </MemoryRouter>,
+    )
+    fireEvent.click(screen.getByRole('button', { name: /Gerar de novo/ }))
+    expect(useUiStore.getState().overlay).toEqual({ kind: 'ata-parts', fileId: id, again: ata.id })
+    expect(memory.contents.get(ata.id)).toBe(before)
   })
 })
 

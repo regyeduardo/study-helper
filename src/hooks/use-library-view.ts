@@ -1,11 +1,13 @@
 import { useEffect, useMemo } from 'react'
 
 import type { FileMeta, FolderMeta } from '@/types/domain'
+import { isNote } from '@/lib/family'
 import { LOW_MASTERY_BELOW, REVIEW_BELOW } from '@/lib/file-types'
-import { type SearchHit, searchFile, searchWords } from '@/lib/library-search'
+import { filterLibrary, type FilterSource, type PlaceContext } from '@/lib/library-filters'
+import { type SearchHit, type SearchSource, searchFile, searchWords } from '@/lib/library-search'
 import type { View } from '@/lib/paths'
 import { fileBytes, folderBytes } from '@/lib/storage/file-sizes'
-import { liveFiles, liveFolders, useLibraryStore } from '@/stores/library'
+import { liveFiles, liveFolders, type OpenedFile, useLibraryStore } from '@/stores/library'
 import { useUiStore } from '@/stores/ui'
 
 export interface FolderTile {
@@ -23,6 +25,22 @@ export function useLiveLibrary() {
   const files = useLibraryStore(state => state.files)
   const folders = useLibraryStore(state => state.folders)
   return useMemo(() => ({ files: liveFiles(files, folders), folders: liveFolders(folders) }), [files, folders])
+}
+
+/** The files directly in the folders or anywhere below them. */
+export function filesInside(files: FileMeta[], folders: FolderMeta[], folderIds: string[]): FileMeta[] {
+  const ids = new Set(folderIds.flatMap(id => descendants(folders, id)))
+  return files.filter(file => file.folderId && ids.has(file.folderId))
+}
+
+/** What `filterLibrary` needs of the library; `only` is up to each list. The same object while the library is the same. */
+export function useFilterSource(): FilterSource & { library: PlaceContext['library']; localMedia: string[] } {
+  const files = useLibraryStore(state => state.files)
+  const folders = useLibraryStore(state => state.folders)
+  const media = useLibraryStore(state => state.localMedia)
+  const library = useLibraryStore(state => (state.repo?.kind === 'drive' ? 'drive' : 'navegador'))
+  const timeZone = useLibraryStore(state => state.index.settings.timezone)
+  return useMemo(() => ({ files, folders, localMedia: media.flatMap(item => item.fileIds), library, timeZone, now: Date.now() }), [files, folders, media, library, timeZone])
 }
 
 export function useFileBytes(file: FileMeta): number {
@@ -61,6 +79,17 @@ export function usePathName() {
   }, [folders])
 }
 
+/** What the content search reads: a note's text; of an entrada, only its transcription (FR-053), never its own text. */
+export function searchSourceOf(file: FileMeta, opened: OpenedFile | undefined): SearchSource | undefined {
+  return opened && !isNote(file) ? { content: opened.sidecar.transcript ?? '', sidecar: opened.sidecar } : opened
+}
+
+/** The same, as one text for a plain "contains". */
+export function searchTextOf(file: FileMeta, opened: OpenedFile | undefined): string {
+  if (isNote(file)) return opened?.content ?? ''
+  return [opened?.sidecar.transcript ?? '', ...(opened?.sidecar.recording?.blocks ?? []).map(block => block.text)].join(' ')
+}
+
 const LOAD_AT_ONCE = 4
 const loading = new Set<string>()
 
@@ -71,6 +100,7 @@ export function useSearchHits(query: string): Map<string, SearchHit> {
   const searching = searchWords(query).length > 0
   useEffect(() => {
     if (!searching) return
+    // the entradas too: what was said in them is searched
     const missing = files.filter(file => !useLibraryStore.getState().opened[file.id] && !loading.has(file.id))
     let next = 0
     let alive = true
@@ -92,7 +122,7 @@ export function useSearchHits(query: string): Map<string, SearchHit> {
     const hits = new Map<string, SearchHit>()
     if (!searching) return hits
     for (const file of files) {
-      const hit = searchFile(file, opened[file.id], query)
+      const hit = searchFile(file, searchSourceOf(file, opened[file.id]), query)
       if (hit) hits.set(file.id, hit)
     }
     return hits
@@ -114,20 +144,27 @@ export function useLibraryView(view: View, folderId: string | null) {
   const contents = useLibraryStore(state => state.opened)
   const sizes = useLibraryStore(state => state.sizes)
   const media = useLibraryStore(state => state.localMedia)
-  const { query, types, lowMastery, tag, sort } = useUiStore()
+  const { query, types, lowMastery, tag, sort, filters } = useUiStore()
+  const source = useFilterSource()
   const trimmed = query.trim().toLowerCase()
 
   return useMemo(() => {
     const folder = folders.find(item => item.id === folderId) ?? null
-    const browsing = view === 'folder' && !trimmed
+    // the Pasta filter looks beyond the folder being browsed, as in the explorer
+    const browsing = view === 'folder' && !trimmed && !filters.folders.length
     let list = files
     if (browsing) list = list.filter(file => file.folderId === folderId)
-    if (view === 'review') list = list.filter(file => file.mastery !== null && file.mastery < REVIEW_BELOW)
+    if (view === 'review') list = list.filter(file => isNote(file) && file.mastery !== null && file.mastery < REVIEW_BELOW)
     if (view === 'favorites') list = list.filter(file => file.favorite)
     if (types.size) list = list.filter(file => types.has(file.type))
     if (tag) list = list.filter(file => file.tags.includes(tag))
     if (lowMastery) list = list.filter(file => file.mastery !== null && file.mastery < LOW_MASTERY_BELOW)
-    if (trimmed) list = list.filter(file => `${file.name} ${file.description} ${file.tags.join(' ')} ${contents[file.id]?.content ?? ''}`.toLowerCase().includes(trimmed))
+    if (trimmed) list = list.filter(file => `${file.name} ${file.description} ${file.tags.join(' ')} ${searchTextOf(file, contents[file.id])}`.toLowerCase().includes(trimmed))
+
+    // the panel's filters, with the counts of what is left to filter
+    const result = filterLibrary({ ...source, only: new Set(list.map(file => file.id)) }, filters)
+    const kept = new Set(result.items.map(file => file.id))
+    list = list.filter(file => kept.has(file.id))
 
     const sorted = [...list]
     if (sort === 'recent') sorted.sort((a, b) => b.updated.at.localeCompare(a.updated.at))
@@ -149,8 +186,8 @@ export function useLibraryView(view: View, folderId: string | null) {
           })
       : []
 
-    const filtering = Boolean(types.size || lowMastery || tag || trimmed)
+    const filtering = Boolean(types.size || lowMastery || tag || trimmed || result.active.length || filters.scope !== 'tudo')
     const hideFiles = browsing && !sorted.length && tiles.length > 0 && !filtering
-    return { folder, files: sorted, tiles, filtering, hideFiles, browsing }
-  }, [files, folders, contents, sizes, media, view, folderId, trimmed, types, lowMastery, tag, sort])
+    return { folder, files: sorted, tiles, filtering, hideFiles, browsing, result }
+  }, [files, folders, contents, sizes, media, view, folderId, trimmed, types, lowMastery, tag, sort, filters, source])
 }

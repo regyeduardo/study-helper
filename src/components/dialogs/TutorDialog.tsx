@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
 
+import type { TutorArtifact } from '@/types/domain'
 import { noteText } from '@/components/dialogs/CardsDialog'
 import GithubMarkdownView from '@/components/reader/GithubMarkdownView'
 import { Dialog } from '@/components/ui/Dialog'
 import { Icon } from '@/components/ui/Icon'
+import { artifactsOf } from '@/lib/artifacts'
 import { GenerationSession } from '@/lib/generation/session'
-import { askTutor, type TutorMode, type TutorTurn } from '@/lib/generation/tutor'
+import { askTutor, lastConversation, modeOf, type TutorMode, type TutorTurn, withTurns } from '@/lib/generation/tutor'
 import { useLibraryStore } from '@/stores/library'
 import { useUiStore } from '@/stores/ui'
 
@@ -24,7 +26,8 @@ function recognizer(): Recognition | null {
   return Maker ? new Maker() : null
 }
 
-export function TutorDialog({ fileId }: { fileId: string }) {
+/** `conversationId`: opens that conversation; `null`: starts a new one; absent: continues the last one. */
+export function TutorDialog({ fileId, conversationId }: { fileId: string; conversationId?: string | null }) {
   const close = useUiStore(state => state.close)
   const meta = useLibraryStore(state => state.files.find(file => file.id === fileId))
   const settings = useLibraryStore(state => state.index.settings.ai)
@@ -36,21 +39,52 @@ export function TutorDialog({ fileId }: { fileId: string }) {
   const [error, setError] = useState('')
   const note = useRef<Promise<string> | null>(null)
   const canListen = useRef(recognizer() !== null)
+  const conversation = useRef<TutorArtifact | null>(null)
+  // Bumps when another conversation starts: a late answer then goes only to the conversation it belongs to.
+  const round = useRef(0)
 
   useEffect(() => {
     note.current = noteText(fileId)
-  }, [fileId])
+    if (conversationId === null) return
+    void useLibraryStore
+      .getState()
+      .openFile(fileId)
+      .then(({ sidecar }) => {
+        const list = artifactsOf(sidecar)
+        const last = conversationId ? (list.find((item): item is TutorArtifact => item.kind === 'tutor' && item.id === conversationId) ?? null) : lastConversation(list)
+        if (!last || conversation.current || round.current) return
+        conversation.current = last
+        setTurns(last.turns)
+        setMode(modeOf(last))
+      })
+  }, [fileId, conversationId])
+
+  const keep = (talk: TutorArtifact | null, list: TutorTurn[]): TutorArtifact | null => {
+    if (!list.length) return talk
+    const next = withTurns(talk, list)
+    void useLibraryStore
+      .getState()
+      .saveArtifact(fileId, next)
+      .catch(failure => setError(failure instanceof Error ? failure.message : String(failure)))
+    return next
+  }
 
   const send = async (text: string, nextMode = mode, history = turns) => {
     const said = text.trim()
     const asked: TutorTurn[] = said ? [...history, { who: 'você', text: said }] : history
+    const started = round.current
+    const talk = (conversation.current = keep(conversation.current, asked))
     setTurns(asked)
     setDraft('')
     setBusy(true)
     setError('')
     try {
       const reply = await askTutor(await (note.current ?? noteText(fileId)), nextMode, asked, new GenerationSession(settings))
-      setTurns([...asked, { who: 'tutor', text: reply }])
+      const answered: TutorTurn[] = [...asked, { who: 'tutor', text: reply }]
+      const saved = keep(talk, answered)
+      if (round.current !== started) return
+      conversation.current = saved
+      setTurns(answered)
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : String(failure))
     } finally {
@@ -58,10 +92,16 @@ export function TutorDialog({ fileId }: { fileId: string }) {
     }
   }
 
+  const startOver = (nextMode: TutorMode) => {
+    round.current++
+    conversation.current = null
+    setTurns([])
+    if (nextMode === 'testar') void send('', nextMode, [])
+  }
+
   const switchTo = (next: TutorMode) => {
     setMode(next)
-    setTurns([])
-    if (next === 'testar') void send('', next, [])
+    startOver(next)
   }
 
   const listen = () => {
@@ -87,6 +127,10 @@ export function TutorDialog({ fileId }: { fileId: string }) {
               Testar o que sei
             </button>
           </div>
+          <button className="btn quiet" style={{ marginLeft: 'auto', height: 26 }} disabled={busy || !turns.length} onClick={() => startOver(mode)}>
+            <Icon name="plus" />
+            Nova conversa
+          </button>
         </div>
         <ol className="tutor-talk" aria-label="Conversa com o tutor">
           {turns.map((turn, index) => (

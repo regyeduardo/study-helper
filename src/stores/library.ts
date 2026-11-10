@@ -2,6 +2,7 @@ import { create } from 'zustand'
 
 import type {
   Activity,
+  Artifact,
   Attempt,
   FileMeta,
   FileSidecar,
@@ -17,11 +18,17 @@ import type {
   StoredQuestion,
 } from '@/types/domain'
 import type { TokenProvider } from '@/controllers/drive.controller'
-import { legacyAiOf, normalizeSettings } from '@/lib/ai/config'
+import { legacyAiOf, normalizeSettings, targetFor } from '@/lib/ai/config'
+import { missingSetup } from '@/lib/ai/providers'
+import { artifactsOf, hasOldFields, migrated, removeArtifact, renameArtifact, withArtifact, withoutOldFields } from '@/lib/artifacts'
 import { defaultIndex, newFileMeta, newFolderMeta, newSidecar } from '@/lib/defaults'
 import { currentDevice, stamp } from '@/lib/device'
+import { migrateEntries } from '@/lib/entry-migration'
+import { descendantsOf } from '@/lib/family'
 import { masteryOf } from '@/lib/exam'
 import { mediaOf } from '@/lib/file-types'
+import { nameArtifact, nameSource } from '@/lib/generation/artifact-name'
+import { GenerationSession } from '@/lib/generation/session'
 import { activeLinks, saveSharedAttempt, type SharedAttempts, sharedLibrary } from '@/lib/share'
 import { setSharedRoot } from '@/lib/paths'
 import { newId, nowIso } from '@/lib/ids'
@@ -77,6 +84,13 @@ interface LibraryState {
   moveFiles(ids: string[], folderId: string | null): Promise<void>
   hasMedia(id: string): boolean
   trashFiles(ids: string[], options?: { media?: boolean }): Promise<void>
+  /** "Apagar tudo": the item and its live descendants go to the Lixeira marked with its id, to come back together. */
+  trashFamily(id: string): Promise<void>
+  /** "Apagar só esta": its children pass to its mother (none: they become roots), but an Ata stays with its entrada; only the item goes to the Lixeira. */
+  trashOnly(id: string, options?: { media?: boolean }): Promise<void>
+  /** "Apagar só a mídia": the media leaves; the entrada stays, marked as media deleted, with the transcription and the notes. */
+  removeMedia(id: string): Promise<void>
+  /** An item of an "Apagar tudo" brings back all with the same mark; each to the root when its folder is gone. */
   restoreFile(id: string): Promise<void>
   deleteFileForever(id: string): Promise<void>
   createFolder(fields: Partial<FolderMeta> & { name: string }): Promise<FolderMeta>
@@ -93,6 +107,10 @@ interface LibraryState {
   recordAttempt(id: string, attempt: Omit<Attempt, 'id' | 'createdAt' | 'deviceId'>): Promise<void>
   saveHighlight(id: string, highlight: Highlight): Promise<void>
   removeHighlight(id: string, highlightId: string): Promise<void>
+  /** Adds the artifact, or updates the one with its id; `replaceId`: "Substituir este" (takes that one's place and id). */
+  saveArtifact(fileId: string, artifact: Artifact, replaceId?: string): Promise<Artifact>
+  renameArtifact(fileId: string, id: string, name: string): Promise<void>
+  deleteArtifact(fileId: string, id: string): Promise<void>
   markOpened(id: string): void
   forgetCurrent(): Promise<void>
   saveShare(share: ShareRecord): Promise<void>
@@ -180,6 +198,72 @@ export const useLibraryStore = create<LibraryState>((set, get) => {
     await repo.saveIndex(index)
   }
 
+  // Artifact writes of a note run one after the other: each reads what the one before saved.
+  const artifactTurns = new Map<string, Promise<unknown>>()
+  const inTurn = <T>(fileId: string, task: () => Promise<T>): Promise<T> => {
+    const run = (artifactTurns.get(fileId) ?? Promise.resolve()).then(task)
+    artifactTurns.set(
+      fileId,
+      run.catch(() => undefined),
+    )
+    return run
+  }
+
+  /** `byUser`: stamps the note as edited; the migration and the AI naming on open do not. */
+  const changeArtifacts = (fileId: string, change: (sidecar: FileSidecar) => FileSidecar, byUser = true) =>
+    inTurn(fileId, async () => {
+      const sidecar = await sidecarOf(fileId)
+      const next = change(sidecar)
+      if (next === sidecar) return sidecar
+      return saveSidecarOnly(byUser ? { ...next, meta: { ...next.meta, updated: stamp() } } : next)
+    })
+
+  // The old single map and deck become artifacts: the list is saved with the old fields still there, and only then are they cleared.
+  const migrate = (fileId: string) =>
+    inTurn(fileId, async () => {
+      let sidecar = await sidecarOf(fileId)
+      if (!hasOldFields(sidecar)) return
+      const first = migrated(sidecar)
+      if (first.artifacts!.length !== (sidecar.artifacts?.length ?? -1)) sidecar = await saveSidecarOnly(first)
+      const cleared = withoutOldFields(sidecar)
+      if (cleared !== sidecar) await saveSidecarOnly(cleared)
+    })
+
+  /** The notes made before entradas existed get theirs (once per library, with a copy first); a failure leaves the library as it was. */
+  const migrateOnLoad = async (repo: Repository, snapshot: Snapshot) => {
+    const localMedia = (await listLocalMedia().catch(() => [] as LocalMedia[])).flatMap(item => item.fileIds)
+    const migrated = await migrateEntries(repo, snapshot, { localMedia }).catch(() => null)
+    if (!migrated || migrated === snapshot || get().repo !== repo || get().sharedView) return
+    const before = new Map(snapshot.files.map(file => [file.id, file]))
+    for (const file of migrated.files) if (before.get(file.id) !== file) replaceFile(file)
+    set(state => ({ index: { ...state.index, entriesMigratedAt: migrated.index.entriesMigratedAt } }))
+  }
+
+  const naming = new Set<string>()
+  const nameProvisional = async (fileId: string) => {
+    const target = targetFor(get().index.settings, 'titulo')
+    if (missingSetup(target) || naming.has(fileId)) return
+    const waiting = artifactsOf(await sidecarOf(fileId)).filter(item => item.provisionalName)
+    if (!waiting.length) return
+    naming.add(fileId)
+    try {
+      const session = new GenerationSession(target)
+      for (const artifact of waiting) {
+        const name = await nameArtifact(nameSource(artifact), artifact.kind, artifact.made?.instruction, session).catch(() => null)
+        if (!name) continue
+        await changeArtifacts(fileId, sidecar => (artifactsOf(sidecar).find(item => item.id === artifact.id)?.provisionalName ? renameArtifact(sidecar, artifact.id, name) : sidecar), false)
+      }
+    } finally {
+      naming.delete(fileId)
+    }
+  }
+
+  /** On the first open of a note: migrate the old fields, then let the AI name what still has the placeholder. Failures keep things as they were. */
+  const tidyArtifacts = async (fileId: string) => {
+    await migrate(fileId).catch(() => undefined)
+    await nameProvisional(fileId).catch(() => undefined)
+  }
+
   return {
     repo: null,
     accountId: null,
@@ -224,6 +308,7 @@ export const useLibraryStore = create<LibraryState>((set, get) => {
         if (get().repo !== repo) return
         get().applySnapshot(snapshot)
         set({ ready: true })
+        await migrateOnLoad(repo, snapshot)
         await get().purgeExpiredTrash()
       } catch (error) {
         if (get().repo === repo) set({ loadError: error instanceof Error ? error.message : 'Não consegui abrir a biblioteca.', ready: true })
@@ -266,6 +351,7 @@ export const useLibraryStore = create<LibraryState>((set, get) => {
       const [content, sidecar] = await Promise.all([repository().readContent(id), repository().readSidecar(id)])
       const opened = { content, sidecar }
       set(state => ({ opened: { ...state.opened, [id]: opened } }))
+      if (hasOldFields(sidecar) || artifactsOf(sidecar).some(item => item.provisionalName)) void tidyArtifacts(id)
       return opened
     },
 
@@ -317,15 +403,44 @@ export const useLibraryStore = create<LibraryState>((set, get) => {
       }
     },
 
+    trashFamily: async id => {
+      const root = get().files.find(file => file.id === id)
+      if (!root) return
+      const at = nowIso()
+      for (const file of [root, ...descendantsOf(get().files, id)]) await get().updateFile(file.id, { deletedAt: at, trashedWith: id })
+    },
+
+    trashOnly: async (id, options) => {
+      const meta = get().files.find(file => file.id === id)
+      if (!meta) return
+      // an Ata never loses its entrada (FR-055): at most, its mother is in the Lixeira
+      const keeps = (child: FileMeta) => meta.role === 'entrada' && child.type === 'meeting'
+      for (const child of get().files.filter(file => file.parentFileId === id && !keeps(file))) await get().updateFile(child.id, { parentFileId: meta.parentFileId ?? null })
+      await get().trashFiles([id], options)
+    },
+
+    removeMedia: async id => {
+      if (!get().hasMedia(id)) return
+      const origin = await removeMediaOf(id)
+      if (origin) await get().updateFile(id, { origin })
+    },
+
     restoreFile: async id => {
       const meta = get().files.find(file => file.id === id)
-      const folder = get().folders.find(item => item.id === meta?.folderId)
-      await get().updateFile(id, { deletedAt: null, folderId: folder && !folder.deletedAt ? meta!.folderId : null })
+      if (!meta) return
+      const mark = meta.trashedWith
+      const family = mark ? get().files.filter(file => file.trashedWith === mark && file.deletedAt) : [meta]
+      for (const file of family) {
+        const folder = get().folders.find(item => item.id === file.folderId)
+        await get().updateFile(file.id, { deletedAt: null, folderId: folder && !folder.deletedAt ? file.folderId : null, ...(mark ? { trashedWith: undefined } : {}) })
+      }
     },
 
     deleteFileForever: async id => {
       const meta = get().files.find(file => file.id === id)
-      if (meta?.origin?.storage === 'drive' && meta.origin.storedFileId) await repository().removeSource(meta.origin.storedFileId).catch(() => undefined)
+      const ref = meta?.origin?.storage === 'drive' ? meta.origin.storedFileId : undefined
+      // an entrada and the notes that existed before it share the stored file: it goes with the last one
+      if (ref && !get().files.some(file => file.id !== id && file.origin?.storedFileId === ref)) await repository().removeSource(ref).catch(() => undefined)
       await repository().removeFile(id)
       set(state => {
         const opened = { ...state.opened }
@@ -445,6 +560,19 @@ export const useLibraryStore = create<LibraryState>((set, get) => {
 
     removeHighlight: async (id, highlightId) => {
       await get().updateSidecar(id, sidecar => ({ ...sidecar, highlights: sidecar.highlights.filter(item => item.id !== highlightId) }))
+    },
+
+    saveArtifact: async (fileId, artifact, replaceId) => {
+      const list = artifactsOf(await changeArtifacts(fileId, sidecar => withArtifact(sidecar, { ...artifact, updatedAt: nowIso() }, replaceId)))
+      return list.find(item => item.id === replaceId) ?? list.find(item => item.id === artifact.id)!
+    },
+
+    renameArtifact: async (fileId, id, name) => {
+      await changeArtifacts(fileId, sidecar => renameArtifact(sidecar, id, name))
+    },
+
+    deleteArtifact: async (fileId, id) => {
+      await changeArtifacts(fileId, sidecar => removeArtifact(sidecar, id))
     },
 
     markOpened: id => {

@@ -125,10 +125,11 @@ export async function fetchSharedItemController(id: string): Promise<SharedItem 
   const folders = await Promise.all(manifest.folders.map(entry => sharedJson<SharedFolder>(id, `${entry.path}.folder.json`)))
   const files = await Promise.all(
     manifest.files.map(async entry => {
-      const [content, sidecar] = await Promise.all([sharedText(id, `${entry.path}.md`), sharedJson<FileSidecar>(id, `${entry.path}.json`)])
+      // the Worker keeps the shared artifacts in the sidecar, in the link's own shape
+      const [content, sidecar] = await Promise.all([sharedText(id, `${entry.path}.md`), sharedJson<Omit<FileSidecar, 'artifacts'> & Pick<SharedFile, 'artifacts'>>(id, `${entry.path}.json`)])
       if (content === null || !sidecar) return null
       const { meta } = sidecar
-      const file: SharedFile = { id: entry.id, name: meta.name, folderId: meta.folderId, type: meta.type, position: meta.position, description: meta.description, tags: meta.tags ?? [], content, questions: sidecar.questions ?? [], highlights: sidecar.highlights ?? [], ...(sidecar.transcript !== undefined ? { transcript: sidecar.transcript } : {}), ...(sidecar.recording ? { recording: sidecar.recording } : {}), ...(sidecar.documents ? { documents: sidecar.documents } : {}), ...(entry.media ? { media: { url: sharedMediaUrl(id, entry.id), mime: entry.media.mime, size: entry.media.size } } : {}), meta }
+      const file: SharedFile = { id: entry.id, name: meta.name, folderId: meta.folderId, type: meta.type, position: meta.position, description: meta.description, tags: meta.tags ?? [], content, questions: sidecar.questions ?? [], highlights: sidecar.highlights ?? [], ...(sidecar.transcript !== undefined ? { transcript: sidecar.transcript } : {}), ...(sidecar.recording ? { recording: sidecar.recording } : {}), ...(sidecar.documents ? { documents: sidecar.documents } : {}), ...(sidecar.artifacts ? { artifacts: sidecar.artifacts } : {}), ...(entry.media ? { media: { url: sharedMediaUrl(id, entry.id), mime: entry.media.mime, size: entry.media.size } } : {}), meta }
       return file
     }),
   )

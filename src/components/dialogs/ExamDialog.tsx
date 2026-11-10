@@ -7,6 +7,7 @@ import { ModelPick, useModelChoice } from '@/components/dialogs/ModelPick'
 import { Dialog } from '@/components/ui/Dialog'
 import { Icon } from '@/components/ui/Icon'
 import { targetFor } from '@/lib/ai/config'
+import { isNote } from '@/lib/family'
 import { CERTAINTY_LABELS, examStats, givenAnswerText, isAnswered, LETTERS, LEVEL_LABELS, questionFromStored, questionType, rightAnswerText, shuffleExam, statementLines, storedAnswer, summarizeExam } from '@/lib/exam'
 import { type Diagnosis, diagnoseMistakes, gapExcerpt, type MissedQuestion } from '@/lib/generation/diagnosis'
 import { paths } from '@/lib/paths'
@@ -616,7 +617,7 @@ export function FolderExamDialog({ folderId, fileIds }: { folderId: string | nul
       }
       walk(folderId)
     }
-    const files = library.files.filter(file => !file.deletedAt && (fileIds ? fileIds.includes(file.id) : file.folderId !== null && ids.has(file.folderId)))
+    const files = library.files.filter(file => !file.deletedAt && isNote(file) && (fileIds ? fileIds.includes(file.id) : file.folderId !== null && ids.has(file.folderId)))
     void Promise.all(files.map(async file => (await library.openFile(file.id)).sidecar.questions.map(question => ({ question, fileId: file.id })))).then(lists => setPool(lists.flat()))
   }, [folderId, fileIds])
 

@@ -6,7 +6,7 @@ import { Dialog } from '@/components/ui/Dialog'
 import { Icon } from '@/components/ui/Icon'
 import { IntegrationStatus } from '@/components/dialogs/IntegrationStatus'
 import { ModelPick, useModelChoice } from '@/components/dialogs/ModelPick'
-import { FolderPicker } from '@/components/dialogs/SimpleDialogs'
+import { FolderField } from '@/components/dialogs/FolderChooser'
 import { SourceStoragePicker } from '@/components/dialogs/SourceStoragePicker'
 import type { LitterboxTime } from '@/controllers/hosting.controller'
 import {
@@ -902,7 +902,7 @@ function RecordingDoneOptions({ place }: { place: 'dialog' | 'window' }) {
       />
       <div className="field">
         <span className="lab">Pasta</span>
-        <FolderPicker value={folderId} onChange={setFolderId} />
+        <FolderField value={folderId} onChange={setFolderId} />
       </div>
     </div>
   )

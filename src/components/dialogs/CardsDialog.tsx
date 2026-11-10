@@ -1,12 +1,15 @@
 import { useEffect, useState } from 'react'
 
-import type { StudyCard } from '@/types/domain'
+import type { CardsArtifact } from '@/types/domain'
+import { MoreOptions } from '@/components/dialogs/FromNoteFields'
 import { ModelPick, useModelChoice } from '@/components/dialogs/ModelPick'
 import { Dialog } from '@/components/ui/Dialog'
 import { Icon } from '@/components/ui/Icon'
 import { targetFor } from '@/lib/ai/config'
+import { artifactsOf, decksOf, newCardsArtifact } from '@/lib/artifacts'
 import { generateCards, reviewed, today } from '@/lib/generation/cards'
 import { GenerationSession } from '@/lib/generation/session'
+import { nowIso } from '@/lib/ids'
 import { transcriptText } from '@/lib/transcription/export'
 import { useLibraryStore } from '@/stores/library'
 import { useUiStore } from '@/stores/ui'
@@ -16,27 +19,30 @@ export async function noteText(fileId: string): Promise<string> {
   return sidecar.recording?.blocks.length ? transcriptText(sidecar.recording) : content
 }
 
-async function saveCards(fileId: string, cards: StudyCard[]): Promise<void> {
-  const library = useLibraryStore.getState()
-  await library.updateSidecar(fileId, sidecar => ({ ...sidecar, cards }))
-  await library.updateFile(fileId, { cardDue: cards.map(card => card.due) })
-}
-
-export function CardsDialog({ fileId }: { fileId: string }) {
+/** Without `deckId` it reviews the due cards of every deck of the note ("Revisar"); with it, only that deck. */
+export function CardsDialog({ fileId, deckId }: { fileId: string; deckId?: string }) {
   const close = useUiStore(state => state.close)
   const meta = useLibraryStore(state => state.files.find(file => file.id === fileId))
   const settings = useLibraryStore(state => state.index.settings)
   const choice = useModelChoice('cartoes')
-  const [cards, setCards] = useState<StudyCard[] | null>(null)
+  const [decks, setDecks] = useState<CardsArtifact[] | null>(null)
+  const [only, setOnly] = useState(deckId)
   const [queue, setQueue] = useState<string[]>([])
   const [showing, setShowing] = useState(false)
   const [busy, setBusy] = useState('')
   const [error, setError] = useState('')
   const [done, setDone] = useState(0)
+  const [instruction, setInstruction] = useState('')
 
-  const start = (list: StudyCard[]) => {
-    setCards(list)
-    setQueue(list.filter(card => card.due <= today()).map(card => card.id))
+  const start = (all: CardsArtifact[], deck = only) => {
+    setDecks(all)
+    setOnly(deck)
+    setQueue(
+      decksOf(all, deck)
+        .flatMap(item => item.cards)
+        .filter(card => card.due <= today())
+        .map(card => card.id),
+    )
     setShowing(false)
   }
 
@@ -44,17 +50,19 @@ export function CardsDialog({ fileId }: { fileId: string }) {
     void useLibraryStore
       .getState()
       .openFile(fileId)
-      .then(({ sidecar }) => start(sidecar.cards ?? []))
+      .then(({ sidecar }) => start(decksOf(artifactsOf(sidecar))))
   }, [fileId])
 
   const make = async () => {
     setBusy('Fazendo os cartões da nota')
     setError('')
     try {
-      const made = await generateCards(await noteText(fileId), new GenerationSession(targetFor(settings, 'cartoes', choice.model)))
-      if (!made.length) throw new Error('A IA não devolveu nenhum cartão. Tente de novo.')
-      await saveCards(fileId, made)
-      start(made)
+      const said = instruction.trim()
+      const made = await generateCards(await noteText(fileId), new GenerationSession(targetFor(settings, 'cartoes', choice.model)), said)
+      if (!made.cards.length) throw new Error('A IA não devolveu nenhum cartão. Tente de novo.')
+      const deck = newCardsArtifact({ name: made.name, cards: made.cards, made: { ...(choice.model ? { model: choice.model } : {}), ...(said ? { instruction: said } : {}), at: nowIso() } })
+      await useLibraryStore.getState().saveArtifact(fileId, deck)
+      start([...(decks ?? []), deck], deck.id)
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : String(failure))
     } finally {
@@ -63,16 +71,18 @@ export function CardsDialog({ fileId }: { fileId: string }) {
   }
 
   const answer = async (right: boolean) => {
-    if (!cards) return
     const id = queue[0]
-    const next = cards.map(card => (card.id === id ? reviewed(card, right) : card))
-    setCards(next)
+    const deck = decks?.find(item => item.cards.some(card => card.id === id))
+    if (!decks || !deck) return
+    const next = { ...deck, cards: deck.cards.map(card => (card.id === id ? reviewed(card, right) : card)) }
+    setDecks(decks.map(item => (item.id === deck.id ? next : item)))
     setQueue(right ? queue.slice(1) : [...queue.slice(1), id])
     setShowing(false)
     setDone(count => count + (right ? 1 : 0))
-    await saveCards(fileId, next)
+    await useLibraryStore.getState().saveArtifact(fileId, next)
   }
 
+  const cards = decks && decksOf(decks, only).flatMap(item => item.cards)
   const current = cards?.find(card => card.id === queue[0])
   return (
     <Dialog title={`Cartões${meta ? `: ${meta.name}` : ''}`} size="narrow" onClose={close}>
@@ -89,6 +99,7 @@ export function CardsDialog({ fileId }: { fileId: string }) {
           <div className="cards-empty">
             <p>Esta nota ainda não tem cartões.</p>
             <ModelPick choice={choice} />
+            <MoreOptions instruction={instruction} onInstruction={setInstruction} placeholder="Ex.: foque nas datas e nos nomes" />
             <button className="btn primary" disabled={!choice.ready} onClick={() => void make()}>
               Fazer os cartões
             </button>
@@ -123,9 +134,8 @@ export function CardsDialog({ fileId }: { fileId: string }) {
             <p className="muted">
               {cards.length} cartões · próximos em {[...new Set(cards.map(card => card.due))].sort()[0] ?? '—'}
             </p>
-            <ModelPick choice={choice} />
-            <button className="btn quiet" disabled={!choice.ready} onClick={() => void make()}>
-              Fazer os cartões de novo
+            <button className="btn quiet" onClick={() => useUiStore.getState().open({ kind: 'generate-artifact', fileId, artifact: 'cartoes' })}>
+              Fazer outro baralho
             </button>
           </div>
         )}

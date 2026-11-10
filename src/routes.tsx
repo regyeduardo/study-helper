@@ -15,6 +15,8 @@ export const router = createBrowserRouter(
         { path: '/favoritos', element: <WorkspacePage /> },
         { path: '/lixeira', element: <WorkspacePage /> },
         { path: '/arquivo/:fileId', element: <WorkspacePage /> },
+        { path: '/entradas', element: <WorkspacePage /> },
+        { path: '/entrada/:fileId', element: <WorkspacePage /> },
         { path: '/compartilhados', element: <WorkspacePage /> },
         { path: '/compartilhados-comigo', element: <WorkspacePage /> },
         { path: '/shared/:shareId', element: <WorkspacePage /> },

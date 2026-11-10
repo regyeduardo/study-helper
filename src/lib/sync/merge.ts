@@ -1,6 +1,7 @@
 import { diffArrays } from 'diff'
 
-import type { FileSidecar } from '@/types/domain'
+import type { DiagnosisRecord, FileSidecar, FolderMeta } from '@/types/domain'
+import { artifactMeta, placeholderName } from '@/lib/artifacts'
 import type { FieldConflict } from '@/lib/storage/repository'
 
 export interface TextHunk {
@@ -115,6 +116,8 @@ const META_LABELS: Record<string, string> = {
 }
 
 const IGNORED_META = new Set(['updated', 'words', 'readingMinutes', 'mastery', 'lastReviewedAt', 'questionCount'])
+/** Come from the artifacts list: taken from the merged list, never picked side by side. */
+const ARTIFACT_META = new Set(['artifacts', 'cardDue', 'hasMindmap'])
 
 function equal(left: unknown, right: unknown): boolean {
   return JSON.stringify(left) === JSON.stringify(right)
@@ -167,28 +170,66 @@ export interface SidecarMerge {
   conflicts: FieldConflict[]
 }
 
+/** The side that changed it since the base wins; untouched on this device, the other device's value stays. */
+function changedSide<T>(base: T | undefined, mine: T | undefined, theirs: T | undefined): T | undefined {
+  return JSON.stringify(mine) === JSON.stringify(base) ? (theirs ?? mine) : mine
+}
+
 export function mergeSidecar(base: FileSidecar, mine: FileSidecar, theirs: FileSidecar): SidecarMerge {
   const conflicts: FieldConflict[] = []
   const meta = { ...mine.meta }
   const record = meta as unknown as Record<string, unknown>
-  for (const key of Object.keys(mine.meta) as (keyof typeof mine.meta)[]) {
-    if (IGNORED_META.has(key)) continue
+  const withArtifacts = Boolean(mine.artifacts || theirs.artifacts)
+  // Both sides' keys: a field only the other device wrote (one this device does not have yet) is not dropped.
+  for (const key of [...new Set([...Object.keys(mine.meta), ...Object.keys(theirs.meta)])] as (keyof typeof mine.meta)[]) {
+    if (IGNORED_META.has(key) || (withArtifacts && ARTIFACT_META.has(key))) continue
     record[key] = pick(base.meta[key], mine.meta[key], theirs.meta[key], `meta.${key}`, META_LABELS[key] ?? key, conflicts)
   }
   if (theirs.meta.updated.at > mine.meta.updated.at && conflicts.length === 0) meta.updated = theirs.meta.updated
 
-  const recording = JSON.stringify(mine.recording) === JSON.stringify(base.recording) ? (theirs.recording ?? mine.recording) : mine.recording
+  const recording = changedSide(base.recording, mine.recording, theirs.recording)
+  // fields with no merge of their own were dropped here: a sync between two devices lost the transcript, the old Atas and the old map/deck
+  const transcript = changedSide(base.transcript, mine.transcript, theirs.transcript)
+  const documents = changedSide(base.documents, mine.documents, theirs.documents)
+  const cards = changedSide(base.cards, mine.cards, theirs.cards)
+  const mindmap = changedSide(base.mindmap, mine.mindmap, theirs.mindmap)
+  const artifacts = withArtifacts
+    ? mergeById(base.artifacts ?? [], mine.artifacts ?? [], theirs.artifacts ?? [], item => item.id, 'artifacts', item => `${placeholderName(item.kind)}: ${item.name}`, conflicts)
+    : undefined
 
   return {
     merged: {
-      meta,
+      meta: artifacts ? { ...meta, ...artifactMeta(artifacts) } : meta,
       questions: mergeById(base.questions, mine.questions, theirs.questions, item => item.storedId, 'questions', item => `Questão: ${item.enunciado.slice(0, 60)}`, conflicts),
       attempts: mergeById(base.attempts, mine.attempts, theirs.attempts, item => item.id, 'attempts', item => `Prova de ${item.createdAt}`, conflicts),
       highlights: mergeById(base.highlights, mine.highlights, theirs.highlights, item => item.id, 'highlights', item => `Destaque: ${item.quote.slice(0, 60)}`, conflicts),
       ...(recording ? { recording } : {}),
+      ...(transcript !== undefined ? { transcript } : {}),
+      ...(documents ? { documents } : {}),
+      ...(cards ? { cards } : {}),
+      ...(mindmap ? { mindmap } : {}),
+      ...(artifacts ? { artifacts } : {}),
     },
     conflicts,
   }
+}
+
+/** A folder has no conflict screen: per field, the side that changed it since the base wins, mine when both did. */
+export function mergeFolder(base: FolderMeta, mine: FolderMeta, theirs: FolderMeta): FolderMeta {
+  const keys = [...new Set([...Object.keys(mine), ...Object.keys(theirs)])] as (keyof FolderMeta)[]
+  return Object.fromEntries(keys.map(key => [key, equal(mine[key], base[key]) ? theirs[key] : mine[key]])) as unknown as FolderMeta
+}
+
+/** Settings.aiDiagnosis between devices: the newest result of each use + provider + model stays. */
+export function mergeDiagnosis(mine: DiagnosisRecord[] | undefined, theirs: DiagnosisRecord[] | undefined): DiagnosisRecord[] | undefined {
+  if (!mine && !theirs) return undefined
+  const newest = new Map<string, DiagnosisRecord>()
+  for (const record of [...(mine ?? []), ...(theirs ?? [])]) {
+    const key = JSON.stringify([record.use, record.provider, record.model])
+    const known = newest.get(key)
+    if (!known || record.at > known.at) newest.set(key, record)
+  }
+  return [...newest.values()]
 }
 
 export function applyFieldChoices(merged: FileSidecar, conflicts: FieldConflict[], choices: Record<string, 'mine' | 'theirs'>): FileSidecar {
@@ -200,9 +241,9 @@ export function applyFieldChoices(merged: FileSidecar, conflicts: FieldConflict[
       ;(result.meta as unknown as Record<string, unknown>)[key] = value
       continue
     }
-    const list = result[section as 'questions' | 'attempts' | 'highlights'] as unknown as { storedId?: string; id?: string }[]
+    const list = result[section as 'questions' | 'attempts' | 'highlights' | 'artifacts'] as unknown as { storedId?: string; id?: string }[]
     const position = list.findIndex(item => (item.storedId ?? item.id) === key)
     if (position >= 0) list[position] = value as { storedId?: string; id?: string }
   }
-  return result
+  return result.artifacts ? { ...result, meta: { ...result.meta, ...artifactMeta(result.artifacts) } } : result
 }

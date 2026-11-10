@@ -1,0 +1,15 @@
+/* Família na lista da pasta e no cabeçalho da nota: aninhamento, contagem e selo "de: <mãe>". */
+.fam-count{font-size:11.5px;font-weight:400;color:var(--fg-muted);border:1px solid var(--border);border-radius:10px;padding:1px 8px;white-space:nowrap;line-height:1.4}
+.fam-selo{color:var(--accent);text-decoration:none;overflow-wrap:anywhere;min-width:0}
+a.fam-selo:hover{text-decoration:underline;text-underline-offset:3px}
+.fam-selo.off{color:var(--fg-muted)}
+.fam-selo-row{display:block;width:fit-content;max-width:100%;font-size:12px;line-height:1.4;margin:2px 0 0 24px}
+/* Nested under the mother: one step in per level, the name lined up with the mother's name. */
+.ex-table tr.fam-nested>td:first-child{padding-left:calc(10px + var(--fam-depth,1) * 24px)}
+.title>.fam-count{margin-left:8px;vertical-align:1px}
+.tr .title>.fam-selo-row{margin:2px 0 0;font-weight:400}
+/* An option that cannot be picked says why (FR-023, FR-046): the option fades, the reason stays readable. Beats `.opt[aria-disabled]`, which fades the reason too. */
+.opts.says-why .opt[aria-disabled="true"]{opacity:1}
+.opts.says-why .opt[aria-disabled="true"]:hover{background:none}
+.opts.says-why .opt[aria-disabled="true"] b,.opts.says-why .opt[aria-disabled="true"] span:not(.lim){color:var(--fg-faint)}
+.opts.says-why .opt[aria-disabled="true"] .radio{opacity:.5}

@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 
 import { Icon, type IconName } from '@/components/ui/Icon'
-import { useLiveLibrary, usePathName } from '@/hooks/use-library-view'
+import { searchTextOf, useLiveLibrary, usePathName } from '@/hooks/use-library-view'
 import { useViewRoute } from '@/hooks/use-view-route'
 import { paths } from '@/lib/paths'
 import { toggleTheme } from '@/lib/theme'
@@ -37,7 +37,7 @@ export function CommandPalette() {
     const q = query.trim().toLowerCase()
     const matches = (text: string) => !q || text.toLowerCase().includes(q)
     const docs = files
-      .filter(file => matches(`${file.name} ${file.tags.join(' ')} ${contents[file.id]?.content ?? ''}`))
+      .filter(file => matches(`${file.name} ${file.tags.join(' ')} ${searchTextOf(file, contents[file.id])}`))
       .sort((a, b) => (openedAt[b.id] ?? 0) - (openedAt[a.id] ?? 0) || b.updated.at.localeCompare(a.updated.at))
       .slice(0, RESULT_LIMIT)
       .map<Item>(file => ({

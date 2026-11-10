@@ -535,6 +535,56 @@ describe('plain page of a share, for AI agents and people without login', () => 
     expect((await call('GET', `/shared/${id}/share.json`)).status).toBe(404)
   })
 
+  const mapArtifact = { id: 'mapa-1', kind: 'mapa', name: 'Decisões do reajuste', diagram: { form: 'arvore', root: { id: 'r', text: 'Reajuste', children: [] } }, mermaid: 'flowchart LR\n  m0(["Reajuste"])\n  m0 --> m1\n  m1["Índice#58; IPCA"]' }
+  const cardsArtifact = { id: 'baralho-1', kind: 'cartoes', name: 'Datas', cards: [{ id: 'c1', front: 'Quando reajusta?', back: 'Em março.' }, { id: 'c2', front: 'Qual índice?', back: 'IPCA.' }] }
+  const tutorArtifact = { id: 'conversa-1', kind: 'tutor', name: 'Por que IPCA', turns: [{ who: 'você', text: 'Por que o IPCA?' }, { who: 'tutor', text: 'Porque mede a inflação oficial.' }] }
+
+  it('keeps the artifacts in the shared sidecar; an old share without them stays as it was', async () => {
+    const id = await noteShare({ artifacts: [mapArtifact, cardsArtifact, tutorArtifact] })
+    expect(JSON.parse(env.BUCKET.objects.get(`shared/${id}/Reunião.json`).body).artifacts).toEqual([mapArtifact, cardsArtifact, tutorArtifact])
+    const plain = await (await post()).json()
+    expect(JSON.parse(env.BUCKET.objects.get(`shared/${plain.id}/Nota.json`).body)).not.toHaveProperty('artifacts')
+  })
+
+  it('refuses artifacts that are not a list of objects, or carry binary bytes', async () => {
+    for (const artifacts of ['mapa', { 0: mapArtifact }, [mapArtifact, 'texto'], [null], [{ ...mapArtifact, mermaid: 'flowchart\u0000' }]]) {
+      const note = { ...share().files[0], artifacts }
+      const response = await call('POST', '/shares', { token: 'token-ana', body: { turnstileToken: 'ok', share: { ...share(), files: [note] } } })
+      expect(response.status).toBe(415)
+    }
+    expect([...env.BUCKET.objects.keys()]).toEqual([])
+  })
+
+  it('prints a section per artifact after the note text: the Mermaid code, the cards front and back, one Tutor turn per line', async () => {
+    const id = await noteShare({ artifacts: [mapArtifact, cardsArtifact, tutorArtifact] })
+    const html = await (await open(`/s/${id}`)).text()
+    inOrder(html, ['# Ata\n\n- Preço', '<h3>Mapa mental: Decisões do reajuste</h3>', '<pre>flowchart LR\n  m0([&quot;Reajuste&quot;])\n  m0 --&gt; m1\n  m1[&quot;Índice#58; IPCA&quot;]</pre>', '<h3>Cartões: Datas</h3>', '<h3>Conversa do Tutor: Por que IPCA</h3>', '<h3>Transcrição</h3>'])
+    expect(html).toContain('<pre>Frente: Quando reajusta?\nVerso: Em março.</pre>')
+    expect(html).toContain('<pre>Frente: Qual índice?\nVerso: IPCA.</pre>')
+    expect(html).toContain('<pre>Você: Por que o IPCA?\nTutor: Porque mede a inflação oficial.</pre>')
+    const markdown = await (await open(`/s/${id}.md`)).text()
+    expect(markdown).toContain(`### Mapa mental: Decisões do reajuste\n\n\`\`\`mermaid\n${mapArtifact.mermaid}\n\`\`\``)
+    expect(markdown).toContain('### Cartões: Datas\n\nFrente: Quando reajusta?\nVerso: Em março.\n\nFrente: Qual índice?\nVerso: IPCA.')
+    expect(markdown).toContain('### Conversa do Tutor: Por que IPCA\n\nVocê: Por que o IPCA?\nTutor: Porque mede a inflação oficial.')
+    const old = await noteShare()
+    expect(await (await open(`/s/${old}`)).text()).not.toMatch(/Mapa mental|Cartões|Conversa do Tutor/)
+  })
+
+  it('escapes the HTML that comes in the artifacts', async () => {
+    const evil = '<img src=x onerror=alert(1)>'
+    const artifacts = [
+      { ...mapArtifact, name: evil, mermaid: '</pre><script>alert(2)</script>' },
+      { ...cardsArtifact, name: evil, cards: [{ id: 'c1', front: '<b>frente</b>', back: '<i>verso</i>' }] },
+      { ...tutorArtifact, name: evil, turns: [{ who: 'tutor', text: '<script>alert(3)</script>' }] },
+    ]
+    const html = await (await open(`/s/${await noteShare({ artifacts })}`)).text()
+    expect(html).not.toMatch(/<img|<script>alert|<b>|<i>/)
+    expect(html).toContain('<h3>Mapa mental: &lt;img src=x onerror=alert(1)&gt;</h3>')
+    expect(html).toContain('&lt;/pre&gt;&lt;script&gt;alert(2)&lt;/script&gt;')
+    expect(html).toContain('Frente: &lt;b&gt;frente&lt;/b&gt;')
+    expect(html).toContain('Tutor: &lt;script&gt;alert(3)&lt;/script&gt;')
+  })
+
   it('renders every question type with its gabarito, and an old plain transcript', () => {
     const share = {
       id: 'AbCdEfGhIjKlMnOpQrStUv',

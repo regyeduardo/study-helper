@@ -5,7 +5,7 @@ import type { CourseAnalysis } from '@/types/domain'
 import { Dialog } from '@/components/ui/Dialog'
 import { Icon } from '@/components/ui/Icon'
 import { ModelPick, useModelChoice } from '@/components/dialogs/ModelPick'
-import { FolderPicker } from '@/components/dialogs/SimpleDialogs'
+import { FolderField } from '@/components/dialogs/FolderChooser'
 import { DEFAULT_STORAGE_LIMIT_BYTES } from '@/lib/defaults'
 import { storedFromRaw } from '@/lib/exam'
 import { importDocument } from '@/lib/imports'
@@ -256,7 +256,7 @@ export function ImportDialog() {
         <input type="file" id="imp-file" hidden accept=".md,.zip,.pdf,.docx" onChange={event => void importFile(event.target.files?.[0] ?? null)} />
         <div className="field">
           <span className="lab">Pasta</span>
-          <FolderPicker value={folderId} onChange={setFolderId} />
+          <FolderField value={folderId} onChange={setFolderId} />
         </div>
         {error && (
           <div className="banner" role="alert">
@@ -318,7 +318,7 @@ export function CourseProposalDialog() {
         </span>
         <div className="field">
           <span className="lab">Onde criar a pasta</span>
-          <FolderPicker value={folderId} onChange={setFolderId} />
+          <FolderField value={folderId} onChange={setFolderId} title="Onde criar a pasta" />
         </div>
       </div>
     </Dialog>

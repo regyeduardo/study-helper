@@ -14,7 +14,10 @@ vi.mock('@/lib/exports/pdf', () => ({ printMarkdownAsPdf: vi.fn(async () => unde
 
 import { AtaPartsDialog } from '@/components/dialogs/AtaPartsDialog'
 import { GenerateDialog } from '@/components/dialogs/GenerateDialog'
+import { CourseProposalDialog, ImportDialog } from '@/components/dialogs/MoreDialogs'
 import { NewContentDialog } from '@/components/dialogs/NewContentDialog'
+import { RecordingDoneDialog } from '@/components/dialogs/RecordDialogs'
+import { MoveDialog } from '@/components/dialogs/SimpleDialogs'
 import { ItemMenu } from '@/components/library/ItemMenu'
 import { DocumentBody } from '@/components/reader/DocumentArticle'
 import { defaultIndex } from '@/lib/defaults'
@@ -26,8 +29,9 @@ import { INSTRUCTION_HEAD } from '@/lib/generation/instruction'
 import { PROMPTS } from '@/lib/generation/prompts.data'
 import { buildShareContent } from '@/lib/share'
 import type { Repository } from '@/lib/storage/repository'
-import { homeFolderOf, useJobsStore } from '@/stores/jobs'
+import { type CourseProposal, homeFolderOf, useJobsStore } from '@/stores/jobs'
 import { useLibraryStore } from '@/stores/library'
+import { useRecorderStore } from '@/stores/recorder'
 import { useUiStore } from '@/stores/ui'
 import { type CapturedRequest, installFetch, openAiStream, systemPromptOf, userContentOf } from '@/test/ai/fake-provider'
 import { meeting, MODEL_DOCUMENT, textAnswer } from '@/test/generation/ata-fixture'
@@ -112,7 +116,9 @@ const file = (id: string) => useLibraryStore.getState().files.find(item => item.
 const folderNamed = (name: string) => useLibraryStore.getState().folders.find(folder => folder.name === name)
 const saveIn = (dialog: HTMLElement) => within(dialog).getByRole('group', { name: 'Salvar em' })
 const folderWindow = () => screen.getByRole('dialog', { name: 'Onde salvar a nota nova' })
-const chosenFolder = (dialog: HTMLElement) => ((within(dialog).getByLabelText('Pasta') as HTMLSelectElement).selectedOptions[0].textContent ?? '').trim()
+const folderTree = (dialog: HTMLElement) => within(dialog).getByRole('tree', { name: 'Todas as pastas' })
+const chosenFolder = (dialog: HTMLElement) => (within(folderTree(dialog)).getByRole('treeitem', { selected: true }).textContent ?? '').trim()
+const pickFolder = (dialog: HTMLElement, name: string) => fireEvent.click(within(folderTree(dialog)).getByRole('treeitem', { name }))
 const tabs = () => screen.getAllByRole('tab').map(tab => `${tab.textContent}${tab.getAttribute('aria-selected') === 'true' ? '*' : ''}`)
 
 function menuOf(id: string): HTMLElement {
@@ -139,11 +145,12 @@ describe('a note made from another opens the folder picker, with the folder name
     expect(saveIn(dialog)).toHaveTextContent('Trabalho › Pauta (pasta nova)')
     expect(saveIn(dialog)).toHaveTextContent('Cria a pasta “Pauta” em Trabalho e leva a nota “Pauta” junto.')
     fireEvent.click(within(saveIn(dialog)).getByRole('button', { name: 'Trocar' }))
-    expect(within(folderWindow()).getByText('Para qual pasta')).toBeInTheDocument()
+    expect(within(folderWindow()).queryByRole('combobox')).not.toBeInTheDocument()
     expect(chosenFolder(folderWindow())).toBe('Pauta (pasta nova)')
     expect(folderWindow()).toHaveTextContent('Trabalho › Pauta › Ata: Pauta')
     fireEvent.click(within(folderWindow()).getByRole('button', { name: 'Usar esta pasta' }))
     expect(screen.queryByRole('dialog', { name: 'Onde salvar a nota nova' })).not.toBeInTheDocument()
+    expect(folderNamed('Pauta')).toBeUndefined()
     fireEvent.click(within(dialog).getByRole('button', { name: 'Gerar' }))
     await waitFor(() => expect(useLibraryStore.getState().files).toHaveLength(2))
     const home = folderNamed('Pauta')!
@@ -164,7 +171,7 @@ describe('a note made from another opens the folder picker, with the folder name
     expect(saveIn(dialog)).toHaveTextContent('Pauta')
     expect(saveIn(dialog)).toHaveTextContent('A nota “Pauta” já está nessa pasta.')
     fireEvent.click(within(saveIn(dialog)).getByRole('button', { name: 'Trocar' }))
-    expect(within(folderWindow()).getByLabelText('Pasta')).toHaveValue(home.id)
+    expect(chosenFolder(folderWindow())).toBe('Pauta')
     fireEvent.click(within(folderWindow()).getByRole('button', { name: 'Voltar' }))
     fireEvent.click(within(dialog).getByRole('button', { name: 'Gerar' }))
     await waitFor(() => expect(useLibraryStore.getState().files).toHaveLength(2))
@@ -193,13 +200,13 @@ describe('a note made from another opens the folder picker, with the folder name
     )
     const dialog = screen.getByRole('dialog', { name: 'Gerar a Ata' })
     fireEvent.click(within(saveIn(dialog)).getByRole('button', { name: 'Trocar' }))
-    fireEvent.change(within(folderWindow()).getByLabelText('Pasta'), { target: { value: other.id } })
+    pickFolder(folderWindow(), 'Outra')
     expect(folderWindow()).toHaveTextContent('Só a nota nova vai para essa pasta.')
     fireEvent.click(within(folderWindow()).getByRole('button', { name: 'Voltar' }))
     expect(saveIn(dialog)).toHaveTextContent('Pauta (pasta nova)')
     fireEvent.click(within(saveIn(dialog)).getByRole('button', { name: 'Trocar' }))
     expect(chosenFolder(folderWindow())).toBe('Pauta (pasta nova)')
-    fireEvent.change(within(folderWindow()).getByLabelText('Pasta'), { target: { value: other.id } })
+    pickFolder(folderWindow(), 'Outra')
     fireEvent.click(within(folderWindow()).getByRole('button', { name: 'Usar esta pasta' }))
     expect(saveIn(dialog)).toHaveTextContent('Outra')
     expect(saveIn(dialog)).toHaveTextContent('Só a nota nova vai para essa pasta.')
@@ -208,6 +215,145 @@ describe('a note made from another opens the folder picker, with the folder name
     expect(file(id).folderId).toBeNull()
     expect(useLibraryStore.getState().files.find(item => item.id !== id)!.folderId).toBe(other.id)
     expect(folderNamed('Pauta')).toBeUndefined()
+  })
+
+  it('a folder made inside the proposed one makes it real: leaving with Voltar saves there, never in a folder that does not exist', async () => {
+    const id = await textNote()
+    render(
+      <MemoryRouter>
+        <GenerateDialog fileId={id} agent="meeting" />
+      </MemoryRouter>,
+    )
+    const dialog = screen.getByRole('dialog', { name: 'Gerar a Ata' })
+    fireEvent.click(within(saveIn(dialog)).getByRole('button', { name: 'Trocar' }))
+    fireEvent.click(within(folderWindow()).getByRole('button', { name: 'Usar esta pasta' }))
+    fireEvent.click(within(saveIn(dialog)).getByRole('button', { name: 'Trocar' }))
+    fireEvent.change(within(folderWindow()).getByRole('textbox', { name: 'Nome da pasta nova' }), { target: { value: 'Sub' } })
+    fireEvent.click(within(folderWindow()).getByRole('button', { name: 'Criar' }))
+    await waitFor(() => expect(folderNamed('Sub')).toBeDefined())
+    fireEvent.click(within(folderWindow()).getByRole('button', { name: 'Voltar' }))
+    expect(saveIn(dialog)).not.toHaveTextContent('(pasta nova)')
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Gerar' }))
+    await waitFor(() => expect(useLibraryStore.getState().files).toHaveLength(2))
+    const home = folderNamed('Pauta')!
+    expect(file(id).folderId).toBe(home.id)
+    expect(useLibraryStore.getState().files.find(item => item.id !== id)!.folderId).toBe(home.id)
+  })
+})
+
+describe('every other place that asks for a folder uses the single chooser', () => {
+  const jobs = useJobsStore.getState()
+
+  afterEach(() => {
+    useJobsStore.setState({ acceptCourse: jobs.acceptCourse, saveRecording: jobs.saveRecording })
+    useRecorderStore.setState({ result: null })
+  })
+
+  const destino = () => useLibraryStore.getState().createFolder({ name: 'Destino' })
+
+  /** Through the field: Trocar, mark, confirm. */
+  function chooseInField(dialog: HTMLElement, windowTitle: string, name: string) {
+    const field = within(dialog).getByRole('group', { name: 'Pasta' })
+    expect(field).toHaveTextContent('Biblioteca')
+    expect(within(dialog).queryByRole('combobox', { name: 'Pasta' })).not.toBeInTheDocument()
+    fireEvent.click(within(field).getByRole('button', { name: 'Trocar' }))
+    const chooser = screen.getByRole('dialog', { name: windowTitle })
+    pickFolder(chooser, name)
+    fireEvent.click(within(chooser).getByRole('button', { name: 'Usar esta pasta' }))
+    expect(screen.queryByRole('dialog', { name: windowTitle })).not.toBeInTheDocument()
+    expect(field).toHaveTextContent(name)
+  }
+
+  it('Mover: what moves is hidden with everything inside; confirming moves notes and folders to the marked one', async () => {
+    const target = await destino()
+    const moved = await useLibraryStore.getState().createFolder({ name: 'Levada' })
+    await useLibraryStore.getState().createFolder({ name: 'Dentro', parentId: moved.id })
+    const id = await textNote()
+    useUiStore.setState({ overlay: { kind: 'move', fileIds: [id], folderIds: [moved.id] }, selection: new Set([id]) })
+    render(
+      <MemoryRouter>
+        <MoveDialog fileIds={[id]} folderIds={[moved.id]} />
+      </MemoryRouter>,
+    )
+    const dialog = screen.getByRole('dialog', { name: 'Mover 2 itens' })
+    expect(chosenFolder(dialog)).toBe('Biblioteca (raiz)')
+    expect(within(folderTree(dialog)).queryByRole('treeitem', { name: 'Levada' })).not.toBeInTheDocument()
+    const filter = within(dialog).getByRole('searchbox', { name: 'Filtrar pastas' })
+    fireEvent.change(filter, { target: { value: 'Dentro' } })
+    expect(dialog).toHaveTextContent('Nenhuma pasta com esse nome.')
+    fireEvent.change(filter, { target: { value: '' } })
+    pickFolder(dialog, 'Destino')
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Mover' }))
+    await waitFor(() => expect(useUiStore.getState().overlay).toBeNull())
+    expect(file(id).folderId).toBe(target.id)
+    expect(folderNamed('Levada')!.parentId).toBe(target.id)
+    expect(useUiStore.getState().selection.size).toBe(0)
+    expect(useUiStore.getState().toasts.at(-1)?.text).toBe('Movido para Destino')
+  })
+
+  it('Mover: Voltar moves nothing', async () => {
+    await destino()
+    const id = await textNote()
+    useUiStore.setState({ overlay: { kind: 'move', fileIds: [id], folderIds: [] } })
+    render(
+      <MemoryRouter>
+        <MoveDialog fileIds={[id]} folderIds={[]} />
+      </MemoryRouter>,
+    )
+    const dialog = screen.getByRole('dialog', { name: 'Mover 1 item' })
+    pickFolder(dialog, 'Destino')
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Voltar' }))
+    expect(useUiStore.getState().overlay).toBeNull()
+    expect(file(id).folderId).toBeNull()
+  })
+
+  it('Importar: the file goes to the folder chosen', async () => {
+    const target = await destino()
+    render(
+      <MemoryRouter>
+        <ImportDialog />
+      </MemoryRouter>,
+    )
+    const dialog = screen.getByRole('dialog', { name: 'Importar' })
+    chooseInField(dialog, 'Escolher pasta', 'Destino')
+    fireEvent.change(dialog.querySelector('#imp-file')!, { target: { files: [new File(['# Oi'], 'nota.md', { type: 'text/markdown' })] } })
+    await waitFor(() => expect(useLibraryStore.getState().files).toHaveLength(1))
+    expect(useLibraryStore.getState().files[0]).toMatchObject({ name: 'nota', folderId: target.id })
+  })
+
+  it('Isso rende uma pasta: the chooser says where it makes the folder, and the chosen one is used', async () => {
+    const target = await destino()
+    const acceptCourse = vi.fn(async () => 'pasta-feita')
+    const analysis = { isCourse: true, name: 'Inglês', description: 'Do zero.', modules: [{ title: 'Módulo 1', covers: '', excerpt: '', lessons: [] }], lessonCount: 2 }
+    const proposal = { analysis, request: { folderId: null }, resolved: {} } as unknown as CourseProposal
+    useJobsStore.setState({ proposals: [proposal], acceptCourse })
+    render(
+      <MemoryRouter>
+        <CourseProposalDialog />
+      </MemoryRouter>,
+    )
+    const dialog = screen.getByRole('dialog', { name: 'Isso rende uma pasta com aulas' })
+    chooseInField(dialog, 'Onde criar a pasta', 'Destino')
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Criar a pasta com as aulas' }))
+    await waitFor(() => expect(acceptCourse).toHaveBeenCalledWith(proposal, target.id))
+  })
+
+  it('Gravação pronta: the recording is saved in the folder chosen', async () => {
+    const target = await destino()
+    const saveRecording = vi.fn(() => new Promise<string>(() => undefined))
+    useJobsStore.setState({ saveRecording })
+    const recorded = new NodeFile([new Uint8Array(8)], 'Reunião.webm', { type: 'audio/webm' }) as unknown as File
+    useRecorderStore.setState({ active: false, result: { file: recorded, mime: 'audio/webm', durationSeconds: 65, storedName: 'gravacao-1.webm', marks: [] }, resultPlace: 'dialog' })
+    render(
+      <MemoryRouter>
+        <RecordingDoneDialog />
+      </MemoryRouter>,
+    )
+    const dialog = screen.getByRole('dialog', { name: 'Gravação pronta' })
+    chooseInField(dialog, 'Escolher pasta', 'Destino')
+    fireEvent.click(within(dialog).getByRole('radio', { name: /Não, só a mídia/ }))
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Salvar' }))
+    expect(saveRecording).toHaveBeenCalledWith(expect.objectContaining({ folderId: target.id }))
   })
 })
 
@@ -350,7 +496,7 @@ describe('Gerar de novo', () => {
     const dialog = screen.getByRole('dialog', { name: 'Gerar de novo a Ata' })
     expect(within(dialog).getByLabelText('Modelo da ata')).toHaveValue('fathom')
     fireEvent.click(within(dialog).getByRole('radio', { name: /Criar nota nova/ }))
-    expect(within(folderWindow()).getByLabelText('Pasta')).toHaveValue(home.id)
+    expect(chosenFolder(folderWindow())).toBe('Revisão do orçamento')
     fireEvent.click(within(folderWindow()).getByRole('button', { name: 'Usar esta pasta' }))
     expect(saveIn(dialog)).toHaveTextContent('Revisão do orçamento')
     expect(within(saveIn(dialog)).getByRole('button', { name: 'Trocar' })).toBeInTheDocument()

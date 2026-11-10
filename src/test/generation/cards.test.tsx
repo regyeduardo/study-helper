@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 
+import type { CardsArtifact } from '@/types/domain'
 import { CardsDialog } from '@/components/dialogs/CardsDialog'
 import { dueCount, reviewed } from '@/lib/generation/cards'
 import { PROMPTS } from '@/lib/generation/prompts.data'
@@ -46,7 +47,7 @@ describe('Cartões', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Mostrar a resposta' }))
     fireEvent.click(screen.getByRole('button', { name: 'Errei' }))
     expect(await screen.findByText('O que exige a continuidade?')).toBeInTheDocument()
-    await waitFor(() => expect(memory.sidecars.get(id)?.cards?.map(card => card.box)).toEqual([1, 0]))
+    await waitFor(() => expect((memory.sidecars.get(id)?.artifacts?.[0] as CardsArtifact | undefined)?.cards.map(card => card.box)).toEqual([1, 0]))
     expect(dueCount(useLibraryStore.getState().files.find(file => file.id === id)?.cardDue)).toBe(1)
   })
 })

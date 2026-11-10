@@ -26,3 +26,9 @@ docs/*
 /Docker/Browser.Dockerfile
 /.env keep
 .wrangler/
+
+# Logs e arquivos do sistema
+*.log
+.DS_Store
+.specify/**
+specs/**

@@ -1,0 +1,86 @@
+/* ---------- folder chooser (FR-030 to FR-035): tree with filter, open at the default folder ---------- */
+.fc{display:flex;flex-direction:column;gap:10px;min-width:0;min-height:0;flex:1 1 auto}
+.fc-cap{font-size:11px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:var(--fg-muted)}
+.fc-live{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+.fc-sec{display:grid;grid-template-columns:minmax(0,1fr);gap:4px}
+.fc-filter{position:relative;display:flex;align-items:center}
+.fc-filter>.ic{position:absolute;left:9px;color:var(--fg-faint);pointer-events:none}
+.fc-filter .input{padding-left:30px;padding-right:32px}
+.fc-filter .input::-webkit-search-cancel-button{display:none}
+.fc-filter>.fc-clear{position:absolute;right:2px}
+.fc-filter>.fc-kbd{position:absolute;right:8px;pointer-events:none}
+.fc-favs{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:minmax(0,1fr);gap:1px;max-height:140px;overflow-x:hidden;overflow-y:auto;overscroll-behavior:contain}
+.fc-tree{min-height:120px;max-height:min(320px,45vh);max-height:min(320px,45dvh);overflow-x:hidden;overflow-y:auto;border:1px solid var(--border);border-radius:9px;padding:6px;overscroll-behavior:contain}
+.fc-row{display:flex;align-items:center;gap:2px;min-width:0;padding-left:calc(var(--fc-indent,0) * 14px)}
+.fc-tw{width:22px;height:30px;flex:none;display:grid;place-items:center;color:var(--fg-faint);border-radius:5px}
+.fc-tw .ic{width:12px;height:12px}
+button.fc-tw:hover{background:var(--bg-hover);color:var(--fg)}
+.fc-it{flex:1;width:100%;min-width:0;min-height:30px;display:flex;align-items:center;gap:8px;padding:4px 8px;border-radius:7px;font-size:13.5px;color:var(--fg-muted);text-align:left}
+.fc-it:hover{background:var(--bg-hover);color:var(--fg)}
+.fc-it:focus-visible{outline-offset:-2px}
+.fc-it[aria-selected="true"],.fc-it[aria-pressed="true"]{background:var(--accent-soft);color:var(--fg);font-weight:600}
+.fc-text{flex:1;min-width:0;display:flex;align-items:baseline;gap:8px}
+.fc-title{display:flex;align-items:center;gap:6px;min-width:0;flex:0 1 auto}
+.fc-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.fc-new{flex:none;font-size:12px;font-weight:400;color:var(--accent);white-space:nowrap}
+.fc .fc-star{flex:none;width:12px;height:12px;color:var(--warn);fill:currentColor}
+.fc-where{flex:1 1 30%;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;font-weight:400;color:var(--fg-muted)}
+.fc-empty{margin:0;padding:18px 12px;text-align:center;font-size:13px;color:var(--fg-muted);border:1px dashed var(--border);border-radius:9px}
+.fc-create{display:flex;gap:8px;align-items:center}
+.fc-create .input{flex:1;min-width:0}
+.fc-hint{margin:0;font-size:12.5px;color:var(--fg-muted)}
+.fc-fail{margin:0;font-size:12.5px;color:var(--bad)}
+.fc-dest{display:flex;align-items:baseline;gap:10px;min-width:0;padding-top:10px;border-top:1px solid var(--border-muted);font-size:12.5px}
+.fc-dest-lab{flex:none;font-weight:600;color:var(--fg-muted)}
+.fc-path{display:flex;align-items:baseline;flex:1;min-width:0}
+.fc-seg{flex:0 256 auto;min-width:4ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* Weights of at least 1: when the others hit min-width, a total under 1 leaves the line wider than its box. */
+.fc-seg:first-child{flex-shrink:128}
+.fc-seg:last-child{flex-shrink:64}
+.fc-seg:only-child{flex-shrink:256}
+.fc-seg.fc-short{flex-shrink:1;min-width:0}
+.fc-seg.fc-gap{flex:none;min-width:0;color:var(--fg-faint)}
+.fc-sep{flex:none;white-space:pre;color:var(--fg-faint)}
+.fc-field{display:flex;align-items:center;gap:8px;min-width:0;min-height:30px;font-size:13px}
+.fc-field>.ic,.fc-field>.folder-ic{color:var(--fg-muted)}
+.fc-field-path{flex:1;min-width:0;font-weight:600;display:flex}
+.fc-dialog{flex:1 1 auto;min-height:0;display:flex;flex-direction:column;outline:none}
+.fc-body{flex:1 1 auto;min-height:0;overflow:auto;padding:4px 16px 16px;display:flex;flex-direction:column}
+.fc-dialog .fc-tree{flex:1 1 256px}
+/* Over a recording panel (z-index 55) too. */
+.scrim:has(>.dialog>.fc-dialog){z-index:60}
+@media (max-width:760px){
+  .dialog:has(>.fc-dialog){height:calc(100vh - 24px);height:calc(100dvh - 24px)}
+  .fc-dialog .fc-tree{max-height:none}
+  .fc-row{padding-left:calc(var(--fc-indent,0) * 10px)}
+  .fc-it{min-height:36px}
+  .fc-tw{width:36px;height:36px}
+  .fc-text{flex-direction:column;align-items:stretch;gap:0}
+  .fc-where{flex:none}
+  .fc .btn,.fc-field .btn,.fc-dialog .df .btn{height:36px}
+  .fc .input{min-height:36px;font-size:16px}
+  .fc-favs{max-height:128px}
+  .fc-filter>.fc-clear{right:0;width:36px;height:36px}
+  .fc-filter>.fc-kbd{display:none}
+}
+/* touch has no title: the marked folder shows its whole name */
+@media (max-width:760px) and (hover:none){
+  .fc-it[aria-selected="true"] .fc-name,.fc-it[aria-pressed="true"] .fc-name{white-space:normal;overflow-wrap:anywhere}
+}
+/* The floating recording window (340x360) and a phone lying down: the whole window goes to the tree. */
+@media (max-height:480px){
+  .scrim:has(>.dialog>.fc-dialog){padding:0}
+  .dialog:has(>.fc-dialog){height:100vh;height:100dvh;max-height:none;border:0;border-radius:0}
+  .dialog:has(>.fc-dialog)>.dh{padding:8px 10px 4px 12px}
+  .fc{gap:6px}
+  .fc-body{padding:4px 12px 8px}
+  .fc-dialog .df{padding:8px 12px}
+  .fc-sec,.fc-cap{display:none}
+  .fc-dialog .fc-tree{flex:1 1 96px;min-height:72px;max-height:none}
+  .fc-it{min-height:36px}
+  .fc-tw{width:36px;height:36px}
+  .fc .btn,.fc-dialog .df .btn{height:36px}
+  .fc .input{min-height:36px}
+  .dialog:has(>.fc-dialog)>.dh .ibtn{width:36px;height:36px}
+  .fc-dest{padding-top:6px}
+}

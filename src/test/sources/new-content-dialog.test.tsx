@@ -5,9 +5,10 @@ import { MemoryRouter } from 'react-router-dom'
 const { startNewContent } = vi.hoisted(() => ({ startNewContent: vi.fn(async (..._args: unknown[]) => null) }))
 
 vi.mock('@/lib/transcription', () => ({ ENGINES: [{ id: 'groq', name: 'Groq', where: 'cloud', limits: 'limits' }] }))
-vi.mock('@/stores/jobs', async () => {
+vi.mock('@/stores/jobs', async importOriginal => {
   const { create } = await import('zustand')
-  return { useJobsStore: create(() => ({ jobs: [], cancel: vi.fn(), startNewContent })) }
+  const { defaultKeep } = await importOriginal<typeof import('@/stores/jobs')>()
+  return { defaultKeep, useJobsStore: create(() => ({ jobs: [], cancel: vi.fn(), startNewContent })) }
 })
 
 import { NewContentDialog } from '@/components/dialogs/NewContentDialog'
@@ -36,9 +37,11 @@ async function openWithFile(file: File) {
   fireEvent.click(screen.getByRole('button', { name: /Arquivo/ }))
   const input = document.getElementById('nc-file') as HTMLInputElement
   fireEvent.change(input, { target: { files: [file] } })
-  await screen.findByText('Onde guardar o arquivo original')
-  return within(screen.getAllByRole('radiogroup')[0])
+  await screen.findByText('O que guardar da fonte')
+  return within(screen.getByRole('radiogroup', { name: 'O que guardar da fonte' }))
 }
+
+const where = () => within(screen.getByRole('radiogroup', { name: 'Onde guardar o arquivo' }))
 
 function checkedName(group: ReturnType<typeof within>): string {
   return group.getAllByRole('radio').find((radio: HTMLElement) => radio.getAttribute('aria-checked') === 'true')!.querySelector('b')!.textContent!
@@ -51,33 +54,31 @@ beforeEach(() => {
 })
 
 describe('NewContentDialog storage choice', () => {
-  it('offers only Google Drive and not keeping, and keeps nothing on Local by default', async () => {
+  it('on Local, a document keeps nothing but the record by default, and says why the file cannot be kept', async () => {
     const group = await openWithFile(sizedFile('notes.txt', 20))
-    const names = group.getAllByRole('radio').map(radio => radio.querySelector('b')!.textContent)
-    expect(names).toEqual(['Google Drive', 'Não guardar'])
-    expect(checkedName(group)).toBe('Não guardar')
+    expect(checkedName(group)).toBe('Só o registro')
     expect(group.getByText('Entre com o Google para guardar no Drive.')).toBeInTheDocument()
     expect(screen.queryByText(/Serviço de terceiro/)).toBeNull()
   })
 
-  it('for a video, the option without cloud says it stays in Mídias, on this computer', async () => {
-    const group = await openWithFile(sizedFile('aula.mp4', 20))
-    expect(await group.findByText('Só neste computador')).toBeInTheDocument()
-    expect(group.queryByText('Não guardar')).not.toBeInTheDocument()
-    expect(group.getByText(/Fica em Mídias, neste navegador/)).toBeInTheDocument()
+  it('for a video, the place without cloud says it stays in Mídias, on this computer', async () => {
+    await openWithFile(sizedFile('aula.mp4', 20))
+    expect(await screen.findByText('Só neste computador')).toBeInTheDocument()
+    expect(where().queryByText('Não guardar')).not.toBeInTheDocument()
+    expect(where().getByText(/Fica em Mídias, neste navegador/)).toBeInTheDocument()
   })
 
   it('defaults to Drive when logged in, without the third-party warning', async () => {
     useAccountStore.setState({ accounts: [LOCAL_ACCOUNT, GOOGLE], activeId: GOOGLE.id })
-    const group = await openWithFile(sizedFile('lecture.txt', 5 * GB))
-    expect(checkedName(group)).toBe('Google Drive')
+    await openWithFile(sizedFile('lecture.txt', 5 * GB))
+    expect(checkedName(where())).toBe('Google Drive')
     expect(screen.queryByText(/Serviço de terceiro/)).toBeNull()
   })
 
-  it('does not let Drive be picked while logged out', async () => {
+  it('does not let the file be kept while logged out', async () => {
     const group = await openWithFile(sizedFile('lecture.txt', 20))
-    fireEvent.click(group.getByText('Google Drive'))
-    expect(checkedName(group)).toBe('Não guardar')
+    fireEvent.click(group.getByText('Registro e arquivo'))
+    expect(checkedName(group)).toBe('Só o registro')
   })
 })
 

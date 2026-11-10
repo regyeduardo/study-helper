@@ -1,8 +1,57 @@
+import type { ReactNode } from 'react'
+
 import type { SourceStorage } from '@/types/domain'
 import { Icon } from '@/components/ui/Icon'
 import type { LitterboxTime } from '@/controllers/hosting.controller'
 import type { StorageOption } from '@/lib/storage/source-storage'
+import type { KeepLevel } from '@/stores/jobs'
 import { formatBytes } from '@/utils/format'
+
+const LEVELS: { id: KeepLevel; name: string; description: string }[] = [
+  { id: 'sem-rastro', name: 'Sem rastro', description: 'Fica só a nota.' },
+  { id: 'registro', name: 'Só o registro', description: 'Guarda nome, link e origem, sem o arquivo.' },
+  { id: 'arquivo', name: 'Registro e arquivo', description: 'Guarda também o arquivo.' },
+]
+
+interface KeepLevelPickerProps {
+  level: KeepLevel
+  onLevel(level: KeepLevel): void
+  /** False for an Ata: it always has an entrada (FR-055). */
+  traceless: boolean
+  /** Why "Registro e arquivo" cannot be picked; absent, it can. */
+  fileReason?: string | null
+  /** Where the file goes, shown under "Registro e arquivo". */
+  children?: ReactNode
+}
+
+/** What stays of the source (FR-023): "Sem rastro", "Só o registro" or "Registro e arquivo", and then where. */
+export function KeepLevelPicker({ level, onLevel, traceless, fileReason, children }: KeepLevelPickerProps) {
+  return (
+    <>
+      <div className="field">
+        <span className="lab">O que guardar da fonte</span>
+        <div className="opts says-why" role="radiogroup" aria-label="O que guardar da fonte">
+          {LEVELS.filter(item => traceless || item.id !== 'sem-rastro').map(item => {
+            const blocked = item.id === 'arquivo' && Boolean(fileReason)
+            return (
+              <button key={item.id} className="opt" role="radio" aria-checked={level === item.id} aria-disabled={blocked} onClick={() => !blocked && onLevel(item.id)}>
+                <span className="radio" />
+                <span>
+                  <b>{item.name}</b>
+                  <span>
+                    {item.description}
+                    {blocked && <> <span className="lim">{fileReason}</span></>}
+                  </span>
+                </span>
+              </button>
+            )
+          })}
+        </div>
+      </div>
+      {level === 'arquivo' && children}
+    </>
+  )
+}
 
 interface SourceStoragePickerProps {
   label: string
@@ -19,7 +68,7 @@ export function SourceStoragePicker({ label, sizeBytes, options, chosen, onChoos
   return (
     <div className="field">
       <span className="lab">{label}</span>
-      <div className="opts" role="radiogroup">
+      <div className="opts says-why" role="radiogroup" aria-label={label}>
         {options
           .filter(option => option.fits)
           .map(option => (

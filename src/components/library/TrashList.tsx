@@ -19,6 +19,11 @@ export function TrashList({ compact = false }: { compact?: boolean }) {
     ...folders.map(folder => ({ kind: 'folder' as const, id: folder.id, name: folder.name, deletedAt: folder.deletedAt!, type: null })),
     ...files.map(file => ({ kind: 'file' as const, id: file.id, name: file.name, deletedAt: file.deletedAt!, type: file.type })),
   ].sort((a, b) => b.deletedAt.localeCompare(a.deletedAt))
+  /** How many more come back with this one: those of the same "Apagar tudo". */
+  const togetherWith = (id: string) => {
+    const mark = files.find(file => file.id === id)?.trashedWith
+    return mark ? files.filter(file => file.trashedWith === mark).length - 1 : 0
+  }
 
   if (!items.length) {
     return (
@@ -56,6 +61,7 @@ export function TrashList({ compact = false }: { compact?: boolean }) {
       </div>
       {items.map(item => {
         const children = item.kind === 'file' ? library.files.filter(file => file.parentFileId === item.id && !file.deletedAt).length : 0
+        const others = togetherWith(item.id)
         return (
           <div key={item.id} className={compact ? 'card' : 'row'} style={{ cursor: 'default' }}>
             <span>
@@ -68,6 +74,11 @@ export function TrashList({ compact = false }: { compact?: boolean }) {
                 <span>
                   apagado em {new Date(item.deletedAt).toLocaleDateString('pt-BR')} · some em {daysLeft(item.deletedAt)} dias
                 </span>
+                {others > 0 && (
+                  <span>
+                    volta junto com mais {others} {others === 1 ? 'item' : 'itens'}
+                  </span>
+                )}
               </div>
               {confirming === item.id && (
                 <div className="inline-confirm" style={{ marginTop: 8 }}>
@@ -95,7 +106,7 @@ export function TrashList({ compact = false }: { compact?: boolean }) {
                 onClick={async () => {
                   if (item.kind === 'folder') await library.restoreFolder(item.id)
                   else await library.restoreFile(item.id)
-                  ui.toast('Restaurado')
+                  ui.toast(others ? `${others + 1} itens restaurados` : 'Restaurado')
                 }}
               >
                 <Icon name="undo" />

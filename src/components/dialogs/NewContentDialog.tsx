@@ -3,11 +3,12 @@ import { useNavigate } from 'react-router-dom'
 
 import type { AtaModelId, AtaPart, SourceStorage } from '@/types/domain'
 import { AtaPartsFields, toggledPart } from '@/components/dialogs/AtaPartsDialog'
+import { FolderField } from '@/components/dialogs/FolderChooser'
+import { MediaAnalysisField, useMediaAnalysis } from '@/components/dialogs/GenerateEntryDialog'
 import { ModelPick, useModelChoice } from '@/components/dialogs/ModelPick'
 import { Dialog } from '@/components/ui/Dialog'
 import { Icon } from '@/components/ui/Icon'
-import { FolderPicker } from '@/components/dialogs/SimpleDialogs'
-import { SourceStoragePicker } from '@/components/dialogs/SourceStoragePicker'
+import { KeepLevelPicker, SourceStoragePicker } from '@/components/dialogs/SourceStoragePicker'
 import type { LitterboxTime } from '@/controllers/hosting.controller'
 import { youtubeId } from '@/controllers/sources.controller'
 import { PART_ORDER } from '@/lib/generation/ata'
@@ -16,7 +17,7 @@ import { detectKind } from '@/lib/generation/uploads'
 import { paths } from '@/lib/paths'
 import { defaultStorage, storageOptions } from '@/lib/storage/source-storage'
 import { useAccountStore } from '@/stores/account'
-import { type Agent, useJobsStore } from '@/stores/jobs'
+import { type Agent, defaultKeep, type KeepLevel, useJobsStore } from '@/stores/jobs'
 import { useLibraryStore } from '@/stores/library'
 import { useSyncStore } from '@/stores/sync'
 import { useUiStore } from '@/stores/ui'
@@ -95,6 +96,7 @@ export function NewContentDialog({ folderId: initialFolder }: { folderId?: strin
   const [topic, setTopic] = useState('')
   const [file, setFile] = useState<File | null>(null)
   const [isMedia, setIsMedia] = useState(false)
+  const [keep, setKeep] = useState<KeepLevel | null>(null)
   const [storage, setStorage] = useState<SourceStorage | null>(null)
   const [litterboxTime, setLitterboxTime] = useState<LitterboxTime>('24h')
   const [name, setName] = useState('')
@@ -109,13 +111,23 @@ export function NewContentDialog({ folderId: initialFolder }: { folderId?: strin
   const driveAvailable = account.kind === 'google'
   const room = usage && settings.storageLimitBytes ? settings.storageLimitBytes - usage.appBytes : null
   const options = useMemo(() => (file ? storageOptions(file.size, driveAvailable, room) : []), [file, driveAvailable, room])
-  const chosen = file ? (storage && options.find(option => option.id === storage && option.fits && option.enabled) ? storage : defaultStorage(driveAvailable, options)) : 'none'
+  const writes: Agent = tab === 'topic' && agent === 'lesson' ? 'explanation' : agent
+  // under "Registro e arquivo", not keeping the file would be "Só o registro"; for media, 'none' is Mídias, on this computer
+  const places = options.filter(option => isMedia || option.id !== 'none')
+  const chosen = file ? (storage && places.find(option => option.id === storage && option.fits && option.enabled) ? storage : defaultStorage(driveAvailable, places)) : 'none'
+  const fileReason = tab !== 'file' ? 'Só para arquivo e mídia.' : places.some(option => option.fits && option.enabled) ? null : (places.find(option => option.reason)?.reason ?? 'Não há onde guardar este arquivo.')
+  const wanted = keep ?? defaultKeep(tab, writes)
+  // an Ata always has an entrada (FR-055)
+  const level: KeepLevel = writes === 'meeting' && wanted === 'sem-rastro' ? 'registro' : wanted === 'arquivo' && fileReason ? 'registro' : wanted
   const isYoutube = Boolean(youtubeId(url))
   const choosesParts = agent === 'meeting' && tab === 'file' && Boolean(file) && isMedia
   const media = tab === 'file' && Boolean(file) && isMedia
   const choices = { aula: useModelChoice('aula', media), explicacao: useModelChoice('explicacao', media), ata: useModelChoice('ata', media) }
   const heardBy = useModelChoice('transcricao')
   const writer = agent === 'reading' ? null : (tab === 'topic' && agent === 'lesson') || agent === 'explanation' ? choices.explicacao : agent === 'meeting' ? choices.ata : choices.aula
+  // only a video has the choice; the type is what the store goes by too
+  const analyzes = media && Boolean(writer) && Boolean(file?.type.startsWith('video/'))
+  const analysis = useMediaAnalysis(writer, analyzes)
 
   const pickFile = async (picked: File | null) => {
     setFile(picked)
@@ -137,7 +149,7 @@ export function NewContentDialog({ folderId: initialFolder }: { folderId?: strin
     const content = contentInput()
     if (!content) return
     const fileId = await startNewContent(
-      { agent: tab === 'topic' && agent === 'lesson' ? 'explanation' : agent, input: content, name, description, folderId, prompt, storage: chosen, litterboxTime, ...(choosesParts ? (ataModel ? { ataParts: [], ataModel } : { ataParts: PART_ORDER.filter(part => ataParts.includes(part)) }) : {}), models: { write: writer?.model || null, transcription: media ? heardBy.model || null : null, everyStep: Boolean(writer?.videoWrites) } },
+      { agent: writes, input: content, name, description, folderId, prompt, keep: level, storage: level === 'arquivo' ? chosen : 'none', litterboxTime, ...(choosesParts ? (ataModel ? { ataParts: [], ataModel } : { ataParts: PART_ORDER.filter(part => ataParts.includes(part)) }) : {}), models: { write: writer?.model || null, transcription: media ? heardBy.model || null : null, everyStep: Boolean(writer?.videoWrites) }, ...(analyzes && analysis.sent ? { analyze: analysis.sent } : {}) },
       setJobId,
     )
     if (fileId) {
@@ -215,18 +227,6 @@ export function NewContentDialog({ folderId: initialFolder }: { folderId?: strin
               <span style={{ fontSize: 12.5 }}>{file ? `${formatBytes(file.size)} · ${file.type || 'arquivo'}` : 'PDF, docx, áudio, vídeo, legenda, .md ou .txt'}</span>
             </label>
             <input ref={input} type="file" id="nc-file" hidden accept={ACCEPT} onChange={event => void pickFile(event.target.files?.[0] ?? null)} />
-            {file && (
-              <SourceStoragePicker
-                label="Onde guardar o arquivo original"
-                sizeBytes={file.size}
-                options={options}
-                chosen={chosen}
-                onChoose={setStorage}
-                litterboxTime={litterboxTime}
-                onLitterboxTime={setLitterboxTime}
-                names={isMedia ? { none: { name: 'Só neste computador', description: 'Fica em Mídias, neste navegador. A nota toca o vídeo ou o áudio daqui.' } } : undefined}
-              />
-            )}
             {media && <ModelPick choice={heardBy} label="Transcrição" />}
           </>
         )}
@@ -264,7 +264,24 @@ export function NewContentDialog({ folderId: initialFolder }: { folderId?: strin
           </div>
         )}
         {writer && <ModelPick choice={writer} />}
+        {analyzes && <MediaAnalysisField analysis={analysis} />}
         {choosesParts && <AtaPartsFields parts={ataParts} onToggle={part => setAtaParts(current => toggledPart(current, part))} model={ataModel} onModel={setAtaModel} />}
+        {(tab !== 'file' || file) && (
+          <KeepLevelPicker level={level} onLevel={setKeep} traceless={writes !== 'meeting'} fileReason={fileReason}>
+            {file && (
+              <SourceStoragePicker
+                label="Onde guardar o arquivo"
+                sizeBytes={file.size}
+                options={places}
+                chosen={chosen}
+                onChoose={setStorage}
+                litterboxTime={litterboxTime}
+                onLitterboxTime={setLitterboxTime}
+                names={isMedia ? { none: { name: 'Só neste computador', description: 'Fica em Mídias, neste navegador. A nota toca o vídeo ou o áudio daqui.' } } : undefined}
+              />
+            )}
+          </KeepLevelPicker>
+        )}
         <div className="two-col">
           <div className="field">
             <label htmlFor="nc-name">Nome (opcional)</label>
@@ -272,7 +289,7 @@ export function NewContentDialog({ folderId: initialFolder }: { folderId?: strin
           </div>
           <div className="field">
             <span className="lab">Pasta</span>
-            <FolderPicker value={folderId} onChange={setFolderId} />
+            <FolderField value={folderId} onChange={setFolderId} />
           </div>
         </div>
         <details>

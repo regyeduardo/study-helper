@@ -12,9 +12,11 @@ export const paths = {
   favorites: '/favoritos',
   trash: '/lixeira',
   file: (id: string) => (sharedRoot ? `${sharedRoot}/arquivo/${id}` : `/arquivo/${id}`),
+  entries: '/entradas',
+  entry: (id: string) => `/entrada/${id}`,
   shares: '/compartilhados',
   sharedWithMe: '/compartilhados-comigo',
   shared: (id: string) => `/shared/${id}`,
 }
 
-export type View = 'home' | 'folder' | 'review' | 'favorites' | 'trash' | 'doc' | 'shares' | 'sharedWithMe' | 'shared'
+export type View = 'home' | 'folder' | 'review' | 'favorites' | 'trash' | 'doc' | 'entries' | 'entry' | 'shares' | 'sharedWithMe' | 'shared'

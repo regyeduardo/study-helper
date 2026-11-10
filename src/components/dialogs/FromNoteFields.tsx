@@ -1,8 +1,7 @@
 import { useId, useMemo, useState } from 'react'
 
 import type { FileMeta, Settings } from '@/types/domain'
-import { FolderPicker } from '@/components/dialogs/SimpleDialogs'
-import { Dialog } from '@/components/ui/Dialog'
+import { FolderChooserDialog } from '@/components/dialogs/FolderChooser'
 import { usePathName } from '@/hooks/use-library-view'
 import { aiConfigOf, modelByUid } from '@/lib/ai/config'
 import { mediaOf } from '@/lib/file-types'
@@ -45,7 +44,8 @@ export function useNoteFolder(sourceId: string) {
   const homeValue = home ? (home.id ?? NEW_HOME) : null
   const [picked, setPicked] = useState<string | null | undefined>(undefined)
   const [open, setOpen] = useState(false)
-  const value = picked === undefined ? homeValue : picked
+  // NEW_HOME means the home folder: once it is made, its real id
+  const value = picked === undefined || picked === NEW_HOME ? homeValue : picked
   const pathOf = (id: string | null) => (id === NEW_HOME && home ? (home.parentId ? `${pathName(home.parentId)} › ${home.name}` : home.name) : pathName(id))
   const hintOf = (id: string | null) =>
     !source || !home || id !== homeValue
@@ -78,45 +78,19 @@ export function SaveIn({ folder }: { folder: NoteFolder }) {
   )
 }
 
-/** "Onde salvar a nota nova": the folder picker of Mover, over the generation dialog. */
+/** "Onde salvar a nota nova": the single folder chooser, over the generation dialog. */
 export function FolderWindow({ folder, noteName }: { folder: NoteFolder; noteName: string }) {
-  const [draft, setDraft] = useState(folder.value)
-  const back = () => folder.setOpen(false)
-  const use = () => {
-    folder.choose(draft)
-    back()
-  }
   const { home } = folder
   return (
-    <Dialog
+    <FolderChooserDialog
+      value={folder.value}
+      extra={home && !home.id ? { id: NEW_HOME, name: home.name, parentId: home.parentId } : undefined}
       title="Onde salvar a nota nova"
-      size="narrow"
-      onClose={back}
-      footer={
-        <>
-          <button className="btn quiet" onClick={back}>
-            Voltar
-          </button>
-          <button className="btn primary" onClick={use}>
-            Usar esta pasta
-          </button>
-        </>
-      }
-    >
-      <div className="db">
-        <div className="field">
-          <span className="lab">Para qual pasta</span>
-          <FolderPicker value={draft} onChange={setDraft} extra={home && !home.id ? { id: NEW_HOME, name: home.name, parentId: home.parentId } : undefined} />
-          <span className="faint" style={{ fontSize: 12.5 }}>
-            {folder.hintOf(draft)}
-          </span>
-        </div>
-        <div className="field">
-          <span className="lab">Fica em</span>
-          <span style={{ fontSize: 13, overflowWrap: 'anywhere' }}>{`${folder.pathOf(draft)} › ${noteName}`}</span>
-        </div>
-      </div>
-    </Dialog>
+      leaf={noteName}
+      hint={folder.hintOf}
+      onConfirm={id => (folder.choose(id), folder.setOpen(false))}
+      onClose={() => folder.setOpen(false)}
+    />
   )
 }
 

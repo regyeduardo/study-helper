@@ -28,7 +28,7 @@ import {
   type StoredSize,
   type StoredSource,
 } from '@/lib/storage/repository'
-import { applyFieldChoices, hasTextConflict, joinHunks, mergeKept, mergeSidecar, mergeText } from '@/lib/sync/merge'
+import { applyFieldChoices, hasTextConflict, joinHunks, mergeFolder, mergeKept, mergeSidecar, mergeText } from '@/lib/sync/merge'
 
 export const ROOT_NAME = '.sync-study-helper'
 export const INDEX_NAME = 'study-helper.json'
@@ -236,6 +236,7 @@ export class DriveRepository implements Repository {
       })
       this.folders.set(folder.id, { folder: created, meta })
       this.folderByDriveId.set(created.id, folder.id)
+      await this.remember('folder', folder.id, meta.md5Checksum ?? '', folder)
       return
     }
     const moved = entry.folder.parents?.[0] !== parentDriveId
@@ -246,9 +247,11 @@ export class DriveRepository implements Repository {
         removeParent: moved ? entry.folder.parents?.[0] : undefined,
       })
     }
+    const merged = entry.meta ? await this.mergedFolder(folder, entry.meta) : folder
     entry.meta = entry.meta
-      ? await updateDriveFileController(this.token, entry.meta.id, { media: jsonBlob(folder) })
-      : await createDriveFileController(this.token, FOLDER_META_NAME, entry.folder.id, jsonBlob(folder), { shKind: 'folder-meta', shId: folder.id })
+      ? await updateDriveFileController(this.token, entry.meta.id, { media: jsonBlob(merged) })
+      : await createDriveFileController(this.token, FOLDER_META_NAME, entry.folder.id, jsonBlob(merged), { shKind: 'folder-meta', shId: folder.id })
+    await this.remember('folder', folder.id, entry.meta.md5Checksum ?? '', merged)
   }
 
   async removeFolder(folderId: string): Promise<void> {
@@ -482,7 +485,7 @@ export class DriveRepository implements Repository {
     return value
   }
 
-  private async remember(kind: 'md' | 'sidecar', fileId: string, md5: string, value: unknown): Promise<void> {
+  private async remember(kind: 'md' | 'sidecar' | 'folder', fileId: string, md5: string, value: unknown): Promise<void> {
     await this.db.put('cache', `${kind}:${fileId}`, { md5, value })
   }
 
@@ -508,6 +511,8 @@ export class DriveRepository implements Repository {
       activities: [...byId.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
       shares: mergeKept(base.value.shares ?? [], mine.shares, theirs.shares ?? []),
       sharedWithMe: mergeKept(base.value.sharedWithMe ?? [], mine.sharedWithMe, theirs.sharedWithMe ?? []),
+      // once one device migrated the entradas, a device that loaded before does not undo the mark
+      ...((mine.entriesMigratedAt ?? theirs.entriesMigratedAt) ? { entriesMigratedAt: mine.entriesMigratedAt ?? theirs.entriesMigratedAt } : {}),
     }
   }
 
@@ -541,6 +546,15 @@ export class DriveRepository implements Repository {
       theirsStamp: await this.theirsStampOf(fileId, entry.sidecar, remote),
     })
     return resolved.kind === 'text' ? (resolved.resolved ?? mine) : mine
+  }
+
+  /** Another device's favorite or color is kept when this one changes the folder. */
+  private async mergedFolder(mine: FolderMeta, file: DriveFile): Promise<FolderMeta> {
+    const base = await this.db.get<Cached<FolderMeta>>('cache', `folder:${mine.id}`)
+    const remote = await getDriveFileController(this.token, file.id)
+    if (!base || remote.md5Checksum === base.md5) return mine
+    const theirs = JSON.parse(await downloadDriveTextController(this.token, file.id)) as FolderMeta
+    return mergeFolder(base.value, mine, theirs)
   }
 
   private async mergedSidecar(fileId: string, mine: FileSidecar, file: DriveFile): Promise<FileSidecar> {

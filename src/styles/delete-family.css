@@ -1,0 +1,13 @@
+/* "Apagar" of a family: the tree of what was born of the item (FR-028) */
+.dfam-count{margin:0}
+.dfam-tree{max-height:46vh;overflow:auto;border:1px solid var(--border-muted);border-radius:9px;padding:8px}
+.dfam-list,.dfam-list ul{list-style:none;margin:0;padding:0;display:grid;gap:2px}
+.dfam-list ul{margin-left:9px;padding-left:12px;border-left:1px solid var(--border)}
+.dfam-node{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;padding:5px 6px;border-radius:7px;min-width:0}
+.dfam-name{display:flex;gap:7px;align-items:flex-start;color:var(--fg);font-weight:500;min-width:0;flex:1 1 220px;overflow-wrap:anywhere}
+.dfam-name .fic2{margin:1px 0 0;flex:none}
+.dfam-where{display:inline-flex;gap:4px;align-items:center;font-size:12px;color:var(--fg-muted);min-width:0;overflow-wrap:anywhere}
+.dfam-where .ic{width:13px;height:13px;flex:none}
+.dfam-arts{display:flex;flex-wrap:wrap;gap:4px 6px;padding:0 6px 4px 28px}
+.dfam-art{display:inline-flex;gap:5px;align-items:center;padding:2px 8px;border:1px solid var(--border);border-radius:11px;font-size:12px;color:var(--fg-muted);min-width:0;overflow-wrap:anywhere}
+.dfam-art .ic{width:13px;height:13px;flex:none}

@@ -63,7 +63,7 @@ describe('Provedores', () => {
   it('starts with DeepInfra and OpenRouter, each read live with its count and situation', async () => {
     setup()
     render(<SettingsDialog initial="ai" />)
-    expect(screen.getAllByRole('tab').map(item => item.textContent)).toEqual(['Provedores', 'Modelos', 'Padrões por uso'])
+    expect(screen.getAllByRole('tab').map(item => item.textContent)).toEqual(['Provedores', 'Modelos', 'Padrões por uso', 'Recomendações'])
     expect(screen.getByText('Cada provedor tem sua chave. Os modelos vêm dele, lidos ao vivo.')).toBeInTheDocument()
     await waitFor(() => expect(within(screen.getByRole('row', { name: /^DeepInfra/ })).getByText('3')).toBeInTheDocument())
     const row = screen.getByRole('row', { name: /^DeepInfra/ })

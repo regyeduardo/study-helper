@@ -8,7 +8,10 @@ import { CommandsShell } from '@/components/layout/OtherShells'
 import { useCounts } from '@/components/layout/ReaderShell'
 import { MasteryMeter, TypeDot } from '@/components/library/Badges'
 import { EmptyList } from '@/components/library/EmptyList'
+import { EntryList } from '@/components/library/EntryList'
+import { LayoutFilters } from '@/components/library/Filters'
 import { CommandsRow } from '@/components/library/FileRows'
+import { FavoriteFolders } from '@/components/library/FolderTree'
 import { FolderTiles } from '@/components/library/FolderTiles'
 import { SelectionBar } from '@/components/library/SelectionBar'
 import { SHARING_TITLES, SharingView } from '@/components/library/SharingLists'
@@ -17,51 +20,27 @@ import { SharedStatus } from '@/pages/shared'
 import { TrashList } from '@/components/library/TrashList'
 import { useFileActions } from '@/components/library/use-file-actions'
 import { DocumentBody, DocumentHead } from '@/components/reader/DocumentArticle'
+import { EntryPage } from '@/components/reader/EntryPage'
 import GithubMarkdownView from '@/components/reader/GithubMarkdownView'
 import { InspectorBody, InspectorTabs } from '@/components/reader/Inspector'
 import { useLibraryView, useLiveLibrary, usePathName } from '@/hooks/use-library-view'
 import { useDocument } from '@/hooks/use-document'
 import type { ViewRoute } from '@/hooks/use-view-route'
-import { FILE_TYPES, typeInfo } from '@/lib/file-types'
+import { FILE_TYPES } from '@/lib/file-types'
+import type { FilterResult } from '@/lib/library-filters'
 import { paths, type View } from '@/lib/paths'
 import { useLibraryStore } from '@/stores/library'
 import { type GroupKey, type SortKey, useUiStore } from '@/stores/ui'
 import { useScrollerRef } from '@/pages/workspace/container/shared'
 
-function FilterBar() {
+function FilterBar({ result }: { result: FilterResult }) {
   const ui = useUiStore()
-  const { files } = useLiveLibrary()
-  const [menu, setMenu] = useState<{ kind: 'filter' | 'display'; x: number; y: number } | null>(null)
-  const tags = useMemo(() => [...new Set(files.flatMap(file => file.tags))].sort(), [files])
-  const anchor = (kind: 'filter' | 'display') => (event: React.MouseEvent<HTMLButtonElement>) => {
+  const [menu, setMenu] = useState<{ kind: 'display'; x: number; y: number } | null>(null)
+  const anchor = (kind: 'display') => (event: React.MouseEvent<HTMLButtonElement>) => {
     const box = event.currentTarget.getBoundingClientRect()
     setMenu(menu?.kind === kind ? null : { kind, x: box.left, y: box.bottom + 6 })
   }
   const chips = []
-  if (ui.types.size)
-    chips.push(
-      <span key="type" className="fchip">
-        <span>Tipo</span>
-        <span>
-          é <b>{[...ui.types].map(type => typeInfo(type).label).join(' ou ')}</b>
-        </span>
-        <button onClick={() => [...ui.types].forEach(type => ui.toggleType(type))} aria-label="Tirar filtro de tipo">
-          <Icon name="x" />
-        </button>
-      </span>,
-    )
-  if (ui.lowMastery)
-    chips.push(
-      <span key="low" className="fchip">
-        <span>Domínio</span>
-        <span>
-          abaixo de <b>60%</b>
-        </span>
-        <button onClick={ui.toggleLowMastery} aria-label="Tirar filtro de domínio">
-          <Icon name="x" />
-        </button>
-      </span>,
-    )
   if (ui.tag)
     chips.push(
       <span key="tag" className="fchip">
@@ -90,10 +69,7 @@ function FilterBar() {
     <div className="fbar">
       {chips}
       <input className="input fbar-search" style={{ height: 26, padding: '2px 8px' }} aria-label="Buscar" placeholder="Filtrar por texto" value={ui.query} onChange={event => ui.setQuery(event.target.value)} />
-      <button className="btn quiet" onClick={anchor('filter')}>
-        <Icon name="filter" />
-        Filtro
-      </button>
+      <LayoutFilters result={result} />
       {chips.length > 0 && (
         <button className="btn quiet" onClick={ui.clearFilters}>
           Limpar
@@ -104,30 +80,6 @@ function FilterBar() {
         <Icon name="sort" />
         Exibição
       </button>
-      {menu?.kind === 'filter' && (
-        <Popover x={menu.x} y={menu.y} onClose={() => setMenu(null)} label="Filtro">
-          <div className="mh">Tipo</div>
-          {FILE_TYPES.map(type => (
-            <button key={type.id} className="mi" onClick={() => ui.toggleType(type.id as FileType)}>
-              <span className={`check ${ui.types.has(type.id) ? 'on' : ''}`}>{ui.types.has(type.id) && <Icon name="check" />}</span>
-              <span className={`tdot ${type.tone}`} style={{ color: 'var(--fg)', fontSize: 13 }}>
-                {type.label}
-              </span>
-            </button>
-          ))}
-          <div className="hr" />
-          <button className="mi" onClick={ui.toggleLowMastery}>
-            <span className={`check ${ui.lowMastery ? 'on' : ''}`}>{ui.lowMastery && <Icon name="check" />}</span>
-            Domínio abaixo de 60%
-          </button>
-          {tags.length > 0 && <div className="mh">Tag</div>}
-          {tags.map(tag => (
-            <button key={tag} className="mi" onClick={() => ui.setTag(tag)}>
-              <span className={`check ${ui.tag === tag ? 'on' : ''}`}>{ui.tag === tag && <Icon name="check" />}</span>#{tag}
-            </button>
-          ))}
-        </Popover>
-      )}
       {menu?.kind === 'display' && (
         <Popover x={menu.x - 120} y={menu.y} onClose={() => setMenu(null)} label="Exibição">
           <div className="mh">Agrupar por</div>
@@ -217,6 +169,7 @@ function Table({ route }: { route: ViewRoute }) {
   } else body = rows(data.files)
   return (
     <div className="tbl">
+      {data.browsing && <FavoriteFolders inline current={route.folderId} />}
       {data.tiles.length > 0 && (
         <div style={{ padding: '14px 12px 0' }}>
           <FolderTiles tiles={data.tiles} />
@@ -361,6 +314,15 @@ export function CommandsWorkspace({ route }: { route: ViewRoute }) {
       </CommandsShell>
     )
   }
+  if (route.view === 'entry' && route.fileId) {
+    return (
+      <CommandsShell>
+        <div className="body">
+          <EntryPage fileId={route.fileId} />
+        </div>
+      </CommandsShell>
+    )
+  }
   if (route.view === 'doc' && route.fileId) {
     return (
       <CommandsShell>
@@ -387,6 +349,7 @@ export function CommandsWorkspace({ route }: { route: ViewRoute }) {
       <nav className="views" aria-label="Visões">
         {tab('folder', 'Biblioteca', paths.library, counts.library)}
         {tab('review', 'Para revisar', paths.review, counts.review)}
+        {tab('entries', 'Entradas', paths.entries, counts.entries)}
         {tab('favorites', 'Favoritos', paths.favorites, counts.favorites)}
         {tab('trash', 'Lixeira', paths.trash, counts.trash)}
         {tab('shares', SHARING_TITLES.shares, paths.shares, counts.shares)}
@@ -410,11 +373,15 @@ export function CommandsWorkspace({ route }: { route: ViewRoute }) {
           Configurações
         </button>
       </nav>
-      {view !== 'trash' && view !== 'shares' && view !== 'sharedWithMe' && <FilterBar />}
+      {view !== 'trash' && view !== 'shares' && view !== 'sharedWithMe' && view !== 'entries' && <FilterBar result={data.result} />}
       <div className="body">
         {view === 'shares' || view === 'sharedWithMe' ? (
           <div className="tbl" style={{ padding: 12 }}>
             <SharingView view={view} heading={false} />
+          </div>
+        ) : view === 'entries' ? (
+          <div className="tbl" style={{ padding: 12 }}>
+            <EntryList />
           </div>
         ) : (
           <Table route={effective} />

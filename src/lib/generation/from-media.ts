@@ -16,6 +16,8 @@ export type MediaParts = Record<string, unknown>[]
 
 const OUVIR = 'O material é a gravação em áudio acima, no lugar da transcrição: ouça do começo ao fim e use tudo o que foi dito, com os nomes que as pessoas dizem. Os minutos [▸ mm:ss] são os do áudio.'
 
+const OUVIR_E_LER = 'O material é a gravação em áudio acima e, abaixo dela, a transcrição dessa gravação: ouça do começo ao fim e use as duas, os nomes e termos como a transcrição os escreve e o que ela tiver errado como se ouve. Os minutos [▸ mm:ss] são os do áudio.'
+
 const TAREFAS = 'Modelo LEVANTAMENTO DE TAREFAS. Uma linha por pedido ou compromisso dito: "- [ ] **o que fazer** · dono (ou "sem dono") · prazo dito (ou "sem prazo")", e embaixo a prova [▸ mm:ss] Nome: "literal".'
 
 const MP3_KBPS = 24
@@ -46,6 +48,11 @@ export async function mediaParts(source: Blob, provider: string, limit = MAX_AUD
   const audio = mp3 ? await mp3Of(ogg ?? source).catch(() => null) : ogg
   if (!audio || audio.size > limit) return null
   return [{ type: 'input_audio', input_audio: { data: await base64Of(audio), format: mp3 ? 'mp3' : 'ogg' } }, { type: 'text', text: OUVIR }]
+}
+
+/** "Transcrição + vídeo" (FR-046): the light audio and the transcription in the same call. */
+export function withTranscript(media: MediaParts, transcript: string): MediaParts {
+  return [...media.map(part => (part.text === OUVIR ? { type: 'text', text: OUVIR_E_LER } : part)), { type: 'text', text: `# Transcrição da gravação\n\n${transcript}` }]
 }
 
 /** The Ata from the audio: the chosen model's skeleton, or the checked parts in order, each under its "## " title; the instruction of who asked at the end. */

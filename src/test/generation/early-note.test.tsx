@@ -119,7 +119,9 @@ describe('the note opens as soon as the transcription is out', () => {
     expect(memory.contents.get(id!) ?? '').toBe('')
     release()
     await waitFor(() => expect(useLibraryStore.getState().files.find(file => file.id === id)?.status).toBe('ready'))
-    expect(memory.contents.get(id!)).toContain('Lançar em maio')
+    // the Ata is a note under the entrada, which keeps the transcription
+    await waitFor(() => expect(useLibraryStore.getState().files.find(file => file.parentFileId === id)?.status).toBe('ready'))
+    expect(memory.contents.get(useLibraryStore.getState().files.find(file => file.parentFileId === id)!.id)).toContain('Lançar em maio')
     expect(memory.sidecars.get(id!)?.recording?.blocks[1].text).toBe('Sim, eu mando a proposta para a Marina.')
     expect(useLibraryStore.getState().files.find(file => file.id === id)?.name).not.toBe('Reunião 14-10-2026.webm')
   })
