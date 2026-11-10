@@ -71,13 +71,42 @@ export function partName(part: Blob): string {
   return part.type.includes('webm') ? 'trecho.webm' : 'trecho.wav'
 }
 
+/** How much audio the whole job carries, counting the last part as full (the parts are the only length the job knows). */
+export function wholeSeconds(job: ProviderJob): number {
+  return job.parts.length ? partStart(job, job.parts.length - 1) + job.partSeconds : job.partSeconds
+}
+
+const STILL_WAITING_SECONDS = 60
+
+/** Wraps `progress` so that a step with no news for 60 s says it is still waiting for `waitingFor`. Call `stop` when the work ends. */
+export function watchProgress(progress: Progress, waitingFor: string): { progress: Progress; stop: () => void } {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const stop = () => clearTimeout(timer)
+  const say = (message: string, fraction?: number) => (fraction === undefined ? progress(message) : progress(message, fraction))
+  return {
+    progress: (message, fraction) => {
+      stop()
+      say(message, fraction)
+      timer = setTimeout(() => say(`${message} · ainda esperando ${waitingFor}…`, fraction), STILL_WAITING_SECONDS * 1000)
+    },
+    stop,
+  }
+}
+
+/** Sends every part at once. The message names the first part still without an answer, and the bar counts the ones that came back. */
 export async function sendParts<T>(job: ProviderJob, label: string, send: (part: Blob, index: number) => Promise<T>): Promise<T[]> {
-  let done = 0
-  job.progress(label, 0)
+  const total = job.parts.length
+  const finished = new Set<number>()
+  const said = () => {
+    const first = job.parts.findIndex((_, index) => !finished.has(index))
+    return first < 0 || total < 2 ? label : `${label} · parte ${first + 1} de ${total}`
+  }
+  job.progress(said(), 0)
   return Promise.all(
     job.parts.map(async (part, index) => {
       const answer = await send(part, index)
-      job.progress(label, ++done / job.parts.length)
+      finished.add(index)
+      job.progress(said(), finished.size / total)
       return answer
     }),
   )

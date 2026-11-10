@@ -47,21 +47,77 @@ export interface ServiceName {
 
 const AUDIO_ATTEMPTS = 6
 const SERVER_ERRORS = [500, 502, 503, 504]
+/** An audio request waits this long, plus AUDIO_WAIT_PER_MINUTE for each minute of audio it carries. */
+const AUDIO_WAIT_BASE = 60
+const AUDIO_WAIT_PER_MINUTE = 30
+/** A request that keeps timing out is tried this many times (2 retries), far fewer than the other failures, so a part that never answers fails fast. */
+const TIMEOUT_ATTEMPTS = 3
+/** What a request carries when the caller does not say: one part of the providers. */
+const DEFAULT_AUDIO_SECONDS = 300
 
 const pause = (seconds: number) => new Promise(resolve => setTimeout(resolve, seconds * 1000))
 
-export async function postAudioController(url: string, apiKey: string, form: FormData, service: ServiceName, signal?: AbortSignal): Promise<Record<string, unknown>> {
+export const audioWaitSeconds = (audioSeconds: number, perMinute = AUDIO_WAIT_PER_MINUTE): number => AUDIO_WAIT_BASE + (perMinute * audioSeconds) / 60
+
+export interface AudioRequest {
+  /** How much audio the request carries; the time it may wait grows with it. */
+  audioSeconds?: number
+  /** Seconds it may wait for each minute of audio (default 30); an optional request can ask for less. */
+  waitPerMinute?: number
+  /** How many times it is tried when it keeps timing out (default 3). */
+  timeoutAttempts?: number
+  /** Which part of a longer audio this is, to say so when it never answers. */
+  part?: { number: number; of: number }
+}
+
+/** The job's cancel signal joined with a time limit; `race` makes any wait end at the limit, even a fetch that ignores the abort. */
+function timeLimit(seconds: number, cancel?: AbortSignal) {
+  const controller = new AbortController()
+  const forward = () => controller.abort()
+  if (cancel?.aborted) controller.abort()
+  else cancel?.addEventListener('abort', forward, { once: true })
+  let expired = false
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      expired = true
+      controller.abort()
+      reject(new Error('timeout'))
+    }, seconds * 1000)
+  })
+  timeout.catch(() => undefined)
+  return {
+    signal: controller.signal,
+    expired: () => expired,
+    race: <T>(work: Promise<T>): Promise<T> => Promise.race([work, timeout]),
+    stop: () => {
+      clearTimeout(timer)
+      cancel?.removeEventListener('abort', forward)
+    },
+  }
+}
+
+export async function postAudioController(url: string, apiKey: string, form: FormData, service: ServiceName, signal?: AbortSignal, request: AudioRequest = {}): Promise<Record<string, unknown>> {
+  const seconds = audioWaitSeconds(request.audioSeconds ?? DEFAULT_AUDIO_SECONDS, request.waitPerMinute)
+  const timeoutAttempts = request.timeoutAttempts ?? TIMEOUT_ATTEMPTS
+  const which = request.part && request.part.of > 1 ? ` a parte ${request.part.number} de ${request.part.of}` : ''
+  let timeouts = 0
   for (let attempt = 0; ; attempt++) {
     const last = attempt === AUDIO_ATTEMPTS - 1
+    const limit = timeLimit(seconds, signal)
     let response: Response
     try {
-      response = await fetch(url, { method: 'POST', headers: { Authorization: `Bearer ${apiKey}` }, body: form, signal })
+      response = await limit.race(fetch(url, { method: 'POST', headers: { Authorization: `Bearer ${apiKey}` }, body: form, signal: limit.signal }))
     } catch {
+      limit.stop()
       if (signal?.aborted) throw new TranscriptionError('Transcrição cancelada.')
-      if (last) throw new TranscriptionError(`${service.the} não respondeu depois de ${AUDIO_ATTEMPTS} tentativas. Confira a internet e tente de novo.`)
+      if (limit.expired()) {
+        if (++timeouts >= timeoutAttempts || last) throw new TranscriptionError(`${service.the} não respondeu${which} depois de ${attempt + 1} tentativas. Tente de novo.`)
+      } else if (last) throw new TranscriptionError(`${service.the} não respondeu depois de ${AUDIO_ATTEMPTS} tentativas. Confira a internet e tente de novo.`)
       await pause(2 ** attempt * 2)
       continue
     }
+    if (!response.ok) limit.stop()
     if (response.status === 429 && !last) {
       await pause(Number(response.headers.get('retry-after') ?? '') || 2 ** attempt * 2)
       continue
@@ -73,7 +129,15 @@ export async function postAudioController(url: string, apiKey: string, form: For
     }
     if (response.status === 401 || response.status === 403) throw new TranscriptionError(`A chave ${service.of} foi recusada.`)
     if (!response.ok) throw new TranscriptionError(`${service.the} recusou o áudio (${response.status}).`)
-    return (await response.json()) as Record<string, unknown>
+    try {
+      return (await limit.race(response.json())) as Record<string, unknown>
+    } catch (error) {
+      if (!limit.expired() || signal?.aborted) throw error
+      if (++timeouts >= timeoutAttempts || last) throw new TranscriptionError(`${service.the} não respondeu${which} depois de ${attempt + 1} tentativas. Tente de novo.`)
+    } finally {
+      limit.stop()
+    }
+    await pause(2 ** attempt * 2)
   }
 }
 
