@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 
-import type { FileMeta, MediaAnalysis } from '@/types/domain'
+import type { AtaModelId, AtaPart, FileMeta, MediaAnalysis } from '@/types/domain'
+import { AtaPartsFields, toggledPart } from '@/components/dialogs/AtaPartsDialog'
 import { FolderField } from '@/components/dialogs/FolderChooser'
 import { MoreOptions } from '@/components/dialogs/FromNoteFields'
 import { type ModelChoice, ModelPick, useModelChoice } from '@/components/dialogs/ModelPick'
@@ -9,6 +10,7 @@ import { Icon } from '@/components/ui/Icon'
 import { useDocument } from '@/hooks/use-document'
 import { aiConfigOf } from '@/lib/ai/config'
 import { mediaOf } from '@/lib/file-types'
+import { PART_ORDER } from '@/lib/generation/ata'
 import { sourceExpired } from '@/lib/storage/source-storage'
 import { type NoteAgent, useJobsStore } from '@/stores/jobs'
 import { type OpenedFile, useLibraryStore } from '@/stores/library'
@@ -91,6 +93,14 @@ function nothingToRead(entry: FileMeta, opened: OpenedFile, file: boolean): stri
   return `O texto desta entrada não foi guardado: ${NOTHING_HELD}`
 }
 
+/** "Modelo da ata" of the last time: the newest Ata made from this entrada, else the newest made from any entrada; Padrão with the Resumo when there is none. */
+function lastAta(files: FileMeta[], fileId: string): { model: AtaModelId | null; parts: AtaPart[] } {
+  const atas = files.filter(file => !file.deletedAt && (file.made?.ataModel || file.made?.parts?.length))
+  const newest = (list: FileMeta[]) => list.reduce<FileMeta | null>((best, file) => (!best || file.made!.at > best.made!.at ? file : best), null)
+  const last = newest(atas.filter(file => file.parentFileId === fileId)) ?? newest(atas)
+  return { model: last?.made?.ataModel ?? null, parts: last?.made?.parts?.length ? last.made.parts : ['resumo'] }
+}
+
 /** "Gerar desta entrada": only what makes sense for its kind and for what it keeps; the note is the entrada's child, and the page stays open. */
 export function GenerateEntryDialog({ fileId }: { fileId: string }) {
   const close = useUiStore(state => state.close)
@@ -107,6 +117,8 @@ export function GenerateEntryDialog({ fileId }: { fileId: string }) {
   const [folderId, setFolderId] = useState<string | null | undefined>(undefined)
   const [choosing, setChoosing] = useState(false)
   const [instruction, setInstruction] = useState('')
+  const files = useLibraryStore(state => state.files)
+  const [ata, setAta] = useState(() => lastAta(files, fileId))
 
   const origin = entry?.origin ?? null
   const hasFile = Boolean(origin && !origin.removedAt && (inBrowser || ((origin.storedFileId || origin.storedUrl) && !sourceExpired(origin))))
@@ -125,6 +137,8 @@ export function GenerateEntryDialog({ fileId }: { fileId: string }) {
 
   const blocked = opened && nothingToRead(entry, opened, canHear || (!isMedia && hasFile))
   const ataOfMedia = goal === 'meeting' && isMedia && (spoken || !transcribed)
+  // the Ata of a media needs a model or at least one part
+  const ataEmpty = ataOfMedia && !ata.model && !ata.parts.length
   // the store ignores these, so the window says it instead of doing nothing
   const busy = writes ? (!transcribed && isMedia && running) || (ataOfMedia && writing) : running
   const destination = folderId === undefined ? entry.folderId : folderId
@@ -133,7 +147,7 @@ export function GenerateEntryDialog({ fileId }: { fileId: string }) {
     close()
     if (goal === 'transcribe') return void transcribeNote(fileId, undefined, choice.model || null)
     const place = { folderId: destination }
-    if (ataOfMedia) return void generateAta(fileId, ['resumo'], undefined, { model: choice.model || null, everyStep: choice.videoWrites }, place, instruction, undefined, analysis.sent)
+    if (ataOfMedia) return void generateAta(fileId, ata.model ? [] : PART_ORDER.filter(part => ata.parts.includes(part)), ata.model ?? undefined, { model: choice.model || null, everyStep: choice.videoWrites }, place, instruction, undefined, analysis.sent)
     void generateFromNote(fileId, goal, choice.model || null, place, instruction, analysis.sent)
   }
 
@@ -147,7 +161,7 @@ export function GenerateEntryDialog({ fileId }: { fileId: string }) {
           <button className="btn quiet" onClick={close}>
             Cancelar
           </button>
-          <button className="btn primary" disabled={!opened || Boolean(blocked) || !choice.ready || busy} onClick={start}>
+          <button className="btn primary" disabled={!opened || Boolean(blocked) || !choice.ready || busy || ataEmpty} onClick={start}>
             Gerar
           </button>
         </>
@@ -180,6 +194,7 @@ export function GenerateEntryDialog({ fileId }: { fileId: string }) {
                 ))}
               </div>
             </div>
+            {ataOfMedia && <AtaPartsFields parts={ata.parts} onToggle={part => setAta(current => ({ ...current, parts: toggledPart(current.parts, part) }))} model={ata.model} onModel={model => setAta(current => ({ ...current, model }))} />}
             <ModelPick choice={choice} />
             {writes && mediaOf(entry) === 'video' && <MediaAnalysisField analysis={analysis} />}
             {writes && (

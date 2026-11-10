@@ -150,15 +150,48 @@ const LIST: Record<AiUse, { why: string; rungs: [ModelPair, number | null][] }> 
     why: 'WER 4,17 em português, quase de graça',
     rungs: [[WHISPER_TURBO_DI, 9], [WHISPER_DI, 9], [QWEN_ASR_DI, 9], [MIMO_DI, null], [VOXTRAL_DI, null]],
   },
+  // 10/11: in the Ata this model also says who speaks by the call tiles (one vision model for both). On the real meeting
+  // of 09/11, MiMo named the recorder as another tile and GLM named tiles that were not there (6, the score of naming
+  // another tile); Gemini 3.8 Flash got 8 of 9 answered frames and invented none. Flash-Lite was not tested on it.
   tela: {
-    why: 'vê imagem e lê o texto, sem configurar nada',
-    rungs: [[GEMMA_26B_OR, null], [MIMO_DI, 9], [GLM_OR, 10], [GEMINI_LITE_OR, 10]],
+    why: 'lê a tela e, na Ata, diz quem fala pelo quadro aceso: o único barato que não trocou o quadro na reunião real',
+    rungs: [[GEMMA_26B_OR, null], [MIMO_DI, 6], [GLM_OR, 6], [GEMINI_LITE_OR, null], [GEMINI_38_OR, 9]],
   },
+  // ATA_LIST_DATE: measured on the real meeting of 09/11 against ~/Downloads/atas-09-11/gabarito.md (best per format, rounded down);
+  // DeepSeek V4 Flash left the Ata (5 to 6.5: it keeps a deadline taken back); GLM gave no answer (all the tokens on thinking);
+  // MiMo was not measured writing the Ata. Step by step in ATA_STEPS.
   ata: {
-    why: 'contexto longo e JSON nos 5 passos',
-    rungs: [[LING_OR, null], [DEEPSEEK_DI, 9], [DEEPSEEK_OR, 8], [GEMMA_26B_OR, 7], [MIMO_DI, 8], [GLM_OR, 10], [GEMINI_38_OR, 10]],
+    why: 'medida na Ata real de 09/11: com o GPT-6 Luna nos passos de texto, 10 dos 16 formatos passaram de 8; o DeepSeek V4 Flash ficou em 6',
+    rungs: [[LING_OR, null], [LUNA_OR, 8], [DEEPSEEK_DI, 6], [DEEPSEEK_OR, 6], [GEMMA_26B_OR, 7], [MIMO_DI, null], [GLM_OR, 0], [GEMINI_38_OR, 8]],
   },
 }
+
+/** The Ata scores (LIST.ata and ATA_STEPS) are from this day, not from LIST_DATE. */
+export const ATA_LIST_DATE = '2026-11-10'
+
+/** The day of a use's list scores, "dd/mm". */
+export function listDayOf(use: AiUse): string {
+  return (use === 'ata' ? ATA_LIST_DATE : LIST_DATE).split('-').reverse().slice(0, 2).join('/')
+}
+
+export interface AtaStep {
+  step: 'quem-fala' | 'tela' | 'contexto' | 'escrever'
+  label: string
+  /** The pair of the step first; the next ones also passed. Score: the Ata made with it, on the real meeting of 09/11. */
+  picks: { pair: ModelPair; score: number }[]
+  note: string
+}
+
+/**
+ * The Ata step by step (ATA_LIST_DATE): each step got the model that did it right on the real meeting.
+ * In the app, "Quem fala" and "Leitura da tela" both use the Leitura de tela model; the text steps use the Ata model or their own.
+ */
+export const ATA_STEPS: AtaStep[] = [
+  { step: 'quem-fala', label: 'Quem fala', picks: [{ pair: GEMINI_38_OR, score: 8 }], note: 'pelo quadro aceso: certo em 8 de 9 quadros com resposta; o MiMo errou quem gravou' },
+  { step: 'tela', label: 'Leitura da tela', picks: [{ pair: MIMO_DI, score: 8 }], note: 'leu endereços, menus e o cronograma; no app o mesmo modelo diz quem fala, e aí vale o Gemini 3.8 Flash' },
+  { step: 'contexto', label: 'Contexto e estado final', picks: [{ pair: LUNA_OR, score: 8 }], note: 'pegou o prazo retirado e o que foi descartado; o DeepSeek V4 Flash não' },
+  { step: 'escrever', label: 'Escrita', picks: [{ pair: LUNA_OR, score: 8 }, { pair: GEMINI_38_OR, score: 8 }], note: 'o Luna é o mais barato; o Gemini 3.8 Flash também passou no Fathom' },
+]
 
 /** Fits the DiagnosisRecord of data-model.md: one result of the person's diagnosis. */
 export interface TestedPair {

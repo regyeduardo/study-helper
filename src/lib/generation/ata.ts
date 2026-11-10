@@ -145,13 +145,13 @@ function marksBlock(marks: RecordingMark[], blocks: Speech[], seen: Map<string, 
   return `## Marcados durante a gravação\n\n${lines.join('\n')}\n`
 }
 
-/** The model's answer without thinking, code fences or minute marks (never "when"). */
+/** The model's answer without thinking or code fences; minutes stay as the method writes them, "[mm:ss]". */
 export function modelDocument(raw: string): string {
   return (
     raw
       .replace(/<think>[\s\S]*?<\/think>/g, '')
       .replace(/^```(markdown|md)?\s*$/gm, '')
-      .replace(/[ \t]*\[▸[^\]]*\](\(#t=\d+\))?/g, '')
+      .replace(/\[▸\s*([^\]]*)\](\(#t=\d+\))?/g, '[$1]')
       .replace(/\n{3,}/g, '\n\n')
       .trim() + '\n'
   )

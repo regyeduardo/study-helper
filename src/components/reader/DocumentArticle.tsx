@@ -14,6 +14,7 @@ import { MinutesTab } from '@/components/reader/MinutesTab'
 import { TagSuggestion } from '@/components/reader/TagSuggestion'
 import { useDocument } from '@/hooks/use-document'
 import { withImages } from '@/lib/generation/ata'
+import { forReading } from '@/lib/generation/ata-reading'
 import { courseOf } from '@/lib/generation/course-lesson'
 import { usePathName } from '@/hooks/use-library-view'
 import { MEDIA_LABEL, mediaOf } from '@/lib/file-types'
@@ -22,7 +23,7 @@ import { paths } from '@/lib/paths'
 import { transcriptText } from '@/lib/transcription/export'
 import { renameInText, renameSpeaker, withRecorder } from '@/lib/transcription/turns'
 import { recorderName, useAccountStore } from '@/stores/account'
-import { useDocumentStore } from '@/stores/document'
+import { type Heading, useDocumentStore } from '@/stores/document'
 import { useJobsStore } from '@/stores/jobs'
 import { useLibraryStore } from '@/stores/library'
 import { useUiStore } from '@/stores/ui'
@@ -84,6 +85,12 @@ function SourceMinutes({ media, children }: { media: MeetingMedia; children: Rea
       </div>
     </div>
   )
+}
+
+/** The Ata in the "Ata" tab of a meeting note: while the tab is on screen its headings are the Índice, and they leave with it. */
+function AtaTab({ markdown, onHeadings }: { markdown: string; onHeadings(headings: Heading[]): void }) {
+  useEffect(() => () => onHeadings([]), [onHeadings])
+  return <GithubMarkdownView markdown={markdown} onHeadings={onHeadings} />
 }
 
 function shortLength(seconds: number): string {
@@ -270,9 +277,9 @@ export function DocumentBody({ fileId, compact = false }: { fileId: string; comp
   const viewer = live ? (
     <GithubMarkdownView markdown={live} live />
   ) : opened && opened.content && !(recording && meta.type === 'reading') ? (
-    <GithubMarkdownView markdown={ataDocument && !recording ? withImages(opened.content, ataDocument.images) : opened.content} quotes={quotes} onSelection={setSelection} onQuoteClick={onQuoteClick} onHeadings={onHeadings} onHeading={setHeading} />
+    <GithubMarkdownView markdown={ataDocument && !recording ? withImages(forReading(opened.content), ataDocument.images) : opened.content} quotes={quotes} onSelection={setSelection} onQuoteClick={onQuoteClick} onHeadings={onHeadings} onHeading={setHeading} />
   ) : null
-  const ataView = ataDocument ? <GithubMarkdownView markdown={withImages(ataDocument.markdown, ataDocument.images)} /> : undefined
+  const ataView = ataDocument ? <AtaTab markdown={withImages(forReading(ataDocument.markdown), ataDocument.images)} onHeadings={onHeadings} /> : undefined
   const rename = async (speakerId: string, name: string) => {
     if (!recording || !opened) return
     const renamed = renameSpeaker(recording, speakerId, name)

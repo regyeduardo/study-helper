@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 // What every part of the Ata reads: meeting data, the speech with real names, the screen reading
 // grouped by screen, and the context + glossary pass (pass 1 of relatorio.md).
+import { Cancelled } from '@/controllers/ai.controller'
 import type { RecordingData } from '@/types/domain'
 import type { AtaAi } from '@/lib/generation/ata-ai'
 import * as P from '@/lib/generation/ata-prompts'
@@ -133,10 +134,35 @@ export interface Material {
 
 const span = (g: { at: number; end: number }) => (g.end - g.at >= 2 ? `${clock(g.at)}–${clock(g.end)}` : clock(g.at))
 
+/** Seconds between two pieces of one sentence. */
+const SENTENCE_GAP = 1.5
+
+/**
+ * metodo.md §4: when the label flips word by word inside a sentence, the pieces are read as one sentence, under the
+ * voice that said most of its words. A piece without a final punctuation mark joins the next one right after it.
+ */
+export function joinBrokenSentences(blocks: Speech[]): Speech[] {
+  const out: Speech[] = []
+  let words = new Map<string, number>()
+  for (const block of blocks) {
+    const last = out[out.length - 1]
+    if (last && !/[.?!…]["')\]]*$/.test(last.text) && block.at - last.end <= SENTENCE_GAP) {
+      last.text = `${last.text} ${block.text}`
+      last.end = Math.max(last.end, block.end)
+    } else {
+      out.push({ ...block })
+      words = new Map()
+    }
+    words.set(block.who, (words.get(block.who) ?? 0) + block.text.split(/\s+/).length)
+    out[out.length - 1].who = [...words].sort((a, b) => b[1] - a[1])[0][0]
+  }
+  return out
+}
+
 /** `written`: the exact screen terms read by the local OCR, appended to the screen reading. */
 export function meetingMaterial(recording: RecordingData, startedAt: Date, screen: ScreenGroup[], written = ''): Material {
   const nameOf = (id: string) => recording.speakers.find(speaker => speaker.id === id)?.name ?? id
-  const blocks = recording.blocks.filter(block => block.text.trim() && !NOISE.test(block.text.trim())).map(block => ({ at: block.start, end: block.end, who: block.speaker ? nameOf(block.speaker) : '?', text: block.text.trim() }))
+  const blocks = joinBrokenSentences(recording.blocks.filter(block => block.text.trim() && !NOISE.test(block.text.trim())).map(block => ({ at: block.start, end: block.end, who: block.speaker ? nameOf(block.speaker) : '?', text: block.text.trim() })))
   const people = [...new Set(blocks.map(block => block.who))].filter(name => name !== '?')
   const recorder = recording.blocks.some(block => block.speaker === MICROPHONE) ? nameOf(MICROPHONE) : null
   const ordered = [...people.filter(name => name !== recorder), ...(recorder && people.includes(recorder) ? [recorder] : [])]
@@ -271,11 +297,61 @@ export interface Context {
 }
 
 export async function understandMeeting(m: Material, ai: AtaAi): Promise<Context> {
-  const brief = jsonIn(await ai.text('context', P.ENTENDER, `${m.dados}\n\nFALAS:\n${m.falas}\n\nLEITURA DA TELA:\n${m.tela}`, { max: 8000, json: true })) ?? {}
-  return contextOf(brief, m)
+  const user = `${m.dados}\n\nFALAS:\n${m.falas}\n\nLEITURA DA TELA:\n${m.tela}`
+  // the internal timeline of the method runs beside the context; failing, the Ata goes on without it
+  const [brief, timeline] = await Promise.all([ai.text('context', P.ENTENDER, user, { max: 8000, json: true }).then(jsonIn), timelineOf(user, ai)])
+  return contextOf(brief ?? {}, m, timeline)
 }
 
-export function contextOf(brief: Json, m: Material): Context {
+const usable = (timeline: Json | null) => Boolean(timeline && (list(timeline.assuntos).length || list(timeline.compromissos).length))
+
+/** json: false, so the provider's retries never wait on it; an answer without a usable JSON is asked once more. */
+async function timelineOf(user: string, ai: AtaAi): Promise<Json | null> {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const timeline = jsonIn(await ai.text('context', P.ESTADO_FINAL, user, { max: 8000, json: false }))
+      if (usable(timeline)) return timeline
+    } catch (error) {
+      if (error instanceof Cancelled) throw error
+    }
+  }
+  return null
+}
+
+/** The final state of the meeting (metodo.md §1), as every writer reads it. */
+export function finalState(timeline: Json | null): string {
+  if (!timeline) return ''
+  const minutes = (value: unknown) => (Array.isArray(value) ? value.map(String).filter(Boolean).join(' → ') : '')
+  const subjects = list(timeline.assuntos).map(a => {
+    const dropped = list(a.descartado).map(d => `${oneLine(d.era)} → ${oneLine(d.ficou)}${minutes(d.minutos) ? ` (${minutes(d.minutos)})` : ''}`)
+    return `- [${String(a.importancia ?? '').slice(0, 1) || '?'}] ${oneLine(a.assunto)}: ${oneLine(a.estado_final)}${dropped.length ? ` Descartado: ${dropped.join('; ')}.` : ''}`
+  })
+  const deadlines = list(timeline.prazos)
+    .filter(d => d.vale_no_fim === false)
+    .map(d => `${oneLine(d.o_que)} · ${oneLine(d.prazo_dito)} · ${oneLine(d.minuto)}${oneLine(d.mudou) ? ` (${oneLine(d.mudou)})` : ''}`)
+  const commitments = list(timeline.compromissos)
+  const line = (c: Json) => `${oneLine(c.quem)}: ${oneLine(c.o_que)} · ${oneLine(c.prazo) || 'sem prazo'} · ${oneLine(c.minuto)}${oneLine(c.mudou) ? ` (${oneLine(c.mudou)})` : ''}`
+  const valid = commitments.filter(c => c.vale_no_fim !== false).map(line)
+  const gone = commitments.filter(c => c.vale_no_fim === false).map(line)
+  const asked = list(timeline.pedidos_sem_aceite).map(p => `${oneLine(p.o_que)} (pedido por ${oneLine(p.pedido_por) || '?'}, ${oneLine(p.minuto)})`)
+  const loose = (key: string) => (Array.isArray(timeline[key]) ? timeline[key].map((item: unknown) => oneLine(String(item))).filter(Boolean) : [])
+  return [
+    'ESTADO FINAL DA REUNIÃO (linha do tempo interna; vale acima do que foi dito antes, e não é para copiar):',
+    deadlines.length ? `Prazos que NÃO valem mais (decisão: vai no topo): ${deadlines.join(' | ')}` : '',
+    ...subjects,
+    valid.length ? `Compromissos que valem no fim: ${valid.join(' | ')}` : '',
+    gone.length ? `Compromissos que NÃO valem mais: ${gone.join(' | ')}` : '',
+    asked.length ? `Pedidos sem aceite: ${asked.join(' | ')}` : '',
+    loose('nao_ficou_claro').length ? `Não ficou claro: ${loose('nao_ficou_claro').join(' | ')}` : '',
+    loose('conflitos_com_a_tela').length ? `Conflitos com a tela: ${loose('conflitos_com_a_tela').join(' | ')}` : '',
+  ]
+    .filter(Boolean)
+    .join('\n')
+}
+
+export function contextOf(brief: Json, m: Material, timeline: Json | null = null): Context {
+  const state = finalState(timeline)
+  const withState = (text: string) => (state ? `${text}\n${state}` : text)
   const pessoas = list(brief.pessoas)
   const glossario = list(brief.glossario)
   const people = pessoas.map(p => `${p.nome} (${p.papel ?? ''}${p.participou === false ? ', não participou' : ''})`).join('; ')
@@ -320,7 +396,7 @@ export function contextOf(brief: Json, m: Material): Context {
       .join('; ')}`,
     `GLOSSÁRIO (com o que a transcrição escreveu errado):\n${glossarioTexto}`,
   ].join('\n')
-  return { brief, contexto, contextoCurto, glossario: glossarioTexto, contextoGeral }
+  return { brief, contexto: withState(contexto), contextoCurto: withState(contextoCurto), glossario: glossarioTexto, contextoGeral: withState(contextoGeral) }
 }
 
 /** "Natalia Lenza" read on a card becomes "Natália Lenza" when that is a known name. */

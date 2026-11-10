@@ -189,6 +189,16 @@ describe('the miniature tests have a real answer key', () => {
     expect(plain(materialText(requirementOf('ata').test.material))).toContain('antonio')
   })
 
+  it('the known meeting has a task proposed and then dropped: the Ata and the writing step must keep it out of the tasks (FR-064)', () => {
+    for (const id of ['ata', 'escrever'] as const) {
+      const { test } = requirementOf(id)
+      expect(test.dropped, id).toHaveLength(1)
+      const spoken = plain(materialText(test.material))
+      for (const form of test.dropped![0].accept) expect(spoken, form).toContain(plain(form))
+      expect(spoken).toContain('nao tem sorteio')
+    }
+  })
+
   it('needs the task with its owner and its deadline, not only the task', () => {
     const tasks = requirementOf('ata').test.expected.filter(expected => expected.together)
     expect(tasks).toHaveLength(3)
@@ -222,6 +232,23 @@ describe('the miniature tests have a real answer key', () => {
     expect(test.material.table).toHaveLength(2)
     for (const row of test.material.table) expect(row).toHaveLength(3)
     expect(test.cer?.max).toBeGreaterThan(0)
+  })
+
+  it('Leitura de tela also draws a video call: tiles with a name, one with the speaking ring, and asks who is speaking', () => {
+    const { test } = requirementOf('tela')
+    if (test.material.kind !== 'tela') throw new Error('expected a screen')
+    const call = test.material.call
+    if (!call) throw new Error('the screen of the test is a video call')
+    expect(call.tiles.length).toBeGreaterThanOrEqual(4)
+    expect(new Set(call.tiles).size).toBe(call.tiles.length)
+    expect(call.tiles).toContain(call.speaking)
+    // Not at either end: a model that always points at the first or the last tile does not pass by luck.
+    expect([call.tiles[0], call.tiles.at(-1)]).not.toContain(call.speaking)
+    // The names are text on the screen, so they belong to what is read.
+    for (const name of call.tiles) expect(materialText(test.material)).toContain(name)
+    expect(test.speaking).toEqual({ field: 'falando' })
+    expect(test.format).toMatchObject({ kind: 'json', fields: ['texto', 'falando'] })
+    expect(plain(test.ask)).toContain('anel')
   })
 
   it('keeps the sample files under public/diagnostico/', () => {

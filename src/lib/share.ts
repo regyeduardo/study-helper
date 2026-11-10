@@ -10,6 +10,7 @@ import { newFileMeta, newFolderMeta } from '@/lib/defaults'
 import { newId, nowIso } from '@/lib/ids'
 import { keepLocalMedia, type LocalMedia, readLocalMedia } from '@/lib/recording/media-library'
 import { makeSeekable } from '@/lib/recording/seekable'
+import type { EntryShareChoice } from '@/lib/share-entry'
 import { bytesOf, type Repository, type StoredSize } from '@/lib/storage/repository'
 import { downloadStoredSource, sourceExpired, storeSource } from '@/lib/storage/source-storage'
 import { RECORDER, withRecorder } from '@/lib/transcription/turns'
@@ -79,6 +80,65 @@ function sharedMeta({ artifacts: _artifacts, cardDue: _cardDue, hasMindmap: _has
   return { ...meta, mastery: null, lastReviewedAt: null }
 }
 
+interface SharedFileOptions {
+  folderId: string | null
+  withExams: boolean
+  artifact(artifact: Artifact): boolean
+  meta: Partial<FileMeta>
+}
+
+/** A note as it goes in a link: `recorder` names the microphone voice of notes transcribed back when it was "Você". */
+function sharedFileOf(file: FileMeta, opened: OpenedFile, recorder: string, options: SharedFileOptions): SharedFile {
+  const recording = opened.sidecar.recording && withRecorder(opened.sidecar.recording, recorder)
+  // only the speaker label at the start of a line: "Você" inside what was said stays
+  const named = (text: string) => (recording !== opened.sidecar.recording ? text.replace(/^Você(?= \[)/gm, recorder.trim() || RECORDER) : text)
+  const artifacts = artifactsOf(opened.sidecar).filter(options.artifact).map(sharedArtifact)
+  return {
+    id: file.id,
+    name: file.name,
+    folderId: options.folderId,
+    type: file.type,
+    position: file.position,
+    description: file.description,
+    tags: file.tags,
+    content: named(opened.content),
+    questions: options.withExams ? opened.sidecar.questions : [],
+    highlights: opened.sidecar.highlights,
+    ...(opened.sidecar.transcript !== undefined ? { transcript: named(opened.sidecar.transcript) } : {}),
+    ...(recording ? { recording } : {}),
+    ...(opened.sidecar.documents ? { documents: opened.sidecar.documents } : {}),
+    ...(artifacts.length ? { artifacts } : {}),
+    meta: options.meta,
+  }
+}
+
+/** The source of an item without the place it is kept in: the Drive file of who shares never goes. */
+function plainOrigin(origin: SourceMeta | null): SourceMeta | null {
+  if (!origin) return null
+  const { storedFileId: _id, storedUrl: _url, expiresAt: _expires, removedAt: _removed, ...rest } = origin
+  return { ...rest, storage: 'none' }
+}
+
+/**
+ * The link of an entrada (FR-065, FR-066): the entrada with its transcription, then the chosen notes in the order of the tree, each with its mother and only its chosen artifacts.
+ * No folder of who shares; the exam goes with the note (FR-020). Without the media, the entrada goes as "Só o registro".
+ */
+export async function buildEntryShareContent(entryId: string, files: FileMeta[], open: (id: string) => Promise<OpenedFile>, choice: EntryShareChoice, recorder = ''): Promise<ShareContent> {
+  const entry = files.find(file => file.id === entryId)
+  if (!entry) throw new Error('Entrada não encontrada.')
+  const entryMeta: Partial<FileMeta> = { ...sharedMeta(entry), folderId: null, parentFileId: null, origin: plainOrigin(entry.origin), kept: choice.media ? (entry.kept ?? 'arquivo') : 'registro' }
+  const sharedFiles = [sharedFileOf(entry, await open(entry.id), recorder, { folderId: null, withExams: true, artifact: () => false, meta: entryMeta })]
+  for (const id of choice.notes) {
+    const note = files.find(file => file.id === id)
+    if (!note) continue
+    // a note made from the media before entradas existed: in the link it is text, as the notes made now
+    const origin = note.origin && mediaOf(note) !== 'text' ? { input: 'text' as const, name: entry.name, storage: 'none' as const } : plainOrigin(note.origin)
+    const chosen = new Set(choice.artifacts[id] ?? [])
+    sharedFiles.push(sharedFileOf(note, await open(id), recorder, { folderId: null, withExams: true, artifact: artifact => chosen.has(artifact.id), meta: { ...sharedMeta(note), folderId: null, origin } }))
+  }
+  return { kind: 'entrada', title: entry.name, folders: [], files: sharedFiles }
+}
+
 /** `recorder`: name of who shares, for the microphone voice of notes transcribed back when it was "Você". `kinds`: the artifact types that go. */
 export async function buildShareContent(target: ShareTarget, folders: FolderMeta[], files: FileMeta[], open: (id: string) => Promise<OpenedFile>, withExams: boolean, recorder = '', kinds: ArtifactKind[] = []): Promise<ShareContent> {
   const tree = target.kind === 'folder' ? folderTree(folders, target.id) : []
@@ -93,32 +153,7 @@ export async function buildShareContent(target: ShareTarget, folders: FolderMeta
     description: folder.description,
   }))
   const sharedFiles: SharedFile[] = []
-  for (const file of chosen) {
-    const opened = await open(file.id)
-    const recording = opened.sidecar.recording && withRecorder(opened.sidecar.recording, recorder)
-    // only the speaker label at the start of a line: "Você" inside what was said stays
-    const named = (text: string) => (recording !== opened.sidecar.recording ? text.replace(/^Você(?= \[)/gm, recorder.trim() || RECORDER) : text)
-    const artifacts = artifactsOf(opened.sidecar)
-      .filter(artifact => kinds.includes(artifact.kind))
-      .map(sharedArtifact)
-    sharedFiles.push({
-      id: file.id,
-      name: file.name,
-      folderId: target.kind === 'file' ? null : file.folderId,
-      type: file.type,
-      position: file.position,
-      description: file.description,
-      tags: file.tags,
-      content: named(opened.content),
-      questions: withExams ? opened.sidecar.questions : [],
-      highlights: opened.sidecar.highlights,
-      ...(opened.sidecar.transcript !== undefined ? { transcript: named(opened.sidecar.transcript) } : {}),
-      ...(recording ? { recording } : {}),
-      ...(opened.sidecar.documents ? { documents: opened.sidecar.documents } : {}),
-      ...(artifacts.length ? { artifacts } : {}),
-      meta: sharedMeta(file),
-    })
-  }
+  for (const file of chosen) sharedFiles.push(sharedFileOf(file, await open(file.id), recorder, { folderId: target.kind === 'file' ? null : file.folderId, withExams, artifact: artifact => kinds.includes(artifact.kind), meta: sharedMeta(file) }))
   const title = target.kind === 'folder' ? (tree[0]?.name ?? '') : (chosen[0]?.name ?? '')
   return { kind: target.kind, title, folders: sharedFolders, files: sharedFiles }
 }
@@ -160,6 +195,12 @@ export function shareMediaOf(content: ShareContent, files: FileMeta[], localMedi
     }
   }
   return found
+}
+
+/** The media of an entrada that can go in its link: in this browser, or kept in the Drive or a temporary service and still there. */
+export function entryMediaOf(entryId: string, files: FileMeta[], localMedia: LocalMedia[], repo: Repository | null): ShareMedia | null {
+  const only: ShareContent = { kind: 'entrada', title: '', folders: [], files: [{ id: entryId } as SharedFile] }
+  return shareMediaOf(only, files, localMedia, repo)[0] ?? null
 }
 
 export async function questionCountOf(target: ShareTarget, folders: FolderMeta[], files: FileMeta[]): Promise<number> {
@@ -252,6 +293,35 @@ function ownArtifacts(list: SharedFile['artifacts'], at: string): Artifact[] {
   })
 }
 
+/** What of a shared note lives in its sidecar: the exam with the attempts made in the link, highlights, transcription, Ata and artifacts. */
+async function fillImported(actions: ImportActions, id: string, file: SharedFile, attempts: SharedAttempts, at: string): Promise<void> {
+  const fileAttempts = attempts[file.id] ?? []
+  const last = fileAttempts[fileAttempts.length - 1]
+  const artifacts = ownArtifacts(file.artifacts, at)
+  await actions.updateSidecar(id, sidecar => ({
+    ...sidecar,
+    questions: file.questions,
+    attempts: fileAttempts,
+    highlights: file.highlights ?? [],
+    ...(file.transcript !== undefined ? { transcript: file.transcript } : {}),
+    ...(file.recording ? { recording: file.recording } : {}),
+    ...(file.documents ? { documents: file.documents } : {}),
+    ...(artifacts.length ? { artifacts } : {}),
+    meta: { ...sidecar.meta, questionCount: file.questions.length, ...(last ? { mastery: masteryOf(last.correct, last.total), lastReviewedAt: last.createdAt } : {}), ...(artifacts.length ? artifactMeta(artifacts) : {}) },
+  }))
+}
+
+async function keepImportedMedia(actions: ImportActions, meta: FileMeta, file: SharedFile, media: SharedMedia, options: MediaImport): Promise<void> {
+  const task = options.track(`Guardar a mídia: ${meta.name}`)
+  try {
+    const origin = await keepSharedMedia(file, media, meta.id, options, task)
+    await actions.updateSidecar(meta.id, sidecar => ({ ...sidecar, meta: { ...sidecar.meta, origin } }))
+    task.done('Mídia guardada.')
+  } catch (error) {
+    task.fail(error instanceof Error ? error.message : 'Não consegui guardar a mídia.')
+  }
+}
+
 export async function importSharedItem(item: SharedItem, attempts: SharedAttempts, actions: ImportActions, media?: MediaImport): Promise<{ folderId: string | null; fileId: string | null }> {
   const withMedia = media && hasSharedMedia(item) ? media : null
   const folderIds = new Map<string, string>()
@@ -275,33 +345,49 @@ export async function importSharedItem(item: SharedItem, attempts: SharedAttempt
       file.content,
     )
     firstFileId ??= meta.id
-    const fileAttempts = attempts[file.id] ?? []
-    const last = fileAttempts[fileAttempts.length - 1]
-    const artifacts = ownArtifacts(file.artifacts, item.createdAt)
-    await actions.updateSidecar(meta.id, sidecar => ({
-      ...sidecar,
-      questions: file.questions,
-      attempts: fileAttempts,
-      highlights: file.highlights ?? [],
-      ...(file.transcript !== undefined ? { transcript: file.transcript } : {}),
-      ...(file.recording ? { recording: file.recording } : {}),
-      ...(file.documents ? { documents: file.documents } : {}),
-      ...(artifacts.length ? { artifacts } : {}),
-      meta: { ...sidecar.meta, questionCount: file.questions.length, ...(last ? { mastery: masteryOf(last.correct, last.total), lastReviewedAt: last.createdAt } : {}), ...(artifacts.length ? artifactMeta(artifacts) : {}) },
-    }))
-    if (withMedia && file.media) {
-      const task = withMedia.track(`Guardar a mídia: ${meta.name}`)
-      try {
-        const origin = await keepSharedMedia(file, file.media, meta.id, withMedia, task)
-        await actions.updateSidecar(meta.id, sidecar => ({ ...sidecar, meta: { ...sidecar.meta, origin } }))
-        task.done('Mídia guardada.')
-      } catch (error) {
-        task.fail(error instanceof Error ? error.message : 'Não consegui guardar a mídia.')
-      }
-    }
+    await fillImported(actions, meta.id, file, attempts, item.createdAt)
+    if (withMedia && file.media) await keepImportedMedia(actions, meta, file, file.media, withMedia)
   }
   const rootId = item.folders.find(folder => folder.parentId === null)?.id
   return { folderId: rootId ? (folderIds.get(rootId) ?? null) : null, fileId: item.kind === 'file' ? firstFileId : null }
+}
+
+/** "(cópia N)" when this link was already imported (FR-071): only the entrada changes its name. */
+function copyName(name: string, existing: FileMeta[], shareId: string): string {
+  const taken = new Set(existing.filter(file => file.sharedFrom === shareId).map(file => file.name))
+  if (!taken.size) return name
+  let copy = 1
+  while (taken.has(`${name} (cópia ${copy})`)) copy++
+  return `${name} (cópia ${copy})`
+}
+
+export interface EntryImport {
+  /** The folder chosen in the folder picker; the whole family goes into it. */
+  folderId: string | null
+  /** The library of who imports, to know whether this link came before. */
+  existing: FileMeta[]
+  media?: MediaImport
+}
+
+/** Everything in the link of an entrada, at once (FR-068, FR-069): the entrada, the notes under it and the children under their mothers, with the artifacts inside the notes. */
+export async function importSharedEntry(item: SharedItem, attempts: SharedAttempts, actions: ImportActions, options: EntryImport): Promise<{ fileId: string }> {
+  const entry = item.files.find(file => file.meta?.role === 'entrada') ?? item.files[0]
+  const withMedia = options.media && entry.media && hasSharedMedia(item) ? options.media : null
+  const base = (file: SharedFile) => ({ type: knownType(file.type), folderId: options.folderId, position: file.position, description: file.description, tags: file.tags, origin: file.meta?.origin ?? null })
+  const created = await actions.createFile({ ...base(entry), name: copyName(entry.name, options.existing, item.id), role: 'entrada', kept: withMedia ? (entry.meta?.kept ?? 'arquivo') : 'registro', parentFileId: null, sharedFrom: item.id }, entry.content)
+  await fillImported(actions, created.id, entry, attempts, item.createdAt)
+  const ids = new Map([[entry.id, created.id]])
+  // mothers first: a note whose mother did not come hangs from the entrada
+  const pending = item.files.filter(file => file !== entry)
+  while (pending.length) {
+    const index = pending.findIndex(file => !pending.some(other => other.id === file.meta?.parentFileId))
+    const [file] = pending.splice(Math.max(index, 0), 1)
+    const meta = await actions.createFile({ ...base(file), name: file.name, parentFileId: ids.get(file.meta?.parentFileId ?? '') ?? created.id }, file.content)
+    ids.set(file.id, meta.id)
+    await fillImported(actions, meta.id, file, attempts, item.createdAt)
+  }
+  if (withMedia && entry.media) await keepImportedMedia(actions, created, entry, entry.media, withMedia)
+  return { fileId: created.id }
 }
 
 export interface SharedLibrary {

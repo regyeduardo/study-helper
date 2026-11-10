@@ -13,8 +13,11 @@ type LoadState = { kind: 'loading' } | { kind: 'unavailable' } | { kind: 'ready'
 
 function sharedRoute(item: SharedItem, pathname: string): ViewRoute {
   const [, , , section, id] = pathname.split('/')
-  if (section === 'arquivo' && id) return { view: 'doc', folderId: null, fileId: id }
+  // the entrada of the link opens its page, as in one's own library (FR-067)
+  const isEntry = (fileId: string) => item.files.some(file => file.id === fileId && file.meta?.role === 'entrada')
+  if (section === 'arquivo' && id) return { view: isEntry(id) ? 'entry' : 'doc', folderId: null, fileId: id }
   if (section === 'pasta' && id) return { view: 'folder', folderId: id, fileId: null }
+  if (item.kind === 'entrada') return { view: 'entry', folderId: null, fileId: (item.files.find(file => isEntry(file.id)) ?? item.files[0]).id }
   if (item.kind === 'file') return { view: 'doc', folderId: null, fileId: item.files[0].id }
   return { view: 'folder', folderId: item.folders.find(folder => folder.parentId === null)?.id ?? null, fileId: null }
 }

@@ -704,6 +704,71 @@ describe('"Gerar desta entrada": o que a janela oferece', () => {
     expect(generateAta).toHaveBeenCalledWith('e', ['resumo'], undefined, { model: A.uid, everyStep: false }, { folderId: 'aurora' }, '', undefined, undefined)
   })
 
+  describe('Modelo da ata', () => {
+    const modelPick = () => screen.getByLabelText('Modelo da ata') as HTMLSelectElement
+    const parts = () => screen.queryByRole('group', { name: 'Partes da ata' })
+    const ask = async (extra: FileSidecar[] = []) => {
+      seed([withTranscript(entrada('e', 'v.mp4', VIDEO)), ...extra])
+      await openDialog()
+      await screen.findByRole('radiogroup', { name: 'O que gerar' })
+    }
+
+    it('na Ata oferece o Modelo da ata (Padrão e os 15 modelos) e as partes do Padrão; em Aula, some', async () => {
+      await ask()
+      expect(within(modelPick()).getAllByRole('option')).toHaveLength(16)
+      expect(modelPick().value).toBe('')
+      expect(within(modelPick()).getByRole('option', { name: 'Fathom' })).toBeInTheDocument()
+      expect(parts()).toBeInTheDocument()
+      expect((screen.getByRole('checkbox', { name: 'Resumo' }) as HTMLInputElement).checked).toBe(true)
+      pick('Aula')
+      expect(screen.queryByLabelText('Modelo da ata')).not.toBeInTheDocument()
+      expect(parts()).not.toBeInTheDocument()
+    })
+
+    it('um modelo esconde as partes e vai para a Ata sem elas', async () => {
+      const generateAta = vi.fn(async () => undefined)
+      useJobsStore.setState({ generateAta })
+      await ask()
+      fireEvent.change(modelPick(), { target: { value: 'fathom' } })
+      expect(parts()).not.toBeInTheDocument()
+      go()
+      expect(generateAta).toHaveBeenCalledWith('e', [], 'fathom', { model: A.uid, everyStep: false }, { folderId: 'aurora' }, '', undefined, undefined)
+    })
+
+    it('as partes marcadas do Padrão vão na ordem da ata; sem nenhuma, não gera', async () => {
+      const generateAta = vi.fn(async () => undefined)
+      useJobsStore.setState({ generateAta })
+      await ask()
+      fireEvent.click(screen.getByRole('checkbox', { name: 'Resumo' }))
+      expect(screen.getByRole('button', { name: 'Gerar' })).toBeDisabled()
+      expect(screen.getByText('Marque ao menos uma parte.')).toBeInTheDocument()
+      const tasks = screen.getByRole('checkbox', { name: 'Levantamento de tarefas' })
+      const questions = screen.getByRole('checkbox', { name: /^Perguntas/ })
+      fireEvent.click(questions)
+      fireEvent.click(tasks)
+      go()
+      expect(generateAta).toHaveBeenCalledWith('e', ['tarefas', 'perguntas'], undefined, { model: A.uid, everyStep: false }, { folderId: 'aurora' }, '', undefined, undefined)
+    })
+
+    it('começa no modelo da última Ata feita desta entrada', async () => {
+      await ask([item('velha', { name: 'Ata antiga', type: 'meeting', parentFileId: 'e', made: { at: '2026-11-01T10:00:00.000Z', ataModel: 'tldv' } }), item('nova', { name: 'Ata nova', type: 'meeting', parentFileId: 'e', made: { at: '2026-11-05T10:00:00.000Z', ataModel: 'cornell' } })])
+      expect(modelPick().value).toBe('cornell')
+      expect(parts()).not.toBeInTheDocument()
+    })
+
+    it('começa nas partes do Padrão da última Ata feita desta entrada', async () => {
+      await ask([item('ata-partes', { name: 'Ata em partes', type: 'meeting', parentFileId: 'e', made: { at: '2026-11-05T10:00:00.000Z', parts: ['tarefas', 'linha'] } })])
+      expect(modelPick().value).toBe('')
+      expect((screen.getByRole('checkbox', { name: 'Resumo' }) as HTMLInputElement).checked).toBe(false)
+      expect((screen.getByRole('checkbox', { name: 'Levantamento de tarefas' }) as HTMLInputElement).checked).toBe(true)
+    })
+
+    it('sem Ata desta entrada, começa na última feita em outra', async () => {
+      await ask([item('outra', { name: 'Ata de outra', type: 'meeting', parentFileId: 'outra-entrada', made: { at: '2026-11-02T10:00:00.000Z', ataModel: 'read-ai' } })])
+      expect(modelPick().value).toBe('read-ai')
+    })
+  })
+
   it('a Ata de uma mídia com a transcrição só em texto, sem falas, vai pelo texto', async () => {
     const generateFromNote = vi.fn(async () => 'nota')
     const generateAta = vi.fn(async () => undefined)

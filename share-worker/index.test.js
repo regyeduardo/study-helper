@@ -611,3 +611,82 @@ describe('plain page of a share, for AI agents and people without login', () => 
     expect(renderSharePage(share, { origin: 'https://share.test', appUrl: APP_URL })).toContain('<pre>Professor [00:05]: Olá.</pre>')
   })
 })
+
+describe('share of an entrada with its family (FR-070)', () => {
+  const mapOfAta = { id: 'm1', kind: 'mapa', name: 'Portal novo', diagram: { form: 'arvore', root: { id: 'r', text: 'Portal', children: [] } }, mermaid: 'flowchart LR\n  m0(["Portal"])' }
+  const note = (id, name, parentFileId, fields = {}) => ({ id, name, folderId: null, type: 'class', position: 0, description: '', tags: [], content: `Texto de ${name}`, questions: [], meta: { parentFileId }, ...fields })
+  const entrada = {
+    id: 'e',
+    name: 'Reunião de planejamento',
+    folderId: null,
+    type: 'meeting',
+    position: 0,
+    description: '',
+    tags: [],
+    content: '',
+    questions: [],
+    recording,
+    meta: { role: 'entrada', kept: 'arquivo', parentFileId: null, origin: { input: 'file', name: 'planejamento.mp4', mime: 'video/mp4', storage: 'none' } },
+  }
+  // sent in the order of the tree: each note after its mother
+  const family = [entrada, note('ata', 'Ata', 'e', { type: 'meeting', artifacts: [mapOfAta] }), note('aula', 'Aula', 'e'), note('exp', 'Explicação', 'aula', { type: 'explanation' }), note('extra', 'Pontos jurídicos', 'exp', { type: 'explanation' })]
+
+  async function entradaShare(files = family) {
+    const response = await call('POST', '/shares', { token: 'token-ana', body: { turnstileToken: 'ok', share: { kind: 'entrada', title: 'Reunião de planejamento', folders: [], files } } })
+    expect(response.status).toBe(201)
+    return (await response.json()).id
+  }
+
+  function inOrder(text, parts) {
+    const found = parts.map(part => text.indexOf(part))
+    expect(found.every(index => index >= 0)).toBe(true)
+    expect(found).toEqual([...found].sort((a, b) => a - b))
+  }
+
+  it('accepts kind "entrada" and keeps who is the entrada and the mother of each note', async () => {
+    const id = await entradaShare()
+    expect(manifestOf(id)).toMatchObject({ kind: 'entrada', title: 'Reunião de planejamento' })
+    expect(JSON.parse(env.BUCKET.objects.get(`shared/${id}/Explicação.json`).body).meta).toMatchObject({ parentFileId: 'aula' })
+    expect(JSON.parse(env.BUCKET.objects.get(`shared/${id}/Reunião de planejamento.json`).body).meta).toMatchObject({ role: 'entrada', parentFileId: null })
+    expect((await call('POST', '/shares', { token: 'token-ana', body: { turnstileToken: 'ok', share: { kind: 'familia', title: 'x', folders: [], files: family } } })).status).toBe(415)
+  })
+
+  it('the page carries the entrada, its media and transcription, and the notes nested under their mothers, one heading deeper per level', async () => {
+    const id = await entradaShare()
+    await uploadMedia(id, 'e', MEDIA, { mime: 'video/mp4' })
+    const html = await (await call('GET', `/s/${id}`, { origin: null })).text()
+    expect(html).toContain('<h1>Reunião de planejamento</h1>')
+    expect(html).toMatch(/<meta name="description" content="Reunião de planejamento: uma entrada com 4 notas[^"]*">/)
+    inOrder(html, [
+      '<h2>Reunião de planejamento</h2>',
+      'Tipo: Entrada · planejamento.mp4',
+      `Mídia (video/mp4, 10 bytes): <a href="https://share.test/media/${id}/e">`,
+      '<h3>Transcrição</h3>',
+      '<h3>Ata</h3>',
+      'Texto de Ata',
+      '<h4>Mapa mental: Portal novo</h4>',
+      '<h3>Aula</h3>',
+      'Texto de Aula',
+      '<h4>Explicação</h4>',
+      'Texto de Explicação',
+      '<h5>Pontos jurídicos</h5>',
+    ])
+    const markdown = await (await call('GET', `/s/${id}.md`, { origin: null })).text()
+    inOrder(markdown, ['## Reunião de planejamento', '### Transcrição', '### Ata', '#### Mapa mental: Portal novo', '### Aula', '#### Explicação', '##### Pontos jurídicos'])
+  })
+
+  it('only what was chosen: a note left out is not on the page, and a note whose mother did not come hangs from the entrada', async () => {
+    const id = await entradaShare([entrada, note('ata', 'Ata', 'e'), note('solta', 'Nota solta', 'fora')])
+    const html = await (await call('GET', `/s/${id}`, { origin: null })).text()
+    expect(html).not.toMatch(/<h\d>(Aula|Explicação|Pontos jurídicos)<\/h\d>|Texto de (Aula|Explicação)/)
+    inOrder(html, ['<h2>Reunião de planejamento</h2>', '<h3>Ata</h3>', '<h3>Nota solta</h3>'])
+    expect(html).toMatch(/content="Reunião de planejamento: uma entrada com 2 notas/)
+  })
+
+  it('an entrada with no note goes alone, with its transcription', async () => {
+    const id = await entradaShare([entrada])
+    const html = await (await call('GET', `/s/${id}`, { origin: null })).text()
+    inOrder(html, ['<h2>Reunião de planejamento</h2>', '<h3>Transcrição</h3>', 'Você [00:00]: Bom dia.'])
+    expect(html).toMatch(/content="Reunião de planejamento: uma entrada, sem notas/)
+  })
+})

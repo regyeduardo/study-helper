@@ -1,10 +1,10 @@
-import { type ReactNode, useMemo } from 'react'
+import { Fragment, type ReactNode, useMemo } from 'react'
 
 import type { AiConfig, AiProviderId, AiUse, DiagnosisRecord } from '@/types/domain'
 import { Icon } from '@/components/ui/Icon'
 import { USE_GROUPS, USES } from '@/lib/ai/config'
 import type { DiagnosisEstimate } from '@/lib/ai/diagnosis'
-import { priceFromCatalog, LIST_TITLE, type CurrentPair, type Difference, type Rung, recommendationOf, RECOMMENDATIONS, situationsOf, type UseSituation } from '@/lib/ai/recommendations'
+import { ATA_STEPS, priceFromCatalog, LIST_TITLE, listDayOf, type CurrentPair, type Difference, type Rung, recommendationOf, RECOMMENDATIONS, situationsOf, type UseSituation } from '@/lib/ai/recommendations'
 import { providerOf } from '@/lib/ai/providers'
 import { USE_REQUIREMENTS } from '@/lib/ai/use-requirements'
 import { useLibraryStore } from '@/stores/library'
@@ -165,6 +165,27 @@ function General({ config, situations, timeZone, tested, onOpen, onChoose }: Gen
                   ) : (
                     <span className="rec-none">nenhum par passa da nota mínima</span>
                   )}
+                  {item.use === 'ata' && (
+                    <div className="rec-steps-box">
+                      <span className="rec-steps-h" aria-hidden="true">
+                        Passo a passo
+                      </span>
+                      {/* role="list": a list without bullets loses its role in Safari/VoiceOver */}
+                      <ul className="rec-steps" role="list" aria-label="Ata passo a passo">
+                        {ATA_STEPS.map(step => (
+                          <li key={step.step}>
+                            {`${step.label}: `}
+                            {step.picks.map((pick, index) => (
+                              <Fragment key={`${pick.pair.provider}::${pick.pair.model}`}>
+                                {index > 0 && ' ou '}
+                                <span className="rec-pick">{pick.pair.name}</span>
+                              </Fragment>
+                            ))}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
                 </td>
                 <td data-cell="Seu padrão">
                   <CurrentCell current={item.current} difference={item.difference} />
@@ -213,6 +234,44 @@ interface LadderProps {
   onChoose(next: AiConfig): void
 }
 
+/** The Ata step by step (ATA_STEPS): each step with its own model, measured on the real meeting. */
+/** The header of the list score column: "App 10/11" read as a grade out of 11, so it says what it is and the day. */
+const scoreHead = (use: AiUse) => `Nota do app · ${listDayOf(use)}`
+
+function AtaSteps() {
+  const day = scoreHead('ata')
+  return (
+    <table className="rec-table rec-pairs rec-steps-table" aria-label="Ata passo a passo">
+      <caption>{`Passo a passo, medido em ${listDayOf('ata')} numa reunião real`}</caption>
+      <thead>
+        <tr>
+          <th>Passo</th>
+          <th>Modelo · provedor</th>
+          <th>{day}</th>
+          <th>Por quê</th>
+        </tr>
+      </thead>
+      <tbody>
+        {ATA_STEPS.flatMap(step =>
+          step.picks.map((pick, index) => (
+            <tr key={`${step.step}-${index}`} className={index > 0 ? 'rec-more' : undefined} aria-label={`${step.label} · ${pick.pair.name}`}>
+              <td data-cell="Passo">{index === 0 ? step.label : ''}</td>
+              <td data-cell="Modelo · provedor">
+                <b>{pick.pair.name}</b>
+                <span className="rec-sub">
+                  <span>{providerName(pick.pair.provider)}</span>
+                </span>
+              </td>
+              <td data-cell={day}>{pick.score}</td>
+              <td data-cell="Por quê">{index === 0 ? step.note : ''}</td>
+            </tr>
+          )),
+        )}
+      </tbody>
+    </table>
+  )
+}
+
 function scoreCell(rung: Rung, timeZone: string, ran: boolean) {
   if (rung.testedScore !== null && rung.testedAt) return `${rung.testedScore} · ${dayOf(rung.testedAt, timeZone)}`
   return ran ? 'não rodou' : '—'
@@ -235,7 +294,7 @@ function Ladder({ config, situation, timeZone, tested, onBack, onChoose }: Ladde
               <span>{providerName(rung.pair.provider)}</span>
             </span>
           </td>
-          <td data-cell="App 07/11">{rung.listScore ?? (note ?? '—')}</td>
+          <td data-cell={scoreHead(use)}>{rung.listScore ?? (note ?? '—')}</td>
           <td data-cell="Seu teste">{scoreCell(rung, timeZone, tested.some(record => record.use === use))}</td>
           <td data-cell="Custo por nota">{usd(rung.cost)}</td>
           <td className="rec-act">
@@ -279,12 +338,13 @@ function Ladder({ config, situation, timeZone, tested, onBack, onChoose }: Ladde
           <p>{recommendation.why}</p>
         </div>
       )}
+      {use === 'ata' && <AtaSteps />}
       <table className="rec-table rec-pairs" aria-label={`Pares de ${label}`}>
         <caption>Do par mais barato que faz direito para cima</caption>
         <thead>
           <tr>
             <th>Modelo · provedor</th>
-            <th>App 07/11</th>
+            <th>{scoreHead(use)}</th>
             <th>Seu teste</th>
             <th>Custo por nota</th>
             <th>
@@ -457,7 +517,7 @@ export function RecommendationsTab({ config, save }: { config: AiConfig; save(ne
     <div className="recs" data-screen={open ? 'ladder' : 'general'}>
       <p className="rec-list">
         <Icon name="star" />
-        {LIST_TITLE}
+        {open ? `Recomendação do app · lista de ${listDayOf(open.use)}` : LIST_TITLE}
       </p>
       <div className="rec-cols">
         <nav className="rec-nav" aria-label="Usos">

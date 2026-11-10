@@ -120,7 +120,7 @@ describe('the Ata pipeline', () => {
     expect(md).toContain('- [ ] [Ajustar a Tabela de Vendas (card #007)](#t1) · Natália Lenza · 29/10/2026')
     expect(md).toContain('<a id="t1"></a>\n#### 1. Ajustar a Tabela de Vendas (card #007)')
     expect(md).toContain('[▸ 00:30](#t=30)')
-    expect(md).toContain('### Ficou sem dono')
+    expect(md).toContain('### Em aberto')
     expect(md).toContain('### Glossário')
     expect(md).toContain('**VGV:** Valor Geral de Vendas. A transcrição escreve BGV.')
     expect(md).not.toMatch(/Você|Falante \d/)
@@ -235,7 +235,7 @@ describe('the Ata in a chosen model', () => {
     expect(prompt).toContain('separe os tópicos pelo que foi discutido')
     expect(prompt).toContain('Resumo e conclusão')
     expect(prompt).toContain('Tarefas: só o que precisa ser feito, em detalhe')
-    expect(prompt).toContain('Nunca escreva quem falou, quando, responsável ou prazo')
+    expect(prompt).toContain('sempre quem, até quando e o minuto [mm:ss]')
     expect(prompt).toContain('Nunca invente')
   })
 

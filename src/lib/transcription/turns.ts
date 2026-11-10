@@ -51,6 +51,8 @@ export function computerWords(channels: RecordingChannels): WordTest {
 }
 
 function microphoneSpeakers(words: Word[], turns: SpeakerTurn[], fromMicrophone: WordTest, fromComputer: WordTest): Set<string> {
+  // No split of voices: there is no voice to call the recorder's, and the words under the computer floor must not all go to the microphone.
+  if (!turns.length) return new Set()
   const count = new Map<string, { microphone: number; mine: number; theirs: number }>()
   for (const word of words) {
     const speaker = speakerOf(word, turns)

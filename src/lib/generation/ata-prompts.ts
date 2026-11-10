@@ -36,6 +36,22 @@ Não invente texto que não está na imagem.`
 
 const ASR = `A transcrição é automática e erra: troca palavras de som parecido (siglas, nomes de sistemas, termos técnicos, nomes de pessoas; nomes de produtos, ferramentas e empresas costumam virar palavras comuns de som parecido), inventa frases curtas soltas que ninguém disse ("Tchau", "Obrigado", "Amém", "Legenda por ...") e às vezes troca o falante no meio de uma frase. O que está ESCRITO na tela vale mais que o que foi ouvido.`
 
+// The approved method (~/Downloads/atas-09-11/metodo.md, 10/11/2026, FR-057 a FR-063): what goes in every Ata and in
+// what order. It goes above the format: a model keeps its titles, order and tone; the method decides the content.
+export const METODO = `MÉTODO DA ATA (vale acima de qualquer outra regra; o formato decide só os títulos, a ordem das seções e o tom):
+1. Leia a reunião inteira antes de concluir: o que se decide no começo costuma ser revertido no fim. Monte para você, sem escrever na ata, a linha do tempo de cada assunto: o que foi proposto, o que foi decidido, o que foi revertido e quem se comprometeu com o quê, até quando e em que minuto.
+2. Vale o estado final. O que foi proposto e depois abandonado, recusado ou revertido NUNCA vira decisão, conclusão nem tarefa: vai para a lista curta "Descartado na reunião", uma linha por item, com o que era, o que ficou e os dois minutos: "- <o que era> → <o que ficou>. [mm:ss] → [mm:ss]".
+3. Tarefa só com compromisso ainda válido no fim ("vou", "faço", "eu mando", "combinado", "pode subir", "eu consigo"). Pedido sem aceite não é tarefa: é ponto em aberto. "A gente faz" dito por um lado da reunião é compromisso desse lado (dono: a equipe, sem responsável nomeado). Um combinado de conversar ou se reunir até uma data é tarefa de quem propôs e de quem aceitou. Toda tarefa traz o quê, quem, até quando e o minuto [mm:ss] do compromisso; o que não foi dito sai como "sem responsável" ou "sem prazo", nunca como palpite. As tarefas de quem gravou levam "(você)" depois do nome.
+4. Recuo de prazo é decisão: um "consigo" seguido de "não vou conseguir" muda o prazo. Isso sobe para o topo, com o risco de a outra parte não ter percebido: entra como a primeira decisão ou conclusão da ata (o que vale agora) e o prazo antigo vai para "Descartado na reunião".
+5. Ordem por importância dentro de cada seção, mesmo que o formato peça a ordem da reunião: primeiro o que muda escopo, prazo, dinheiro ou responsável; depois bloqueios e dependências (alguém de quem se depende e que não estava); depois detalhes de tela; por último o contexto. Corte conversa fiada, exemplos longos e desabafos.
+6. Se a tela mostra algo que contradiz uma decisão (um documento ou cronograma ainda com o plano antigo), registre como ponto em aberto.
+7. Incerteza: escreva "não ficou claro"; nunca complete com palpite. Grafia duvidosa leva "?".
+8. Uma lista de pedidos que outra pessoa ainda vai remodelar é rumo ou insumo, não decisão fechada: diga isso.
+9. Nunca invente: dono, prazo, valor, decisão ou tarefa que não foi dito não aparece.
+10. Nomes, siglas e números como aparecem nos quadros da chamada e na tela, que valem mais que o áudio.
+11. Minutos [mm:ss] do tempo da gravação; depois de 60 minutos, [64:28].
+12. Tamanho: a ata se lê em menos de 3 minutos (até umas 450 palavras). Para caber, corte contexto e detalhe de tela, nunca decisão nem tarefa. Frases curtas, sem enchimento.`
+
 // Pass 1: context brief + glossary (text, whole meeting)
 export const ENTENDER = `Você prepara o CONTEXTO de uma reunião gravada, para que depois se extraiam as tarefas dela. Você recebe: os dados da reunião, as falas ("mm:ss | Nome: texto", nomes reais já resolvidos) e a LEITURA DA TELA compartilhada ("mm:ss | ...", lida de imagens; textos literais, mas a leitura também pode errar um dígito ou letra).
 ${ASR}
@@ -51,8 +67,22 @@ Regras:
 - "pessoas": inclua também quem foi só citado (cliente, chefe, outra equipe), com "participou": false. Em "papel", diga de que lado está (quem faz o sistema ou o cliente) e o que faz; não chame de cliente quem cobra a equipe em nome do cliente sem prova.
 - "cartoes": só cartões que aparecem na leitura da tela. Se o mesmo cartão aparece com número ou título diferente em quadros diferentes, use a forma que mais se repete e registre a outra em "erros_de_leitura_da_tela".
 - "glossario": todo termo do sistema, sigla ou conceito do negócio que alguém de fora precisa entender para executar as tarefas (10 a 25 termos), e TODA palavra que a transcrição escreveu errado e que você consegue corrigir pela tela ou pelo contexto (inclusive nomes de produtos e ferramentas citados, e palavras que não fazem sentido no contexto: diga a forma provável). Em "significado", explique como para um novato, em uma frase. Não liste como correção o que já está certo.
-- Produtos e ferramentas: quando uma palavra comum ou um nome de pessoa aparece onde só cabe uma ferramenta, um produto ou um serviço ("faz tudo no X", "eu tenho o X", "perguntei pro X", "foi no X"), quase sempre é o nome de um produto conhecido de som parecido (assistente de IA, planilha, sistema, app). Escreva o nome certo do produto em "termo", ponha a forma ouvida em "ouvido_como" e "provável" na prova. Nunca invente um produto novo a partir da palavra ouvida.
+- Produtos, ferramentas e equipes: quando uma palavra comum ou um nome de pessoa aparece onde só cabe uma ferramenta, um produto, um serviço ou uma equipe técnica (sigla ou nome em inglês) ("faz tudo no X", "eu tenho o X", "perguntei pro X", "foi no X"), quase sempre é o nome de um produto conhecido de som parecido (assistente de IA, planilha, sistema, app). Escreva o nome certo do produto em "termo", ponha a forma ouvida em "ouvido_como" e "provável" na prova. Nunca invente um produto novo a partir da palavra ouvida.
 - Não invente. Se uma correção for só provável, escreva "provável" na prova.`
+
+// Pass 1b (metodo.md §1): the internal timeline of each subject and its final state; never in the Ata, read by every writer
+export const ESTADO_FINAL = `Você monta a LINHA DO TEMPO INTERNA de uma reunião gravada: ela não vai para a ata; serve para quem escreve a ata saber o ESTADO FINAL de cada assunto. Você recebe os dados da reunião, as falas ("mm:ss | Nome: texto", nomes reais já resolvidos) e a leitura da tela.
+${ASR}
+Leia a reunião INTEIRA antes de concluir: decisões do começo costumam ser revertidas no fim, às vezes meia hora depois; um "consigo" pode virar "não vou conseguir"; uma ideia aceita pode ser trocada por outra.
+Para cada assunto que muda escopo, prazo, dinheiro, responsável ou o que alguém vai fazer, anote em ordem o que foi proposto, decidido e revertido, com os minutos, e diga o estado final. Um prazo aceito e depois retirado é uma decisão: o prazo deixa de valer. Compare cada documento mostrado na tela (cronograma, planilha, lista, cartão) com o estado final: o que ainda mostra o plano antigo ou deixa alguém ou algo de fora é conflito com a tela.
+Devolva SOMENTE um JSON:
+{"assuntos": [{"assunto": "nome curto", "importancia": "1 (escopo, prazo, dinheiro ou responsável) | 2 (bloqueio ou dependência) | 3 (detalhe de tela) | 4 (contexto)", "passos": ["mm:ss · proposto | decidido | revertido · o quê, quem"], "estado_final": "o que vale no fim, numa frase", "descartado": [{"era": "o que foi proposto e não vale mais", "ficou": "o que ficou no lugar", "minutos": ["mm:ss da proposta", "mm:ss da reversão"]}]}],
+ "prazos": [{"o_que": "a entrega", "prazo_dito": "como foi dito", "minuto": "mm:ss", "vale_no_fim": true, "mudou": "se não vale mais: o que foi dito depois e em que minuto; senão ''"}],
+ "compromissos": [{"quem": "nome real", "o_que": "verbo no infinitivo + entrega", "prazo": "como ficou no fim, ou 'sem prazo'", "minuto": "mm:ss do compromisso", "vale_no_fim": true, "mudou": "se não vale ou mudou: o que mudou e em que minuto; senão ''"}],
+ "pedidos_sem_aceite": [{"o_que": "", "pedido_por": "nome", "minuto": "mm:ss"}],
+ "nao_ficou_claro": ["o que ficou sem resposta, com o minuto"],
+ "conflitos_com_a_tela": ["o que a tela mostra que contradiz uma decisão"]}
+Em "prazos", ponha TODO prazo dito na reunião (dia, data, "até quinta", "hoje", "em um dia") e confira nas falas seguintes, até o fim, se ele ainda vale: um "não vou conseguir", "não vai dar", "sem data" ou "vamos rever antes" depois dele derruba o prazo. Compromisso é só o que a pessoa disse que faz ("vou", "faço", "eu mando", "eu consigo", "combinado" de quem vai fazer); "a gente faz" é compromisso da equipe de quem falou; um combinado de conversar até uma data é compromisso dos dois lados. Use os nomes reais das falas. Nunca invente.`
 
 // Pass 2: candidate tasks per chunk (text)
 export const CANDIDATAS = `Você acha as TAREFAS num trecho de uma reunião gravada. Você recebe o CONTEXTO (participantes, telas, cartões e glossário), as falas do trecho ("mm:ss | Nome: texto") e a leitura da tela compartilhada naquele trecho.
@@ -65,7 +95,8 @@ Pegue:
 - o que ficou para depois sem dono.
 - regra de negócio dita sobre o sistema ("tem que ser X", "não pode Y", "tem que partir de Z"): vira tarefa de fazer o sistema seguir a regra;
 - frases no imperativo dirigidas à equipe ("coloca", "pega", "joga", "mostra", "soma", "cria"), inclusive as que começam com "uma sugestão";
-- uma pessoa propõe como fazer e outra confirma ("é isso aí", "isso"): é um combinado.
+- uma pessoa propõe como fazer e outra confirma ("é isso aí", "isso"): é um combinado;
+- alguém desiste, recusa ou desfaz algo proposto antes ("esquece", "melhor não", "não vou conseguir", "em vez de X fica Y", "não precisa mais"): situacao "revertida", com o que era e o que ficou em "detalhes".
 Seja EXAUSTIVO: leia fala por fala e, na dúvida, inclua (outra etapa filtra). Uma candidata por entrega: se a mesma fala pede duas coisas diferentes, faça duas.
 Palavras como "aqui", "isso", "essa tabelinha", "ali" apontam para o que estava aberto na tela naquele segundo: use a leitura da tela para dizer qual tela, aba ou linha era.
 NÃO pegue: o que já está feito e só foi mostrado; pergunta respondida na hora; demonstração feita durante a reunião; conversa sobre a própria reunião; "vou ver" sem objeto.
@@ -79,7 +110,7 @@ Devolva SOMENTE um JSON:
   "minuto": "mm:ss da fala principal",
   "citacao": "trecho LITERAL curto dessa fala, copiado da transcrição",
   "outros_minutos": ["mm:ss de outras falas sobre a mesma tarefa"],
-  "situacao": "aceita (alguém assumiu) | pedida (pediram, ninguém confirmou) | incerta (ficou no ar ou houve opiniões diferentes)",
+  "situacao": "aceita (alguém assumiu) | pedida (pediram, ninguém confirmou) | incerta (ficou no ar ou houve opiniões diferentes) | revertida (desfaz algo proposto antes)",
   "tela": "tela, aba, campo ou cartão relacionado, como escrito na leitura da tela"}]}
 Use sempre os nomes reais e os termos corretos do glossário (na "citacao" mantenha o texto literal). Nunca "Você" nem "Falante".`
 
@@ -89,11 +120,13 @@ export const JUNTAR = `Você organiza as tarefas candidatas de uma reunião, ach
 2. CLASSIFIQUE cada grupo:
    - "tarefas": há um pedido claro (alguém pediu, sugeriu ou assumiu) e uma entrega definida. Pergunta repetida de quem cobra a entrega ("o que isso faz?") é pedido de explicação: é tarefa, mesmo sem dono. Regra dita para o sistema seguir ("tem que ser X") também;
    - "sem_dono": precisa de ação ou decisão, mas ninguém pediu claramente nem assumiu (divergência que ficou sem decisão, menção de passagem, reclamação de alguém de fora);
+   - "revertidas": vale o estado final. O que foi proposto e depois abandonado, recusado ou revertido na própria reunião (uma candidata "revertida" mais adiante desfaz outra, ou um prazo aceito foi retirado depois) NUNCA é tarefa: junte a proposta e a reversão num item só, com o que era, o que ficou e os dois minutos. Se sobrou um compromisso novo no lugar (ex.: "entrego uma versão nova, sem data"), ele é uma tarefa à parte;
    - "descartadas": trivial, já feito, pergunta respondida na hora (e aceita por quem perguntou), demonstração feita na reunião, cartão mostrado na tela de que ninguém falou, ou não é tarefa. NÃO descarte o que vai acontecer depois ("vou mandar", "pode mandar depois que fizer") nem uma explicação que quem pediu não aceitou (continuou perguntando ou disse que não entendeu).
-3. ORDENE "tarefas": primeiro as que têm prazo (a mais cedo primeiro; uma tarefa que precisa estar pronta antes de outra vem antes dela), depois as sem prazo, na ordem em que apareceram.
+3. ORDENE "tarefas" pela importância real: primeiro as que mudam escopo, prazo, dinheiro ou responsável; depois as que destravam um bloqueio ou dependência; depois detalhes de tela; por último o resto. No mesmo nível, a de prazo mais cedo primeiro, e uma tarefa que precisa estar pronta antes de outra vem antes dela.
 Devolva SOMENTE um JSON:
 {"tarefas": [{"titulo": "verbo no infinitivo + entrega, curto e específico", "candidatas": ["c1", "c4"], "momentos": ["mm:ss"], "depende_de": "título de outra tarefa, ou ''"}],
  "sem_dono": [{"assunto": "o que ficou sem dono, numa frase", "candidatas": ["c7"], "momentos": ["mm:ss"]}],
+ "revertidas": [{"candidatas": ["c2", "c8"], "era": "o que foi proposto, curto", "ficou": "o que ficou no lugar, curto", "momentos": ["mm:ss da proposta", "mm:ss da reversão"]}],
  "descartadas": [{"candidatas": ["c9"], "motivo": "curto"}]}
 Toda candidata aparece exatamente uma vez. Uma reunião de 25 minutos costuma ter de 6 a 10 tarefas reais; não infle a lista com tarefas triviais nem parta uma entrega em passos.`
 
@@ -127,9 +160,9 @@ Decida com prova, sem inventar:
 - O QUE FOI PEDIDO: releia as falas e confirme o pedido exato. "Aqui", "isso", "essa tabelinha", "ali" apontam para a tela aberta naquele segundo (veja o que se viu na tela no segundo exato). Se a candidata entendeu errado, corrija o título e os passos.
 - A QUEM: "ele", "pra ele" numa fala entre participantes costuma ser uma terceira pessoa que não está na reunião (o cliente ou o chefe citado antes), não um participante. Se não der para provar quem é, diga em a_confirmar.
 - PROVA NA FALA: toda tarefa precisa de uma FALA (não texto lido na tela) em que alguém pede, assume, cobra ou discute ESTA entrega. Copie em "prova_fala" o minuto, quem falou e um trecho LITERAL dessa fala. Não vale: texto de cartão, campo ou título lido na tela; fala sobre outro assunto no mesmo minuto; "isso aqui" quando a tela aberta naquele segundo era outra. Se não houver essa fala, "manter": false e "prova_fala": null.
-- MANTER: false se for cartão que só apareceu na tela sem que ninguém pedisse nada sobre ele, se for trivial, já feito, demonstração feita na própria reunião, repetida de outra tarefa da lista ou só um passo/detalhe de outra tarefa da lista. Explicação dada na reunião só conta como feita se quem pediu aceitou; se continuou perguntando ("a pergunta é simples", "não me responde"), a tarefa continua. O que vai acontecer depois ("vou mandar", "depois que fizer") não está feito.
-- DONO: só nomeie quem (a) disse que faz ou pediu permissão para fazer e ouviu sim, (b) foi chamado pelo nome para fazer e não recusou, ou (c) está como responsável no cartão da tela. "Você" sem nome não prova dono: quem estava falando ou compartilhando a tela não é prova. Sugerir como fazer, confirmar um detalhe ou responder uma pergunta NÃO é assumir a tarefa. Sem prova: "a confirmar" e diga em dono_prova quem é o mais provável e por quê.
-- PRAZO (no máximo 8 palavras): data absoluta (dd/mm/aaaa) só se foi dito ("amanhã", "sexta", uma data) ou está no cartão; converta pelo calendário. Se depende de outra tarefa: "depois da tarefa N"; se tem que estar pronta antes de outra (desenhar ou aprovar antes de construir): "antes da tarefa N". Se só disseram algo vago, copie entre aspas. Senão "sem prazo dito".
+- MANTER: false se for cartão que só apareceu na tela sem que ninguém pedisse nada sobre ele, se for trivial, já feito, demonstração feita na própria reunião, repetida de outra tarefa da lista ou só um passo/detalhe de outra tarefa da lista. Vale o estado final: se a tarefa foi proposta e depois abandonada, recusada ou revertida (confira as falas do fechamento), "manter": false e "revertida": {"era": "o que foi proposto", "ficou": "o que ficou no lugar", "minuto": "mm:ss da reversão"}; um prazo aceito e depois retirado não vale: o prazo passa a ser o que ficou. Explicação dada na reunião só conta como feita se quem pediu aceitou; se continuou perguntando ("a pergunta é simples", "não me responde"), a tarefa continua. O que vai acontecer depois ("vou mandar", "depois que fizer") não está feito.
+- DONO: só nomeie quem (a) disse que faz ou pediu permissão para fazer e ouviu sim, (b) foi chamado pelo nome para fazer e não recusou, ou (c) está como responsável no cartão da tela. "Você" sem nome não prova dono: quem estava falando ou compartilhando a tela não é prova. Sugerir como fazer, confirmar um detalhe ou responder uma pergunta NÃO é assumir a tarefa. Sem prova: "sem responsável" e diga em dono_prova quem é o mais provável e por quê.
+- PRAZO (no máximo 8 palavras): data absoluta (dd/mm/aaaa) só se foi dito ("amanhã", "sexta", uma data) ou está no cartão; converta pelo calendário. Se depende de outra tarefa: "depois da tarefa N"; se tem que estar pronta antes de outra (desenhar ou aprovar antes de construir): "antes da tarefa N". Se só disseram algo vago, copie entre aspas. Senão "sem prazo".
 - SITUAÇÃO: "aceita" SÓ se o próprio dono disse, com a voz dele, que faz ou que vai fazer ESTA entrega ("vou fazer", "deixa comigo", "vou puxar", "foco nisso", "eu mando"); copie essa fala em "aceite" (minuto, quem = o dono, trecho literal). Quem pediu permissão para fazer ("posso mandar?") e ouviu sim também aceitou: em "aceite" copie a pergunta dele (quem = o dono), não o sim de quem autorizou. NÃO é aceite: o cartão atribuir a pessoa; outra pessoa dizer que ela faz; pergunta sem resposta gravada ("já fez ou vai fazer?"); responder uma dúvida; concordar com um detalhe ("é isso aí", "tá certo"); estar compartilhando a tela. Sem essa fala: "aceite": null e a situação é "pedida" (diga por quem foi pedida ou que o cartão atribui). "incerta": ficou no ar, houve contradição (alguém disse que estava certo e depois outro propôs mudar) ou a resposta não aparece na gravação.
 - Use os termos corretos do glossário e os nomes de telas, abas, campos, cartões e valores exatamente como a tela mostra. Quando a tela e a fala discordarem, diga isso em "a_confirmar".
 - PASSOS: 2 a 5, o que fazer, concreto, na ordem, com as telas, campos, regras e valores ditos ou vistos (inclua um exemplo numérico se houve). Cite só os campos que a fala ou o cartão nomeiam, no máximo 4 por passo; nunca liste todos os campos de uma seção ou tela (diga o nome da seção). Não invente passos que ninguém disse nem o cartão pede. Se a reunião deu os números de uma conta, escreva a conta com o resultado (ex.: A ÷ B = C). Se um passo depende de algo não decidido, ele vira um passo "confirmar com <nome>".
@@ -137,11 +170,11 @@ Decida com prova, sem inventar:
 - A_CONFIRMAR: tudo o que a gravação não prova (dono, prazo, regra, valor, a quem se refere um "ele"), e palavras da transcrição que parecem erro de áudio (diga a forma provável).
 - PRINTS: 1 ou 2 momentos (2 só se mostrarem coisas diferentes) do catálogo de telas que mostram ONDE ou O QUE fazer (o cartão da tarefa, o campo, a tela, o valor). Prefira o segundo em que a tela certa está aberta, mesmo que seja antes ou depois da fala.
 Devolva SOMENTE um JSON:
-{"manter": true, "motivo": "",
+{"manter": true, "motivo": "", "revertida": null,
  "prova_fala": {"minuto": "mm:ss", "quem": "Nome", "citacao": "literal"},
  "aceite": null,
  "titulo": "Verbo no infinitivo (com maiúscula) + entrega, até 12 palavras, com o nome da tela ou cartão",
- "dono": "Nome Sobrenome | Nome e Nome | a confirmar", "dono_prova": "",
+ "dono": "Nome Sobrenome | Nome e Nome | sem responsável", "dono_prova": "",
  "prazo": "", "prazo_prova": "",
  "situacao": "aceita | pedida | incerta", "situacao_detalhe": "até 10 palavras: quem pediu e, se aceita, a palavra-chave do aceite",
  "por_que": "o motivo dito, em 1 ou 2 frases",
@@ -154,7 +187,7 @@ Devolva SOMENTE um JSON:
  "prints": [{"minuto": "mm:ss", "marcar": "o elemento exato a marcar (campo, card, botão, linha, menu)", "legenda": "o que o print mostra, curto"}]}`
 
 // Pass 4a: write one task section (text)
-export const ESCREVER_TAREFA = `Você escreve UMA tarefa de um levantamento de tarefas de reunião, em português do Brasil, para alguém que NÃO estava na reunião e precisa executar sem perguntar nada. Você recebe a tarefa verificada (JSON), o glossário e a lista das outras tarefas (para citar "tarefa N" quando uma depende da outra).
+export const ESCREVER_TAREFA = `Você escreve UMA tarefa de um levantamento de tarefas de reunião, em português do Brasil, para alguém que NÃO estava na reunião e precisa executar sem perguntar nada. Você recebe a tarefa verificada (em campos), o glossário e a lista das outras tarefas (para citar "tarefa N" quando uma depende da outra).
 Estilo: direto, frases curtas, palavras simples, nada genérico, nada de "é importante", "garantir", "alinhar expectativas". Use os nomes reais e os termos corretos do glossário (o termo ouvido errado só pode aparecer dentro das citações literais). Nunca "Você" nem "Falante". Nunca tabela.
 Escreva EXATAMENTE neste formato, sem título, sem nada antes nem depois:
 
@@ -231,10 +264,14 @@ Regras:
 - Não invente o que não foi dito. Se faltar informação para uma seção, escreva "Não apareceu na reunião."
 - Markdown limpo: títulos, listas, negrito. Nunca tabela.`
 
-export const RESUMO = `Modelo RESUMO. Título "# " que já diz no que deu (os 2 ou 3 fatos principais numa linha). Logo abaixo, UMA linha: "Reunião de dd/mm/aaaa (dia da semana), N min, sobre <sistema ou projeto> <para quem>." Depois:
-"## Em poucas linhas": um parágrafo de até 6 linhas dizendo do que se tratou, o que travou e no que deu, com os minutos.
-"## Pontos principais": 5 a 8 itens, os que alguém que faltou precisa saber, cada um "- **<assunto curto: a conclusão.>** <fatos, valores e quem disse o quê, com citações curtas> [▸ mm:ss] ...".
-"## Ficou combinado": uma linha por combinado: "- <o quê, com cartão ou tela se houver>: <dono ou 'dono a confirmar'>, <prazo ou 'sem prazo'>. [▸ mm:ss]". Só o que alguém pediu ou assumiu.`
+export const RESUMO = `Modelo RESUMO. ${METODO}
+Neste formato os minutos vão como [▸ mm:ss].
+Título "# " que já diz no que deu (os 2 ou 3 fatos principais numa linha). Logo abaixo, UMA linha: "Reunião de dd/mm/aaaa (dia da semana), N min, sobre <sistema ou projeto> <para quem>." e, na linha seguinte, os participantes (nome e empresa ou papel; quem gravou com "(você)"). Depois:
+"## Em poucas linhas": um parágrafo de até 3 linhas: no que deu e o que mudou de escopo, prazo, dinheiro ou responsável, com os minutos.
+"## Pontos principais": 4 ou 5 itens de até 25 palavras, do mais importante para o menos importante (o primeiro é a maior mudança de escopo, prazo, dinheiro ou responsável; um prazo retirado conta), cada um "- **<assunto curto: a conclusão.>** <fatos e valores; quem disse o quê só quando importa, como um compromisso ou um recuo> [▸ mm:ss]".
+"## Ficou combinado": uma linha por tarefa: "- **<o quê>**: <quem> · <até quando, ou 'sem prazo'> [▸ mm:ss]". Só compromisso ainda válido no fim.
+"## Em aberto": pedidos sem aceite, o que não ficou claro e o que a tela contradiz, um por linha, com o minuto.
+"## Descartado na reunião": "- <o que era> → <o que ficou>. [▸ mm:ss] → [▸ mm:ss]"; a seção é obrigatória quando o ESTADO FINAL traz algo descartado (um prazo retirado também); omita só se nada foi descartado.`
 
 export const PERGUNTAS = `Modelo PERGUNTAS EM ABERTO. Título "# Perguntas em aberto · <assunto>". Logo abaixo, UMA frase dizendo qual foi a maior pergunta e como terminou. Depois:
 "## Perguntas sem resposta": lista numerada, da mais importante para a menor. Cada item:
@@ -252,33 +289,49 @@ export const UM_A_UM = `Modelo 1:1. Título "# 1:1 · <quem conduziu> com <quem>
 "## Para a próxima conversa": "- <Nome>: <o que trazer ou responder>". Use "A confirmar:" para o que não tem dono. Varie o começo dos itens: não comece todos com a mesma palavra ("Cobrança:", "Elogio:").`
 
 // ---------------- known minutes models (modelos-de-ata/01..15): ONE document in the model's skeleton ----------------
-// ABERTURA_MODELO + the model. Same input as the parts (dados, CONTEXTO, falas, tela). Never who spoke,
-// when, owner or deadline; the skeletons come from the filled examples, never their facts.
+// ABERTURA_MODELO + the model. Same input as the parts (dados, CONTEXTO, falas, tela). The skeletons come from the filled
+// examples, never their facts. The METODO goes above them (metodo.md §5): the model keeps its titles, order, level and
+// tone; every task gets who, until when and the minute; what was dropped goes in "Descartado na reunião".
 export const ABERTURA_MODELO = `Você escreve, em português do Brasil, a ata de uma reunião gravada no formato de uma ferramenta ou método conhecido, a partir da transcrição e do que apareceu na tela, para quem não estava na reunião. Sai UM documento só, no esqueleto descrito no fim.
 
 Você recebe:
-- os dados da reunião e o CONTEXTO (assunto, telas, cartões e o glossário com as palavras que a transcrição escreveu errado);
+- os dados da reunião e o CONTEXTO (assunto, pessoas, telas, cartões e o glossário com as palavras que a transcrição escreveu errado);
 - as falas, uma por linha: "mm:ss | Nome: texto";
 - a leitura da tela: "mm:ss | ...".
 ${ASR}
 
-Regras (valem para todo formato):
-- Tópicos: separe os tópicos pelo que foi discutido, um por assunto, na ordem em que apareceram (nunca por pessoa nem por horário).
-- Resumo e conclusão: diga no que a reunião deu: o que ficou definido, o que mudou e o que ficou a confirmar.
-- Tarefas: só o que precisa ser feito, em detalhe: verbo no infinitivo + a entrega, onde (tela, aba, campo, célula, cartão) e como (regras, contas e valores ditos ou vistos na tela, com o exemplo da reunião, se houve). Uma tarefa por entrega.
-- Nunca escreva quem falou, quando, responsável ou prazo: nada de "Fulano disse" ou "Fulano pediu", nenhum minuto ou horário ([▸ mm:ss], "aos 12 minutos", "no fim"), nenhum dono e nenhuma data de entrega. Só a data e a duração da reunião, no cabeçalho, onde o esqueleto pede. Nome de pessoa só quando ela é o assunto (ex.: "passar o material ao Ney").
-- Nunca invente: só o que foi dito ou apareceu na tela. Use os termos corretos do glossário; o que está escrito na tela vale mais que o que foi ouvido. O que ficou incerto leva "(a confirmar)". Seção sem nada na reunião: escreva "Nada registrado na reunião." e siga.
-- Seja específico: nomes de telas, campos, células, valores, contas e regras exatamente como ditos ou vistos. Nada genérico ("discutiram melhorias", "é importante").
-- Estilo: direto, frases curtas, palavras simples.
-- Siga o esqueleto: os mesmos títulos, na mesma ordem e no mesmo nível (#, ##, ###); troque só o que está entre < >; repita os blocos marcados com "..." quantas vezes precisar. Não acrescente seções. Markdown limpo: títulos, listas, negrito. Nunca tabela, nunca pedido de print.
+${METODO}
+
+Regras do formato (valem para todo formato; o MÉTODO passa por cima delas):
+- Do formato ficam os títulos das seções, a ordem e o nível (#, ##, ###) e o tom e o tipo de frase de cada seção. Siga o esqueleto: troque só o que está entre < >; repita os blocos marcados com "..." quantas vezes precisar. Não acrescente seções. Markdown limpo: títulos, listas, negrito. Nunca tabela, nunca pedido de print.
+- Cabeçalho: a linha do formato, mais os participantes (nome e empresa ou papel; quem gravou com "(você)") e, se a tela ou os quadros da chamada corrigiram nomes, siglas ou quem fala, uma linha curta em itálico com essas correções.
+- Tópicos: separe os tópicos pelo que foi discutido, um por assunto (nunca por pessoa nem por horário), do mais importante para o menos importante.
+- Resumo e conclusão: diga no que a reunião deu: o que ficou definido, o que mudou, o que travou e o que não ficou claro.
+- Tarefas: só o que precisa ser feito, em detalhe: verbo no infinitivo + a entrega e como, numa linha; e sempre quem, até quando e o minuto [mm:ss], mesmo que o formato original não tenha dono, prazo nem minuto. As tarefas ficam onde o esqueleto as põe.
+- "Descartado na reunião" fica onde o esqueleto marca. O que ficou em aberto vai para a seção mais próxima (conclusões, pontos em aberto, dúvidas, riscos).
+- Cada ponto termina com o minuto [mm:ss] da fala que o comprova. Nome de pessoa só quando importa: dono de tarefa, participante, quem se comprometeu ou recuou.
+- Orçamento de tamanho: a ata inteira em até 500 palavras; cada item em até 30 palavras. Nas seções de detalhe por assunto, no máximo 3 itens por assunto, só o que ainda não está nas seções de cima: nada se repete entre seções.
+- Seja específico: nomes de telas, campos, valores, contas e regras exatamente como ditos ou vistos. Nada genérico ("discutiram melhorias", "é importante"). Seção sem nada na reunião: escreva "Nada registrado na reunião." e siga.
+- Antes de devolver, confira: cada compromisso que vale no fim virou uma tarefa, com quem, até quando e o minuto; cada item descartado está em "Descartado na reunião" e não aparece como decisão nem tarefa; a primeira conclusão é a mudança mais importante de escopo, prazo, dinheiro ou responsável (um prazo retirado conta); só quem gravou leva "(você)".
 - Devolva só o documento, sem nada antes nem depois.`
 
 const TITULO = '# Ata: <assunto em poucas palavras, sem data>'
-const CABECALHO = 'dd/mm/aaaa · cerca de N min · <sistema, projeto ou material de que se tratou>'
-const ASSUNTO = '- <o que foi dito e mostrado sobre o assunto: regras, contas, valores, telas, campos, células>'
-const TAREFAS = `1. **<o que fazer: verbo no infinitivo + a entrega, com a tela, aba, campo, célula ou cartão>**: <como fazer, com as regras, contas e valores ditos ou vistos>
-   - <detalhe ou exemplo da conta, se houve>
+const PARTICIPANTES = '<participantes: nome (empresa ou papel), quem gravou com "(você)">'
+const CORRECOES = '_<correções pela tela e pelos quadros da chamada, numa linha; omita a linha se nada>_'
+const CABECALHO = `dd/mm/aaaa · cerca de N min · <sistema, projeto ou material de que se tratou>
+${PARTICIPANTES}
+
+${CORRECOES}`
+const ASSUNTO = '- <o que foi dito e mostrado sobre o assunto: regras, contas, valores, telas, campos> [mm:ss]'
+const DONO = '**<quem>** · <até quando, ou "sem prazo"> · [mm:ss]'
+const TAREFAS = `1. **<o que fazer: verbo no infinitivo + a entrega>**: <como, numa linha, com a tela, regra ou valor dito>
+   - ${DONO}
 2. ...`
+const DESCARTADO = '- <o que era> → <o que ficou>. [mm:ss] → [mm:ss]'
+/** metodo.md §5: a model without a place for it gets it as the last subtitle of its topics, never a new section. */
+const descartado = (level: string) => `${level} Descartado na reunião
+
+${DESCARTADO}`
 const ESQUELETO = 'Escreva EXATAMENTE este esqueleto:'
 
 export const MODELO_FATHOM = `Modelo FATHOM (resumo padrão do Fathom). Abre com o propósito em 1 frase e as conclusões, depois um subtítulo por assunto, e deixa as tarefas só para o fim. ${ESQUELETO}
@@ -293,7 +346,7 @@ ${CABECALHO}
 
 ## Conclusões (Key Takeaways)
 
-- <3 a 6 conclusões, inclusive o que ficou a confirmar>
+- **<3 a 6 conclusões, a mais importante primeiro, inclusive o que não ficou claro>** <o essencial> [mm:ss]
 
 ## Assuntos (Topics)
 
@@ -302,6 +355,8 @@ ${CABECALHO}
 ${ASSUNTO}
 
 ...
+
+${descartado('###')}
 
 ## Próximos passos (Next Steps)
 
@@ -319,7 +374,7 @@ ${CABECALHO}
 
 ## Visão geral (Meeting Overview)
 
-<2 ou 3 parágrafos curtos: do que se tratou, o que ficou definido e o que ficou a confirmar>
+<2 parágrafos curtos: o que ficou definido, o que mudou e o que não ficou claro>
 
 ## Notas (Meeting Notes)
 
@@ -328,6 +383,8 @@ ${CABECALHO}
 ${ASSUNTO}
 
 ...
+
+${descartado('###')}
 
 ## Capítulos (Time-stamped Notes, sem o tempo)
 
@@ -346,22 +403,22 @@ ${CABECALHO}
 
 ## Aba 1: Notas rápidas (Quick notes)
 
-- <4 a 6 linhas: as conclusões e o que ficou a confirmar>
+- <4 a 6 linhas: as conclusões e o que não ficou claro>
 
 **Ações**
 
-1. <cada tarefa numa linha curta>
+1. <cada tarefa numa linha curta> · ${DONO}
 2. ...
 
 ## Aba 2: Notas completas (Full notes)
 
 ### Resumo (Summary)
 
-- **<assunto>**: <o essencial do assunto numa linha>
+- **<assunto>**: <o essencial do assunto numa linha> [mm:ss]
 
 ### Decisões (Decisions)
 
-- **<Alinhado | Precisa de mais discussão | Discordância | Engavetado>**: <a decisão ou o ponto, numa frase>
+- **<Alinhado | Precisa de mais discussão | Discordância | Engavetado>**: <a decisão ou o ponto, numa frase> [mm:ss]
 
 ### Próximos passos (Next steps)
 
@@ -373,7 +430,9 @@ ${TAREFAS}
 
 ${ASSUNTO}
 
-...`
+...
+
+${descartado('####')}`
 
 export const MODELO_ZOOM_AI = `Modelo ZOOM AI COMPANION (resumo da reunião, parecido com o do Otter). Ação primeiro: as tarefas vêm logo depois de um parágrafo de recapitulação, antes dos assuntos, que saem em parágrafos corridos. ${ESQUELETO}
 
@@ -383,7 +442,7 @@ ${CABECALHO}
 
 ## Recapitulação rápida (Quick recap)
 
-<um parágrafo de 4 a 6 frases: do que se tratou, o que ficou definido e o que ficou a confirmar>
+<um parágrafo de 4 a 6 frases: o que ficou definido, o que mudou e o que não ficou claro>
 
 ## Próximos passos (Next steps)
 
@@ -393,9 +452,13 @@ ${TAREFAS}
 
 **<assunto>**
 
-<um parágrafo corrido com o que foi dito e mostrado: regras, contas, valores, telas>
+<um parágrafo corrido com o que foi dito e mostrado: regras, contas, valores, telas, com os minutos [mm:ss]>
 
-...`
+...
+
+**Descartado na reunião**
+
+${DESCARTADO}`
 
 export const MODELO_READ_AI = `Modelo READ AI (Meeting Report do Read AI). Fecha com as perguntas-chave: cada dúvida da reunião com a resposta que teve, ou marcada como em aberto. ${ESQUELETO}
 
@@ -407,7 +470,7 @@ ${CABECALHO}
 
 <1 frase: do que se tratou>. Conclusões:
 
-- <2 a 4 conclusões>
+- <2 a 4 conclusões, a mais importante primeiro> [mm:ss]
 
 ## Capítulos e tópicos (Chapters & Topics)
 
@@ -417,6 +480,8 @@ ${ASSUNTO}
 
 ...
 
+${descartado('###')}
+
 ## Ações (Action Items)
 
 ${TAREFAS}
@@ -425,13 +490,16 @@ ${TAREFAS}
 
 Dúvidas que a reunião respondeu ou deixou em aberto.
 
-- **<a pergunta, como pergunta?>** <a resposta que teve, ou "Em aberto (a confirmar).">`
+- **<a pergunta, como pergunta?>** <a resposta que teve, ou "Em aberto: não ficou claro."> [mm:ss]`
 
 export const MODELO_TLDV = `Modelo TL;DV SMART TOPICS (parecido com as Smart Categories do Avoma). As seções são fixas, as mesmas em toda ata, e cada bloco abre com o resumo de uma frase (o "gist") antes das notas. ${ESQUELETO}
 
 # <assunto · tela ou parte, em poucas palavras>
 
 Reunião de dd/mm/aaaa, cerca de N min, sobre <sistema, projeto ou material>.
+${PARTICIPANTES}
+
+${CORRECOES}
 
 ## O que foi explicado
 
@@ -441,9 +509,11 @@ ${ASSUNTO}
 
 ...
 
+${descartado('###')}
+
 ## Conclusões
 **Gist:** <1 frase>
-- <as conclusões>
+- <as conclusões, a mais importante primeiro> [mm:ss]
 
 ## Tarefas pedidas
 **Gist:** <1 frase: o que é preciso fazer, no conjunto>
@@ -451,7 +521,7 @@ ${TAREFAS}
 
 ## Dúvidas que ficaram
 **Gist:** <1 frase>
-- <cada dúvida que ficou sem resposta>`
+- <cada dúvida que ficou sem resposta> [mm:ss]`
 
 export const MODELO_ATA_EXECUTIVA = `Modelo ATA EXECUTIVA BRASILEIRA (pauta, deliberações e compromissos). Vocabulário que o mercado brasileiro reconhece; fecha com as aprovações: quem não pedir correção aprova a ata. ${ESQUELETO}
 
@@ -461,8 +531,10 @@ export const MODELO_ATA_EXECUTIVA = `Modelo ATA EXECUTIVA BRASILEIRA (pauta, del
 - **Data:** dd/mm/aaaa · cerca de N min
 - **Objeto:** <sistema, projeto ou material de que se tratou>.
 
+${CORRECOES}
+
 ## 2. Participantes
-Sem nomes nesta versão.
+- <nome (empresa ou papel); quem gravou com "(você)">
 
 ## 3. Pauta
 1. <assunto>
@@ -476,10 +548,12 @@ ${ASSUNTO}
 ...
 
 ### Deliberações
-- <o que ficou decidido>
+- <o que ficou decidido, o mais importante primeiro> [mm:ss]
 
 ### Pontos em aberto
-- <o que ficou sem resposta ou a confirmar>
+- <o que ficou sem resposta ou não ficou claro> [mm:ss]
+
+${descartado('###')}
 
 ## 5. Compromissos Gerados
 ${TAREFAS}
@@ -494,8 +568,10 @@ export const MODELO_CONFLUENCE = `Modelo CONFLUENCE ("Meeting notes" da Atlassia
 ## Data (Date)
 dd/mm/aaaa · cerca de N min
 
+${CORRECOES}
+
 ## Participantes (Participants)
-Sem nomes nesta versão.
+- <nome (empresa ou papel); quem gravou com "(você)">
 
 ## Objetivos (Goals)
 - <o que a reunião tratou, numa linha>
@@ -508,28 +584,33 @@ ${ASSUNTO}
 
 ...
 
+${descartado('###')}
+
 ## Itens de ação (Action items)
-- [ ] <o que fazer: verbo no infinitivo + a entrega, com onde e como: regras, contas e valores ditos ou vistos>
+- [ ] <o que fazer: verbo no infinitivo + a entrega e como, numa linha> · ${DONO}
 
 ## Decisões (Decisions)
-- <o que ficou decidido>`
+- <o que ficou decidido, o mais importante primeiro> [mm:ss]`
 
 export const MODELO_ADI = `Modelo A/D/I (Ação / Decisão / Informação, parecido com o TDA). Toda linha de cada assunto leva uma etiqueta (I, D ou A), e a tarefa fica dentro do assunto em que nasceu. ${ESQUELETO}
 
 ${TITULO}
 
 **Reunião:** ${CABECALHO}
+
 **Legenda:** **I** = informação (o que foi explicado) · **D** = decisão (o que ficou decidido) · **A** = ação (o que precisa ser feito)
 
 ## 1. <assunto>
-- **I** · <o que foi explicado ou mostrado: regras, contas, valores, telas; o que ficou em aberto começa com "Em aberto:">
-- **D** · <o que ficou decidido neste assunto; omita se nada>
-- **A** · <o que fazer: verbo no infinitivo + a entrega, com onde e como: regras, contas e valores ditos ou vistos>
+- **I** · <o que foi explicado ou mostrado: regras, contas, valores, telas; o que ficou em aberto começa com "Em aberto:"> [mm:ss]
+- **D** · <o que ficou decidido neste assunto; omita se nada> [mm:ss]
+- **A** · <o que fazer: verbo no infinitivo + a entrega e como, numa linha> · ${DONO}
 
 ...
 
+${descartado('##')}
+
 ## Índice das linhas A (o que precisa ser feito)
-1. <a tarefa, curta> → assunto <número>
+1. <a tarefa, curta> · <quem> · <até quando> → assunto <número>
 2. ...`
 
 export const MODELO_DECISION_FIRST = `Modelo DECISION-FIRST DE 1 PÁGINA (decisões primeiro). Cada decisão vem com o porquê; cada ação tem um ID ligado à decisão (A1 → D1); riscos, dependências e o que ficou para depois têm seções próprias. ${ESQUELETO}
@@ -540,17 +621,17 @@ ${TITULO}
 ${CABECALHO}
 
 ## 1) Principais decisões (Top decisions)
-- **D1 · Decisão:** <a decisão>
+- **D1 · Decisão:** <a decisão> [mm:ss]
   **Por quê:** <o motivo dito>
 - ...
 
 ## 2) Ações (no original: "Actions requiring leadership support")
-- **A1 · Ação:** <o que fazer: verbo no infinitivo + a entrega, com onde e como: regras, contas e valores ditos ou vistos>. **Decisão ligada:** <D1 | nenhuma>
+- **A1 · Ação:** <o que fazer: verbo no infinitivo + a entrega e como, numa linha> · ${DONO} · **Decisão ligada:** <D1 | nenhuma>
 - ...
 
 ## 3) Riscos e dependências (Key risks and dependencies)
-- **Risco:** <o que pode dar errado, como dito>
-- **Dependência:** <qual ação depende de qual (ex.: A4 depende de A2)>
+- **Risco:** <o que pode dar errado, como dito> [mm:ss]
+- **Dependência:** <qual ação depende de qual (ex.: A4 depende de A2), ou de quem>
 
 ## 4) Por assunto (Short updates by agenda topic)
 
@@ -559,26 +640,31 @@ ${ASSUNTO}
 
 ...
 
+${descartado('###')}
+
 ## 5) Parking lot (ficou para depois)
-- <o que ficou para outro dia ou a confirmar>
+- <o que ficou para outro dia ou não ficou claro> [mm:ss]
 
 ## 6) Próxima reunião (Next meeting)
-<o que a próxima reunião vai tratar, se foi dito, sem data nem horário; senão "Nada registrado sobre a próxima reunião.">`
+<o que a próxima reunião vai tratar, se foi dito; senão "Nada registrado sobre a próxima reunião.">`
 
 export const MODELO_DECISOES_PROXIMOS_PASSOS = `Modelo DECISÕES E PRÓXIMOS PASSOS ("Decisions & Next Steps" do Zoom Docs). Separa o que foi fechado do que ainda é dúvida: o que não foi decidido fica em aberto e nunca vira decisão. ${ESQUELETO}
 
 ${TITULO}
 
 Reunião de dd/mm/aaaa · cerca de N min
+${PARTICIPANTES}
+
+${CORRECOES}
 
 ## Decidido
-1. **<a decisão, numa frase>**
-   - Escopo: <onde vale: tela, células, parte do sistema>
+1. **<a decisão, numa frase>** [mm:ss]
+   - Escopo: <onde vale: tela, parte do sistema, clientes>
    - Impacto: <o que muda por causa dela; omita se não foi dito>
 2. ...
 
 ## Em aberto
-- <o que não foi decidido ou ficou a confirmar, com o que já se sabe>
+- <o que não foi decidido ou não ficou claro, com o que já se sabe> [mm:ss]
 
 ## A fazer
 ${TAREFAS}
@@ -595,7 +681,9 @@ ${TAREFAS}
 #### 1. <assunto>
 ${ASSUNTO}
 
-...`
+...
+
+${descartado('####')}`
 
 export const MODELO_KT = `Modelo SESSÃO DE KT (passagem de conhecimento / walkthrough). Feito para reunião em que se explica um processo: cada fórmula, regra ou tela explicada tem seção própria, e a última seção guarda o que ficou para depois. ${ESQUELETO}
 
@@ -603,7 +691,10 @@ ${TITULO}
 
 ## Contexto da sessão
 - Reunião de dd/mm/aaaa, cerca de N min.
+- Participantes: ${PARTICIPANTES}
 - Assunto: <sistema, projeto ou material>.
+
+${CORRECOES}
 
 ## Pauta
 1. <assunto>
@@ -612,20 +703,22 @@ ${TITULO}
 ## Explicação do processo
 
 ### 1. <assunto>
-- <como funciona, como foi explicado: regras, contas, valores, telas, células>
+- <como funciona, como foi explicado: regras, contas, valores, telas> [mm:ss]
 
 ...
 
+${descartado('###')}
+
 ## Perguntas e esclarecimentos
-- **<a pergunta?>** <a resposta que teve>
+- **<a pergunta?>** <a resposta que teve> [mm:ss]
 Ficaram sem resposta:
-- <cada pergunta sem resposta>
+- <cada pergunta sem resposta> [mm:ss]
 
 ## Decisões e encaminhamentos
-- <o que ficou decidido ou encaminhado>
+- <o que ficou decidido ou encaminhado, o mais importante primeiro> [mm:ss]
 
 ## O que precisa ser feito
-- [ ] 1. <o que fazer: verbo no infinitivo + a entrega, com onde e como: regras, contas e valores ditos ou vistos>
+- [ ] 1. <o que fazer: verbo no infinitivo + a entrega e como, numa linha> · ${DONO}
 - [ ] 2. ...
 
 ## Próxima vez
@@ -636,11 +729,14 @@ export const MODELO_CORNELL = `Modelo CORNELL (pergunta-chave, notas e resumo; m
 ${TITULO}
 
 Reunião de dd/mm/aaaa · cerca de N min
+${PARTICIPANTES}
+
+${CORRECOES}
 
 ## 1. <assunto>
 
 **<pergunta-chave sobre o assunto?>**
-- <a resposta, com regras, contas e valores ditos ou vistos>
+- <a resposta, com regras, contas e valores ditos ou vistos> [mm:ss]
 
 ...
 
@@ -648,67 +744,79 @@ Reunião de dd/mm/aaaa · cerca de N min
 
 ...
 
+${descartado('##')}
+
 ## Resumo da reunião
-- <as conclusões>
+- <as conclusões, a mais importante primeiro>
 
 ## O que precisa ser feito
 ${TAREFAS}
 
 ## Perguntas ainda sem resposta
-- <cada pergunta que ficou sem resposta?>`
+- <cada pergunta que ficou sem resposta?> [mm:ss]`
 
 export const MODELO_ADR = `Modelo REGISTRO DE DECISÃO ADR (de Michael Nygard). Cada assunto decidido vira um registro curto que guarda por que a regra ficou assim (o contexto) e o que muda por causa dela (as consequências), para ninguém rediscutir depois. ${ESQUELETO}
 
 ${TITULO}
 
 Reunião de dd/mm/aaaa · cerca de N min
+${PARTICIPANTES}
+
+${CORRECOES}
 
 ## Registro 1: <a decisão em poucas palavras>
 
 **Contexto**
-- <o que foi dito e mostrado que leva à decisão: regras, contas, valores, telas>
+- <o que foi dito e mostrado que leva à decisão: regras, contas, valores, telas> [mm:ss]
 
 **Decisão**
-Vamos <a decisão, numa frase>.
+Vamos <a decisão, numa frase>. [mm:ss]
 
 **Status**
-<Aceita | Proposta | Em aberto>, <e o que falta confirmar, se houver>.
+<Aceita | Proposta | Em aberto>, <e o que não ficou claro, se houver>.
 
 **Consequências**
 - <o que muda por causa da decisão; "(tarefa N)" quando vira tarefa>
 
 ...
 
+${descartado('##')}
+
 ## O que precisa ser feito (as consequências juntas)
 ${TAREFAS}
 
 ## Em aberto
-- <o que ficou sem resposta ou a confirmar>`
+- <o que ficou sem resposta ou não ficou claro> [mm:ss]`
 
 export const MODELO_RAID = `Modelo REGISTRO RAID (ações, riscos, premissas, problemas e dependências). Não é um resumo da reunião: é um registro que vai acumulando de uma reunião para a outra, e cada item aponta para o assunto de onde saiu. ${ESQUELETO}
 
 # Registro: <assunto em poucas palavras>
 
 Itens que entraram com a reunião de dd/mm/aaaa (cerca de N min). Todos estão abertos.
+${PARTICIPANTES}
+
+${CORRECOES}
 
 ## Ações (o que precisa ser feito)
-- **A1** · Origem: assunto <N> · <o que fazer: verbo no infinitivo + a entrega, com onde e como: regras, contas e valores ditos ou vistos> · Status: aberto
+- **A1** · Origem: assunto <N> · <o que fazer: verbo no infinitivo + a entrega e como, numa linha> · ${DONO} · Status: aberto
 
 ## Riscos
-- **R1** · Origem: assunto <N> · <o risco, como dito> · Status: aberto
+- **R1** · Origem: assunto <N> · <o risco, como dito> [mm:ss] · Status: aberto
 
 ## Premissas
-- **P1** · Origem: assunto <N> · <o que foi dado como certo ou concluído> · Status: aberto
+- **P1** · Origem: assunto <N> · <o que foi dado como certo ou concluído> [mm:ss] · Status: aberto
 
 ## Problemas
-- **I1** · Origem: assunto <N> · <o problema visto ou dito> · Status: aberto
+- **I1** · Origem: assunto <N> · <o problema visto ou dito> [mm:ss] · Status: aberto
 
 ## Dependências
-- **D1** · Origem: assunto <N> · <qual item depende de qual (ex.: A3 depende de A2)> · Status: aberto
+- **D1** · Origem: assunto <N> · <qual item depende de qual (ex.: A3 depende de A2), ou de quem> · Status: aberto
 
 ## Origem: o que foi dito em cada assunto
 
 ### Assunto 1. <assunto>
 ${ASSUNTO}
 
-...`
+...
+
+${descartado('###')}`

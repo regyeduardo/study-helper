@@ -1,13 +1,17 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 
 import type { ArtifactKind, ShareContent, ShareKind, ShareRecord } from '@/types/domain'
+import { EntryShareTree } from '@/components/dialogs/EntryShareTree'
+import { entryKind } from '@/components/library/EntryList'
 import { Dialog } from '@/components/ui/Dialog'
 import { Icon } from '@/components/ui/Icon'
 import { createShareController, isShareConfigured, uploadShareMediaController } from '@/controllers/share.controller'
 import { env } from '@/lib/env'
 import { paths } from '@/lib/paths'
-import { buildShareContent, questionCountOf, shareBytes, shareMediaOf, shareUrl } from '@/lib/share'
+import { mediaLength, mediaOf } from '@/lib/file-types'
+import { buildEntryShareContent, buildShareContent, entryMediaOf, questionCountOf, shareBytes, shareMediaOf, shareUrl } from '@/lib/share'
+import { choiceCount, choiceOf, defaultChoice, entryShareTree, MEDIA_KEY, toggleChoice } from '@/lib/share-entry'
 import { loadTurnstile } from '@/lib/turnstile'
 import { recorderName, useAccountStore } from '@/stores/account'
 import { useLibraryStore } from '@/stores/library'
@@ -109,25 +113,45 @@ export function ShareDialog({ target, id }: { target: ShareKind; id: string }) {
   const configured = isShareConfigured()
   const token = (options?: { force?: boolean }) => tokenFor(account.id, options)
   const name = target === 'folder' ? folders.find(folder => folder.id === id)?.name : files.find(file => file.id === id)?.name
+  // an entrada goes with its family, item by item (FR-066)
+  const entrada = target === 'entrada'
+  const entry = entrada ? (files.find(file => file.id === id) ?? null) : null
+  const tree = useMemo(() => (entrada ? entryShareTree(files, id) : []), [entrada, files, id])
+  const entryMedia = entrada ? entryMediaOf(id, files, localMedia, repo) : null
+  const [chosen, setChosen] = useState(() => defaultChoice(tree, Boolean(entryMedia)))
+  const [transcribed, setTranscribed] = useState(false)
 
   useEffect(() => {
     if (!google || !configured) return
     let alive = true
     setContent(null)
-    void buildShareContent({ kind: target, id }, folders, files, openFile, withExams, recorderName(useAccountStore.getState().active()), kinds).then(built => alive && setContent(built))
+    const recorder = recorderName(useAccountStore.getState().active())
+    const built = entrada ? buildEntryShareContent(id, files, openFile, choiceOf(tree, chosen), recorder) : buildShareContent({ kind: target, id }, folders, files, openFile, withExams, recorder, kinds)
+    void built.then(made => alive && setContent(made))
     return () => {
       alive = false
     }
-  }, [withExams, kinds, google, configured, target, id])
+  }, [withExams, kinds, chosen, google, configured, target, id])
 
   useEffect(() => {
-    if (!google || !configured) return
+    if (!google || !configured || entrada) return
     void questionCountOf({ kind: target, id }, folders, files).then(setQuestions)
   }, [google, configured])
 
+  useEffect(() => {
+    if (!entrada) return
+    let alive = true
+    void openFile(id).then(opened => alive && setTranscribed(Boolean(opened.sidecar.recording?.blocks.length || opened.sidecar.transcript?.trim())), () => undefined)
+    return () => {
+      alive = false
+    }
+  }, [entrada, id])
+
   const toggleKind = (kind: ArtifactKind) => setKinds(list => (list.includes(kind) ? list.filter(item => item !== kind) : [...list, kind]))
   const bytes = content ? shareBytes(content) : null
-  const media = content ? shareMediaOf(content, files, localMedia, repo) : []
+  const media = entrada ? (entryMedia && chosen.has(MEDIA_KEY) ? [entryMedia] : []) : content ? shareMediaOf(content, files, localMedia, repo) : []
+  const count = choiceCount(tree, chosen, Boolean(entryMedia))
+  const mediaRow = entry && entryMedia ? { icon: entryKind(entry).icon, detail: [mediaOf(entry) === 'video' ? 'vídeo' : 'áudio', mediaLength(entry.origin?.durationSeconds)].filter(Boolean).join(' de '), size: entryMedia.size === null ? '' : formatBytes(entryMedia.size) } : null
   const mediaBytes = media.every(item => item.size !== null) ? media.reduce((sum, item) => sum + (item.size ?? 0), 0) : null
   const empty = content !== null && content.files.length === 0
 
@@ -157,7 +181,7 @@ export function ShareDialog({ target, id }: { target: ShareKind; id: string }) {
     try {
       const result = await createShareController(token, captcha, content)
       const uploaded = await uploadMedia(result.id)
-      const record: ShareRecord = { id: result.id, kind: target, itemId: id, title: content.title, bytes: result.bytes + uploaded.sent, withExams, createdAt: result.createdAt, expiresAt: result.expiresAt }
+      const record: ShareRecord = { id: result.id, kind: target, itemId: id, title: content.title, bytes: result.bytes + uploaded.sent, withExams: entrada || withExams, createdAt: result.createdAt, expiresAt: result.expiresAt }
       await saveShare(record)
       setMediaFailed(uploaded.failed)
       setCreated(record)
@@ -198,6 +222,14 @@ export function ShareDialog({ target, id }: { target: ShareKind; id: string }) {
     </>
   ) : (
     <>
+      {entrada && configured && count.total > 0 && (
+        <span className="grow sh-count" aria-live="polite">
+          <b>
+            {count.chosen} de {count.total}
+          </b>{' '}
+          {count.total === 1 ? 'item vai' : 'itens vão'}
+        </span>
+      )}
       <button className="btn quiet" onClick={ui.close}>
         Cancelar
       </button>
@@ -209,7 +241,7 @@ export function ShareDialog({ target, id }: { target: ShareKind; id: string }) {
   )
 
   return (
-    <Dialog title={`Compartilhar · ${name ?? ''}`} size="narrow" onClose={ui.close} footer={footer}>
+    <Dialog title={`${entrada ? 'Compartilhar entrada' : 'Compartilhar'} · ${name ?? ''}`} size={entrada ? 'normal' : 'narrow'} onClose={ui.close} footer={footer}>
       <div className="db">
         {!google ? (
           <div className="banner info" role="status">
@@ -228,14 +260,17 @@ export function ShareDialog({ target, id }: { target: ShareKind; id: string }) {
             <span className="muted" style={{ fontSize: 13 }}>
               Quem tiver o link pode ler, sem entrar em conta. O link vale por 3 dias e mostra a versão de agora.
             </span>
-            <button className="opt" role="checkbox" aria-checked={withExams} onClick={() => setWithExams(value => !value)}>
-              <span className={`check ${withExams ? 'on' : ''}`}>{withExams && <Icon name="check" />}</span>
-              <span>
-                <b>Levar as provas</b>
-                <span>{questions === 1 ? 'Vai só a questão' : questions ? `Vão só as ${questions} questões` : 'Vão só as questões'}. Suas tentativas, notas e destaques ficam com você.</span>
-              </span>
-            </button>
-            {ARTIFACT_BOXES.map(box => {
+            {entrada && <EntryShareTree tree={tree} chosen={chosen} onToggle={key => setChosen(current => toggleChoice(tree, current, key))} media={mediaRow} transcribed={transcribed} />}
+            {!entrada && (
+              <button className="opt" role="checkbox" aria-checked={withExams} onClick={() => setWithExams(value => !value)}>
+                <span className={`check ${withExams ? 'on' : ''}`}>{withExams && <Icon name="check" />}</span>
+                <span>
+                  <b>Levar as provas</b>
+                  <span>{questions === 1 ? 'Vai só a questão' : questions ? `Vão só as ${questions} questões` : 'Vão só as questões'}. Suas tentativas, notas e destaques ficam com você.</span>
+                </span>
+              </button>
+            )}
+            {!entrada && ARTIFACT_BOXES.map(box => {
               const on = kinds.includes(box.kind)
               return (
                 <button key={box.kind} className="opt" role="checkbox" aria-checked={on} onClick={() => toggleKind(box.kind)}>

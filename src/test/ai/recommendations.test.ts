@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { USES } from '@/lib/ai/config'
-import { costPerNote, findPair, LIST_DATE, LIST_DATE_LABEL, LIST_TITLE, listReviewDue, type ModelPair, PAIRS, priceFromCatalog, RECOMMENDATIONS, recommendationOf, situationsOf, type TestedPair } from '@/lib/ai/recommendations'
+import { ATA_LIST_DATE, ATA_STEPS, costPerNote, findPair, LIST_DATE, LIST_DATE_LABEL, LIST_TITLE, listDayOf, listReviewDue, type ModelPair, PAIRS, priceFromCatalog, RECOMMENDATIONS, recommendationOf, situationsOf, type TestedPair } from '@/lib/ai/recommendations'
 import { requirementOf } from '@/lib/ai/use-requirements'
 import type { AiConfig, AiUse } from '@/types/domain'
 
@@ -11,6 +11,7 @@ const MIMO = 'XiaomiMiMo/MiMo-V2.6-Flash'
 const WHISPER = 'openai/whisper-large-v3-turbo'
 const GLM_OR = 'z-ai/glm-5.3-flash'
 const GEMINI_OR = 'google/gemini-3.8-flash'
+const LUNA_OR = 'openai/gpt-6-luna'
 
 const USE_IDS = USES.map(use => use.id)
 
@@ -25,6 +26,7 @@ function config(defaults: AiConfig['defaults'], extra: { mid: string; pid: strin
     { pid: 'openrouter', mid: DS_OR },
     { pid: 'openrouter', mid: GLM_OR },
     { pid: 'openrouter', mid: GEMINI_OR },
+    { pid: 'openrouter', mid: LUNA_OR },
     ...extra,
   ]
   return {
@@ -41,7 +43,7 @@ function config(defaults: AiConfig['defaults'], extra: { mid: string; pid: strin
 
 const di = (mid: string) => `deepinfra::${mid}`
 const or = (mid: string) => `openrouter::${mid}`
-const RECOMMENDED: AiConfig['defaults'] = { estudo: di(DS_DI), web: or(DS_OR), midia: di(MIMO), transcricao: di(WHISPER) }
+const RECOMMENDED: AiConfig['defaults'] = { estudo: di(DS_DI), web: or(DS_OR), midia: di(MIMO), transcricao: di(WHISPER), ata: or(LUNA_OR), tela: or(GEMINI_OR) }
 
 const situationOf = (situations: ReturnType<typeof situationsOf>, use: AiUse) => situations.find(situation => situation.use === use)!
 
@@ -70,8 +72,8 @@ describe('the fixed list', () => {
     ['titulo', 'deepinfra', DS_DI],
     ['midia', 'deepinfra', MIMO],
     ['transcricao', 'deepinfra', WHISPER],
-    ['tela', 'deepinfra', MIMO],
-    ['ata', 'deepinfra', DS_DI],
+    ['tela', 'openrouter', GEMINI_OR],
+    ['ata', 'openrouter', LUNA_OR],
   ]
 
   it.each(INDICATED)('indicates for %s the pair %s · %s', (use, provider, model) => {
@@ -93,7 +95,7 @@ describe('the fixed list', () => {
     ['midia', 8],
     ['transcricao', 9],
     ['tela', 9],
-    ['ata', 9],
+    ['ata', 8],
   ] as const)('%s has the score %i in the list', (use, score) => {
     expect(recommendationOf(use).indicated?.score).toBe(score)
   })
@@ -104,9 +106,9 @@ describe('the fixed list', () => {
 
   it('marks the uses that take the same pair as their mother, as in the "(herda)" of the list', () => {
     const inherits = RECOMMENDATIONS.filter(item => item.inherits).map(item => item.use)
-    expect(inherits).toEqual(['aula', 'explicacao', 'prova', 'cartoes', 'mapa', 'tutor', 'curso', 'titulo', 'tela', 'ata'])
-    expect(recommendationOf('tela').inherits).toBe('midia')
-    expect(recommendationOf('ata').inherits).toBe('estudo')
+    expect(inherits).toEqual(['aula', 'explicacao', 'prova', 'cartoes', 'mapa', 'tutor', 'curso', 'titulo'])
+    expect(recommendationOf('tela').inherits).toBeNull()
+    expect(recommendationOf('ata').inherits).toBeNull()
     expect(recommendationOf('web').inherits).toBeNull()
     expect(recommendationOf('transcricao').inherits).toBeNull()
   })
@@ -133,8 +135,10 @@ describe('the indicated pair is the cheapest at or above the minimum', () => {
     }
   })
 
-  it('prioritizes the cheap: every indicated token pair costs at most US$ 0.30 per 1M of output', () => {
-    for (const { indicated } of RECOMMENDATIONS) {
+  it('prioritizes the cheap: every indicated token pair costs at most US$ 0.30 per 1M of output (the Ata, measured 10/11: the cheaper ones failed it)', () => {
+    for (const { use, indicated } of RECOMMENDATIONS) {
+      // measured 10/11: the cheaper ones failed the real Ata, and named the wrong tile in "who speaks"
+      if (use === 'ata' || use === 'tela') continue
       const price = indicated!.pair.price
       if (price?.per === 'token') expect(price.output).toBeLessThanOrEqual(0.3)
     }
@@ -142,20 +146,53 @@ describe('the indicated pair is the cheapest at or above the minimum', () => {
 
   it('keeps out of the ladder what the list has not tested and what is below the minimum', () => {
     const outside = recommendationOf('ata').outside
-    expect(outside.map(rung => [rung.pair.name, rung.score])).toEqual([
-      ['Ling-3.0-flash', null],
-      ['Gemma 4 26B A4B', 7],
+    expect(outside.map(rung => [rung.pair.name, rung.pair.provider, rung.score])).toEqual([
+      ['Ling-3.0-flash', 'openrouter', null],
+      ['DeepSeek V4 Flash 0731', 'deepinfra', 6],
+      ['Gemma 4 26B A4B', 'openrouter', 7],
+      ['DeepSeek V4 Flash 0731', 'openrouter', 6],
+      ['MiMo-V2.6-Flash', 'deepinfra', null],
+      ['GLM-5.3-Flash', 'openrouter', 0],
     ])
   })
 
-  it('keeps the whole ladder of the Ata as in the wireframe', () => {
+  it('keeps the ladder of the Ata measured on the real meeting of 09/11 (10/11): DeepSeek V4 Flash left it', () => {
     expect(recommendationOf('ata').ladder.map(rung => [rung.pair.name, rung.pair.provider, rung.score])).toEqual([
-      ['DeepSeek V4 Flash 0731', 'deepinfra', 9],
-      ['DeepSeek V4 Flash 0731', 'openrouter', 8],
-      ['MiMo-V2.6-Flash', 'deepinfra', 8],
-      ['GLM-5.3-Flash', 'openrouter', 10],
-      ['Gemini 3.8 Flash', 'openrouter', 10],
+      ['GPT-6 Luna', 'openrouter', 8],
+      ['Gemini 3.8 Flash', 'openrouter', 8],
     ])
+  })
+})
+
+describe('the Ata, step by step (measured on 10/11 on the real meeting of 09/11)', () => {
+  it('has its own date, shown in the column of the list scores', () => {
+    expect(ATA_LIST_DATE).toBe('2026-11-10')
+    expect(listDayOf('ata')).toBe('10/11')
+    expect(listDayOf('estudo')).toBe('07/11')
+  })
+
+  it('names the model of each step, with its provider and score', () => {
+    expect(ATA_STEPS.map(step => [step.label, step.picks.map(pick => [pick.pair.name, pick.pair.provider, pick.score])])).toEqual([
+      ['Quem fala', [['Gemini 3.8 Flash', 'openrouter', 8]]],
+      ['Leitura da tela', [['MiMo-V2.6-Flash', 'deepinfra', 8]]],
+      ['Contexto e estado final', [['GPT-6 Luna', 'openrouter', 8]]],
+      ['Escrita', [['GPT-6 Luna', 'openrouter', 8], ['Gemini 3.8 Flash', 'openrouter', 8]]],
+    ])
+    for (const step of ATA_STEPS) expect(step.note.length).toBeGreaterThan(0)
+  })
+
+  it('Leitura de tela also says who speaks in the Ata: it points to Gemini 3.8 Flash; MiMo and GLM named the wrong tile', () => {
+    expect(recommendationOf('tela').ladder.map(rung => [rung.pair.name, rung.score])).toEqual([['Gemini 3.8 Flash', 9]])
+    expect(recommendationOf('tela').outside.map(rung => [rung.pair.name, rung.score])).toEqual([
+      ['Gemma 4 26B A4B', null],
+      ['MiMo-V2.6-Flash', 6],
+      ['GLM-5.3-Flash', 6],
+      ['Gemini 3.5 Flash-Lite', null],
+    ])
+  })
+
+  it('DeepSeek V4 Flash is in no step of the Ata', () => {
+    expect(ATA_STEPS.flatMap(step => step.picks).some(pick => pick.pair.name.startsWith('DeepSeek'))).toBe(false)
   })
 })
 
@@ -173,8 +210,8 @@ describe('cost per note', () => {
     ['titulo', 0.0002, 1],
     ['midia', 0.14, 2],
     ['transcricao', 0.012, 2],
-    ['tela', 0.005, 1],
-    ['ata', 0.006, 1],
+    ['tela', 0.04, 1],
+    ['ata', 0.013, 2],
   ] as const)('%s costs about US$ %f', (use, cost, digits) => {
     expect(rounded(recommendationOf(use).indicated!.cost, digits)).toBe(cost)
   })
@@ -211,8 +248,8 @@ describe('cost per note', () => {
 
   it('gives the Ata by the five steps and by the ruler asked for', () => {
     const costs = recommendationOf('ata').indicated!.costs
-    expect(rounded(costs[0].value, 1)).toBe(0.006)
-    expect(rounded(costs[1].value, 1)).toBe(0.002)
+    expect(rounded(costs[0].value, 2)).toBe(0.013)
+    expect(rounded(costs[1].value, 2)).toBe(0.0045)
   })
 
   // pesquisa.md, column "Subindo"
@@ -249,8 +286,8 @@ describe('model + provider pairs', () => {
     expect(deepInfra.name).toBe(openRouter.name)
     expect(deepInfra.price).toMatchObject({ input: 0.06, output: 0.18 })
     expect(openRouter.price).toMatchObject({ input: 0.046, output: 0.3 })
-    const scores = recommendationOf('ata').ladder.filter(rung => rung.pair.name === 'DeepSeek V4 Flash 0731').map(rung => rung.score)
-    expect(scores).toEqual([9, 8])
+    const scores = recommendationOf('ata').outside.filter(rung => rung.pair.name === 'DeepSeek V4 Flash 0731').map(rung => [rung.pair.provider, rung.score])
+    expect(scores).toEqual([['deepinfra', 6], ['openrouter', 6]])
   })
 
   it('finds a pair only with its own provider', () => {
@@ -315,7 +352,8 @@ describe('the situation of each use against the defaults of the person', () => {
   })
 
   it('marks "herda" when the pair comes from Vídeo e áudio', () => {
-    const { current } = situationOf(situationsOf(config(RECOMMENDED)), 'tela')
+    const inheriting = Object.fromEntries(Object.entries(RECOMMENDED).filter(([use]) => use !== 'tela'))
+    const { current } = situationOf(situationsOf(config(inheriting)), 'tela')
     expect(current).toMatchObject({ model: MIMO, inherits: true, from: 'midia' })
   })
 
@@ -331,11 +369,11 @@ describe('the situation of each use against the defaults of the person', () => {
   })
 
   it('says how many times more expensive a different pair is', () => {
-    const ata = situationOf(situationsOf(config({ ...RECOMMENDED, ata: or(GLM_OR) })), 'ata')
+    const ata = situationOf(situationsOf(config({ ...RECOMMENDED, ata: or(GEMINI_OR) })), 'ata')
     expect(ata.same).toBe(false)
     expect(ata.difference?.kind).toBe('pricier')
     if (ata.difference?.kind !== 'pricier') throw new Error('expected pricier')
-    expect(ata.difference.times).toBeCloseTo(0.0155 / 0.00588, 2)
+    expect(ata.difference.times).toBeCloseTo(0.0975 / 0.013, 2)
   })
 
   it('uses the price of the list for a known pair that is not in the ladder of that use', () => {
@@ -398,7 +436,7 @@ describe('the situation of each use against the defaults of the person', () => {
 
     it('keeps the list score of a pair the diagnosis did not run', () => {
       const ata = recommendationOf('ata', [tested({ use: 'ata', provider: 'openrouter', model: GEMINI_OR, score: null })])
-      expect(ata.ladder.find(rung => rung.pair.model === GEMINI_OR)).toMatchObject({ score: 10, listScore: 10, testedScore: null })
+      expect(ata.ladder.find(rung => rung.pair.model === GEMINI_OR)).toMatchObject({ score: 8, listScore: 8, testedScore: null })
     })
 
     it('uses the date and the newest record of a pair', () => {

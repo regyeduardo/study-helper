@@ -15,7 +15,14 @@ export type ProposedFolder = Pick<FolderMeta, 'id' | 'name' | 'parentId'>
 
 type Entry = ProposedFolder & Partial<Pick<FolderMeta, 'favorite' | 'color' | 'position'>>
 
+/** Where the folders come from: the library open now, unless the caller gives another (the importer's own, under a shared link). */
+export interface FolderSource {
+  folders: FolderMeta[]
+  createFolder(fields: Partial<FolderMeta> & { name: string }): Promise<FolderMeta>
+}
+
 interface ChoiceOptions {
+  source?: FolderSource
   /** Hidden, with everything inside them. */
   exclude?: string[]
   extra?: ProposedFolder
@@ -77,8 +84,9 @@ const keyOf = (id: string | null) => id ?? ROOT
 const foldedName = (name: string) => searchWords(name).join(' ')
 const byName = (a: Entry, b: Entry) => a.name.localeCompare(b.name, 'pt-BR')
 
-function useFolderModel(exclude: string[] | undefined, extra: ProposedFolder | undefined) {
-  const folders = useLibraryStore(state => state.folders)
+function useFolderModel(exclude: string[] | undefined, extra: ProposedFolder | undefined, source?: FolderSource) {
+  const stored = useLibraryStore(state => state.folders)
+  const folders = source?.folders ?? stored
   return useMemo(() => {
     const live: Entry[] = liveFolders(folders)
     const byId = new Map<string, Entry>(live.map(folder => [folder.id, folder]))
@@ -150,8 +158,8 @@ function RowText({ entry, name, isNew, where }: { entry: Entry | null; name: str
 }
 
 /** The chooser itself, for a dialog that is only about picking a folder (Mover). */
-export function FolderChooser({ value, onChange, onConfirm, onCancel, exclude, extra, leaf, hint, autoFocus = false }: FolderChooserProps) {
-  const model = useFolderModel(exclude, extra)
+export function FolderChooser({ value, onChange, onConfirm, onCancel, source, exclude, extra, leaf, hint, autoFocus = false }: FolderChooserProps) {
+  const model = useFolderModel(exclude, extra, source)
   const [query, setQuery] = useState('')
   const [open, setOpen] = useState(() => new Set(model.ancestors(value)))
   const [seen, setSeen] = useState(value)
@@ -263,7 +271,7 @@ export function FolderChooser({ value, onChange, onConfirm, onCancel, exclude, e
     setBusy(true)
     setFailed(false)
     try {
-      const { createFolder } = useLibraryStore.getState()
+      const createFolder = source?.createFolder ?? useLibraryStore.getState().createFolder
       // inside the proposed folder: that one has to exist first
       const parentId = extra && value === extra.id ? (await createFolder({ name: extra.name, parentId: extra.parentId })).id : value
       const folder = await createFolder({ name: clean, parentId })
@@ -428,7 +436,7 @@ function resultRows(model: Model, words: string[]): Row[] {
 }
 
 /** The chooser in its own window, over whatever asked for the folder. Esc closes only this one. */
-export function FolderChooserDialog({ value, onConfirm, onClose, exclude, extra, leaf, hint, title = 'Escolher pasta', confirmLabel = 'Usar esta pasta', host = document }: FolderChooserDialogProps) {
+export function FolderChooserDialog({ value, onConfirm, onClose, source, exclude, extra, leaf, hint, title = 'Escolher pasta', confirmLabel = 'Usar esta pasta', host = document }: FolderChooserDialogProps) {
   const [draft, setDraft] = useState(value)
   const panel = useRef<HTMLDivElement>(null)
   // read while rendering: by the first effect the filter has already taken the focus
@@ -457,7 +465,7 @@ export function FolderChooserDialog({ value, onConfirm, onClose, exclude, extra,
         }}
       >
         <div className="fc-body">
-          <FolderChooser value={draft} onChange={setDraft} onConfirm={onConfirm} onCancel={onClose} exclude={exclude} extra={extra} leaf={leaf} hint={hint} autoFocus />
+          <FolderChooser value={draft} onChange={setDraft} onConfirm={onConfirm} onCancel={onClose} source={source} exclude={exclude} extra={extra} leaf={leaf} hint={hint} autoFocus />
         </div>
         <div className="df">
           <button type="button" className="btn quiet" onClick={onClose}>

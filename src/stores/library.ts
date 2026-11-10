@@ -94,6 +94,10 @@ interface LibraryState {
   restoreFile(id: string): Promise<void>
   deleteFileForever(id: string): Promise<void>
   createFolder(fields: Partial<FolderMeta> & { name: string }): Promise<FolderMeta>
+  /** The folders of who is looking, even while a shared link is open (the importer's folder picker). */
+  ownFolders(): FolderMeta[]
+  /** A folder in one's own library, even while a shared link is open: the link stays read only. */
+  createOwnFolder(fields: Partial<FolderMeta> & { name: string }): Promise<FolderMeta>
   updateFolder(id: string, patch: Partial<FolderMeta>): Promise<void>
   trashFolder(id: string): Promise<void>
   restoreFolder(id: string): Promise<void>
@@ -455,6 +459,18 @@ export const useLibraryStore = create<LibraryState>((set, get) => {
       const folder = newFolderMeta(fields)
       await repository().saveFolder(folder)
       replaceFolder(folder)
+      return folder
+    },
+
+    ownFolders: () => (own ?? get()).folders,
+
+    createOwnFolder: async fields => {
+      if (!own) return get().createFolder(fields)
+      const repo = get().repo
+      if (!repo) throw new Error('A biblioteca ainda não abriu.')
+      const folder = newFolderMeta(fields)
+      await repo.saveFolder(folder)
+      if (own) own = { ...own, folders: [...own.folders, folder] }
       return folder
     },
 

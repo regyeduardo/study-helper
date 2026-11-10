@@ -86,7 +86,7 @@ async function transcribeWithProvider(engine: ProviderEngine, audio: Blob, setti
       warning = `Os falantes não foram separados: ${error instanceof Error ? error.message : String(error)}`
     }
   }
-  if (!turns.length && !warning) warning = NO_SPEAKERS
+  if (!turns.length && !warning) warning = heard.speakersError ? `Os falantes não foram separados: ${heard.speakersError}` : NO_SPEAKERS
   const sides = options.microphoneOnLeft && channels.length === 2 ? { microphone: channels[0], computer: channels[1] } : null
   const blocks = blocksFromWords(heard.inSpeech ? heard.words : wordsInSpeech(heard.words, turns), turns, sides ? microphoneWords(sides) : undefined, sides ? computerWords(sides) : undefined)
   const speakers = speakersOf(blocks, options.recorder)

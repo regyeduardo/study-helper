@@ -178,7 +178,7 @@ export function ItemMenu() {
         <Icon name="star" />
         {file.favorite ? 'Tirar dos favoritos' : 'Favoritar'}
       </button>
-      <button className="mi" onClick={act(() => ui.open({ kind: 'share', target: 'file', id: file.id }))}>
+      <button className="mi" onClick={act(() => ui.open({ kind: 'share', target: file.role === 'entrada' ? 'entrada' : 'file', id: file.id }))}>
         <Icon name="link" />
         Compartilhar
       </button>

@@ -101,6 +101,8 @@ export async function findCandidates(m: Material, ctx: Context, ai: AtaAi): Prom
 export interface Plan {
   tasks: Json[]
   dropped: Json[]
+  /** Proposed and then reverted in the meeting (metodo.md: the final state counts): never a task, only "Descartado na reunião". */
+  reverted: Json[]
 }
 
 const COMMIT = /\b(vou|eu fa[cç]o|deixa comigo|eu mando|pode deixar)\b/i
@@ -122,6 +124,7 @@ export async function mergeAndReview(m: Material, ctx: Context, ai: AtaAi, cands
   const lines = cands.map(c => `${c.id} · ${c.minuto} · ${c.o_que} · pedida por ${c.pedida_por || '?'} · dono: ${c.dono || '?'} · prazo: ${c.prazo || '-'} · ${c.situacao} · "${c.citacao}" · ${c.detalhes ?? ''} · tela: ${c.tela ?? ''}`).join('\n')
   const merged = jsonIn(await ai.text('candidates', P.JUNTAR, `${m.dados}\n\n${ctx.contexto}\n\nCANDIDATAS:\n${lines}`, { max: 5000, json: true })) ?? {}
   const dropped: Json[] = list(merged.descartadas)
+  const reverted: Json[] = list(merged.revertidas).filter(r => oneLine(r.era) && oneLine(r.ficou))
   const ids = (t: Json): string[] => (Array.isArray(t.candidatas) ? t.candidatas.map(String) : [])
   // evidence gate: a group with no candidate quote that was actually SAID (only screen/card text) is not a task
   const tarefas = list(merged.tarefas).filter(t => {
@@ -129,7 +132,7 @@ export async function mergeAndReview(m: Material, ctx: Context, ai: AtaAi, cands
     dropped.push({ candidatas: t.candidatas, motivo: `sem fala: só na tela (${t.titulo ?? ''})` })
     return false
   })
-  if (!tarefas.length) return { tasks: [], dropped }
+  if (!tarefas.length) return { tasks: [], dropped, reverted }
   const spokenOf = (t: Json) => ids(t).map(id => byId[id]).filter(c => c && said.some(c.citacao))
   const review = `${ctx.contextoCurto}\n\nTAREFAS:\n${tarefas
     .map((t, i) => {
@@ -179,7 +182,7 @@ export async function mergeAndReview(m: Material, ctx: Context, ai: AtaAi, cands
     parent.momentos = [...(Array.isArray(parent.momentos) ? parent.momentos : []), ...(Array.isArray(t.momentos) ? t.momentos : [])]
     parent.partes.push(t.titulo)
   })
-  return { tasks: kept.map(t => ({ ...t, _cands: ids(t).map(id => byId[id]).filter(Boolean) })), dropped }
+  return { tasks: kept.map(t => ({ ...t, _cands: ids(t).map(id => byId[id]).filter(Boolean) })), dropped, reverted }
 }
 
 export type LookFn = (at: number) => Promise<string | null>
@@ -211,14 +214,34 @@ export async function verifyTasks(m: Material, ctx: Context, ai: AtaAi, plan: Pl
     const falas = [...new Set(windows.flatMap(([a, z]) => m.falasEntre(a, z).split('\n')))].filter(Boolean).sort().join('\n')
     const user = `${m.dados}\n\n${ctx.contextoCurto}\n\nTODAS AS TAREFAS (número: título):\n${lista}\n\nTAREFA A VERIFICAR: ${i + 1}. ${t.titulo}${t.depende_de ? ` (depende de: ${t.depende_de})` : ''}${t.partes?.length ? `\nESTA TAREFA INCLUI, COMO PASSOS: ${t.partes.join('; ')}` : ''}\nCANDIDATAS QUE A ORIGINARAM:\n${JSON.stringify(mine)}\n\nFALAS EM VOLTA DOS MOMENTOS:\n${falas}\n\nLEITURA DA TELA NO TRECHO:\n${m.telaJanelas(moments) || 'nada'}\n\nO QUE SE VIU NA TELA NO SEGUNDO EXATO:\n${JSON.stringify(seen)}\n\nCATÁLOGO DE TELAS DA REUNIÃO (para os prints):\n${m.catalogoCurto || 'nenhum'}`
     const v = jsonIn(await ai.text('write', P.VERIFICAR, user, { max: 5000, json: true }))
-    return enforce({ ...(v ?? { manter: false, motivo: 'sem JSON' }), _n: i + 1, _titulo: t.titulo } as Json, said)
+    return enforce({ ...(v ?? { manter: false, motivo: 'sem JSON' }), _n: i + 1, _titulo: t.titulo, _momentos: moments } as Json, said)
   })
+  // reverted later in the meeting: out of the tasks, into "Descartado na reunião"
+  for (const v of verified) {
+    const r = v.manter === false && v.revertida && typeof v.revertida === 'object' ? (v.revertida as Json) : null
+    if (!r || !oneLine(r.ficou)) continue
+    const proposed = Array.isArray(v._momentos) && v._momentos.length ? clock(v._momentos[0]) : ''
+    plan.reverted.push({ era: oneLine(r.era) || oneLine(v._titulo), ficou: r.ficou, momentos: [proposed, oneLine(r.minuto)].filter(Boolean) })
+  }
   return verified.filter(v => v.manter !== false && v.titulo)
 }
 
-export async function writeTasks(m: Material, ctx: Context, ai: AtaAi, tasks: Json[]): Promise<{ bodies: string[]; geral: Json | null; pending: Json | null }> {
+const NO_OWNER = /^(|a confirmar|sem responsável|sem dono|ninguém|\?)$/i
+
+/** metodo.md: a task needs a commitment still valid at the end; a request nobody accepted, or with no owner, is an open point. */
+export function committed(task: Json): boolean {
+  return task.situacao === 'aceita' && !NO_OWNER.test(oneLine(task.dono).trim())
+}
+
+/** The minute of the commitment: the acceptance, else the proof, else the first quote. */
+function minuteOf(task: Json): string {
+  return oneLine(task.aceite?.minuto ?? task.prova_fala?.minuto ?? list(task.base)[0]?.minuto ?? '')
+}
+
+export async function writeTasks(m: Material, ctx: Context, ai: AtaAi, tasks: Json[], open: Json[] = []): Promise<{ bodies: string[]; geral: Json | null; pending: Json | null }> {
   const LISTA = tasks.map((t, i) => `${i + 1}. ${t.titulo} · ${t.dono} · ${t.prazo}`).join('\n')
-  const tarefasMin = tasks.map((t, i) => `${i + 1}. ${t.titulo} · onde: ${short(t.onde, 160)} · falas: ${list(t.base).map(b => b.minuto).join(', ')}`).join('\n')
+  // the open points already found go along, so "Em aberto" does not get them twice
+  const tarefasMin = [...tasks, ...open].map((t, i) => `${i + 1}. ${t.titulo} · onde: ${short(t.onde, 160)} · falas: ${list(t.base).map(b => b.minuto).join(', ')}`).join('\n')
   const hidden = ['prints', 'prova_fala', 'aceite', 'manter', 'motivo']
   const [bodies, geral, pending] = await Promise.all([
     pool(tasks, 6, async (t, i) => {
@@ -253,13 +276,15 @@ export function unowned(pending: Json | null, bodies: string[], said: Said): Jso
 }
 
 /** Gold structure (02z-tarefas-claude.md), one level down so it fits as a part of the Ata. */
-export function assembleTasks(ctx: Context, tasks: Json[], bodies: string[], geral: Json | null, semDono: Json[] = []): { markdown: string; title: string; prints: PrintRequest[] } {
+export function assembleTasks(ctx: Context, tasks: Json[], bodies: string[], geral: Json | null, semDono: Json[] = [], open: Json[] = [], reverted: Json[] = []): { markdown: string; title: string; prints: PrintRequest[] } {
   const title = oneLine(geral?.titulo ?? ctx.brief.assunto ?? '')
   const parts: string[] = []
   const contexto = Array.isArray(geral?.contexto) ? geral!.contexto : [ctx.brief.contexto ?? '']
   parts.push(contexto.map(oneLine).filter(Boolean).join('\n'), '', '### Lista', '')
   if (!tasks.length) parts.push('Nenhuma tarefa apareceu na reunião.')
-  tasks.forEach((t, i) => parts.push(`- [ ] [${cap(oneLine(t.titulo))}](#t${i + 1}) · ${oneLine(t.dono) || 'a confirmar'} · ${oneLine(t.prazo) || 'sem prazo dito'}`))
+  // every task: what, who, until when and the minute (metodo.md)
+  const at = (t: Json) => (minuteOf(t) ? ` · [▸ ${minuteOf(t)}]` : '')
+  tasks.forEach((t, i) => parts.push(`- [ ] [${cap(oneLine(t.titulo))}](#t${i + 1}) · ${oneLine(t.dono) || 'sem responsável'} · ${oneLine(t.prazo) || 'sem prazo'}${at(t)}`))
   parts.push('')
   const prints: PrintRequest[] = []
   tasks.forEach((t, i) => {
@@ -278,14 +303,28 @@ export function assembleTasks(ctx: Context, tasks: Json[], bodies: string[], ger
       })
     if (list(t.prints).length) parts.push('')
   })
-  if (semDono.length) {
-    parts.push('### Ficou sem dono', '')
+  if (semDono.length || open.length) {
+    parts.push('### Em aberto', '')
+    for (const t of open) {
+      const owner = NO_OWNER.test(oneLine(t.dono).trim()) ? 'sem responsável' : `${oneLine(t.dono)}, sem aceite`
+      parts.push(`- **${cap(oneLine(t.titulo)).replace(/\.$/, '')}.** ${owner} · ${oneLine(t.prazo) || 'sem prazo'}${minuteOf(t) ? ` [▸ ${minuteOf(t)}]` : ''}`)
+    }
     for (const s of semDono)
       parts.push(
         `- **${oneLine(s.assunto).replace(/\*/g, '').replace(/\.$/, '')}.** ${oneLine(s.texto)} ${list(s.base)
           .map(b => `[▸ ${oneLine(b.minuto)}] "${oneLine(b.citacao)}"`)
           .join(' · ')}`.trim(),
       )
+    parts.push('')
+  }
+  const seen = new Set<string>()
+  const dropped = reverted.filter(r => !seen.has(plainText(oneLine(r.era))) && seen.add(plainText(oneLine(r.era))))
+  if (dropped.length) {
+    parts.push('### Descartado na reunião', '')
+    for (const r of dropped) {
+      const moments = (Array.isArray(r.momentos) ? r.momentos : []).map(oneLine).filter(Boolean).slice(0, 2)
+      parts.push(`- ${cap(oneLine(r.era))} → ${oneLine(r.ficou).replace(/\.$/, '')}.${moments.length ? ` ${moments.map(m => `[▸ ${m}]`).join(' → ')}` : ''}`)
+    }
     parts.push('')
   }
   const taskText = ` ${plainText(bodies.join(' ') + ' ' + tasks.map(t => t.titulo).join(' '))} `
@@ -308,9 +347,11 @@ export async function buildTasks(m: Material, ctx: Context, ai: AtaAi, look: Loo
   onProgress(`Tarefas: juntando e revisando ${cands.length} candidatas`)
   const plan = await mergeAndReview(m, ctx, ai, cands, said)
   onProgress(`Tarefas: conferindo ${plan.tasks.length} tarefas com as falas e a tela`)
-  const tasks = await verifyTasks(m, ctx, ai, plan, look, said)
-  onProgress(`Tarefas: escrevendo ${tasks.length} tarefas e o que ficou sem dono`)
-  const { bodies, geral, pending } = await writeTasks(m, ctx, ai, tasks)
-  const done = assembleTasks(ctx, tasks, bodies, geral, unowned(pending, bodies, said))
+  const verified = await verifyTasks(m, ctx, ai, plan, look, said)
+  const tasks = verified.filter(committed)
+  const open = verified.filter(task => !committed(task))
+  onProgress(`Tarefas: escrevendo ${tasks.length} tarefas e o que ficou em aberto`)
+  const { bodies, geral, pending } = await writeTasks(m, ctx, ai, tasks, open)
+  const done = assembleTasks(ctx, tasks, bodies, geral, unowned(pending, bodies, said), open, plan.reverted)
   return { ...done, tasks, dropped: plan.dropped }
 }

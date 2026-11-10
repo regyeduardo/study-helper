@@ -227,6 +227,74 @@ describe('a escada de cada uso (R-A)', () => {
   })
 })
 
+describe('a Ata passo a passo (lista de 10/11)', () => {
+  it('na visão Geral, a linha da Ata mostra o modelo de cada passo', async () => {
+    setup()
+    await open()
+    const steps = within(rowOf(label('ata'))).getByRole('list', { name: 'Ata passo a passo' })
+    expect(within(steps).getAllByRole('listitem').map(item => item.textContent)).toEqual([
+      'Quem fala: Gemini 3.8 Flash',
+      'Leitura da tela: MiMo-V2.6-Flash',
+      'Contexto e estado final: GPT-6 Luna',
+      'Escrita: GPT-6 Luna ou Gemini 3.8 Flash',
+    ])
+    expect(within(rowOf(label('estudo'))).queryByRole('list', { name: 'Ata passo a passo' })).toBeNull()
+  })
+
+  it('na escada da Ata, uma tabela dá o passo, o modelo · provedor, a nota de 10/11 e o porquê; a coluna da lista diz 10/11', async () => {
+    setup()
+    await open()
+    fireEvent.click(within(rowOf(label('ata'))).getByRole('button', { name: label('ata') }))
+    const region = screen.getByRole('region', { name: `Escada de ${label('ata')}` })
+    const table = within(region).getByRole('table', { name: 'Ata passo a passo' })
+    const rows = within(table).getAllByRole('row').slice(1)
+    expect(rows.map(row => within(row).getAllByRole('cell')[0].textContent)).toEqual(['Quem fala', 'Leitura da tela', 'Contexto e estado final', 'Escrita', ''])
+    expect(rows[0]).toHaveTextContent('Gemini 3.8 Flash')
+    expect(rows[0]).toHaveTextContent('OpenRouter')
+    expect(rows[1]).toHaveTextContent('MiMo-V2.6-Flash')
+    expect(rows[1]).toHaveTextContent('DeepInfra')
+    expect(rows[3]).toHaveTextContent('GPT-6 Luna')
+    expect(rows[4]).toHaveTextContent('Gemini 3.8 Flash')
+    expect(within(region).getByRole('table', { name: `Pares de ${label('ata')}` })).toHaveTextContent('Nota do app · 10/11')
+    expect(within(table).getByRole('columnheader', { name: 'Nota do app · 10/11' })).toBeInTheDocument()
+  })
+
+  it('o título do alto traz a data da lista do uso aberto: 10/11 na escada da Ata, 07/11 na Geral e nas outras escadas', async () => {
+    setup()
+    await open()
+    expect(screen.getByText(/^Recomendação do app · lista de/)).toHaveTextContent('lista de 07/11')
+    fireEvent.click(within(rowOf(label('ata'))).getByRole('button', { name: label('ata') }))
+    expect(screen.getByText(/^Recomendação do app · lista de/)).toHaveTextContent('lista de 10/11')
+    expect(screen.getByText(/^Recomendação do app · lista de/)).not.toHaveTextContent('07/11')
+    fireEvent.click(within(usesNav()).getByRole('button', { name: /^Geral · todos os usos/ }))
+    fireEvent.click(within(rowOf(label('titulo'))).getByRole('button', { name: label('titulo') }))
+    expect(screen.getByText(/^Recomendação do app · lista de/)).toHaveTextContent('lista de 07/11')
+  })
+
+  it('revisões de design: cada nome de modelo é um bloco só (não quebra no meio), a lista diz o que é, e o 2º modelo de um passo é marcado como continuação', async () => {
+    setup()
+    await open()
+    const steps = within(rowOf(label('ata'))).getByRole('list', { name: 'Ata passo a passo' })
+    const items = within(steps).getAllByRole('listitem')
+    expect(items.map(item => [...item.querySelectorAll('.rec-pick')].map(pick => pick.textContent))).toEqual([['Gemini 3.8 Flash'], ['MiMo-V2.6-Flash'], ['GPT-6 Luna'], ['GPT-6 Luna', 'Gemini 3.8 Flash']])
+    expect(within(rowOf(label('ata'))).getByText('Passo a passo')).toHaveClass('rec-steps-h')
+
+    fireEvent.click(within(rowOf(label('ata'))).getByRole('button', { name: label('ata') }))
+    const table = screen.getByRole('table', { name: 'Ata passo a passo' })
+    const rows = within(table).getAllByRole('row').slice(1)
+    expect(rows.map(row => row.classList.contains('rec-more'))).toEqual([false, false, false, false, true])
+  })
+
+  it('as outras escadas seguem com a data da lista, 07/11, e sem a tabela de passos', async () => {
+    setup()
+    await open()
+    fireEvent.click(within(rowOf(label('titulo'))).getByRole('button', { name: label('titulo') }))
+    const region = screen.getByRole('region', { name: `Escada de ${label('titulo')}` })
+    expect(within(region).queryByRole('table', { name: 'Ata passo a passo' })).toBeNull()
+    expect(within(region).getByRole('table', { name: `Pares de ${label('titulo')}` })).toHaveTextContent('Nota do app · 07/11')
+  })
+})
+
 describe('Rodar meu diagnóstico (FR-050)', () => {
   const openTitle = () => fireEvent.click(within(rowOf(label('titulo'))).getByRole('button', { name: label('titulo') }))
 

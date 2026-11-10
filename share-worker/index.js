@@ -20,6 +20,7 @@ const PAGE_PATH = /^\/s\/([A-Za-z0-9_-]{16,64})(?:\/arquivo\/([A-Za-z0-9_-]{1,64
 const PAGE_HEADERS = { 'Cache-Control': SHARED_CACHE, 'X-Robots-Tag': 'noindex' }
 const PAGE_STYLE = 'body{margin:0;font:16px/1.6 system-ui,sans-serif;color:#1f2328;background:#fff}main{max-width:46rem;margin:0 auto;padding:1.5rem 1rem 4rem}h1,h2,h3,h4,h5,h6{line-height:1.3;margin:2rem 0 .5rem}pre{white-space:pre-wrap;overflow-wrap:anywhere;font:inherit;margin:0 0 1rem}a{color:#0969da}@media (prefers-color-scheme:dark){body{color:#e6edf3;background:#0d1117}a{color:#4493f8}}'
 const HTML_ESCAPES = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }
+const SHARE_KINDS = ['file', 'folder', 'entrada']
 const TYPE_LABELS = { class: 'Aula', explanation: 'Explicação', reading: 'Leitura', meeting: 'Reunião' }
 const ARTIFACT_LABELS = { mapa: 'Mapa mental', cartoes: 'Cartões', tutor: 'Conversa do Tutor' }
 const TURN_LABELS = { você: 'Você', tutor: 'Tutor' }
@@ -154,7 +155,7 @@ function cleanFile(file) {
 }
 
 export function cleanShare(share) {
-  if (!share || typeof share !== 'object' || (share.kind !== 'file' && share.kind !== 'folder') || !isText(share.title)) return null
+  if (!share || typeof share !== 'object' || !SHARE_KINDS.includes(share.kind) || !isText(share.title)) return null
   if (!Array.isArray(share.files) || !share.files.length || (share.folders !== undefined && !Array.isArray(share.folders))) return null
   const folders = (share.folders ?? []).map(cleanFolder)
   const files = share.files.map(cleanFile)
@@ -462,11 +463,18 @@ function artifactBlocks(artifact, level) {
   return [title, ...(turns.length ? [preformatted(turns.join('\n'))] : [])]
 }
 
+// an entrada says what it is and the name of its original; a note says its type
+function typeLine(file) {
+  if (file.role !== 'entrada') return `Tipo: ${TYPE_LABELS[file.type] ?? file.type}`
+  const original = textOrEmpty(file.origin?.name)
+  return `Tipo: Entrada${original ? ` · ${original}` : ''}`
+}
+
 function noteBlocks(file, level, mediaUrl) {
   const media = file.media ? mediaUrl(file.id) : ''
   return [
     heading(level, file.name),
-    paragraph(`Tipo: ${TYPE_LABELS[file.type] ?? file.type}`),
+    paragraph(typeLine(file)),
     ...(file.description ? [paragraph(file.description)] : []),
     ...(file.tags.length ? [paragraph(`Tags: ${file.tags.join(', ')}`)] : []),
     ...(media ? [link(`Mídia (${file.media.mime || 'tipo desconhecido'}, ${sizeText(file.media.size)})`, media, media)] : []),
@@ -494,6 +502,30 @@ function treeBlocks(share, mediaUrl) {
   return [...notesOf(share.files.filter(file => !known.has(file.folderId)), 2), ...share.folders.filter(folder => !known.has(folder.parentId)).sort(byPosition).flatMap(folder => folderBlocks(folder, 2))]
 }
 
+// the family of an entrada in the same hierarchy as the app: each note one level under its mother, in the order sent (the tree's)
+function familyBlocks(share, mediaUrl) {
+  const entry = share.files.find(file => file.role === 'entrada') ?? share.files[0]
+  const ids = new Set(share.files.map(file => file.id))
+  const motherOf = file => (file.parentFileId && file.parentFileId !== file.id && ids.has(file.parentFileId) ? file.parentFileId : entry.id)
+  const shown = new Set([entry.id])
+  const branch = (file, level) => [
+    ...noteBlocks(file, level, mediaUrl),
+    ...share.files
+      .filter(child => !shown.has(child.id) && motherOf(child) === file.id)
+      .flatMap(child => {
+        shown.add(child.id)
+        return branch(child, level + 1)
+      }),
+  ]
+  return branch(entry, 2)
+}
+
+function shareSummary(family, count) {
+  if (!family) return count === 1 ? '1 nota compartilhada' : `${count} notas compartilhadas`
+  const notes = count - 1
+  return notes ? `uma entrada com ${notes === 1 ? '1 nota' : `${notes} notas`}` : 'uma entrada, sem notas'
+}
+
 function shareDocument(share, { origin, appUrl, fileId }) {
   const only = share.files.filter(file => file.id === fileId)
   const shown = only.length ? { ...share, folders: [], files: only } : share
@@ -501,13 +533,13 @@ function shareDocument(share, { origin, appUrl, fileId }) {
   const count = shown.files.length
   return {
     title: share.title,
-    description: `${share.title}: ${count === 1 ? '1 nota compartilhada' : `${count} notas compartilhadas`} no Estudo, com o texto completo nesta página.`,
+    description: `${share.title}: ${shareSummary(share.kind === 'entrada' && !only.length, count)} no Estudo, com o texto completo nesta página.`,
     redirect: appLink,
     blocks: [
       heading(1, share.title),
       paragraph(`Compartilhado em ${dateText(share.createdAt)} · expira em ${dateText(share.expiresAt)}`),
       link('', 'Abrir no Estudo', appLink),
-      ...treeBlocks(shown, id => `${origin}/media/${share.id}/${encodeURIComponent(id)}`),
+      ...(share.kind === 'entrada' && !only.length ? familyBlocks : treeBlocks)(shown, id => `${origin}/media/${share.id}/${encodeURIComponent(id)}`),
     ],
   }
 }
@@ -576,6 +608,10 @@ async function sharedNote(bucket, root, entry) {
     documents: sidecar.documents,
     artifacts: sidecar.artifacts,
     media: entry.media,
+    // only an entrada and its family carry these: the page nests the notes by them
+    role: meta.role === 'entrada' ? 'entrada' : undefined,
+    parentFileId: isText(meta.parentFileId) ? meta.parentFileId : null,
+    origin: plainObject(meta.origin) ?? undefined,
   }
 }
 

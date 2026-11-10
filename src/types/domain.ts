@@ -145,6 +145,8 @@ export interface FileMeta {
   kept?: 'registro' | 'arquivo'
   /** Id da raiz de um "Apagar tudo": restaurar traz todos com a mesma marca. */
   trashedWith?: string
+  /** Só em entrada importada de um link: o id do compartilhamento, para a próxima importação virar "(cópia N)". */
+  sharedFrom?: string
   folderId: string | null
   type: FileType
   description: string
@@ -515,7 +517,7 @@ export interface TrashEntry {
   deletedAt: string
 }
 
-export type ShareKind = 'file' | 'folder'
+export type ShareKind = 'file' | 'folder' | 'entrada'
 
 export interface ShareRecord {
   id: string

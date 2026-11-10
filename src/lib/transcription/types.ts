@@ -87,4 +87,6 @@ export interface ProviderResult {
   words: Word[]
   turns: SpeakerTurn[]
   inSpeech?: boolean
+  /** Why the speaker split did not come, when the provider tried and failed. */
+  speakersError?: string
 }

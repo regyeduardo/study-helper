@@ -492,10 +492,52 @@ function inventedSource(data: Data | null, cited: Cited[]): string | null {
   return words.filter(word => inPage.has(word)).length / Math.max(1, words.length) >= CITED_MATCH ? null : 'um enunciado que não está na página citada'
 }
 
+/** Where the answer lists its tasks: the rows of a JSON task list, or the lines under a Markdown task heading. */
+const TASK_LIST = /^(tarefas|acoes|a_fazer|passos|proximos_passos|compromissos)$/
+const TASK_HEADING = /(a fazer|tarefa|proximos passos|acoes|action|combinad|compromisso|encaminhamento|precisa ser feito)/
+
+function taskBlocks(answer: string, data: Data | null): string[] {
+  if (data) {
+    const rows: string[] = []
+    const walk = (value: unknown) => {
+      if (Array.isArray(value)) value.forEach(walk)
+      else if (isData(value))
+        for (const [field, inner] of Object.entries(value)) {
+          if (TASK_LIST.test(plain(field)) && Array.isArray(inner)) rows.push(...inner.map(row => plain(typeof row === 'string' ? row : JSON.stringify(row))))
+          else walk(inner)
+        }
+    }
+    walk(data)
+    return rows
+  }
+  const rows: string[] = []
+  let inTasks = false
+  for (const line of answer.split('\n')) {
+    const heading = /^#{1,6}\s+(.*)$/.exec(line)
+    if (heading) inTasks = TASK_HEADING.test(plain(heading[1])) && !/descartad/.test(plain(heading[1]))
+    else if (inTasks && line.trim()) rows.push(plain(line))
+  }
+  return rows
+}
+
+/** Who the answer says is speaking, against the tile that has the ring: one name, and the right one. Anything else is wrong, nobody included. */
+function wrongSpeaker(test: MiniTest, data: Data | null): string[] {
+  const call = test.material.kind === 'tela' ? test.material.call : undefined
+  if (!test.speaking || !call) return []
+  const said = data?.[test.speaking.field]
+  const text = typeof said === 'string' ? said.trim() : ''
+  const named = call.tiles.filter(name => plain(text).includes(plain(name)))
+  if (named.length === 1 && named[0] === call.speaking) return []
+  return [`${named.length ? named.join(' e ') : text || 'ninguém'} como quem fala, e o anel está em ${call.speaking}`]
+}
+
 function inventionsOf(test: MiniTest, answer: string, data: Data | null, cited: Cited[]): string[] {
   const flat = plain(answer)
+  const tasks = test.dropped?.length ? taskBlocks(answer, data) : []
   return [
     ...test.forbidden.filter(word => flat.includes(plain(word))),
+    ...wrongSpeaker(test, data),
+    ...(test.dropped ?? []).filter(item => tasks.some(row => has(row, item.accept))).map(item => `como tarefa ${item.item}`),
     ...(test.strictNumbers ? inventedNumbers(test, answer).map(number => `o número ${number}`) : []),
     ...(test.people ? inventedOwners(test.people, data).map(owner => `o dono ${owner}`) : []),
     ...(test.citedUrl ? [inventedSource(data, cited)].filter((item): item is string => item !== null) : []),
@@ -558,7 +600,8 @@ export function gradeAnswer(test: MiniTest, answer: string, cited: Cited[] = [])
   const ptBr = brazilian(answer)
   const speech = typeof data?.fala === 'string' ? data.fala : answer
   const wer = test.wer ? wordErrors(test.wer.reference, speech) : undefined
-  const cer = test.cer ? charErrors(test.cer.reference, answer) : undefined
+  const read = typeof data?.texto === 'string' ? data.texto : answer
+  const cer = test.cer ? charErrors(test.cer.reference, read) : undefined
   if (test.measure === 'wer') return { score: werScore(wer ?? 1), found, expected, missing, inventions, format, ptBr, wer }
   const parts = scoreOf({ found, expected, inventions: inventions.length, format, ptBr })
   const offScript = (wer !== undefined && wer > test.wer!.max) || (cer !== undefined && cer > test.cer!.max)
@@ -877,6 +920,10 @@ async function loadSample(file: string): Promise<{ data: string; mime: string } 
 const PAD = 60
 const CELL_WIDTH = 340
 const ROW_HEIGHT = 60
+const TILE_TOP = 590
+const TILE_HEIGHT = 100
+const TILE_GAP = 40
+const RING_WIDTH = 10
 
 /** The screen of the test, drawn from its fields: the same picture everywhere, no file. Null where there is no canvas. */
 export async function drawScreen(material: Extract<Material, { kind: 'tela' }>): Promise<{ data: string; mime: string } | null> {
@@ -903,6 +950,24 @@ export async function drawScreen(material: Extract<Material, { kind: 'tela' }>):
       paint.fillText(cell, x + 16, y + 40)
     }),
   )
+  if (material.call) {
+    const { tiles, speaking } = material.call
+    const tileWidth = (material.width - 2 * PAD - (tiles.length - 1) * TILE_GAP) / tiles.length
+    paint.textAlign = 'center'
+    tiles.forEach((name, at) => {
+      const x = PAD + at * (tileWidth + TILE_GAP)
+      paint.fillStyle = '#e5e7eb'
+      paint.fillRect(x, TILE_TOP, tileWidth, TILE_HEIGHT)
+      // The only sign of speech is the ring: a thick colored frame around the tile of whoever speaks; the others have a thin gray one.
+      paint.strokeStyle = name === speaking ? '#16a34a' : '#9ca3af'
+      paint.lineWidth = name === speaking ? RING_WIDTH : 2
+      paint.strokeRect(x, TILE_TOP, tileWidth, TILE_HEIGHT)
+      paint.fillStyle = '#111111'
+      paint.fillText(name, x + tileWidth / 2, TILE_TOP + TILE_HEIGHT / 2 + 9)
+    })
+    paint.textAlign = 'left'
+    paint.lineWidth = 1
+  }
   return { data: canvas.toDataURL('image/png').split(',')[1], mime: 'image/png' }
 }
 

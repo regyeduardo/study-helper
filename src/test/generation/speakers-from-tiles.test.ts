@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { Cancelled } from '@/controllers/ai.controller'
 import type { SeeFn, Shot } from '@/lib/generation/ata-types'
-import { speakersFromTiles, TILES_PROMPT, WHO_PROMPT } from '@/lib/generation/speakers-from-tiles'
+import { amongPrompt, speakersFromTiles, TILES_PROMPT, WHO_PROMPT } from '@/lib/generation/speakers-from-tiles'
 import type { RecordingData, TranscriptBlock } from '@/types/domain'
 
 const TILES = ['Ana Souza', 'Bruno Lima', 'Regy Niles']
@@ -101,6 +101,56 @@ describe('speakersFromTiles', () => {
     // one weak vote is enough when the name is free
     const weak = await speakersFromTiles(input, frames, fakeSee(at => (at < 30 ? 'Natália Lenza' : at === 35 ? 'Henrique Souza' : ''), tiles))
     expect(weak.recording.speakers.map(speaker => speaker.name)).toEqual(['Natália Lenza', 'Henrique Souza', 'Regy Niles'])
+  })
+
+  it('o microfone fica com o quadro que acende quando ele fala, não com o de quem está mudo (reunião de 09/11)', async () => {
+    // Ana fala 0-30; o microfone (Regy) fala 60-90 e o quadro DELE acende (borda); Bruno está mudo e nunca acende.
+    const who = (at: number) => (at < 30 ? 'Ana Souza' : at >= 60 ? 'Regy Niles' : '')
+    const result = await speakersFromTiles(recording([['s1', 0, 10], ['s1', 10, 20], ['s1', 20, 30], ['mic', 60, 70], ['mic', 70, 80], ['mic', 80, 90]]), frames, fakeSee(who))
+    expect(nameOf(result.recording, 's1')).toBe('Ana Souza')
+    expect(nameOf(result.recording, 'mic')).toBe('Regy Niles')
+  })
+
+  it('o microfone que já tem o nome real de quem gravou o mantém, e nenhuma outra voz leva esse nome (quadro mudo e quadro próprio nunca acendem: não dá para escolher entre eles)', async () => {
+    // Ana fala; o microfone é o Regy (conta Google do app); Bruno está mudo. Ninguém acende enquanto o microfone fala.
+    const input = recording([['s1', 0, 10], ['s1', 10, 20], ['s1', 20, 30], ['mic', 60, 70], ['mic', 70, 80]])
+    input.speakers = input.speakers.map(speaker => (speaker.id === 'mic' ? { ...speaker, name: 'Regy Niles' } : speaker))
+    const result = await speakersFromTiles(input, frames, fakeSee(at => (at < 30 ? 'Ana Souza' : ''), ['Ana Souza', 'Bruno Lima', 'Regy Niles']))
+    expect(nameOf(result.recording, 'mic')).toBe('Regy Niles')
+    expect(nameOf(result.recording, 's1')).toBe('Ana Souza')
+  })
+
+  it('o microfone com um só bloco longo (e sobreposto à outra voz) vota também nos blocos curtos, onde o quadro dele acende sozinho (reunião de 09/11, quadros reais)', async () => {
+    // Ana fala 0-30; o microfone tem um bloco longo 60-72 em que Ana fala por cima (a visão vê Ana) e três respostas curtas em que só o quadro do Regy acende; Bruno está mudo.
+    const input = recording([['s1', 0, 10], ['s1', 10, 20], ['s1', 20, 30], ['mic', 60, 72], ['mic', 75, 77], ['mic', 80, 82], ['mic', 85, 87]])
+    const who = (at: number) => (at < 30 || at === 66 ? 'Ana Souza' : 'Regy Niles')
+    const result = await speakersFromTiles(input, frames, fakeSee(who, ['Ana Souza', 'Bruno Lima', 'Regy Niles']))
+    expect(nameOf(result.recording, 'mic')).toBe('Regy Niles')
+    expect(nameOf(result.recording, 's1')).toBe('Ana Souza')
+  })
+
+  it('a visão que sempre aponta a apresentadora não decide o microfone: ele pergunta só entre os quadros que sobram, e o mudo nunca acende (reunião de 09/11, quadros reais)', async () => {
+    // Ana apresenta e fala 0-30. Quando o microfone fala (60+), a visão ainda aponta Ana (o nome dela está em destaque). Entre Bruno (mudo) e Regy, só o quadro do Regy acende.
+    const input = recording([['s1', 0, 10], ['s1', 10, 20], ['s1', 20, 30], ['mic', 60, 72], ['mic', 75, 77], ['mic', 80, 82], ['mic', 85, 87]])
+    const tiles = ['Ana Souza', 'Bruno Lima', 'Regy Niles']
+    const see: SeeFn = vi.fn(async (images: string[], prompt: string) => {
+      const at = timeOf(images[0])
+      if (prompt === TILES_PROMPT) return JSON.stringify({ quadros: tiles })
+      if (prompt === WHO_PROMPT) return JSON.stringify({ falando: 'Ana Souza' })
+      if (prompt === amongPrompt(['Bruno Lima', 'Regy Niles'])) return JSON.stringify({ falando: at >= 60 ? 'Regy Niles' : '' })
+      throw new Error('prompt inesperado')
+    })
+    const result = await speakersFromTiles(input, frames, see)
+    expect(nameOf(result.recording, 'mic')).toBe('Regy Niles')
+    expect(nameOf(result.recording, 's1')).toBe('Ana Souza')
+  })
+
+  it('a voz remota que a visão confunde com o nome de quem gravou fica com outro quadro', async () => {
+    const input = recording([['s1', 0, 10], ['s1', 10, 20], ['s1', 20, 30], ['mic', 60, 70]])
+    input.speakers = input.speakers.map(speaker => (speaker.id === 'mic' ? { ...speaker, name: 'Regy Niles' } : speaker))
+    const result = await speakersFromTiles(input, frames, fakeSee(at => (at < 30 ? 'Regy Niles' : ''), ['Ana Souza', 'Bruno Lima', 'Regy Niles']))
+    expect(nameOf(result.recording, 'mic')).toBe('Regy Niles')
+    expect(nameOf(result.recording, 's1')).not.toBe('Regy Niles')
   })
 
   it('falha da visão em alguns quadros não derruba o resto', async () => {

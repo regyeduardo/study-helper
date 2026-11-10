@@ -35,8 +35,16 @@ export type Material =
   | { kind: 'texto'; text: string }
   | { kind: 'audio'; file: string; seconds: number; speech: string }
   | { kind: 'video'; file: string; seconds: number; speech: string; slide: string }
-  | { kind: 'tela'; width: number; height: number; title: string; topics: string[]; number: string; table: string[][] }
+  | { kind: 'tela'; width: number; height: number; title: string; topics: string[]; number: string; table: string[][]; call?: VideoCall }
   | { kind: 'busca'; topic: string }
+
+/** The strip of participants of a video call under the slide: the tile of whoever speaks has a colored ring around it. */
+export interface VideoCall {
+  /** The names written on the tiles, left to right. */
+  tiles: string[]
+  /** The tile with the ring: the answer key of "who is speaking". */
+  speaking: string
+}
 
 export interface JsonList {
   count: number
@@ -69,6 +77,8 @@ export interface MiniTest {
   need?: number
   /** Tempting inventions: none of these can be in the answer. */
   forbidden: string[]
+  /** Proposed and then dropped in the meeting (FR-057, FR-064): among the tasks it counts as invented; out of them, or under "Descartado na reunião", it does not. */
+  dropped?: Expected[]
   /** A number that is neither in the material nor in `numbers` counts as invented. */
   strictNumbers?: boolean
   /** Numbers the answer may say beyond those in the material (results of a calculation). */
@@ -82,6 +92,8 @@ export interface MiniTest {
   wer?: { reference: string; max: number }
   /** Characters read against a known screen. */
   cer?: { reference: string; max: number }
+  /** A video-call screen (Material `tela` with `call`): this field of the JSON answer must name the tile with the ring. Naming another counts as invented. */
+  speaking?: { field: string }
   /** The URL of the answer must be among the pages the search read, and the statement must match what was cited. */
   citedUrl?: boolean
   /** Yes-or-no questions for the cheap AI judge, only where automatic checks cannot see clarity. */
@@ -220,12 +232,13 @@ const REUNIAO = `00:00 | Marta: Bom dia, gente. Reunião rápida sobre o cardáp
 01:04 | Bruna: Minha proposta é receber encomenda só pelo WhatsApp da loja. Fica tudo escrito.
 01:15 | Marta: Concordo. Decidido: este ano, encomenda só pelo WhatsApp, nada de telefone.
 01:24 | Bruna: Então eu monto o cardápio com os preços e publico no Instagram da padaria até segunda-feira, dia 1º de dezembro.
+01:30 | Joel: E se a gente fizer um sorteio de panetone no Instagram? Eu organizo o sorteio.
 01:36 | Marta: Ótimo. Eu fico com as embalagens: fecho o pedido com o fornecedor até quarta-feira, dia 26, senão não chega a tempo.
 01:49 | Joel: E as entregas nos fins de semana de dezembro? O Seu Antônio, que fazia, se aposentou.
 01:58 | Bruna: Eu não consigo, fico no balcão.
 02:03 | Marta: Eu também não. Precisamos de alguém, mas hoje não dá para resolver.
 02:10 | Joel: Fica em aberto, então.
-02:14 | Marta: Fica. Recapitulando: panetone de cupuaçu no cardápio, encomenda só pelo WhatsApp. Joel fecha a receita até sexta, dia 28; Bruna publica o cardápio até segunda, dia 1º; eu fecho as embalagens até quarta, dia 26. As entregas de fim de semana ainda não têm dono.
+02:14 | Marta: Fica. E o sorteio, Joel, melhor não: este ano não tem sorteio. Recapitulando: panetone de cupuaçu no cardápio, encomenda só pelo WhatsApp. Joel fecha a receita até sexta, dia 28; Bruna publica o cardápio até segunda, dia 1º; eu fecho as embalagens até quarta, dia 26. As entregas de fim de semana ainda não têm dono.
 02:40 | Bruna: Perfeito.
 02:43 | Joel: Até mais.`
 
@@ -250,6 +263,8 @@ const TAREFAS: Expected[] = [
 
 const PENDENCIA: Expected = { item: 'as entregas dos fins de semana de dezembro ficaram sem dono', accept: ['entregas'] }
 
+const DESCARTADA: Expected = { item: 'o sorteio de panetone no Instagram, proposto e depois descartado', accept: ['sorteio'] }
+
 const REUNIAO_INVENCOES = ['motoboy', 'transportadora', 'antônio vai', 'antônio fica', 'dia 30']
 
 const FALA_TRANSCRICAO = 'Bom dia turma toda. Hoje vamos revisar o capítulo sobre as salinas do litoral. A professora Lúcia Andrade lembrou que cada hectare de cristalizador produz quarenta e oito toneladas de sal por safra. Tragam o resumo escrito até sexta-feira porque na próxima aula teremos um debate curto sobre o assunto.'
@@ -269,6 +284,8 @@ const TELA = {
     ['7º B', '12 projetos', 'Laboratório 2'],
     ['8º A', '25 projetos', 'Ginásio'],
   ],
+  // Four tiles, the ring on the third: not at an end, and the others are as bright as a quiet tile gets.
+  call: { tiles: ['Helena Prado', 'Bruno Lima', 'Paulo Reis', 'Carla Dias'], speaking: 'Paulo Reis' },
 }
 
 /** The text a material carries: what the answer key is compared with. */
@@ -277,7 +294,7 @@ export function materialText(material: Material): string {
   if (material.kind === 'audio') return material.speech
   if (material.kind === 'video') return `${material.slide}\n${material.speech}`
   if (material.kind === 'busca') return material.topic
-  return [material.title, ...material.topics, material.number, ...material.table.flat()].join('\n')
+  return [material.title, ...material.topics, material.number, ...material.table.flat(), ...(material.call?.tiles ?? [])].join('\n')
 }
 
 /* ---------- the declarations ---------- */
@@ -518,10 +535,10 @@ export const USE_REQUIREMENTS: Record<AiUse, UseRequirement> = {
   }),
   tela: declare('tela', {
     needs: ['imagem'],
-    asks: 'vê imagem e lê o texto',
+    asks: 'vê imagem, lê o texto e vê quem fala numa chamada de vídeo',
     ruler: { per: '20 telas', input: 24_000, output: 3_000 },
     test: {
-      ask: 'Transcreva todo o texto desta tela, exatamente como está escrito, sem traduzir, corrigir ou completar.',
+      ask: 'Esta é a tela de uma chamada de vídeo, com um slide compartilhado e os quadros dos participantes embaixo. Responda SOMENTE um JSON: {"texto": "todo o texto da tela, exatamente como está escrito, sem traduzir, corrigir ou completar", "falando": "o nome escrito no quadro do participante que tem um anel colorido aceso em volta, que é quem está falando agora"}.',
       material: TELA,
       expected: [
         { item: 'o título', accept: ['ipê-amarelo', 'ipê amarelo'] },
@@ -534,10 +551,12 @@ export const USE_REQUIREMENTS: Record<AiUse, UseRequirement> = {
       ],
       forbidden: ['38', 'laboratório 3'],
       strictNumbers: true,
-      format: { kind: 'text' },
+      format: { kind: 'json', fields: ['texto', 'falando'] },
       measure: 'itens',
       // pesquisa.md does not give a limit: the same 10% as the transcription.
       cer: { reference: materialText(TELA), max: 0.1 },
+      // Weak vision models (gemini-3.5-flash-lite, MiMo) name the wrong person because they do not see the ring; gemini-3.8-flash got it right 3 of 3.
+      speaking: { field: 'falando' },
     },
   }),
   ata: declare('ata', {
@@ -548,10 +567,11 @@ export const USE_REQUIREMENTS: Record<AiUse, UseRequirement> = {
     ruler: { per: 'hora de reunião', input: 50_000, output: 8_000 },
     altRulers: [{ per: 'hora de reunião, sem reler', input: 15_000, output: 3_000 }],
     test: {
-      ask: 'Leia esta reunião e responda SOMENTE um JSON, em português do Brasil: {"decisoes": ["..."], "tarefas": [{"o_que": "...", "dono": "...", "prazo": "..."}], "sem_dono": ["o que ficou sem dono"]}. Não invente dono nem prazo.',
+      ask: 'Leia esta reunião e responda SOMENTE um JSON, em português do Brasil: {"decisoes": ["..."], "tarefas": [{"o_que": "...", "dono": "...", "prazo": "..."}], "sem_dono": ["o que ficou sem dono"], "descartado": ["o que foi proposto e depois descartado na reunião"]}. Não invente dono nem prazo.',
       material: texto(REUNIAO),
       expected: [...DECISOES, ...TAREFAS, PENDENCIA],
       forbidden: REUNIAO_INVENCOES,
+      dropped: [DESCARTADA],
       strictNumbers: true,
       people: DONOS,
       format: { kind: 'json', fields: ['decisoes', 'tarefas', 'sem_dono'], lists: { tarefas: { count: 3, fields: ['o_que', 'dono', 'prazo'] } } },
@@ -643,10 +663,11 @@ export const STEP_REQUIREMENTS: Record<AiStep, UseRequirement> = {
     asks: 'escrever a ata em português do Brasil, com dono e prazo certos',
     ruler: { per: 'passo', input: 7_000, output: 1_500 },
     test: {
-      ask: 'Escreva a ata desta reunião em Markdown, em português do Brasil, com as seções Decisões, A fazer (o quê, quem, até quando) e Em aberto. Não invente dono nem prazo.',
+      ask: 'Escreva a ata desta reunião em Markdown, em português do Brasil, com as seções Decisões, A fazer (o quê, quem, até quando), Em aberto e, se houver, Descartado na reunião. Não invente dono nem prazo.',
       material: texto(REUNIAO),
       expected: [...DECISOES, ...TAREFAS, PENDENCIA],
       forbidden: REUNIAO_INVENCOES,
+      dropped: [DESCARTADA],
       strictNumbers: true,
       people: DONOS,
       format: { kind: 'markdown', headings: 2 },

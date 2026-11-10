@@ -22,7 +22,7 @@ import {
   testCost,
   USE_BUDGET,
 } from '@/lib/ai/diagnosis'
-import { INVENTION_CAP, materialText, type MiniTest, PT_PT_MARKS, requirementOf, RETEST_MARGIN, USE_REQUIREMENTS, werScore } from '@/lib/ai/use-requirements'
+import { INVENTION_CAP, materialText, MIN_SCORE as MIN, type MiniTest, PT_PT_MARKS, requirementOf, RETEST_MARGIN, USE_REQUIREMENTS, werScore } from '@/lib/ai/use-requirements'
 import type { AiProvider, AiUse, DiagnosisRecord } from '@/types/domain'
 import { installFetch, jsonResponse, openAiStream } from '@/test/ai/fake-provider'
 
@@ -46,7 +46,7 @@ const CITED = 'https://provas.exemplo/enem-fotossintese'
 function gold(test: MiniTest): string {
   const { material, format } = test
   if (test.measure === 'wer') return test.wer!.reference
-  if (material.kind === 'tela') return materialText(material)
+  if (material.kind === 'tela') return JSON.stringify({ texto: materialText(material), falando: material.call?.speaking ?? '' })
   if (material.kind === 'video') return JSON.stringify({ fala: material.speech, slide: material.slide })
   const hits = test.expected.map(item => item.accept[0])
   if (format.kind === 'markdown') return `## Visão geral\n\n${hits.join('. ')}.\n\n## Detalhes\n\nResumo fiel do material.`
@@ -309,6 +309,27 @@ describe('the automatic score', () => {
     expect(graded.inventions).toEqual([])
   })
 
+  it('ata: the task dropped in the meeting among the tasks loses points; left out or in "Descartado na reunião" it does not (FR-064)', () => {
+    const test = requirementOf('ata').test
+    const perfect = JSON.parse(gold(test))
+    const asTask = gradeAnswer(test, JSON.stringify({ ...perfect, tarefas: [...perfect.tarefas, { o_que: 'Organizar o sorteio de panetone no Instagram', dono: 'Joel', prazo: 'sem prazo' }] }))
+    expect(asTask.inventions).toEqual([expect.stringContaining('sorteio')])
+    expect(asTask.score).toBeLessThan(MIN)
+    expect(gradeAnswer(test, JSON.stringify({ ...perfect, descartado: ['Sorteio de panetone no Instagram → este ano não tem sorteio'] })).score).toBe(10)
+    expect(gradeAnswer(test, gold(test)).score).toBe(10)
+  })
+
+  it('escrever: the same check in the Markdown, by the task section', () => {
+    const test = requirementOf('escrever').test
+    const body = '## Decisões\n\n- O panetone de cupuaçu entra no cardápio. Encomenda só pelo WhatsApp.\n\n## A fazer\n\n- Joel fecha a receita até sexta, dia 28.\n- Bruna publica o cardápio no Instagram até segunda, dia 1º.\n- Marta fecha as embalagens até quarta, dia 26.\n'
+    const end = '\n## Em aberto\n\n- As entregas dos fins de semana ficaram sem dono.\n'
+    const asTask = gradeAnswer(test, `${body}- Joel organiza o sorteio de panetone no Instagram, sem prazo.\n${end}`)
+    expect(asTask.inventions).toEqual([expect.stringContaining('sorteio')])
+    expect(asTask.score).toBeLessThan(MIN)
+    expect(gradeAnswer(test, `${body}${end}\n## Descartado na reunião\n\n- Sorteio de panetone no Instagram → não tem sorteio.\n`).score).toBe(10)
+    expect(gradeAnswer(test, `${body}${end}`).score).toBe(10)
+  })
+
   it('a task needs its owner and deadline in the same row', () => {
     const graded = text('ata', answer => answer.replace('"dono":"joel"', '"dono":"marta"').replace('"dono":"marta","prazo":"26"', '"dono":"joel","prazo":"26"'))
     expect(graded.found).toBe(4)
@@ -373,9 +394,59 @@ describe('the automatic score', () => {
 
   it('a screen read with many wrong characters cannot pass', () => {
     const test = requirementOf('tela').test
-    const graded = gradeAnswer(test, `${materialText(test.material)}\n${'texto a mais que não está na tela '.repeat(6)}`)
+    const falando = test.material.kind === 'tela' ? test.material.call!.speaking : ''
+    const graded = gradeAnswer(test, JSON.stringify({ texto: `${materialText(test.material)}\n${'texto a mais que não está na tela '.repeat(6)}`, falando }))
     expect(graded.cer).toBeGreaterThan(test.cer!.max)
     expect(graded.score).toBeLessThanOrEqual(INVENTION_CAP)
+  })
+
+  describe('Leitura de tela: quem fala na chamada (the ring on the speaking tile)', () => {
+    const test = requirementOf('tela').test
+    if (test.material.kind !== 'tela' || !test.material.call) throw new Error('the screen of the test is a video call')
+    const { tiles, speaking } = test.material.call
+    const read = materialText(test.material)
+    const answer = (falando: string) => JSON.stringify({ texto: read, falando })
+    const others = tiles.filter(name => name !== speaking)
+
+    it('naming the tile with the ring keeps the full score', () => {
+      const graded = gradeAnswer(test, answer(speaking))
+      expect(graded.inventions).toEqual([])
+      expect(graded.score).toBe(10)
+    })
+
+    it('accent, case and spaces around the name do not matter', () => {
+      expect(gradeAnswer(test, answer(`  ${speaking.toUpperCase()} `)).score).toBe(10)
+    })
+
+    it.each(others)('naming another tile (%s) loses score below the minimum, even with all the text right', other => {
+      const graded = gradeAnswer(test, answer(other))
+      expect(graded.found).toBe(graded.expected)
+      expect(graded.inventions).toEqual([`${other} como quem fala, e o anel está em ${speaking}`])
+      expect(graded.score).toBe(INVENTION_CAP)
+      expect(graded.score).toBeLessThan(MIN)
+    })
+
+    it('naming nobody, a name that is on no tile, or two tiles at once is also under the minimum', () => {
+      for (const falando of ['', 'ninguém', 'Marta Oliveira', `${speaking} e ${others[0]}`]) expect(gradeAnswer(test, answer(falando)).score).toBeLessThan(MIN)
+      expect(gradeAnswer(test, answer('')).inventions).toEqual([`ninguém como quem fala, e o anel está em ${speaking}`])
+    })
+
+    it('an answer with no "falando" at all is under the minimum', () => {
+      expect(gradeAnswer(test, JSON.stringify({ texto: read })).score).toBeLessThan(MIN)
+      expect(gradeAnswer(test, read).score).toBeLessThan(MIN)
+    })
+
+    it('says in the reason who was named, when a model fails it', async () => {
+      const { deps } = fake({
+        catalogs: { or: [model('ve', 0.05, 0.1, SEES), model('erra', 0.06, 0.1, SEES)] },
+        reply: call => (call.model.model === 'erra' ? answer(others[0]) : undefined),
+      })
+      const result = await runDiagnosis(await planDiagnosis({ providers: [OR], uses: ['tela'] }, deps), deps)
+      expect(of(result, 've')?.score).toBe(10)
+      expect(of(result, 'erra')?.score).toBeLessThan(MIN)
+      expect(of(result, 'erra')?.reason).toContain(`${others[0]} como quem fala`)
+      expect(result.indicated.tela?.model).toBe('ve')
+    })
   })
 
   it('a screen with its table written in pipes keeps a clean reading', () => {
@@ -1002,6 +1073,36 @@ describe('the real connections, with the network faked', () => {
     if (material.kind !== 'tela') throw new Error('the screen test has a screen')
     expect(await drawScreen(material)).toEqual({ data: 'QUJD', mime: 'image/png' })
     expect(drawn.join('\n').split('\n').sort()).toEqual(materialText(material).split('\n').sort())
+  })
+
+  it('rings the tile of the speaker: the thickest stroke goes around the name of the speaking tile and no other', async () => {
+    type Stroke = { x: number; y: number; w: number; h: number; width: number }
+    const strokes: Stroke[] = []
+    const names: { text: string; x: number; y: number }[] = []
+    const paint = {
+      fillRect: vi.fn(),
+      strokeRect: (x: number, y: number, w: number, h: number) => strokes.push({ x, y, w, h, width: paint.lineWidth }),
+      fillText: (text: string, x: number, y: number) => names.push({ text, x, y }),
+      fillStyle: '',
+      strokeStyle: '',
+      font: '',
+      lineWidth: 1,
+    }
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(paint as never)
+    vi.spyOn(HTMLCanvasElement.prototype, 'toDataURL').mockReturnValue('data:image/png;base64,QUJD')
+    const material = requirementOf('tela').test.material
+    if (material.kind !== 'tela' || !material.call) throw new Error('the screen of the test is a video call')
+    await drawScreen(material)
+    const thickest = Math.max(...strokes.map(stroke => stroke.width))
+    const rings = strokes.filter(stroke => stroke.width === thickest)
+    expect(rings).toHaveLength(1)
+    const [ring] = rings
+    expect(thickest).toBeGreaterThanOrEqual(6)
+    const inside = names.filter(name => name.x >= ring.x && name.x <= ring.x + ring.w && name.y >= ring.y && name.y <= ring.y + ring.h).map(name => name.text)
+    expect(inside).toEqual([material.call.speaking])
+    // Every tile has its name; the others have a frame in the same row, thinner than the ring.
+    for (const name of material.call.tiles) expect(names.map(item => item.text)).toContain(name)
+    expect(strokes.filter(stroke => stroke.width < thickest && stroke.y === ring.y)).toHaveLength(material.call.tiles.length - 1)
   })
 
   it('without a canvas there is no screen', async () => {

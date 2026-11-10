@@ -5,6 +5,7 @@ import { Link, useNavigate } from 'react-router-dom'
 import type { ArtifactKind, FileMeta, SourceMeta, SourceStorage } from '@/types/domain'
 import { entryKind } from '@/components/library/EntryList'
 import { SaveToDrive } from '@/components/library/SaveToDrive'
+import { SharedBadge } from '@/components/library/SharedBadge'
 import { MediaPlayer, type MeetingMedia, playAt, useMeetingMedia } from '@/components/reader/MediaPlayer'
 import { TranscriptTab } from '@/components/reader/TranscriptTab'
 import { Icon, type IconName } from '@/components/ui/Icon'
@@ -332,6 +333,8 @@ function Node({ file, ...tree }: { file: FileMeta } & Omit<TreeProps, 'parentId'
   const job = useJobsStore(state => state.jobs.find(item => item.fileId === file.id && item.kind === 'generation' && (item.status === 'running' || item.status === 'error')))
   const generatePending = useJobsStore(state => state.generatePending)
   const folders = useLibraryStore(state => state.folders)
+  // a shared link brings no folder of who shared
+  const readOnly = useLibraryStore(state => Boolean(state.sharedView))
   const running = job?.status === 'running'
   const unfinished = !running && file.status !== 'ready'
   // a lesson of a course waits for its turn: nothing went wrong
@@ -350,10 +353,12 @@ function Node({ file, ...tree }: { file: FileMeta } & Omit<TreeProps, 'parentId'
         {running && <span className="pending">gerando…</span>}
         {waiting && <span className="pending">ainda não escrita</span>}
         {failed && <span className="ep-fail">falhou</span>}
-        <span className="ep-where" title={tree.pathName(file.folderId)}>
-          <Icon name="folder" />
-          {tree.folderName(file.folderId)}
-        </span>
+        {!readOnly && (
+          <span className="ep-where" title={tree.pathName(file.folderId)}>
+            <Icon name="folder" />
+            {tree.folderName(file.folderId)}
+          </span>
+        )}
       </div>
       {running && <JobProgress job={job} />}
       {failed && <Failure text={job?.error ?? 'A geração não terminou. O material ficou guardado para tentar de novo.'} onRetry={() => void generatePending(file.id)} />}
@@ -478,16 +483,24 @@ function EntryView({ fileId }: { fileId: string }) {
               <h1>{entry.name}</h1>
               <div className="doc-meta">
                 <span className="ep-kind">Entrada · {kind.label}</span>
-                <span title={pathName(entry.folderId)}>
-                  <Icon name="folder" />
-                  {folderName(entry.folderId)}
-                </span>
+                {readOnly ? (
+                  <SharedBadge label />
+                ) : (
+                  <span title={pathName(entry.folderId)}>
+                    <Icon name="folder" />
+                    {folderName(entry.folderId)}
+                  </span>
+                )}
                 <span>{date(entry.created.at)}</span>
                 <span className="ep-kept">{entry.kept === 'arquivo' && !entry.origin?.removedAt ? 'Registro e arquivo' : 'Só o registro'}</span>
               </div>
             </div>
           </div>
-          {!readOnly && (
+          {readOnly ? (
+            <div className="ep-actions">
+              <SharedBadge button />
+            </div>
+          ) : (
             <div className="ep-actions">
               <button className="btn primary ep-gen" onClick={generate}>
                 <Icon name="plus" />
@@ -509,6 +522,7 @@ function EntryView({ fileId }: { fileId: string }) {
                 <Popover x={menu.x} y={menu.y} onClose={() => setMenu(null)} label="Ações da entrada">
                   {action('pen', 'Renomear', () => ui.open({ kind: 'rename', target: 'file', id: entry.id }))}
                   {action('move', 'Mover para…', () => ui.open({ kind: 'move', fileIds: [entry.id], folderIds: [] }))}
+                  {action('link', 'Compartilhar…', () => ui.open({ kind: 'share', target: 'entrada', id: entry.id }))}
                   {hasMedia && action('trash', 'Apagar só a mídia…', removeMedia)}
                   {action('trash', 'Apagar…', () => ui.open({ kind: 'delete-family', fileId: entry.id }), true)}
                 </Popover>
@@ -561,8 +575,8 @@ function EntryView({ fileId }: { fileId: string }) {
               ) : (
                 <div className="empty ep-empty">
                   <div>
-                    <b>Nada nasceu daqui ainda</b>
-                    <div className="muted">{!isMedia ? 'Gere uma nota a partir desta entrada.' : canPlay && !transcribed ? 'Gere uma transcrição, uma ata ou uma aula a partir desta gravação.' : 'Gere uma ata, uma aula ou uma explicação a partir desta entrada.'}</div>
+                    <b>{readOnly ? 'Nenhuma nota veio no link' : 'Nada nasceu daqui ainda'}</b>
+                    <div className="muted">{readOnly ? 'Quem compartilhou mandou só a entrada.' : !isMedia ? 'Gere uma nota a partir desta entrada.' : canPlay && !transcribed ? 'Gere uma transcrição, uma ata ou uma aula a partir desta gravação.' : 'Gere uma ata, uma aula ou uma explicação a partir desta entrada.'}</div>
                   </div>
                   {!readOnly && (
                     <button className="btn primary" onClick={generate}>

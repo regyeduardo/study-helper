@@ -1,5 +1,6 @@
 import { postAudioController, type ServiceName, TranscriptionError } from '@/controllers/transcription.controller'
 import { alignWords } from '@/lib/transcription/align'
+import { opusOgg } from '@/lib/transcription/opus'
 import { timedWords, turnsOf } from '@/lib/transcription/providers/custom'
 import { wordsInSpeech } from '@/lib/transcription/turns'
 import { partName, partStart, type ProviderJob, type ProviderResult, sendParts, type SpeakerTurn, withTerms, type Word } from '@/lib/transcription/types'
@@ -43,18 +44,23 @@ async function said(job: ProviderJob, part: Blob): Promise<string> {
 
 export async function deepInfraTurns(job: ProviderJob): Promise<SpeakerTurn[]> {
   const form = new FormData()
-  form.append('audio', job.audio, 'gravacao')
+  // A recording with video can pass a gigabyte for a few MB of sound: the split gets only its audio track (the same Opus, not re-encoded).
+  form.append('audio', (await opusOgg(job.audio)) ?? job.audio, 'gravacao')
   return turnsOf((await postAudioController(DIARIZATION_URL, keyOf(job), form, DEEPINFRA, job.signal)).speaker_segments)
 }
 
 export async function transcribeWithDeepInfra(job: ProviderJob): Promise<ProviderResult> {
   keyOf(job)
-  const pending = deepInfraTurns(job).catch(() => [] as SpeakerTurn[])
+  let speakersError = ''
+  const pending = deepInfraTurns(job).catch(error => {
+    speakersError = error instanceof Error ? error.message : String(error)
+    return [] as SpeakerTurn[]
+  })
   const heard = await sendParts(job, 'Transcrevendo pela DeepInfra', (part, index) => Promise.all([timed(job, part, index), said(job, part)]))
   const turns = await pending
   const words = heard.flatMap(([times, text], index) => {
     const spoken = wordsInSpeech(times, turns)
     return alignWords(spoken.length * 2 >= times.length ? spoken : times, text, partStart(job, index), partStart(job, index) + job.partSeconds)
   })
-  return { words, turns, inSpeech: true }
+  return { words, turns, inSpeech: true, ...(!turns.length && speakersError ? { speakersError } : {}) }
 }
