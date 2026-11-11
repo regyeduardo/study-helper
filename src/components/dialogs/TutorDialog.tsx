@@ -7,7 +7,7 @@ import { Dialog } from '@/components/ui/Dialog'
 import { Icon } from '@/components/ui/Icon'
 import { artifactsOf } from '@/lib/artifacts'
 import { GenerationSession } from '@/lib/generation/session'
-import { askTutor, lastConversation, modeOf, type TutorMode, type TutorTurn, withTurns } from '@/lib/generation/tutor'
+import { askTutor, lastConversation, modeOf, transcriptAbove, type TutorMode, type TutorTurn, withTurns } from '@/lib/generation/tutor'
 import { useLibraryStore } from '@/stores/library'
 import { useUiStore } from '@/stores/ui'
 
@@ -38,6 +38,8 @@ export function TutorDialog({ fileId, conversationId }: { fileId: string; conver
   const [listening, setListening] = useState(false)
   const [error, setError] = useState('')
   const note = useRef<Promise<string> | null>(null)
+  // the recording the note was born from: the tutor reads it too, as context
+  const heard = useRef<Promise<string> | null>(null)
   const canListen = useRef(recognizer() !== null)
   const conversation = useRef<TutorArtifact | null>(null)
   // Bumps when another conversation starts: a late answer then goes only to the conversation it belongs to.
@@ -45,6 +47,8 @@ export function TutorDialog({ fileId, conversationId }: { fileId: string; conver
 
   useEffect(() => {
     note.current = noteText(fileId)
+    const library = useLibraryStore.getState()
+    heard.current = transcriptAbove(library.files, fileId, id => library.openFile(id)).catch(() => '')
     if (conversationId === null) return
     void useLibraryStore
       .getState()
@@ -79,7 +83,7 @@ export function TutorDialog({ fileId, conversationId }: { fileId: string; conver
     setBusy(true)
     setError('')
     try {
-      const reply = await askTutor(await (note.current ?? noteText(fileId)), nextMode, asked, new GenerationSession(settings))
+      const reply = await askTutor(await (note.current ?? noteText(fileId)), nextMode, asked, new GenerationSession(settings), (await heard.current) ?? '')
       const answered: TutorTurn[] = [...asked, { who: 'tutor', text: reply }]
       const saved = keep(talk, answered)
       if (round.current !== started) return
