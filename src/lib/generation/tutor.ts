@@ -15,6 +15,11 @@ export interface TutorTurn {
 
 const HISTORY_TURNS = 12
 
+/** The speeches about the question when the transcript is long: each speech is one line, so it is cut speech by speech. */
+export function transcriptPart(transcript: string, question: string): string {
+  return notePart(transcript.trim().split('\n').join('\n\n'), question)
+}
+
 /** `transcript`: the recording the note was born from, sent as context (its speeches about the question when long). */
 export function tutorInput(note: string, mode: TutorMode, history: TutorTurn[], transcript = ''): string {
   const talk = history
@@ -23,8 +28,7 @@ export function tutorInput(note: string, mode: TutorMode, history: TutorTurn[], 
     .join('\n')
   // A long note goes in the parts about the last thing the person said, so the whole note can be asked about.
   const said = history.filter(turn => turn.who === 'você').at(-1)?.text ?? ''
-  // each speech is one line: as paragraphs, the long transcript is cut speech by speech
-  const heard = transcript.trim() ? `\n\nTranscrição da gravação de onde a nota saiu:\n${notePart(transcript.trim().split('\n').join('\n\n'), said)}` : ''
+  const heard = transcript.trim() ? `\n\nTranscrição da gravação de onde a nota saiu:\n${transcriptPart(transcript, said)}` : ''
   return `Modo: ${mode}\n\nNota:\n${notePart(note, said)}${heard}\n\nConversa até agora:\n${talk || '(começo da conversa)'}\n\nResponda como Tutor.`
 }
 

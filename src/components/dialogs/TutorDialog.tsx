@@ -6,6 +6,7 @@ import GithubMarkdownView from '@/components/reader/GithubMarkdownView'
 import { Dialog } from '@/components/ui/Dialog'
 import { Icon } from '@/components/ui/Icon'
 import { artifactsOf } from '@/lib/artifacts'
+import { askChat, entryChatContext, type EntryChatContext } from '@/lib/generation/entry-chat'
 import { GenerationSession } from '@/lib/generation/session'
 import { askTutor, lastConversation, modeOf, transcriptAbove, type TutorMode, type TutorTurn, withTurns } from '@/lib/generation/tutor'
 import { useLibraryStore } from '@/stores/library'
@@ -26,8 +27,11 @@ function recognizer(): Recognition | null {
   return Maker ? new Maker() : null
 }
 
-/** `conversationId`: opens that conversation; `null`: starts a new one; absent: continues the last one. */
-export function TutorDialog({ fileId, conversationId }: { fileId: string; conversationId?: string | null }) {
+/**
+ * `conversationId`: opens that conversation; `null`: starts a new one; absent: continues the last one.
+ * `chat`: the Chat da mídia, on the entrada: reads its transcript and every note born of it, without the tutor's modes.
+ */
+export function TutorDialog({ fileId, conversationId, chat = false }: { fileId: string; conversationId?: string | null; chat?: boolean }) {
   const close = useUiStore(state => state.close)
   const meta = useLibraryStore(state => state.files.find(file => file.id === fileId))
   const settings = useLibraryStore(state => state.index.settings.ai)
@@ -40,15 +44,19 @@ export function TutorDialog({ fileId, conversationId }: { fileId: string; conver
   const note = useRef<Promise<string> | null>(null)
   // the recording the note was born from: the tutor reads it too, as context
   const heard = useRef<Promise<string> | null>(null)
+  const family = useRef<Promise<EntryChatContext> | null>(null)
   const canListen = useRef(recognizer() !== null)
   const conversation = useRef<TutorArtifact | null>(null)
   // Bumps when another conversation starts: a late answer then goes only to the conversation it belongs to.
   const round = useRef(0)
 
   useEffect(() => {
-    note.current = noteText(fileId)
     const library = useLibraryStore.getState()
-    heard.current = transcriptAbove(library.files, fileId, id => library.openFile(id)).catch(() => '')
+    if (chat) family.current = entryChatContext(library.files, fileId, id => library.openFile(id))
+    else {
+      note.current = noteText(fileId)
+      heard.current = transcriptAbove(library.files, fileId, id => library.openFile(id)).catch(() => '')
+    }
     if (conversationId === null) return
     void useLibraryStore
       .getState()
@@ -61,7 +69,7 @@ export function TutorDialog({ fileId, conversationId }: { fileId: string; conver
         setTurns(last.turns)
         setMode(modeOf(last))
       })
-  }, [fileId, conversationId])
+  }, [fileId, conversationId, chat])
 
   const keep = (talk: TutorArtifact | null, list: TutorTurn[]): TutorArtifact | null => {
     if (!list.length) return talk
@@ -83,7 +91,8 @@ export function TutorDialog({ fileId, conversationId }: { fileId: string; conver
     setBusy(true)
     setError('')
     try {
-      const reply = await askTutor(await (note.current ?? noteText(fileId)), nextMode, asked, new GenerationSession(settings), (await heard.current) ?? '')
+      const session = new GenerationSession(settings)
+      const reply = chat && family.current ? await askChat(await family.current, asked, session) : await askTutor(await (note.current ?? noteText(fileId)), nextMode, asked, session, (await heard.current) ?? '')
       const answered: TutorTurn[] = [...asked, { who: 'tutor', text: reply }]
       const saved = keep(talk, answered)
       if (round.current !== started) return
@@ -120,26 +129,28 @@ export function TutorDialog({ fileId, conversationId }: { fileId: string; conver
   }
 
   return (
-    <Dialog title={`Tutor${meta ? `: ${meta.name}` : ''}`} onClose={close}>
+    <Dialog title={`${chat ? 'Chat' : 'Tutor'}${meta ? `: ${meta.name}` : ''}`} onClose={close}>
       <div className="db tutor">
         <div className="tr-tools" style={{ justifyContent: 'flex-start' }}>
-          <div className="ex-chips" role="group" aria-label="Modo do tutor">
-            <button className="chip" aria-pressed={mode === 'perguntar'} onClick={() => switchTo('perguntar')}>
-              Tirar dúvida
-            </button>
-            <button className="chip" aria-pressed={mode === 'testar'} onClick={() => switchTo('testar')}>
-              Testar o que sei
-            </button>
-          </div>
+          {!chat && (
+            <div className="ex-chips" role="group" aria-label="Modo do tutor">
+              <button className="chip" aria-pressed={mode === 'perguntar'} onClick={() => switchTo('perguntar')}>
+                Tirar dúvida
+              </button>
+              <button className="chip" aria-pressed={mode === 'testar'} onClick={() => switchTo('testar')}>
+                Testar o que sei
+              </button>
+            </div>
+          )}
           <button className="btn quiet" style={{ marginLeft: 'auto', height: 26 }} disabled={busy || !turns.length} onClick={() => startOver(mode)}>
             <Icon name="plus" />
             Nova conversa
           </button>
         </div>
-        <ol className="tutor-talk" aria-label="Conversa com o tutor">
+        <ol className="tutor-talk" aria-label={chat ? 'Conversa do chat' : 'Conversa com o tutor'}>
           {turns.map((turn, index) => (
             <li key={index} className={turn.who === 'tutor' ? 'from-tutor' : 'from-you'}>
-              <b>{turn.who === 'tutor' ? 'Tutor' : 'Você'}</b>
+              <b>{turn.who === 'tutor' ? (chat ? 'Chat' : 'Tutor') : 'Você'}</b>
               {turn.who === 'tutor' ? <GithubMarkdownView markdown={turn.text} /> : <p>{turn.text}</p>}
             </li>
           ))}
@@ -157,7 +168,7 @@ export function TutorDialog({ fileId, conversationId }: { fileId: string; conver
             if (draft.trim() && !busy) void send(draft)
           }}
         >
-          <input className="input" aria-label="Sua pergunta ou resposta" placeholder={mode === 'testar' ? 'Sua resposta' : 'Sua dúvida sobre a nota'} value={draft} onChange={event => setDraft(event.target.value)} />
+          <input className="input" aria-label="Sua pergunta ou resposta" placeholder={chat ? 'Sua pergunta sobre a mídia e as notas' : mode === 'testar' ? 'Sua resposta' : 'Sua dúvida sobre a nota'} value={draft} onChange={event => setDraft(event.target.value)} />
           {canListen.current && (
             <button type="button" className="ibtn" aria-label={listening ? 'Ouvindo' : 'Falar'} aria-pressed={listening} onClick={listen}>
               <Icon name="mic" />

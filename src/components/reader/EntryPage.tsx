@@ -523,6 +523,10 @@ function EntryView({ fileId }: { fileId: string }) {
             </div>
           ) : (
             <div className="ep-actions">
+              <button className="btn" onClick={() => ui.open({ kind: 'chat', fileId: entry.id })}>
+                <Icon name="chat" />
+                Chat
+              </button>
               <button className="btn primary ep-gen" onClick={generate}>
                 <Icon name="plus" />
                 Gerar desta entrada

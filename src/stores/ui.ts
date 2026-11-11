@@ -15,6 +15,8 @@ export type Overlay =
   | { kind: 'mindmap'; fileId: string; artifactId?: string }
   /** `conversationId`: that conversation; `null`: a new one; absent: the last one. */
   | { kind: 'tutor'; fileId: string; conversationId?: string | null }
+  /** Chat da mídia: the transcript and the notes born of the entrada. */
+  | { kind: 'chat'; fileId: string }
   /** "+ Novo" of a map or a deck; `again`: the one made before ("Gerar de novo"). */
   | { kind: 'generate-artifact'; fileId: string; artifact: 'mapa' | 'cartoes'; again?: string }
   | { kind: 'ata-parts'; fileId: string; again?: string }

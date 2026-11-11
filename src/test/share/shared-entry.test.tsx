@@ -148,6 +148,7 @@ describe('quem abre o link vê a mesma página da entrada, só leitura', () => {
     expect(screen.getByRole('button', { name: 'Importar para a minha biblioteca' })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Gerar desta entrada' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Mais ações' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Chat' })).not.toBeInTheDocument()
     expect(screen.queryByText('Reuniões da Ana')).not.toBeInTheDocument()
     expect(screen.queryByText('Biblioteca')).not.toBeInTheDocument()
   })

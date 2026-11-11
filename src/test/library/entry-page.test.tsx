@@ -324,6 +324,13 @@ describe('Transcrição', () => {
     expect(useUiStore.getState().overlay).toEqual({ kind: 'transcribe', fileId: 'video' })
   })
 
+  it('"Chat" no topo abre o chat da mídia, que lê a transcrição e as notas que nasceram dela', async () => {
+    seed([withTranscript(entrada('video', 'Reunião de kickoff.mp4', VIDEO))])
+    renderEntry('video')
+    fireEvent.click(screen.getByRole('button', { name: 'Chat' }))
+    expect(useUiStore.getState().overlay).toEqual({ kind: 'chat', fileId: 'video' })
+  })
+
   it('transcrição só em texto, sem falas: mostra o texto', async () => {
     seed([{ ...entrada('video', 'Seminário.mp4', VIDEO), transcript: 'No seminário a turma resolveu o exercício 3.' }])
     renderEntry('video')
