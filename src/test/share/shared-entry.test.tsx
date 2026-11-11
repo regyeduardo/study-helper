@@ -139,6 +139,7 @@ describe('quem abre o link vê a mesma página da entrada, só leitura', () => {
     expect(within(original).getByRole('region', { name: 'Player da gravação' })).toBeInTheDocument()
     expect(await within(screen.getByRole('region', { name: 'Transcrição' })).findByText('Vamos fechar o portal novo até março.')).toBeInTheDocument()
     expect(within(screen.getByRole('region', { name: 'Transcrição' })).queryByRole('button', { name: /^Renomear/ })).not.toBeInTheDocument()
+    expect(within(screen.getByRole('region', { name: 'Transcrição' })).queryByRole('button', { name: 'Refazer a transcrição' })).not.toBeInTheDocument()
     const family = screen.getByRole('region', { name: 'O que nasceu daqui' })
     expect(await within(family).findByRole('link', { name: 'Ata' })).toBeInTheDocument()
     expect(within(family).getByText('Portal novo')).toBeInTheDocument()

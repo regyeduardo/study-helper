@@ -18,6 +18,8 @@ interface TranscriptTabProps {
   onRename?(speakerId: string, name: string): void
   onMarks?(marks: RecordingMark[]): void
   onRedo?(instruction: string): void
+  /** Redo from scratch: the same window as transcribing for the first time (entry page). */
+  onRetranscribe?(): void
   /** The second of the speech a search found (FR-074): marked, and scrolled to. */
   found?: number | null
 }
@@ -139,7 +141,7 @@ function RedoBox({ onRedo, onClose }: { onRedo(instruction: string): void; onClo
   )
 }
 
-export function TranscriptTab({ recording, name = 'reunião', time = null, onPlay, onRename, onMarks, onRedo, found = null }: TranscriptTabProps) {
+export function TranscriptTab({ recording, name = 'reunião', time = null, onPlay, onRename, onMarks, onRedo, onRetranscribe, found = null }: TranscriptTabProps) {
   const [editing, setEditing] = useState<string | null>(null)
   const [redoing, setRedoing] = useState(false)
   const ids = recording.speakers.map(speaker => speaker.id)
@@ -187,6 +189,12 @@ export function TranscriptTab({ recording, name = 'reunião', time = null, onPla
         </button>
         {onRedo && (
           <button className="btn" aria-expanded={redoing} onClick={() => setRedoing(open => !open)}>
+            <Icon name="sync" />
+            Refazer a transcrição
+          </button>
+        )}
+        {onRetranscribe && !onRedo && (
+          <button className="btn" onClick={onRetranscribe}>
             <Icon name="sync" />
             Refazer a transcrição
           </button>

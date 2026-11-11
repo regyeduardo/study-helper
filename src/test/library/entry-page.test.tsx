@@ -309,6 +309,21 @@ describe('Transcrição', () => {
     expect(saved.transcript).toContain('Marina Costa')
   })
 
+  it('com transcrição, "Refazer a transcrição" abre a mesma janela de transcrever do zero', async () => {
+    seed([withTranscript(entrada('video', 'Reunião de kickoff.mp4', VIDEO))])
+    renderEntry('video')
+    const trans = within(card('Transcrição'))
+    fireEvent.click(await trans.findByRole('button', { name: 'Refazer a transcrição' }))
+    expect(useUiStore.getState().overlay).toEqual({ kind: 'transcribe', fileId: 'video' })
+  })
+
+  it('transcrição só em texto também pode ser refeita do zero', async () => {
+    seed([{ ...entrada('video', 'Seminário.mp4', VIDEO), transcript: 'No seminário a turma resolveu o exercício 3.' }])
+    renderEntry('video')
+    fireEvent.click(await within(card('Transcrição')).findByRole('button', { name: 'Refazer a transcrição' }))
+    expect(useUiStore.getState().overlay).toEqual({ kind: 'transcribe', fileId: 'video' })
+  })
+
   it('transcrição só em texto, sem falas: mostra o texto', async () => {
     seed([{ ...entrada('video', 'Seminário.mp4', VIDEO), transcript: 'No seminário a turma resolveu o exercício 3.' }])
     renderEntry('video')

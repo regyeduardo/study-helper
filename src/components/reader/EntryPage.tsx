@@ -281,6 +281,8 @@ function Transcript({ entry, opened, canTranscribe, canPlay, playback }: { entry
   const { recording, transcript } = opened.sidecar
   const running = job?.status === 'running'
   const status = job && (running ? <JobProgress job={job} /> : job.error && <Failure text={job.error} />)
+  // from scratch, with the same window as the first time
+  const redo = canTranscribe && !running ? () => openOverlay({ kind: 'transcribe', fileId: entry.id }) : undefined
   if (recording?.blocks.length) {
     // The same rename as in the note: every speech of that voice, the transcript and the entry's text
     const rename = async (speakerId: string, name: string) => {
@@ -292,7 +294,7 @@ function Transcript({ entry, opened, canTranscribe, canPlay, playback }: { entry
     return (
       <>
         {status}
-        <TranscriptTab recording={withRecorder(recording, readOnly ? '' : recorderName(useAccountStore.getState().active()))} name={entry.name} time={playback.time} onPlay={canPlay ? playback.playFrom : undefined} onRename={readOnly ? undefined : (speakerId, name) => void rename(speakerId, name)} found={found} />
+        <TranscriptTab recording={withRecorder(recording, readOnly ? '' : recorderName(useAccountStore.getState().active()))} name={entry.name} time={playback.time} onPlay={canPlay ? playback.playFrom : undefined} onRename={readOnly ? undefined : (speakerId, name) => void rename(speakerId, name)} onRetranscribe={redo} found={found} />
       </>
     )
   }
@@ -300,6 +302,14 @@ function Transcript({ entry, opened, canTranscribe, canPlay, playback }: { entry
     return (
       <>
         {status}
+        {redo && (
+          <div className="tr-tools">
+            <button className="btn" onClick={redo}>
+              <Icon name="sync" />
+              Refazer a transcrição
+            </button>
+          </div>
+        )}
         <p className="ep-plain">{transcript.trim()}</p>
       </>
     )
