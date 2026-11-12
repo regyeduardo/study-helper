@@ -15,6 +15,7 @@ export const EXPLAIN_COLORS = 6
 const SKIP = 'pre, code, mark, a, .ex-loading'
 
 interface Group {
+  key: string
   pattern: RegExp
   ids: string[]
   titles: string[]
@@ -26,6 +27,8 @@ interface Hit {
   start: number
   end: number
   group: Group
+  /** Written just as the passage was selected (same case): where the explanation was most likely asked. */
+  exact: boolean
 }
 
 /** The part of the passage looked for: its first paragraph, as one line (a section's explanation starts with its heading). */
@@ -56,7 +59,7 @@ export function markExplanations(container: HTMLElement, quotes: ExplainedQuote[
     const key = keyOf(quote.quote)
     if (key.length < 3) continue
     const id = key.toLocaleLowerCase('pt-BR')
-    const group = groups.get(id) ?? { pattern: patternOf(key), ids: [], titles: [], generating: false }
+    const group = groups.get(id) ?? { key, pattern: patternOf(key), ids: [], titles: [], generating: false }
     group.ids.push(quote.id)
     if (quote.title) group.titles.push(quote.title)
     group.generating ||= Boolean(quote.generating)
@@ -72,15 +75,17 @@ export function markExplanations(container: HTMLElement, quotes: ExplainedQuote[
   }
   const hits: Hit[] = []
   nodes.forEach((node, index) => {
-    for (const group of groups.values()) for (const match of node.data.matchAll(group.pattern)) if (match[0]) hits.push({ node: index, start: match.index, end: match.index + match[0].length, group })
+    for (const group of groups.values())
+      for (const match of node.data.matchAll(group.pattern)) if (match[0]) hits.push({ node: index, start: match.index, end: match.index + match[0].length, group, exact: match[0].split(/\s+/).join(' ') === group.key })
   })
   hits.sort(before)
 
-  // The strong mark: where each passage first shows up, in reading order, without stepping on another one.
+  // The strong mark: where each passage first shows up as it was selected, in reading order, without stepping on another one.
   const chosen: Hit[] = []
   const strong = new Map<Group, Hit>()
   for (const group of new Set(hits.map(hit => hit.group))) {
-    const place = hits.find(hit => hit.group === group && !chosen.some(other => overlaps(hit, other)))
+    const free = hits.filter(hit => hit.group === group && !chosen.some(other => overlaps(hit, other)))
+    const place = free.find(hit => hit.exact) ?? free[0]
     if (!place) continue
     strong.set(group, place)
     chosen.push(place)

@@ -52,11 +52,27 @@ const lastToast = () => useUiStore.getState().toasts.at(-1)?.text
 const tree = (dialog: HTMLElement) => within(dialog).getByRole('tree', { name: 'Todas as pastas' })
 
 /** Marks a folder in the open chooser and confirms with "Mover", as a person would. */
-async function moveTo(name: string, windowTitle = 'Mover 1 item') {
+async function moveTo(name: string, windowTitle = 'Mover 1 item', answer: string | null = 'Só a entrada') {
   const dialog = await screen.findByRole('dialog', { name: windowTitle })
   fireEvent.click(within(tree(dialog)).getByRole('treeitem', { name }))
   expect(within(tree(dialog)).getByRole('treeitem', { selected: true })).toHaveTextContent(name)
   fireEvent.click(within(dialog).getByRole('button', { name: 'Mover' }))
+  // an entrada with notes born of it: the question comes right after the folder (B)
+  if (answer) fireEvent.click(await screen.findByRole('button', { name: answer }))
+}
+
+function renderEntryPage() {
+  return render(
+    <MemoryRouter>
+      <EntryPage fileId="video" />
+      <Overlays />
+    </MemoryRouter>,
+  )
+}
+
+const openMove = () => {
+  fireEvent.click(screen.getByRole('button', { name: 'Mais ações' }))
+  fireEvent.click(screen.getByRole('menuitem', { name: 'Mover para…' }))
 }
 
 beforeEach(seed)
@@ -113,9 +129,46 @@ describe('mover uma entrada pela página da entrada', () => {
     fireEvent.click(within(tree(dialog)).getByRole('treeitem', { name: 'Atas' }))
     fireEvent.click(within(tree(dialog)).getByRole('treeitem', { name: 'Biblioteca (raiz)' }))
     fireEvent.click(within(dialog).getByRole('button', { name: 'Mover' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Só a entrada' }))
     await waitFor(() => expect(stored('video').folderId).toBeNull())
     expect(saved.get('video')!.meta.folderId).toBeNull()
     expect(lastToast()).toBe('Movido para Biblioteca')
+  })
+})
+
+describe('a entrada com notas nascidas dela: a pergunta na hora (B)', () => {
+  it('depois da pasta, pergunta se leva as notas, dizendo quantas e para onde', async () => {
+    renderEntryPage()
+    openMove()
+    await moveTo('Atas', 'Mover 1 item', null)
+    const question = await screen.findByRole('alertdialog', { name: 'Levar as notas também?' })
+    expect(question).toHaveTextContent('1 nota nasceu desta entrada')
+    expect(question).toHaveTextContent('Atas')
+    expect(within(question).getByRole('button', { name: 'Só a entrada' })).toBeInTheDocument()
+    expect(within(question).getByRole('button', { name: 'A entrada e as notas' })).toBeInTheDocument()
+    // nothing moved before the answer
+    expect(stored('video').folderId).toBe('aurora')
+  })
+
+  it('"A entrada e as notas" leva a família inteira para a pasta escolhida', async () => {
+    renderEntryPage()
+    openMove()
+    await moveTo('Atas', 'Mover 1 item', 'A entrada e as notas')
+    await waitFor(() => expect(stored('ata').folderId).toBe('atas'))
+    expect(stored('video').folderId).toBe('atas')
+    expect(saved.get('ata')!.meta.folderId).toBe('atas')
+    expect(saved.get('video')!.meta.folderId).toBe('atas')
+    expect(lastToast()).toBe('Movido para Atas, com 1 nota')
+  })
+
+  it('sem nenhuma nota nascida dela, move direto, sem perguntar', async () => {
+    useLibraryStore.setState(state => ({ files: state.files.filter(file => file.id !== 'ata') }))
+    renderEntryPage()
+    openMove()
+    await moveTo('Atas', 'Mover 1 item', null)
+    await waitFor(() => expect(stored('video').folderId).toBe('atas'))
+    expect(screen.queryByRole('alertdialog', { name: 'Levar as notas também?' })).not.toBeInTheDocument()
+    expect(lastToast()).toBe('Movido para Atas')
   })
 })
 

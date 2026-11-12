@@ -133,9 +133,10 @@ describe('data que não vale', () => {
     await user.type(input(), '31022026')
     expect(input()).toHaveValue('31/02/2026')
     expect(onChange).not.toHaveBeenCalled()
-    expect(screen.getByRole('alert')).toHaveTextContent('Essa data não existe.')
+    // what is wrong and what to check
+    expect(screen.getByRole('alert')).toHaveTextContent('Essa data não existe. Confira o dia e o mês.')
     expect(input()).toHaveAttribute('aria-invalid', 'true')
-    expect(input()).toHaveAccessibleDescription('Essa data não existe.')
+    expect(input()).toHaveAccessibleDescription('Essa data não existe. Confira o dia e o mês.')
   })
 
   it('corrigir o dia tira a frase e passa a valer', async () => {

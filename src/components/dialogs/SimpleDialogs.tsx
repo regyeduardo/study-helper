@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom'
 import { FolderChooserDialog } from '@/components/dialogs/FolderChooser'
 import { Dialog } from '@/components/ui/Dialog'
 import { usePathName } from '@/hooks/use-library-view'
+import { descendantsOf, isNote } from '@/lib/family'
 import { paths } from '@/lib/paths'
 import { useLibraryStore } from '@/stores/library'
 import { type Overlay, useUiStore } from '@/stores/ui'
@@ -133,12 +134,32 @@ export function MoveDialog({ fileIds, folderIds }: { fileIds: string[]; folderId
   const ui = useUiStore()
   const library = useLibraryStore()
   const count = fileIds.length + folderIds.length
-  const move = async (target: string | null) => {
-    await library.moveFiles(fileIds, target)
-    for (const id of folderIds) await library.updateFolder(id, { parentId: target })
-    ui.close()
-    ui.clearSelection()
-    ui.toast(`Movido para ${library.folders.find(folder => folder.id === target)?.name ?? 'Biblioteca'}`)
+  const folderName = (target: string | null) => useLibraryStore.getState().folders.find(folder => folder.id === target)?.name ?? 'Biblioteca'
+  const move = async (target: string | null, family: string[]) => {
+    try {
+      await library.moveFiles([...new Set([...fileIds, ...family])], target)
+      for (const id of folderIds) await library.updateFolder(id, { parentId: target })
+      ui.close()
+      ui.clearSelection()
+      ui.toast(`Movido para ${folderName(target)}${family.length ? `, com ${family.length} ${family.length === 1 ? 'nota' : 'notas'}` : ''}`)
+    } catch (error) {
+      ui.toast(`Não deu para mover: ${error instanceof Error ? error.message : 'tente de novo.'}`)
+    }
   }
-  return <FolderChooserDialog value={null} exclude={folderIds} title={`Mover ${count} ${count === 1 ? 'item' : 'itens'}`} confirmLabel="Mover" onConfirm={id => void move(id)} onClose={ui.close} />
+  // an entrada with notes born of it: after the folder, the person says whether the notes go too (B)
+  const choose = (target: string | null) => {
+    const { files } = useLibraryStore.getState()
+    const born = [...new Set(fileIds.filter(id => files.find(file => file.id === id)?.role === 'entrada').flatMap(id => descendantsOf(files, id).filter(isNote).map(file => file.id)))].filter(id => !fileIds.includes(id))
+    if (!born.length) return void move(target, [])
+    const many = born.length === 1 ? '1 nota nasceu desta entrada' : `${born.length} notas nasceram desta entrada`
+    ui.open({
+      kind: 'confirm',
+      title: 'Levar as notas também?',
+      text: `${many} (Ata, Aula, Explicação…). Elas podem ir junto para “${folderName(target)}” ou ficar onde estão.`,
+      ok: 'A entrada e as notas',
+      onConfirm: () => move(target, born),
+      alt: { label: 'Só a entrada', onConfirm: () => move(target, []) },
+    })
+  }
+  return <FolderChooserDialog value={null} exclude={folderIds} title={`Mover ${count} ${count === 1 ? 'item' : 'itens'}`} confirmLabel="Mover" onConfirm={choose} onClose={ui.close} />
 }

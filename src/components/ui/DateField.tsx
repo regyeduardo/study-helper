@@ -16,7 +16,7 @@ export interface DateFieldProps {
 }
 
 const MESSAGES: Record<BrDayError, string> = {
-  missing: 'Essa data não existe.',
+  missing: 'Essa data não existe. Confira o dia e o mês.',
   year: `Escolha um ano entre ${MIN_YEAR} e ${MAX_YEAR}.`,
   incomplete: 'Escreva dia, mês e ano, como 05/11/2026.',
 }

@@ -203,6 +203,8 @@ input,select,textarea{font:inherit;color:inherit}
 .ex-search{display:flex;align-items:center;gap:8px;height:34px;padding:0 10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);width:min(360px,100%);color:var(--fg-faint)}
 .ex-search:focus-within{border-color:var(--accent)}
 .ex-search input{flex:1;min-width:0;border:0;outline:0;background:none;color:var(--fg);font:inherit;font-size:13.5px}
+/* the browser gray (#757575) gives 4.1:1 on the dark background; the muted token gives 6.1:1 (light) and 6.5:1 (dark) */
+.ex-search input::placeholder{color:var(--fg-muted);opacity:1}
 .ex-chips{display:flex;gap:6px;flex-wrap:wrap}
 .ex-strip{display:flex;align-items:center;gap:8px;font-size:12.5px}
 .ex-table{width:100%;border-collapse:collapse;font-size:13.5px}
@@ -894,6 +896,8 @@ body.floating-recorder .mini-rec.done{height:100vh}
 .share-size b{font-size:16px;font-weight:600;font-variant-numeric:tabular-nums}
 .share-copy{display:flex;gap:6px}
 .share-copy .input{min-width:0;flex:1}
+/* the link is read-only: a quieter field than the ones that take typing (the same tone as .ias) */
+.share-copy .input[readonly]{background:var(--bg-subtle)}
 /* "Já compartilhado": the state first, in the text color; the dates after it, muted */
 .share-state{margin:0;font-size:13px;line-height:1.45;color:var(--fg-muted);text-wrap:pretty}
 .share-state b{font-weight:600;color:var(--fg)}

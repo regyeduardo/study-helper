@@ -72,7 +72,7 @@ export const APP_PALETTE = `
 .markdown-body mark.ex-strong:hover { box-shadow: inset 0 -3px 0 var(--ex); }
 .markdown-body mark.ex-weak { text-decoration: underline dotted var(--ex); text-decoration-thickness: 2px; text-underline-offset: 4px; }
 .markdown-body mark.ex-weak:hover { background: var(--bg-hover); }
-.markdown-body .ex-loading { display: inline-flex; align-items: center; gap: 5px; margin-left: 6px; padding: 0 7px; border: 1px solid var(--border-muted); border-radius: 999px; background: var(--bg-subtle); color: var(--fg-muted); font-size: 12px; line-height: 18px; white-space: nowrap; vertical-align: 1px; }
+.markdown-body .ex-loading { display: inline-flex; align-items: center; gap: 5px; margin-left: 6px; padding: 0 7px; border: 1px solid var(--border-muted); border-radius: 999px; background: var(--bg-subtle); color: var(--fg-muted); font-size: 12px; font-weight: 400; line-height: 18px; white-space: nowrap; vertical-align: 1px; }
 .markdown-body .ex-loading::before { content: ""; width: 9px; height: 9px; border: 1.5px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: ex-spin .8s linear infinite; }
 @keyframes ex-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .markdown-body .ex-loading::before { animation: none; } }
