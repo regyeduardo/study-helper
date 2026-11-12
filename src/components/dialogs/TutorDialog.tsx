@@ -3,12 +3,16 @@ import { useEffect, useRef, useState } from 'react'
 import type { TutorArtifact } from '@/types/domain'
 import { noteText } from '@/components/dialogs/CardsDialog'
 import GithubMarkdownView from '@/components/reader/GithubMarkdownView'
+import { MediaPlayer, useMeetingMedia } from '@/components/reader/MediaPlayer'
+import { momentIn } from '@/components/reader/MinutesTab'
+import { usePlayback } from '@/components/reader/use-playback'
 import { Dialog } from '@/components/ui/Dialog'
 import { Icon } from '@/components/ui/Icon'
 import { artifactsOf } from '@/lib/artifacts'
 import { askChat, entryChatContext, type EntryChatContext } from '@/lib/generation/entry-chat'
 import { GenerationSession } from '@/lib/generation/session'
-import { askTutor, lastConversation, modeOf, transcriptAbove, type TutorMode, type TutorTurn, withTurns } from '@/lib/generation/tutor'
+import { momentLinks } from '@/lib/generation/moment-links'
+import { askTutor, lastConversation, modeOf, recordingAbove, type TutorMode, type TutorTurn, withTurns } from '@/lib/generation/tutor'
 import { useLibraryStore } from '@/stores/library'
 import { useUiStore } from '@/stores/ui'
 
@@ -49,15 +53,29 @@ export function TutorDialog({ fileId, conversationId, chat = false }: { fileId: 
   const conversation = useRef<TutorArtifact | null>(null)
   // Bumps when another conversation starts: a late answer then goes only to the conversation it belongs to.
   const round = useRef(0)
+  // whose media plays a moment cited in a reply: the entrada of the Chat, or the recording the note was born from
+  const [owner, setOwner] = useState<string | null>(chat ? fileId : null)
+  const ownerMeta = useLibraryStore(state => (owner ? (state.files.find(file => file.id === owner) ?? null) : null))
+  const media = useMeetingMedia(ownerMeta)
+  const playback = usePlayback(media)
+  const playable = media.available
 
   useEffect(() => {
+    let alive = true
     const library = useLibraryStore.getState()
-    if (chat) family.current = entryChatContext(library.files, fileId, id => library.openFile(id))
-    else {
+    if (chat) {
+      family.current = entryChatContext(library.files, fileId, id => library.openFile(id))
+      setOwner(fileId)
+    } else {
       note.current = noteText(fileId)
-      heard.current = transcriptAbove(library.files, fileId, id => library.openFile(id)).catch(() => '')
+      const found = recordingAbove(library.files, fileId, id => library.openFile(id)).catch(() => null)
+      heard.current = found.then(recording => (recording && recording.id !== fileId ? recording.transcript : ''))
+      void found.then(recording => alive && setOwner(recording?.id ?? null))
     }
-    if (conversationId === null) return
+    const stop = () => {
+      alive = false
+    }
+    if (conversationId === null) return stop
     void useLibraryStore
       .getState()
       .openFile(fileId)
@@ -69,6 +87,7 @@ export function TutorDialog({ fileId, conversationId, chat = false }: { fileId: 
         setTurns(last.turns)
         setMode(modeOf(last))
       })
+    return stop
   }, [fileId, conversationId, chat])
 
   const keep = (talk: TutorArtifact | null, list: TutorTurn[]): TutorArtifact | null => {
@@ -147,11 +166,24 @@ export function TutorDialog({ fileId, conversationId, chat = false }: { fileId: 
             Nova conversa
           </button>
         </div>
-        <ol className="tutor-talk" aria-label={chat ? 'Conversa do chat' : 'Conversa com o tutor'}>
+        <ol
+          className="tutor-talk"
+          aria-label={chat ? 'Conversa do chat' : 'Conversa com o tutor'}
+          onClick={
+            playable
+              ? event => {
+                  const seconds = momentIn(event)
+                  if (seconds === null) return
+                  event.preventDefault()
+                  playback.playFrom(seconds)
+                }
+              : undefined
+          }
+        >
           {turns.map((turn, index) => (
             <li key={index} className={turn.who === 'tutor' ? 'from-tutor' : 'from-you'}>
               <b>{turn.who === 'tutor' ? (chat ? 'Chat' : 'Tutor') : 'Você'}</b>
-              {turn.who === 'tutor' ? <GithubMarkdownView markdown={turn.text} /> : <p>{turn.text}</p>}
+              {turn.who === 'tutor' ? <GithubMarkdownView markdown={playable ? momentLinks(turn.text) : turn.text} /> : <p>{turn.text}</p>}
             </li>
           ))}
           {busy && (
@@ -160,6 +192,7 @@ export function TutorDialog({ fileId, conversationId, chat = false }: { fileId: 
             </li>
           )}
         </ol>
+        {playable && <MediaPlayer player={playback.player} media={media} onTime={playback.setTime} onPlayFrom={playback.playFrom} />}
         {error && <div className="banner">{error}</div>}
         <form
           className="tutor-ask"

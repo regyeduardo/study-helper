@@ -1,4 +1,4 @@
-import { type CSSProperties, type RefObject, type SyntheticEvent, useCallback, useEffect, useRef, useState } from 'react'
+import { type ComponentProps, type CSSProperties, type ReactNode, type RefObject, type SyntheticEvent, useCallback, useEffect, useRef, useState } from 'react'
 
 import type { FileMeta } from '@/types/domain'
 import { readLocalMedia } from '@/lib/recording/media-library'
@@ -144,6 +144,33 @@ function loadedTitle(loaded: [number, number][], size: number | undefined): stri
   return `Baixado ${Math.round(fraction * 100)}%${size ? ` · ${megabytes(fraction * size)} de ${megabytes(size)} MB` : ''}`
 }
 
+const ICONS = {
+  back: (
+    <>
+      <path d="M5.07 8.5A8 8 0 1 0 12 4.5" />
+      <path d="M14.6 2.2l-3 2.3 3 2.3" />
+      <text x="12" y="15.4" textAnchor="middle" fontSize="7.4" fontWeight="700" fill="currentColor" stroke="none">
+        10
+      </text>
+    </>
+  ),
+  forward: (
+    <>
+      <path d="M18.93 8.5A8 8 0 1 1 12 4.5" />
+      <path d="M9.4 2.2l3 2.3-3 2.3" />
+      <text x="12" y="15.4" textAnchor="middle" fontSize="7.4" fontWeight="700" fill="currentColor" stroke="none">
+        10
+      </text>
+    </>
+  ),
+  volume: <path d="M4 9.5v5h3.5l4.5 4v-13l-4.5 4zM15.6 9.2a4 4 0 0 1 0 5.6M18.2 6.6a7.6 7.6 0 0 1 0 10.8" />,
+  muted: <path d="M4 9.5v5h3.5l4.5 4v-13l-4.5 4zM16 9.8l5 4.4M21 9.8l-5 4.4" />,
+  expand: <path d="M14 4h6v6M10 20H4v-6M20 4l-7 7M4 20l7-7" />,
+  shrink: <path d="M20 10h-6V4M4 14h6v6M14 10l7-7M3 21l7-7" />,
+  fullscreen: <path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5" />,
+  leave: <path d="M9 4v5H4M15 4v5h5M20 15h-5v5M4 15h5v5" />,
+}
+
 function Glyph({ playing }: { playing: boolean }) {
   return (
     <svg className="ic" viewBox="0 0 24 24" aria-hidden="true">
@@ -152,16 +179,107 @@ function Glyph({ playing }: { playing: boolean }) {
   )
 }
 
+function Icon({ name, size }: { name: keyof typeof ICONS; size?: number }) {
+  return (
+    <svg className="ic" viewBox="0 0 24 24" aria-hidden="true" style={size ? { width: size, height: size } : undefined}>
+      {ICONS[name]}
+    </svg>
+  )
+}
+
+const SPEEDS = [0.75, 1, 1.25, 1.5, 1.75, 2]
+const PREFS_KEY = 'study-helper:player'
+const SKIP = 10
+/** Full screen while playing: the controls hide after this long without the mouse or a key. */
+const IDLE_MS = 3000
+const JUMPS: Record<string, number> = { ArrowRight: 5, ArrowLeft: -5, l: SKIP, j: -SKIP }
+const FOCUSABLE = 'button:not([disabled]), input:not([disabled]), select:not([disabled]), [href], [tabindex]:not([tabindex="-1"])'
+
+interface Prefs {
+  speed: number
+  volume: number
+  muted: boolean
+}
+
+/** Speed and volume stay per browser; a browser that refuses to keep them just starts from the usual again. */
+function readPrefs(): Prefs {
+  const prefs: Prefs = { speed: 1, volume: 1, muted: false }
+  try {
+    const saved = JSON.parse(localStorage.getItem(PREFS_KEY) ?? '{}') as Partial<Prefs>
+    if (SPEEDS.includes(saved.speed as number)) prefs.speed = saved.speed as number
+    if (typeof saved.volume === 'number' && saved.volume >= 0 && saved.volume <= 1) prefs.volume = saved.volume
+    if (saved.muted === true) prefs.muted = true
+  } catch {
+    return prefs
+  }
+  return prefs
+}
+
+function savePrefs(prefs: Prefs): void {
+  try {
+    localStorage.setItem(PREFS_KEY, JSON.stringify(prefs))
+  } catch {
+    return
+  }
+}
+
+const speedName = (speed: number) => `${String(speed).replace('.', ',')}×`
+
+const INTERACTIVE = 'input, textarea, select, button, a[href], [contenteditable]:not([contenteditable="false"])'
+
+/** Whether a key that lands on this element is the player's: a field keeps its typing, a control its own keys. */
+function ownKey(target: HTMLElement | null, key: string): boolean {
+  if (!target) return true
+  const tag = target.tagName
+  if (tag === 'SELECT' || tag === 'TEXTAREA' || target.closest('[contenteditable]:not([contenteditable="false"])')) return false
+  if (tag === 'INPUT') return (target as HTMLInputElement).type === 'range' && key !== 'ArrowLeft' && key !== 'ArrowRight'
+  if (tag === 'BUTTON' || tag === 'A') return key !== ' ' && key !== 'Enter'
+  return true
+}
+
+type FullscreenBox = HTMLElement & { webkitRequestFullscreen?: () => void }
+type FullscreenVideo = HTMLMediaElement & { webkitEnterFullscreen?: () => void }
+
+function openFullscreen(box: HTMLElement, element: HTMLMediaElement | null): void {
+  const old = box as FullscreenBox
+  if (typeof box.requestFullscreen === 'function') void Promise.resolve(box.requestFullscreen()).catch(() => undefined)
+  else if (typeof old.webkitRequestFullscreen === 'function') old.webkitRequestFullscreen()
+  // iPhone only takes the video itself to full screen, with its own controls
+  else (element as FullscreenVideo | null)?.webkitEnterFullscreen?.()
+}
+
+function leaveFullscreen(): void {
+  if (typeof document.exitFullscreen === 'function') void Promise.resolve(document.exitFullscreen()).catch(() => undefined)
+}
+
+function Tool({ label, hint, icon, className, ...rest }: { label: string; hint: string; icon: ReactNode } & Omit<ComponentProps<'button'>, 'title' | 'aria-label'>) {
+  return (
+    <button {...rest} className={className ? `ibtn ${className}` : 'ibtn'} aria-label={label} title={hint}>
+      {icon}
+    </button>
+  )
+}
+
 export function MediaPlayer({ player, media, onTime, onPlayFrom }: MediaPlayerProps) {
   const [playing, setPlaying] = useState(false)
   const [time, setTime] = useState(0)
   const [duration, setDuration] = useState(0)
   const [big, setBig] = useState(false)
+  const [fullscreen, setFullscreen] = useState(false)
+  // full screen while playing: the controls hide after a moment without the mouse or a key
+  const [idle, setIdle] = useState(false)
+  const idleTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const [prefs, setPrefs] = useState(readPrefs)
   const [waiting, setWaiting] = useState(Boolean(media.url))
   const [ready, setReady] = useState(false)
   const [loaded, setLoaded] = useState<[number, number][]>([])
   const [failure, setFailure] = useState<string | null>(null)
   const reloads = useRef({ url: media.url, count: 0 })
+  const section = useRef<HTMLElement>(null)
+  const box = useRef<HTMLDivElement>(null)
+  const expandButton = useRef<HTMLButtonElement>(null)
+  const shrinkButton = useRef<HTMLButtonElement>(null)
+  const opened = useRef(false)
   if (reloads.current.url !== media.url) {
     reloads.current = { url: media.url, count: 0 }
     setWaiting(Boolean(media.url))
@@ -169,6 +287,8 @@ export function MediaPlayer({ player, media, onTime, onPlayFrom }: MediaPlayerPr
     setLoaded([])
     setFailure(null)
   }
+  const expanded = big && media.video
+  const silent = prefs.muted || prefs.volume === 0
 
   const toggle = () => {
     if (playing) player.current?.pause()
@@ -185,6 +305,142 @@ export function MediaPlayer({ player, media, onTime, onPlayFrom }: MediaPlayerPr
     setTime(seconds)
     onTime(seconds)
   }
+  const skip = (seconds: number) => {
+    const element = player.current
+    if (element && duration) moveTo(Math.min(Math.max(element.currentTime + seconds, 0), duration))
+  }
+  const keep = (change: Partial<Prefs>) => {
+    const next = { ...prefs, ...change }
+    setPrefs(next)
+    savePrefs(next)
+  }
+  const mute = () => keep(silent ? { muted: false, volume: prefs.volume || 0.5 } : { muted: true })
+  const inFullscreen = () => Boolean(box.current) && document.fullscreenElement === box.current
+  const toggleFullscreen = () => {
+    if (inFullscreen()) leaveFullscreen()
+    else if (box.current) openFullscreen(box.current, player.current)
+  }
+  const shrink = () => {
+    if (inFullscreen()) leaveFullscreen()
+    setBig(false)
+  }
+
+  const handleKey = (event: KeyboardEvent) => {
+    if (event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey) return
+    const target = event.target instanceof HTMLElement ? event.target : null
+    const key = event.key.length === 1 ? event.key.toLowerCase() : event.key
+    const inside = Boolean(target && section.current?.contains(target))
+    // the open screen listens to the whole page, but a field or a button of the page behind keeps its own keys
+    if (!inside && target?.closest(INTERACTIVE)) return
+    const done = () => event.preventDefault()
+    if (key === 'Escape') {
+      if (inFullscreen()) leaveFullscreen()
+      else if (expanded) setBig(false)
+      else return
+      return done()
+    }
+    if (key === 'Tab') {
+      if (!expanded || !box.current) return
+      const items = [...box.current.querySelectorAll<HTMLElement>(FOCUSABLE)].filter(item => item.checkVisibility?.() ?? true)
+      const first = items[0]
+      const last = items.at(-1)
+      const active = document.activeElement
+      const out = !box.current.contains(active)
+      if (first && last && event.shiftKey && (out || active === first)) last.focus()
+      else if (first && last && !event.shiftKey && (out || active === last)) first.focus()
+      else return
+      return done()
+    }
+    if (!ownKey(target, key)) return
+    if (key === ' ' || key === 'k') toggle()
+    else if (key === 'm') mute()
+    else if (key === 'f' && media.video) {
+      setBig(true)
+      toggleFullscreen()
+    } else if (duration && key in JUMPS) skip(JUMPS[key])
+    else return
+    done()
+  }
+  const keys = useRef(handleKey)
+  keys.current = handleKey
+
+  // the speed and the sound of the browser go to the element; a new load starts again from the default speed
+  useEffect(() => {
+    const element = player.current
+    if (!element) return
+    element.defaultPlaybackRate = prefs.speed
+    element.playbackRate = prefs.speed
+    element.volume = prefs.volume
+    element.muted = prefs.muted
+  }, [prefs, media.video])
+
+  useEffect(() => {
+    if (!expanded) return
+    const listener = (event: KeyboardEvent) => {
+      waking.current()
+      keys.current(event)
+    }
+    document.addEventListener('keydown', listener)
+    return () => document.removeEventListener('keydown', listener)
+  }, [expanded])
+
+  useEffect(() => {
+    const sync = () => setFullscreen(Boolean(box.current) && document.fullscreenElement === box.current)
+    document.addEventListener('fullscreenchange', sync)
+    const element = box.current
+    return () => {
+      document.removeEventListener('fullscreenchange', sync)
+      if (element && document.fullscreenElement === element) leaveFullscreen()
+    }
+  }, [])
+
+  const watching = fullscreen && playing
+  const wake = () => {
+    if (idleTimer.current) clearTimeout(idleTimer.current)
+    setIdle(false)
+    if (watching) idleTimer.current = setTimeout(() => setIdle(true), IDLE_MS)
+  }
+  const waking = useRef(wake)
+  waking.current = wake
+  useEffect(() => {
+    wake()
+    return () => {
+      if (idleTimer.current) clearTimeout(idleTimer.current)
+    }
+  }, [watching])
+
+  // expanded, the page behind stays still: the wheel and the finger over the backdrop or the video scroll nothing
+  useEffect(() => {
+    if (!expanded) return
+    const still = (event: Event) => {
+      if (!(event.target as Element | null)?.closest?.('input')) event.preventDefault()
+    }
+    const parts = [section.current?.querySelector('.mplayer-backdrop'), box.current].filter((part): part is Element => Boolean(part))
+    for (const part of parts) {
+      part.addEventListener('wheel', still, { passive: false })
+      part.addEventListener('touchmove', still, { passive: false })
+    }
+    const root = document.documentElement
+    const before = root.style.overflow
+    root.style.overflow = 'hidden'
+    return () => {
+      for (const part of parts) {
+        part.removeEventListener('wheel', still)
+        part.removeEventListener('touchmove', still)
+      }
+      root.style.overflow = before
+    }
+  }, [expanded])
+
+  useEffect(() => {
+    if (expanded) {
+      opened.current = true
+      shrinkButton.current?.focus()
+    } else if (opened.current) {
+      opened.current = false
+      expandButton.current?.focus()
+    }
+  }, [expanded])
 
   // crossOrigin before src: React sets them in this order, and with src first Chrome starts the load without
   // CORS and then refuses every seek of the remote media ("FFmpegDemuxer: demuxer seek failed")
@@ -244,50 +500,111 @@ export function MediaPlayer({ player, media, onTime, onPlayFrom }: MediaPlayerPr
   }
 
   return (
-    <section className="mplayer" aria-label="Player da gravação">
-      {media.video ? (
-        <button className="mplayer-shot" aria-label={big ? 'Diminuir a tela' : 'Ampliar a tela'} aria-expanded={big} title={big ? 'Diminuir a tela' : 'Ampliar a tela'} onClick={() => setBig(!big)}>
-          <video ref={element => void (player.current = element)} playsInline {...events} />
-        </button>
-      ) : (
-        <audio ref={element => void (player.current = element)} {...events} />
-      )}
-      <button className="ibtn mplayer-play" onClick={toggle} aria-label={playing ? 'Pausar' : 'Tocar'} title={playing ? 'Pausar' : 'Tocar'}>
-        <Glyph playing={playing} />
-      </button>
-      {failure ? (
-        <>
-          <span className="mplayer-failure" role="alert">
-            {failure}
-          </span>
-          <button className="btn quiet" onClick={retry}>
-            Tentar de novo
-          </button>
-        </>
-      ) : (
-        <>
-          <span className="mplayer-time">{clockTime(time)}</span>
-          <input
-            className="mplayer-bar"
-            type="range"
-            aria-label="Posição na gravação"
-            title={media.remote && duration ? loadedTitle(loaded, media.size) : undefined}
-            style={{ '--played': percent(duration ? Math.min(time, duration) / duration : 0), '--loaded': loadedLayer(loaded) } as CSSProperties}
-            min={0}
-            max={duration}
-            step={1}
-            value={Math.min(time, duration)}
-            disabled={!duration}
-            onChange={event => moveTo(Number(event.target.value))}
-          />
-          <span className="mplayer-time">{clockTime(duration)}</span>
-          {waiting && (
-            <span className="mplayer-state" role="status">
-              {ready ? 'Carregando…' : 'Carregando a mídia…'}
-            </span>
+    <section
+      ref={section}
+      className="mplayer"
+      aria-label="Player da gravação"
+      onKeyDown={event => {
+        wake()
+        handleKey(event.nativeEvent)
+      }}
+    >
+      {expanded && <div className="mplayer-backdrop" aria-hidden="true" onClick={shrink} />}
+      <div
+        ref={box}
+        className="mplayer-box"
+        data-big={expanded ? 'true' : undefined}
+        data-fullscreen={fullscreen ? 'true' : undefined}
+        data-idle={watching && idle ? 'true' : undefined}
+        onMouseMove={watching ? wake : undefined}
+        onPointerDown={watching ? wake : undefined}
+        role={expanded ? 'dialog' : undefined}
+        aria-modal={expanded ? true : undefined}
+        aria-label={expanded ? 'Player da gravação ampliado' : undefined}
+      >
+        {media.video ? (
+          <div className="mplayer-stage" onClick={expanded ? toggle : undefined} onDoubleClick={expanded ? toggleFullscreen : undefined}>
+            <video ref={element => void (player.current = element)} playsInline {...events} />
+            {failure && expanded && (
+              <p className="mplayer-failure" role="alert">
+                {failure}
+              </p>
+            )}
+            {!expanded && (
+              <button ref={expandButton} className="mplayer-shot" aria-label="Ampliar a tela" aria-expanded="false" title="Ampliar a tela" onClick={() => setBig(true)}>
+                <Icon name="expand" />
+              </button>
+            )}
+          </div>
+        ) : (
+          <audio ref={element => void (player.current = element)} {...events} />
+        )}
+        <div className="mplayer-controls">
+          <Tool className="mplayer-play" label={playing ? 'Pausar' : 'Tocar'} hint={playing ? 'Pausar (K)' : 'Tocar (K)'} icon={<Glyph playing={playing} />} onClick={toggle} />
+          {failure ? (
+            <>
+              {!expanded && (
+                <span className="mplayer-failure" role="alert">
+                  {failure}
+                </span>
+              )}
+              <button className="btn quiet mplayer-retry" onClick={retry}>
+                Tentar de novo
+              </button>
+            </>
+          ) : (
+            <>
+              <Tool label="Voltar 10 segundos" hint="Voltar 10 segundos (J)" icon={<Icon name="back" size={20} />} onClick={() => skip(-SKIP)} disabled={!duration} />
+              <Tool label="Avançar 10 segundos" hint="Avançar 10 segundos (L)" icon={<Icon name="forward" size={20} />} onClick={() => skip(SKIP)} disabled={!duration} />
+              <div className="mplayer-scrub">
+                <span className="mplayer-time">{clockTime(time)}</span>
+                <input
+                  className="mplayer-bar"
+                  type="range"
+                  aria-label="Posição na gravação"
+                  aria-valuetext={`${clockTime(time)} de ${clockTime(duration)}`}
+                  title={media.remote && duration ? loadedTitle(loaded, media.size) : undefined}
+                  style={{ '--played': percent(duration ? Math.min(time, duration) / duration : 0), '--loaded': loadedLayer(loaded) } as CSSProperties}
+                  min={0}
+                  max={duration}
+                  step={1}
+                  value={Math.min(time, duration)}
+                  disabled={!duration}
+                  onChange={event => moveTo(Number(event.target.value))}
+                />
+                <span className="mplayer-time">{clockTime(duration)}</span>
+              </div>
+              <select className="mplayer-speed" aria-label="Velocidade" title="Velocidade" value={String(prefs.speed)} onChange={event => keep({ speed: Number(event.target.value) })}>
+                {SPEEDS.map(speed => (
+                  <option key={speed} value={String(speed)}>
+                    {speedName(speed)}
+                  </option>
+                ))}
+              </select>
+              <Tool label={silent ? 'Voltar o som' : 'Tirar o som'} hint={silent ? 'Voltar o som (M)' : 'Tirar o som (M)'} icon={<Icon name={silent ? 'muted' : 'volume'} />} onClick={mute} />
+              <input
+                className="mplayer-vol"
+                type="range"
+                aria-label="Volume"
+                aria-valuetext={`${Math.round((prefs.muted ? 0 : prefs.volume) * 100)}%`}
+                style={{ '--played': percent(prefs.muted ? 0 : prefs.volume) } as CSSProperties}
+                min={0}
+                max={100}
+                step={5}
+                value={Math.round((prefs.muted ? 0 : prefs.volume) * 100)}
+                onChange={event => keep({ volume: Number(event.target.value) / 100, muted: false })}
+              />
+            </>
           )}
-        </>
-      )}
+          {expanded && <Tool label={fullscreen ? 'Sair da tela cheia' : 'Tela cheia'} hint={fullscreen ? 'Sair da tela cheia (F)' : 'Tela cheia (F)'} icon={<Icon name={fullscreen ? 'leave' : 'fullscreen'} />} onClick={toggleFullscreen} />}
+          {expanded && <Tool ref={shrinkButton} label="Diminuir a tela" hint="Diminuir a tela (Esc)" icon={<Icon name="shrink" />} onClick={shrink} aria-expanded={true} />}
+        </div>
+        {waiting && !failure && (
+          <span className="mplayer-state" role="status">
+            {ready ? 'Carregando…' : 'Carregando a mídia…'}
+          </span>
+        )}
+      </div>
     </section>
   )
 }

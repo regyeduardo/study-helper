@@ -6,8 +6,9 @@ import type { ArtifactKind, FileMeta, SourceMeta, SourceStorage } from '@/types/
 import { entryKind } from '@/components/library/EntryList'
 import { SaveToDrive } from '@/components/library/SaveToDrive'
 import { SharedBadge } from '@/components/library/SharedBadge'
-import { MediaPlayer, type MeetingMedia, playAt, useMeetingMedia } from '@/components/reader/MediaPlayer'
+import { MediaPlayer, type MeetingMedia, useMeetingMedia } from '@/components/reader/MediaPlayer'
 import { TranscriptTab } from '@/components/reader/TranscriptTab'
+import { usePlayback } from '@/components/reader/use-playback'
 import { Icon, type IconName } from '@/components/ui/Icon'
 import { Popover } from '@/components/ui/Popover'
 import { useDocument } from '@/hooks/use-document'
@@ -53,27 +54,6 @@ function mediaFacts(origin: SourceMeta): string {
 }
 
 /** Plays from a second: asks for the media first when it is still in the Drive, as the reader does. */
-function usePlayback(media: MeetingMedia) {
-  const player = useRef<HTMLMediaElement | null>(null)
-  const [time, setTime] = useState<number | null>(null)
-  const [waiting, setWaiting] = useState<number | null>(null)
-  const playFrom = (seconds: number) => {
-    if (media.url && player.current) {
-      setTime(seconds)
-      return playAt(player.current, seconds)
-    }
-    setWaiting(seconds)
-    void media.request()
-  }
-  useEffect(() => {
-    if (waiting === null || !media.url || !player.current) return
-    setWaiting(null)
-    setTime(waiting)
-    playAt(player.current, waiting)
-  }, [waiting, media.url])
-  return { player, time, setTime, playFrom }
-}
-
 function Facts({ rows }: { rows: [string, ReactNode][] }) {
   const shown = rows.filter(([, value]) => value)
   if (!shown.length) return null

@@ -38,18 +38,25 @@ export async function askTutor(note: string, mode: TutorMode, history: TutorTurn
 
 const heardIn = (sidecar: FileSidecar): string => (sidecar.recording?.blocks.length ? transcriptText(sidecar.recording) : (sidecar.transcript ?? '')).trim()
 
-/** The transcript of the recording above the note (its entrada, or further up); '' when the note is that recording, whose text is the note already. */
-export async function transcriptAbove(files: FileMeta[], fileId: string, open: (id: string) => Promise<{ sidecar: FileSidecar }>): Promise<string> {
-  if (heardIn((await open(fileId)).sidecar)) return ''
+/** The recording the tutor hears: the note itself when it is one, or the nearest one above it with a transcript. */
+export async function recordingAbove(files: FileMeta[], fileId: string, open: (id: string) => Promise<{ sidecar: FileSidecar }>): Promise<{ id: string; transcript: string } | null> {
+  const own = heardIn((await open(fileId)).sidecar)
+  if (own) return { id: fileId, transcript: own }
   const seen = new Set([fileId])
   let mother = motherOf(files, files.find(file => file.id === fileId) ?? { parentFileId: null })
   while (mother && !seen.has(mother.id)) {
     seen.add(mother.id)
     const heard = heardIn((await open(mother.id)).sidecar)
-    if (heard) return heard
+    if (heard) return { id: mother.id, transcript: heard }
     mother = motherOf(files, mother)
   }
-  return ''
+  return null
+}
+
+/** The transcript of the recording above the note (its entrada, or further up); '' when the note is that recording, whose text is the note already. */
+export async function transcriptAbove(files: FileMeta[], fileId: string, open: (id: string) => Promise<{ sidecar: FileSidecar }>): Promise<string> {
+  const found = await recordingAbove(files, fileId, open)
+  return found && found.id !== fileId ? found.transcript : ''
 }
 
 /** The conversation used last: opening the Tutor continues it. */

@@ -21,9 +21,11 @@
 .ep-card .ep-empty{margin:12px auto}
 .ep-card .ep-empty .btn .ic{width:16px;height:16px;color:inherit}
 
-.ep-original .mplayer{box-shadow:none}
-.ep-original .mplayer:has(.mplayer-shot){flex-wrap:wrap;height:auto;padding:8px}
-.ep-original .mplayer-shot:not([aria-expanded="true"]){flex:1 0 100%;width:100%;height:auto;aspect-ratio:16/9}
+.ep-original .mplayer-box{box-shadow:none}
+.ep-original .mplayer-box:not([data-big]):has(.mplayer-stage){flex-wrap:wrap;padding:8px}
+.ep-original .mplayer-box:not([data-big]) .mplayer-stage{flex:1 0 100%;width:100%;height:auto;aspect-ratio:16/9}
+.ep-original .mplayer-box:not([data-big]) .mplayer-controls{flex:1 0 100%}
+.ep-original .mplayer-box:not([data-big]):has(.mplayer-stage) .mplayer-state{top:16px;left:16px;right:auto;bottom:auto;border-color:transparent;background:rgba(0,0,0,.7);box-shadow:none;color:#fff}
 .ep-facts{display:grid;grid-template-columns:auto minmax(0,1fr);gap:4px 14px;margin:0;font-size:13px}
 .ep-facts dt{color:var(--fg-muted)}
 .ep-facts dd{margin:0;overflow-wrap:anywhere}

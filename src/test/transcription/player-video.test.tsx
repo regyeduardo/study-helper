@@ -33,8 +33,8 @@ afterEach(() => {
 describe('the screen in the player', () => {
   it('with video, the thin bar shows a thumbnail of the screen at the speech being played', () => {
     render(<MeetingTabs recording={recording} media={media(true)} />)
-    const thumbnail = screen.getByRole('button', { name: 'Ampliar a tela' })
-    const video = thumbnail.querySelector('video')!
+    expect(screen.getByRole('button', { name: 'Ampliar a tela' })).toBeInTheDocument()
+    const video = document.querySelector('video')!
     expect(video).toHaveAttribute('src', 'blob:reuniao')
     fireEvent.click(screen.getByText('Olha esse gráfico aqui.'))
     expect(video.currentTime).toBe(190)

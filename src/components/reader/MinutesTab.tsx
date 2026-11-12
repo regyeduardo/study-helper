@@ -5,7 +5,8 @@ import { clockTime } from '@/lib/transcription/export'
 
 const MOMENT = /^#t=(\d+(?:\.\d+)?)$/
 
-function momentIn(event: MouseEvent): number | null {
+/** The second of the "#t=…" link clicked, also inside a viewer's shadow root. */
+export function momentIn(event: MouseEvent): number | null {
   for (const node of event.nativeEvent.composedPath()) {
     const href = (node as Element).getAttribute?.('href')
     const found = href ? MOMENT.exec(href) : null
