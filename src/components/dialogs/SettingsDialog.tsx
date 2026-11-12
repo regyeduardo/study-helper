@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 
-import type { LayoutId, Settings } from '@/types/domain'
+import type { Settings } from '@/types/domain'
 import { AiSettings } from '@/components/dialogs/AiSettings'
 import { IntegrationStatus } from '@/components/dialogs/IntegrationStatus'
 import { Icon } from '@/components/ui/Icon'
@@ -9,20 +9,12 @@ import { fromLegacy, legacyAiOf } from '@/lib/ai/config'
 import { DEFAULT_STORAGE_LIMIT_BYTES, defaultSettings } from '@/lib/defaults'
 import { currentDevice } from '@/lib/device'
 import { storageBreakdown, type StorageBreakdown } from '@/lib/storage/storage-usage'
-import { applyTheme, savedTheme, type ThemeChoice } from '@/lib/theme'
 import { useAccountStore } from '@/stores/account'
 import { useLibraryStore } from '@/stores/library'
 import { useModelsStore } from '@/stores/models'
 import { isOnline, useSyncStore } from '@/stores/sync'
 import { type SettingsTab, useUiStore } from '@/stores/ui'
 import { agoText, formatBytes } from '@/utils/format'
-
-export const LAYOUTS: { id: LayoutId; name: string; about: string }[] = [
-  { id: 'reader', name: '1 · Leitor', about: 'Lateral recolhível, leitor largo no meio e painel à direita com índice, notas e informações.' },
-  { id: 'columns', name: '2 · Colunas', about: 'Coleções, lista e documento lado a lado, como no Bear e no Apple Notas.' },
-  { id: 'commands', name: '3 · Comandos', about: 'Tabela densa com filtros e "Exibição", como no Linear; clicar espia o documento ao lado.' },
-  { id: 'focus', name: '4 · Foco', about: 'Tela "Hoje", biblioteca só de texto e leitura em tela cheia com barra flutuante.' },
-]
 
 const LANGUAGES = [
   ['', 'Detectar sozinho'],
@@ -35,47 +27,6 @@ const LANGUAGES = [
 ]
 
 const MB = 1024 * 1024
-
-function AppearanceTab() {
-  const layout = useLibraryStore(state => state.index.settings.layout)
-  const updateSettings = useLibraryStore(state => state.updateSettings)
-  const [theme, setTheme] = useState<ThemeChoice>(savedTheme())
-  return (
-    <>
-      <div className="field">
-        <span className="lab">Cara do app</span>
-        <div className="layout-pick" role="radiogroup" aria-label="Cara do app">
-          {LAYOUTS.map(item => (
-            <button key={item.id} role="radio" aria-checked={layout === item.id} aria-pressed={layout === item.id} onClick={() => void updateSettings({ layout: item.id })}>
-              <b>{item.name}</b>
-              <small>{item.about}</small>
-            </button>
-          ))}
-        </div>
-        <span className="faint" style={{ fontSize: 12 }}>
-          Fica salvo nas suas configurações e vale em todos os seus navegadores.
-        </span>
-      </div>
-      <div className="field">
-        <label htmlFor="theme">Tema</label>
-        <select
-          className="input"
-          id="theme"
-          value={theme}
-          onChange={event => {
-            const choice = event.target.value as ThemeChoice
-            setTheme(choice)
-            applyTheme(choice)
-          }}
-        >
-          <option value="system">Igual ao sistema</option>
-          <option value="light">Claro</option>
-          <option value="dark">Escuro</option>
-        </select>
-      </div>
-    </>
-  )
-}
 
 function LinksTab() {
   const settings = useLibraryStore(state => state.index.settings)
@@ -291,7 +242,7 @@ function SettingsImport() {
     // A file saved before Provedores/Modelos/Padrões gets its old AI fields mapped, like on load.
     const aiConfig = imported.aiConfig ?? fromLegacy({ ...defaultSettings(), ...imported })
     await updateSettings({ ...imported, aiConfig, ai: legacyAiOf(aiConfig) })
-    setStatus('Configurações trazidas do arquivo: IA, transcrição, links, fuso, layout e o resto.')
+    setStatus('Configurações trazidas do arquivo: IA, transcrição, links, fuso e o resto.')
   }
   return (
     <div className="field">
@@ -356,7 +307,6 @@ function OthersTab() {
 }
 
 const TABS: [SettingsTab, string][] = [
-  ['appearance', 'Aparência'],
   ['ai', 'Inteligência artificial'],
   ['links', 'Links'],
   ['storage', 'Armazenamento'],
@@ -369,7 +319,7 @@ export function SettingsDialog({ initial }: { initial?: SettingsTab }) {
   const close = useUiStore(state => state.close)
   const adding = useModelsStore(state => state.adding)
   // Idioma falado and the terms moved to Geral; the old "Transcrição" link opens it.
-  const [tab, setTab] = useState<SettingsTab>(initial === 'transcription' ? 'general' : (initial ?? 'appearance'))
+  const [tab, setTab] = useState<SettingsTab>(initial === 'transcription' ? 'general' : !initial || initial === 'appearance' ? 'ai' : initial)
   // On the phone, opened without a section, it starts on the list of sections.
   const [menu, setMenu] = useState(() => !initial && isNarrowScreen())
   useEffect(() => {
@@ -411,7 +361,6 @@ export function SettingsDialog({ initial }: { initial?: SettingsTab }) {
             ))}
           </nav>
           <div className={`set-body${tab === 'ai' ? ' ias' : ''}`}>
-            {tab === 'appearance' && <AppearanceTab />}
             {tab === 'ai' && <AiSettings />}
             {tab === 'links' && <LinksTab />}
             {tab === 'storage' && <StorageTab />}

@@ -47,10 +47,10 @@ export const SEARCH_PAUSE_MS = 150
 /** Results drawn at once; the rest comes with "Mostrar mais". */
 const RESULTS_AT_ONCE = 50
 
-const plural = (count: number, one: string, many: string) => `${count.toLocaleString('pt-BR')} ${count === 1 ? one : many}`
+export const plural = (count: number, one: string, many: string) => `${count.toLocaleString('pt-BR')} ${count === 1 ? one : many}`
 
 /** The search box: what is typed stays here, and reaches the search only after a pause; going to it starts reading the library. */
-function SearchBox() {
+export function SearchBox({ placeholder = 'Buscar em nomes, transcrições e notas' }: { placeholder?: string }) {
   const query = useUiStore(state => state.query)
   const setQuery = useUiStore(state => state.setQuery)
   const [value, setValue] = useState(query)
@@ -90,7 +90,7 @@ function SearchBox() {
   return (
     <label className="ex-search">
       <Icon name="search" />
-      <input ref={box} type="search" aria-label="Buscar" placeholder="Buscar em nomes, transcrições e notas" value={value} onFocus={() => void readForSearch()} onChange={event => setValue(event.target.value)} />
+      <input ref={box} type="search" aria-label="Buscar" placeholder={placeholder} value={value} onFocus={() => void readForSearch()} onChange={event => setValue(event.target.value)} />
       <span className="kbd" aria-hidden="true">
         /
       </span>

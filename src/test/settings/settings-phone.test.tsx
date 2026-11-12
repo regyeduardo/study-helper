@@ -39,7 +39,7 @@ describe('Configurações no celular', () => {
   it('abre na lista de seções, com o X para fechar e sem a seta de voltar', () => {
     render(<SettingsDialog />)
     expect(title()).toBe('Configurações')
-    expect(within(sections()).getByRole('button', { name: 'Aparência' })).toBeInTheDocument()
+    expect(within(sections()).getByRole('button', { name: 'Links' })).toBeInTheDocument()
     expect(within(dialog()).getByRole('button', { name: 'Fechar' })).not.toHaveClass('on-desk')
     expect(within(dialog()).queryByRole('button', { name: 'Voltar' })).not.toBeInTheDocument()
     // A lista não pode usar a classe dos menus ⋯ (que flutuam com position:fixed).
@@ -48,8 +48,8 @@ describe('Configurações no celular', () => {
 
   it('dentro de uma seção a seta volta para a lista, sem fechar', () => {
     render(<SettingsDialog />)
-    fireEvent.click(within(sections()).getByRole('button', { name: 'Aparência' }))
-    expect(title()).toBe('Aparência')
+    fireEvent.click(within(sections()).getByRole('button', { name: 'Links' }))
+    expect(title()).toBe('Links')
     expect(within(dialog()).getByRole('button', { name: 'Fechar' })).toBeInTheDocument()
     fireEvent.click(within(dialog()).getByRole('button', { name: 'Voltar' }))
     expect(useUiStore.getState().overlay).toEqual({ kind: 'settings' })

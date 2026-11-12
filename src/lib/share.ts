@@ -244,6 +244,10 @@ export interface MediaImport {
   place: MediaPlace
   repo: Repository | null
   track(title: string): TrackedTask
+  /** Media already downloaded while the link was still open, by the id of the shared note: it only has to be stored. */
+  downloaded?: Map<string, Blob>
+  /** Media that could not be downloaded, by the id of the shared note, with the reason: the note comes without it. */
+  failed?: Map<string, string>
 }
 
 export function hasSharedMedia(item: SharedItem, now = Date.now()): boolean {
@@ -266,9 +270,36 @@ async function downloadSharedMedia(media: SharedMedia, progress: (fraction: numb
   return new Blob(parts)
 }
 
+/** The entrada of a link: the note that says so, or the first one. */
+function entryOf(item: SharedItem): SharedFile {
+  return item.files.find(file => file.meta?.role === 'entrada') ?? item.files[0]
+}
+
+function failureText(error: unknown, fallback: string): string {
+  return error instanceof Error && error.message ? error.message : fallback
+}
+
+/**
+ * The media of the entrada of a link, downloaded before the person leaves the link (it can be hundreds of MB): the link stays open with the progress,
+ * and nothing is created in the library until the media is in hand. A media that does not come is told apart, and the entrada then goes as "Só o registro".
+ */
+export async function prefetchEntryMedia(item: SharedItem, progress: (fraction: number) => void): Promise<Pick<MediaImport, 'downloaded' | 'failed'>> {
+  const downloaded = new Map<string, Blob>()
+  const failed = new Map<string, string>()
+  const entry = entryOf(item)
+  if (entry?.media && hasSharedMedia(item)) {
+    try {
+      downloaded.set(entry.id, await downloadSharedMedia(entry.media, progress))
+    } catch (error) {
+      failed.set(entry.id, failureText(error, 'Não consegui baixar a mídia compartilhada.'))
+    }
+  }
+  return { downloaded, failed }
+}
+
 async function keepSharedMedia(file: SharedFile, media: SharedMedia, fileId: string, options: MediaImport, task: TrackedTask): Promise<SourceMeta> {
   const shared = file.meta?.origin
-  const blob = await downloadSharedMedia(media, fraction => task.update(`Baixando a mídia: ${Math.round(fraction * 100)}%`, fraction))
+  const blob = options.downloaded?.get(file.id) ?? (await downloadSharedMedia(media, fraction => task.update(`Baixando a mídia: ${Math.round(fraction * 100)}%`, fraction)))
   const mime = media.mime || shared?.mime || blob.type
   const kept = new File([blob], shared?.name || file.name, { type: mime })
   const origin: SourceMeta = { input: shared?.input === 'file' ? 'file' : 'recording', name: kept.name, mime, sizeBytes: shared?.sizeBytes ?? kept.size, ...(shared?.durationSeconds ? { durationSeconds: shared.durationSeconds } : {}), storage: 'none' }
@@ -311,14 +342,18 @@ async function fillImported(actions: ImportActions, id: string, file: SharedFile
   }))
 }
 
-async function keepImportedMedia(actions: ImportActions, meta: FileMeta, file: SharedFile, media: SharedMedia, options: MediaImport): Promise<void> {
+/** Stores the media of an imported note; the reason it did not go is returned, so the person is told and the note is not left pointing at a file that is not there. */
+async function keepImportedMedia(actions: ImportActions, meta: FileMeta, file: SharedFile, media: SharedMedia, options: MediaImport): Promise<string | null> {
   const task = options.track(`Guardar a mídia: ${meta.name}`)
   try {
     const origin = await keepSharedMedia(file, media, meta.id, options, task)
     await actions.updateSidecar(meta.id, sidecar => ({ ...sidecar, meta: { ...sidecar.meta, origin } }))
     task.done('Mídia guardada.')
+    return null
   } catch (error) {
-    task.fail(error instanceof Error ? error.message : 'Não consegui guardar a mídia.')
+    const reason = failureText(error, 'Não consegui guardar a mídia.')
+    task.fail(reason)
+    return reason
   }
 }
 
@@ -370,9 +405,10 @@ export interface EntryImport {
 }
 
 /** Everything in the link of an entrada, at once (FR-068, FR-069): the entrada, the notes under it and the children under their mothers, with the artifacts inside the notes. */
-export async function importSharedEntry(item: SharedItem, attempts: SharedAttempts, actions: ImportActions, options: EntryImport): Promise<{ fileId: string }> {
-  const entry = item.files.find(file => file.meta?.role === 'entrada') ?? item.files[0]
-  const withMedia = options.media && entry.media && hasSharedMedia(item) ? options.media : null
+export async function importSharedEntry(item: SharedItem, attempts: SharedAttempts, actions: ImportActions, options: EntryImport): Promise<{ fileId: string; mediaFailed?: string }> {
+  const entry = entryOf(item)
+  const failedBefore = options.media?.failed?.get(entry.id)
+  const withMedia = options.media && entry.media && hasSharedMedia(item) && !failedBefore ? options.media : null
   const base = (file: SharedFile) => ({ type: knownType(file.type), folderId: options.folderId, position: file.position, description: file.description, tags: file.tags, origin: file.meta?.origin ?? null })
   const created = await actions.createFile({ ...base(entry), name: copyName(entry.name, options.existing, item.id), role: 'entrada', kept: withMedia ? (entry.meta?.kept ?? 'arquivo') : 'registro', parentFileId: null, sharedFrom: item.id }, entry.content)
   await fillImported(actions, created.id, entry, attempts, item.createdAt)
@@ -386,8 +422,11 @@ export async function importSharedEntry(item: SharedItem, attempts: SharedAttemp
     ids.set(file.id, meta.id)
     await fillImported(actions, meta.id, file, attempts, item.createdAt)
   }
-  if (withMedia && entry.media) await keepImportedMedia(actions, created, entry, entry.media, withMedia)
-  return { fileId: created.id }
+  const failedNow = withMedia && entry.media ? await keepImportedMedia(actions, created, entry, entry.media, withMedia) : null
+  const mediaFailed = failedBefore ?? failedNow ?? undefined
+  // the media did not come: the entrada stays as "Só o registro", never pointing at a file that is not there
+  if (failedNow) await actions.updateSidecar(created.id, sidecar => ({ ...sidecar, meta: { ...sidecar.meta, kept: 'registro' } }))
+  return mediaFailed ? { fileId: created.id, mediaFailed } : { fileId: created.id }
 }
 
 export interface SharedLibrary {

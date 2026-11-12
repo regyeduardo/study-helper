@@ -17,17 +17,41 @@ import { useLibraryStore } from '@/stores/library'
 import { useUiStore } from '@/stores/ui'
 import { dateTime, formatBytes } from '@/utils/format'
 
+type Written = 'ready' | 'failed' | 'gone'
+
+/** Resolves when the explanation stops being written. */
+function written(id: string): Promise<Written> {
+  const outcome = (): Written | null => {
+    const file = useLibraryStore.getState().files.find(item => item.id === id)
+    if (!file || file.deletedAt) return 'gone'
+    return file.status === 'generating' ? null : file.status === 'ready' ? 'ready' : 'failed'
+  }
+  return new Promise(resolve => {
+    const now = outcome()
+    if (now) return resolve(now)
+    const stop = useLibraryStore.subscribe(() => {
+      const done = outcome()
+      if (!done) return
+      stop()
+      resolve(done)
+    })
+  })
+}
+
 export function ExplainDialog({ fileId, excerpt }: { fileId: string; excerpt: string }) {
   const ui = useUiStore()
-  const navigate = useNavigate()
   const explainSelection = useJobsStore(state => state.explainSelection)
   const [mode, setMode] = useState<'context' | 'concept'>('context')
   const [prompt, setPrompt] = useState('')
   const choice = useModelChoice('explicacao')
+  // The person stays where she is reading: the passage shows it is being explained, and a toast opens the explanation when it is ready.
   const go = async () => {
     const id = await explainSelection(fileId, excerpt, prompt, mode, choice.model || null)
     ui.close()
-    navigate(paths.file(id))
+    ui.toast('Gerando a explicação. Você pode continuar lendo.')
+    const result = await written(id)
+    // Not written, it opens where "Tentar de novo" is.
+    if (result !== 'gone') ui.toast(result === 'ready' ? 'Explicação pronta.' : 'A explicação não foi gerada.', { label: 'Abrir explicação', to: paths.file(id) })
   }
   return (
     <Dialog

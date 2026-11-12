@@ -2,6 +2,7 @@
 import { type CSSProperties, type ReactNode, useEffect, useId, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 
+import { DateField as DayField } from '@/components/ui/DateField'
 import { Icon, type IconName } from '@/components/ui/Icon'
 import { DATE_FIELD_LABELS, GROUP_LABELS, toggleOption, type DateField, type FacetOption, type Facets, type FilterGroup, type FolderOption, type ItemKind, type LibraryFilters, type NoteKind } from '@/lib/library-filters'
 import '@/styles/filter-panel.css'
@@ -196,14 +197,8 @@ function PeriodGroup({ filters, facets, change }: PeriodGroupProps) {
       <OptionRow radio={presets} label="Escolher datas…" count={facets.periodCustom} selected={days !== null} onToggle={() => change({ period: days ? null : {} })} />
       {days && (
         <div className="fp-dates">
-          <label className="fp-date">
-            <span>De</span>
-            <input className="input" type="date" value={days.from ?? ''} onChange={event => change({ period: { ...days, from: event.target.value || undefined } })} />
-          </label>
-          <label className="fp-date">
-            <span>Até</span>
-            <input className="input" type="date" value={days.to ?? ''} onChange={event => change({ period: { ...days, to: event.target.value || undefined } })} />
-          </label>
+          <DayField label="De" value={days.from} onChange={from => change({ period: { ...days, from } })} />
+          <DayField label="Até" value={days.to} onChange={to => change({ period: { ...days, to } })} />
         </div>
       )}
     </Group>

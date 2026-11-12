@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react'
 
 import type { HighlightColor } from '@/types/domain'
 import { renderMarkdownController } from '@/controllers/github.controller'
+import { markExplanations } from '@/lib/explain-marks'
 import { markFound } from '@/lib/found-marks'
 import { copyButtons, headingAnchors } from '@/lib/github/chrome'
 import { mountDiagrams } from '@/lib/github/diagrams'
@@ -12,11 +13,17 @@ export interface PaintedQuote {
   quote: string
   color: HighlightColor | 'explained'
   targetId?: string
+  /** An explanation: its name, and whether it is still being written. */
+  title?: string
+  generating?: boolean
 }
 
 export interface ReaderSelection {
   text: string
   rect: DOMRect
+  /** A heading: the last line of its text, and the reading column it sits in. */
+  textEnd?: DOMRect
+  column?: DOMRect
 }
 
 interface GithubMarkdownViewProps {
@@ -24,7 +31,8 @@ interface GithubMarkdownViewProps {
   live?: boolean
   quotes?: PaintedQuote[]
   onSelection?: (selection: ReaderSelection | null) => void
-  onQuoteClick?: (targetId: string) => void
+  /** A mark of explanations was clicked: the ids of the explanations of that passage, and where the mark is. */
+  onQuoteClick?: (targetIds: string[], rect: DOMRect) => void
   onHeadings?: (headings: { id: string; level: number; text: string }[]) => void
   onHeading?: (heading: ReaderSelection | null) => void
   /** The words of the search that opened the note (FR-074): marked where they are, and scrolled to. */
@@ -55,6 +63,21 @@ function sectionText(heading: Element): string {
     node = node.nextElementSibling
   }
   return parts.join('\n\n')
+}
+
+/** The last line of the heading's own text, where the text really ends (the heading's box goes to the column's end). */
+function textEndOf(heading: Element): DOMRect | undefined {
+  const range = document.createRange()
+  range.selectNodeContents(heading)
+  if (typeof range.getClientRects !== 'function') return undefined
+  return Array.from(range.getClientRects())
+    .filter(line => line.width > 0)
+    .at(-1)
+}
+
+function columnOf(host: Element): DOMRect | undefined {
+  const box = (host.closest('.docscroll') ?? document.getElementById('root'))?.getBoundingClientRect()
+  return box && box.width > 0 ? box : undefined
 }
 
 let sheetsPromise: Promise<string[]> | null = null
@@ -93,6 +116,7 @@ function paint(root: ShadowRoot, sheets: string[], html: string): HTMLElement {
 }
 
 function clearMarks(container: HTMLElement): void {
+  for (const loading of Array.from(container.querySelectorAll('span[data-quote]'))) loading.remove()
   for (const mark of Array.from(container.querySelectorAll('mark[data-quote]'))) {
     const parent = mark.parentNode
     if (!parent) continue
@@ -115,7 +139,6 @@ function markQuote(container: HTMLElement, quote: PaintedQuote): void {
     const mark = document.createElement('mark')
     mark.className = `hl-${quote.color}`
     mark.dataset.quote = 'true'
-    if (quote.targetId) mark.dataset.target = quote.targetId
     mark.textContent = middle.data
     middle.parentNode?.replaceChild(mark, middle)
     return
@@ -179,7 +202,11 @@ export default function GithubMarkdownView({ markdown, live = false, quotes = []
     const body = article.current
     if (!body) return
     clearMarks(body)
-    for (const quote of quotes) markQuote(body, quote)
+    for (const quote of quotes) if (quote.color !== 'explained') markQuote(body, quote)
+    markExplanations(
+      body,
+      quotes.flatMap(quote => (quote.color === 'explained' && quote.targetId ? [{ quote: quote.quote, id: quote.targetId, title: quote.title, generating: quote.generating }] : [])),
+    )
   }, [quotes, painted])
 
   useEffect(() => {
@@ -207,11 +234,18 @@ export default function GithubMarkdownView({ markdown, live = false, quotes = []
     }
     const pointHeading = (event: Event) => {
       const heading = headingAt(event)
-      if (heading) onHeading?.({ text: sectionText(heading), rect: heading.getBoundingClientRect() })
+      if (heading) onHeading?.({ text: sectionText(heading), rect: heading.getBoundingClientRect(), textEnd: textEndOf(heading), column: columnOf(element) })
+    }
+    // The mouse left the heading (a touch leaves on every tap, so it does not count).
+    const leaveHeading = (event: Event) => {
+      if ((event as PointerEvent).pointerType === 'touch') return
+      const heading = headingAt(event)
+      const to = (event as PointerEvent).relatedTarget as Node | null | undefined
+      if (heading && !(to && blockOf(heading).contains(to))) onHeading?.(null)
     }
     const click = (event: Event) => {
-      const mark = (event.target as HTMLElement).closest?.('mark[data-target]') as HTMLElement | null
-      if (mark?.dataset.target) onQuoteClick?.(mark.dataset.target)
+      const mark = (event.target as HTMLElement).closest?.('mark[data-ids]') as HTMLElement | null
+      if (mark?.dataset.ids) onQuoteClick?.(mark.dataset.ids.split(','), mark.getBoundingClientRect())
       pointHeading(event)
     }
     let pending = 0
@@ -224,6 +258,7 @@ export default function GithubMarkdownView({ markdown, live = false, quotes = []
     root.addEventListener('keyup', report)
     root.addEventListener('click', click)
     root.addEventListener('pointerover', pointHeading)
+    root.addEventListener('pointerout', leaveHeading)
     if (touch) document.addEventListener('selectionchange', touchSelection)
     return () => {
       window.clearTimeout(pending)
@@ -231,6 +266,7 @@ export default function GithubMarkdownView({ markdown, live = false, quotes = []
       root.removeEventListener('keyup', report)
       root.removeEventListener('click', click)
       root.removeEventListener('pointerover', pointHeading)
+      root.removeEventListener('pointerout', leaveHeading)
       document.removeEventListener('selectionchange', touchSelection)
     }
   }, [onSelection, onQuoteClick, onHeading, painted])

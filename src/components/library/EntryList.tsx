@@ -2,7 +2,7 @@
 import { useEffect, useMemo, useState } from 'react'
 
 import type { FileMeta } from '@/types/domain'
-import { sortFiles, type SortColumn, type SortState } from '@/components/library/Explorer'
+import { plural, SearchBox, sortFiles, type SortColumn, type SortState } from '@/components/library/Explorer'
 import { FileTableRow, SortHead, TableCheck } from '@/components/library/FileRows'
 import { FilterPanel } from '@/components/library/FilterPanel'
 import { ActiveFilters } from '@/components/library/Filters'
@@ -10,10 +10,11 @@ import { SelectionBar } from '@/components/library/SelectionBar'
 import { isTouchScreen, useFileActions } from '@/components/library/use-file-actions'
 import { Icon, type IconName } from '@/components/ui/Icon'
 import { useIsNarrow } from '@/hooks/use-is-narrow'
-import { useFilterSource, useLiveLibrary } from '@/hooks/use-library-view'
+import { useFilterSource, useLiveLibrary, useSearchHits, useSearchPending } from '@/hooks/use-library-view'
 import { isNote } from '@/lib/family'
 import { mediaOf } from '@/lib/file-types'
 import { filterLibrary, NO_FILTERS, withoutFilter } from '@/lib/library-filters'
+import { searchWords } from '@/lib/library-search'
 import { paths } from '@/lib/paths'
 import { useUiStore } from '@/stores/ui'
 import '@/styles/explorer.css'
@@ -36,7 +37,7 @@ export function entryKind(file: Pick<FileMeta, 'origin'>): { label: string; icon
 /** The list of entradas (FR-026, FR-044): the explorer's filter panel and table, over every live entrada of the library, whatever its folder. */
 export function EntryList() {
   const ui = useUiStore()
-  const { filters, selection } = ui
+  const { filters, selection, query } = ui
   const { files, folders } = useLiveLibrary()
   const actions = useFileActions()
   const source = useFilterSource()
@@ -45,9 +46,14 @@ export function EntryList() {
   const [sort, setSort] = useState<SortState>({ column: 'created', ascending: false })
   const [drawerOpen, setDrawerOpen] = useState(false)
   const every = useMemo(() => files.filter(file => !isNote(file)), [files])
+  // the same search as the folders (FR-074), only among the entradas
+  const hits = useSearchHits(query)
+  const pending = useSearchPending()
+  const searching = searchWords(query).length > 0
+  const found = useMemo(() => (searching ? every.filter(file => hits.has(file.id)) : every), [searching, every, hits])
   const folderName = useMemo(() => new Map(folders.map(folder => [folder.id, folder.name])), [folders])
   // the scope belongs to the explorer: here it is always the entradas, and what the panel changes keeps the explorer's own
-  const result = useMemo(() => filterLibrary({ ...source, only: new Set(every.map(file => file.id)) }, { ...filters, scope: 'entradas' }), [source, every, filters])
+  const result = useMemo(() => filterLibrary({ ...source, only: new Set(found.map(file => file.id)) }, { ...filters, scope: 'entradas' }), [source, found, filters])
   const rows = useMemo(() => sortFiles(result.items, sort), [result.items, sort])
   const visible = useMemo(() => new Set(rows.map(file => file.id)), [rows])
 
@@ -78,6 +84,8 @@ export function EntryList() {
   const allChecked = marked === 0 ? false : marked === visible.size ? true : 'some'
   const sortBy = (column: SortColumn) => setSort(current => ({ column, ascending: current.column === column ? !current.ascending : column === 'name' }))
   const rowProps = { narrow, selectable: true, draggable, actions }
+  const term = query.trim()
+  const reading = searching && pending > 0
 
   return (
     <section className="explorer ex-browser entry-list">
@@ -92,36 +100,58 @@ export function EntryList() {
         onClose={() => setDrawerOpen(false)}
       />
       <div className="ex-main">
-        {narrow && (
-          <div className="ex-tools">
+        <div className="ex-tools">
+          {narrow && (
             <button className="btn" onClick={() => setDrawerOpen(true)}>
               <Icon name="filter" />
               Filtros
               {result.active.length > 0 && <span className="ex-filters-n">{result.active.length}</span>}
             </button>
-          </div>
-        )}
+          )}
+          <span className="spacer" />
+          <SearchBox placeholder="Buscar em nomes, transcrições e conteúdo" />
+        </div>
         {result.active.length > 0 && <ActiveFilters active={result.active} summary={`${result.shown} de ${every.length}`} onRemove={group => ui.setFilters(withoutFilter(filters, group))} onClear={() => ui.setFilters({ ...NO_FILTERS, scope: filters.scope, dateField: filters.dateField })} />}
-        <table className="ex-table" aria-label="Entradas">
-          <thead>
-            <tr>
-              <th className="ex-check">
-                <TableCheck checked={allChecked} label="Marcar todos" onToggle={() => (allChecked === true ? ui.clearSelection() : ui.setSelection([...visible]))} />
-              </th>
-              <SortHead column="name" label="Nome" sort={sort} onSort={sortBy} />
-              {!narrow && <th className="ex-plain">O que nasceu</th>}
-              {!narrow && <SortHead column="created" label="Criado" sort={sort} onSort={sortBy} />}
-              {!narrow && <SortHead column="updated" label="Atualizado" sort={sort} onSort={sortBy} />}
-              <th />
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map(file => (
-              <FileTableRow key={file.id} file={file} born to={paths.entry(file.id)} kindText={entryKind(file).label} folderName={(file.folderId && folderName.get(file.folderId)) || 'Biblioteca'} {...rowProps} />
-            ))}
-          </tbody>
-        </table>
-        {!visible.size && <div className="empty">Nada com esse filtro aqui.</div>}
+        {searching && (
+          <p className="ex-found" role="status">
+            {result.shown ? (
+              <>
+                <b>{plural(result.shown, 'resultado', 'resultados')}</b> {`para “${term}” nas entradas`}
+              </>
+            ) : reading ? (
+              `Procurando “${term}” nas entradas…`
+            ) : (
+              `Nada com “${term}” ${result.active.length ? 'com esses filtros' : 'nas entradas'}.`
+            )}
+            {reading && <span className="ex-reading" aria-hidden="true">{` Lendo ${plural(pending, 'item', 'itens')}…`}</span>}
+          </p>
+        )}
+        {/* a search with nothing found keeps only its sentence, like the folders: no heading of an empty table */}
+        {(!searching || rows.length > 0) && (
+          <table className="ex-table" aria-label="Entradas">
+            <thead>
+              <tr>
+                <th className="ex-check">
+                  <TableCheck checked={allChecked} label="Marcar todos" onToggle={() => (allChecked === true ? ui.clearSelection() : ui.setSelection([...visible]))} />
+                </th>
+                <SortHead column="name" label="Nome" sort={sort} onSort={sortBy} />
+                {!narrow && <th className="ex-plain">O que nasceu</th>}
+                {!narrow && <SortHead column="created" label="Criado" sort={sort} onSort={sortBy} />}
+                {!narrow && <SortHead column="updated" label="Atualizado" sort={sort} onSort={sortBy} />}
+                <th />
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map(file => {
+                const hit = searching ? hits.get(file.id) : undefined
+                // a result opens at the speech found
+                const to = hit && hit.at !== null ? `${paths.entry(file.id)}?t=${hit.at}` : paths.entry(file.id)
+                return <FileTableRow key={file.id} file={file} born to={to} hit={hit} kindText={entryKind(file).label} folderName={(file.folderId && folderName.get(file.folderId)) || 'Biblioteca'} {...rowProps} />
+              })}
+            </tbody>
+          </table>
+        )}
+        {!visible.size && !searching && <div className="empty">Nada com esse filtro aqui.</div>}
         <div className="selwrap ex-selwrap">
           <SelectionBar />
         </div>

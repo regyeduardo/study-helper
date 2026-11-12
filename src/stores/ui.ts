@@ -57,6 +57,8 @@ export interface ItemMenu {
 export interface Toast {
   id: number
   text: string
+  /** A button in the toast that opens a page of the app: what it says and where it goes. */
+  action?: { label: string; to: string }
 }
 
 /** What is being dragged to a folder. `over`: the folder under the pointer, `null` being the root; absent, none. */
@@ -97,7 +99,8 @@ interface UiState {
   open(overlay: Overlay): void
   close(): void
   openMenu(menu: ItemMenu | null): void
-  toast(text: string): void
+  toast(text: string, action?: Toast['action']): void
+  dismissToast(id: number): void
   toggleSelected(id: string): void
   setSelection(ids: string[]): void
   clearSelection(): void
@@ -114,6 +117,8 @@ interface UiState {
 
 let toastSeq = 0
 const TOAST_MS = 2600
+/** A toast with a button stays long enough to be read and clicked. */
+const ACTION_TOAST_MS = 10000
 
 export const useUiStore = create<UiState>(set => ({
   overlay: null,
@@ -144,11 +149,12 @@ export const useUiStore = create<UiState>(set => ({
   open: overlay => set({ overlay, menu: null }),
   close: () => set({ overlay: null }),
   openMenu: menu => set({ menu }),
-  toast: text => {
+  toast: (text, action) => {
     const id = ++toastSeq
-    set(state => ({ toasts: [...state.toasts, { id, text }] }))
-    setTimeout(() => set(state => ({ toasts: state.toasts.filter(toast => toast.id !== id) })), TOAST_MS)
+    set(state => ({ toasts: [...state.toasts, action ? { id, text, action } : { id, text }] }))
+    setTimeout(() => set(state => ({ toasts: state.toasts.filter(toast => toast.id !== id) })), action ? ACTION_TOAST_MS : TOAST_MS)
   },
+  dismissToast: id => set(state => ({ toasts: state.toasts.filter(toast => toast.id !== id) })),
   toggleSelected: id =>
     set(state => {
       const selection = new Set(state.selection)

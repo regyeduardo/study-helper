@@ -56,9 +56,48 @@
 .fp-segb:has(:focus-visible){outline:2px solid var(--accent);outline-offset:1px}
 .fp-sr{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip-path:inset(50%);appearance:none;-webkit-appearance:none;border:0}
 .fp-dates{display:grid;gap:4px;margin-top:4px;padding-left:21px}
-.fp-date{display:flex;align-items:center;gap:6px;min-width:0;font-size:12px;color:var(--fg-muted)}
-.fp-date>span{flex:none;width:22px}
-.fp-date .input{flex:1;width:auto;min-width:0;height:26px;padding:2px 5px;font-size:12px}
+
+/* ---------- date field (ui/DateField): dd/mm/aaaa and a pt-BR calendar ---------- */
+/* not ".df": that is the footer of every Dialog (app.css), with its padding, top line and right alignment */
+.df-field{min-width:0}
+.df-row{display:flex;align-items:center;gap:6px;min-width:0;font-size:12px;color:var(--fg-muted)}
+.df-label{flex:none;width:22px}
+.df-box{position:relative;flex:1;min-width:0}
+.df-field .df-input{width:100%;height:28px;padding:2px 28px 2px 6px;font-size:12px;font-variant-numeric:tabular-nums}
+.df-field .df-input::placeholder{color:var(--fg-muted);opacity:1}
+.df-field .df-input[aria-invalid="true"]{border-color:var(--bad)}
+.df-field .df-open{position:absolute;top:2px;right:2px;width:24px;height:24px}
+.df-error{margin:2px 0 0 28px;font-size:12px;line-height:1.35;color:var(--bad)}
+.fp-drawer .df-row{font-size:13px}
+.fp-drawer .df-field .df-input{height:40px;padding-right:42px;font-size:14px}
+.fp-drawer .df-field .df-open{top:2px;right:2px;width:36px;height:36px}
+.fp-drawer .df-error{font-size:13px}
+
+/* the calendar sits on the page, above the drawer (z 40) and the menus (45) */
+.df-pop{position:fixed;z-index:50;width:280px;max-width:calc(100vw - 16px);padding:8px;background:var(--bg);border:1px solid var(--border);border-radius:11px;box-shadow:var(--shadow);color:var(--fg)}
+.df-head{display:flex;align-items:center;justify-content:space-between;gap:4px;margin-bottom:4px}
+.df-title{font-size:13px;font-weight:600}
+/* "Novembro de 2026": only the first letter, so the "de" stays small */
+.df-title::first-letter{text-transform:uppercase}
+/* two classes: .ibtn (30 px) loads after this file */
+.df-pop .df-nav{width:32px;height:32px}
+.df-grid{width:100%;border-collapse:collapse;table-layout:fixed}
+.df-grid th{height:24px;padding:0;font-size:11.5px;font-weight:500;color:var(--fg-muted);text-align:center}
+.df-grid td{padding:1px;text-align:center}
+.df-day{width:100%;height:32px;border-radius:7px;font-size:13px;color:var(--fg);font-variant-numeric:tabular-nums}
+.df-day:hover{background:var(--bg-hover)}
+.df-day[aria-current="date"]{box-shadow:inset 0 0 0 1.5px var(--accent);font-weight:600}
+.df-grid td[aria-selected="true"] .df-day{background:var(--accent);color:var(--bg);font-weight:600}
+.df-pop .df-day:focus-visible{outline:2px solid var(--fg);outline-offset:1px}
+.df-foot{display:flex;justify-content:space-between;gap:8px;margin-top:6px;padding-top:6px;border-top:1px solid var(--border-muted)}
+.df-link{min-height:32px;padding:0 10px;border-radius:7px;font-size:13px;font-weight:500;color:var(--accent)}
+.df-link:hover:not(:disabled){background:var(--bg-hover)}
+.df-link:disabled{color:var(--fg-muted);opacity:.6;cursor:default}
+@media (max-width:760px),(pointer:coarse){
+  .df-pop .df-nav{width:36px;height:36px}
+  .df-day{height:36px}
+  .df-link{min-height:36px}
+}
 
 /* ---------- collapsed ---------- */
 .fp-rail{width:44px;align-items:center;gap:6px;padding-top:9px}
@@ -74,6 +113,4 @@
 .fp-drawer .fp-radio:checked::before{width:10px;height:10px}
 .fp-drawer .fp-seg{height:40px}
 .fp-drawer .fp-segb{font-size:13px}
-.fp-drawer .fp-date{font-size:13px}
-.fp-drawer .fp-date .input{height:40px}
 .fp-drawer .fp-all{max-height:50vh;max-height:50dvh}

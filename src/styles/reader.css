@@ -1,0 +1,24 @@
+/* Head of a note: "Aula · 7 min · 64%" and the "Detalhes" that opens folder, origin and tags. */
+.doc-meta .doc-more{gap:3px;padding:2px 6px;margin-left:-6px;border-radius:6px;text-decoration:none}
+.doc-meta .doc-more:hover{background:var(--bg-hover);color:var(--fg)}
+.doc-meta .doc-more:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.doc-more .ic{transition:transform .15s ease}
+.doc-more[aria-expanded="true"] .ic{transform:rotate(180deg)}
+@media (prefers-reduced-motion: reduce){.doc-more .ic{transition:none}}
+
+.doc-details{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:8px 16px;margin:0;padding:10px 14px;border:1px solid var(--border-muted);border-radius:8px;background:var(--bg-subtle);font-size:13px}
+.doc-details>div{display:contents}
+.doc-details dt{margin:0;color:var(--fg-muted)}
+.doc-details dd{margin:0;min-width:0;display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px}
+.doc-details dd button{display:inline-flex;align-items:center;gap:5px;min-width:0;color:var(--fg);text-decoration:underline;text-decoration-color:var(--border);text-underline-offset:3px}
+.doc-details dd button:hover{text-decoration-color:currentColor}
+.doc-details dd button:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:3px}
+.doc-details .ic{width:14px;height:14px;flex:none;color:var(--fg-muted)}
+.doc-details .doc-tag{color:var(--fg-muted);text-decoration:none}
+.doc-details .doc-tag:hover{color:var(--fg)}
+
+/* The menu of a passage with more than one explanation. */
+.ex-mi{max-width:340px}
+.ex-mi .ic{width:15px;height:15px;flex:none;color:var(--accent)}
+.ex-mi span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ex-mi small{flex:none;font-size:12px;color:var(--fg-muted)}

@@ -4,6 +4,7 @@ import { Icon } from '@/components/ui/Icon'
 import { Popover } from '@/components/ui/Popover'
 import { isGoogleLoginConfigured } from '@/controllers/google-auth.controller'
 import { LocalRepository } from '@/lib/storage/local-repository'
+import { applyTheme, savedTheme, type ThemeChoice } from '@/lib/theme'
 import { type Account, initialsOf, useAccountStore } from '@/stores/account'
 import { useLibraryStore } from '@/stores/library'
 import { useSyncStore } from '@/stores/sync'
@@ -31,6 +32,7 @@ export function AccountMenu() {
   const { addGoogleAccount, switchTo, forgetAccount } = useAccountStore()
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const [theme, setTheme] = useState<ThemeChoice>(savedTheme)
   const configured = isGoogleLoginConfigured()
   const add = async () => {
     setBusy(true)
@@ -101,6 +103,24 @@ export function AccountMenu() {
         </span>
       )}
       <div className="hr" />
+      <label className="mi mi-theme">
+        <Icon name="contrast" />
+        <span>Tema</span>
+        <select
+          className="input"
+          aria-label="Tema"
+          value={theme}
+          onChange={event => {
+            const choice = event.target.value as ThemeChoice
+            setTheme(choice)
+            applyTheme(choice)
+          }}
+        >
+          <option value="system">Igual ao sistema</option>
+          <option value="light">Claro</option>
+          <option value="dark">Escuro</option>
+        </select>
+      </label>
       <button className="mi" onClick={() => ui.open({ kind: 'settings' })}>
         <Icon name="gear" />
         Configurações

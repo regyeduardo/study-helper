@@ -51,7 +51,31 @@ export const APP_PALETTE = `
 .markdown-body mark.hl-green { background: var(--ok-soft); box-shadow: inset 0 -1px 0 var(--ok); color: inherit; border-radius: 2px; padding: 0 1px; }
 .markdown-body mark.hl-pink { background: var(--bad-soft); box-shadow: inset 0 -1px 0 var(--bad); color: inherit; border-radius: 2px; padding: 0 1px; }
 .markdown-body mark.hl-found { background: #f5d34f; color: #1f2328; border-radius: 2px; padding: 0 1px; }
-.markdown-body mark.hl-explained { background: var(--acc1-soft); box-shadow: inset 0 -1px 0 var(--acc1); color: inherit; border-radius: 2px; padding: 0 1px; cursor: pointer; }
+
+/* Explanations in the text: the colors take turns in the order the passages appear (EXPLAIN_COLORS). */
+.markdown-body {
+  --ex-0-strong: var(--acc1); --ex-0-soft: var(--acc1-soft);
+  --ex-1-strong: var(--acc4); --ex-1-soft: var(--acc4-soft);
+  --ex-2-strong: var(--t-reu); --ex-2-soft: color-mix(in srgb, var(--t-reu) 14%, transparent);
+  --ex-3-strong: var(--t-aula); --ex-3-soft: color-mix(in srgb, var(--t-aula) 14%, transparent);
+  --ex-4-strong: var(--acc2); --ex-4-soft: var(--acc2-soft);
+  --ex-5-strong: var(--acc3); --ex-5-soft: var(--acc3-soft);
+  --ex-0-weak: color-mix(in srgb, var(--ex-0-strong) 60%, transparent);
+  --ex-1-weak: color-mix(in srgb, var(--ex-1-strong) 60%, transparent);
+  --ex-2-weak: color-mix(in srgb, var(--ex-2-strong) 60%, transparent);
+  --ex-3-weak: color-mix(in srgb, var(--ex-3-strong) 60%, transparent);
+  --ex-4-weak: color-mix(in srgb, var(--ex-4-strong) 60%, transparent);
+  --ex-5-weak: color-mix(in srgb, var(--ex-5-strong) 60%, transparent);
+}
+.markdown-body mark.ex-mark { color: inherit; background: transparent; border-radius: 2px; padding: 0 1px; cursor: pointer; }
+.markdown-body mark.ex-strong { background: var(--exbg); box-shadow: inset 0 -2px 0 var(--ex); }
+.markdown-body mark.ex-strong:hover { box-shadow: inset 0 -3px 0 var(--ex); }
+.markdown-body mark.ex-weak { text-decoration: underline dotted var(--ex); text-decoration-thickness: 2px; text-underline-offset: 4px; }
+.markdown-body mark.ex-weak:hover { background: var(--bg-hover); }
+.markdown-body .ex-loading { display: inline-flex; align-items: center; gap: 5px; margin-left: 6px; padding: 0 7px; border: 1px solid var(--border-muted); border-radius: 999px; background: var(--bg-subtle); color: var(--fg-muted); font-size: 12px; line-height: 18px; white-space: nowrap; vertical-align: 1px; }
+.markdown-body .ex-loading::before { content: ""; width: 9px; height: 9px; border: 1.5px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: ex-spin .8s linear infinite; }
+@keyframes ex-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .markdown-body .ex-loading::before { animation: none; } }
 
 .markdown-body .snippet-clipboard-content > pre,
 .markdown-body .highlight > pre { flex: 1; }

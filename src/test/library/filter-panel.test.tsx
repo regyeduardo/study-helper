@@ -3,8 +3,10 @@ import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 
 import { FilterPanel, type FilterPanelProps } from '@/components/library/FilterPanel'
+import { newFileMeta } from '@/lib/defaults'
 import { filterLibrary, GROUP_LABELS, NO_FILTERS, toggleOption, type FacetOption, type Facets, type FolderOption, type LibraryFilters } from '@/lib/library-filters'
 
 const opt = <Id,>(id: Id, label: string, count: number, selected = false): FacetOption<Id> => ({ id, label, count, selected })
@@ -182,7 +184,7 @@ describe('Período', () => {
     expect(radio('Escolher datas…')).toBeChecked()
     expect(rowOf(radio('Escolher datas…'))).toHaveTextContent(/^Escolher datas…\s*5$/)
     expect(screen.getByLabelText('De')).toHaveValue('')
-    expect(screen.getByLabelText('Até')).toHaveValue('2026-10-31')
+    expect(screen.getByLabelText('Até')).toHaveValue('31/10/2026')
     fireEvent.change(screen.getByLabelText('De'), { target: { value: '2026-10-01' } })
     expect(onChange).toHaveBeenLastCalledWith({ ...start, period: { from: '2026-10-01', to: '2026-10-31' } })
     fireEvent.change(screen.getByLabelText('Até'), { target: { value: '' } })
@@ -414,11 +416,103 @@ describe('com as contagens de verdade', () => {
     expect(radio('Últimos 7 dias')).not.toBeChecked()
     expect(screen.getByText('1 ativo')).toBeInTheDocument()
     fireEvent.change(screen.getByLabelText('De'), { target: { value: '2026-11-01' } })
-    expect(screen.getByLabelText('De')).toHaveValue('2026-11-01')
+    expect(screen.getByLabelText('De')).toHaveValue('01/11/2026')
     expect(screen.getByText('2 ativos')).toBeInTheDocument()
     fireEvent.click(option('Biblioteca'))
     expect(option('Biblioteca')).toBeChecked()
     expect(option('Com subpastas')).toBeChecked()
     expect(screen.getByText('3 ativos')).toBeInTheDocument()
+  })
+})
+
+describe('as datas do período em português (dd/mm/aaaa)', () => {
+  const stamp = (at: string) => ({ at, deviceId: 'd1', deviceName: 'Teste' })
+  const note = (id: string, at: string) => newFileMeta({ id, name: id, type: 'class', created: stamp(at), updated: stamp(at) })
+  const FILES = [note('antes', '2026-11-04T15:00:00Z'), note('no-dia', '2026-11-05T15:00:00Z'), note('depois', '2026-11-08T12:00:00Z')]
+  const source = { files: FILES, folders: [], now: '2026-11-08T15:00:00Z', timeZone: 'America/Sao_Paulo' }
+
+  function Live({ seen }: { seen: (ids: string[], filters: LibraryFilters) => void }) {
+    const [filters, setFilters] = useState<LibraryFilters>({ ...NO_FILTERS, period: {} })
+    const { facets, items } = filterLibrary(source, filters)
+    seen(items.map(item => item.id), filters)
+    return <FilterPanel filters={filters} facets={facets} onChange={setFilters} />
+  }
+
+  it('não usa o campo de data do navegador, que desenha no idioma dele', () => {
+    const { container } = renderPanel({ ...NO_FILTERS, period: { from: '2026-11-05' } })
+    expect(container.querySelector('input[type="date"]')).toBeNull()
+    expect(screen.getByLabelText('De')).toHaveValue('05/11/2026')
+    expect(screen.getByLabelText('De')).toHaveAttribute('placeholder', 'dd/mm/aaaa')
+  })
+
+  it('digitar 05/11/2026 em "De" filtra a partir daquele dia', async () => {
+    const user = userEvent.setup()
+    const seen = vi.fn()
+    render(<Live seen={seen} />)
+    expect(seen).toHaveBeenLastCalledWith(['antes', 'no-dia', 'depois'], expect.anything())
+    await user.type(screen.getByLabelText('De'), '05112026')
+    expect(screen.getByLabelText('De')).toHaveValue('05/11/2026')
+    expect(seen).toHaveBeenLastCalledWith(['no-dia', 'depois'], expect.objectContaining({ period: { from: '2026-11-05' } }))
+  })
+
+  it('"Até" 05/11/2026 filtra até aquele dia, e os dois juntos fecham o intervalo', async () => {
+    const user = userEvent.setup()
+    const seen = vi.fn()
+    render(<Live seen={seen} />)
+    await user.type(screen.getByLabelText('Até'), '05112026')
+    expect(seen).toHaveBeenLastCalledWith(['antes', 'no-dia'], expect.objectContaining({ period: { to: '2026-11-05' } }))
+    await user.type(screen.getByLabelText('De'), '05/11/2026')
+    expect(seen).toHaveBeenLastCalledWith(['no-dia'], expect.objectContaining({ period: { from: '2026-11-05', to: '2026-11-05' } }))
+  })
+
+  it('colar 2026-11-05 também vale, e o filtro recebe aaaa-mm-dd', async () => {
+    const user = userEvent.setup()
+    const { onChange } = renderPanel({ ...NO_FILTERS, period: {} })
+    await user.click(screen.getByLabelText('De'))
+    await user.paste('2026-11-05')
+    expect(screen.getByLabelText('De')).toHaveValue('05/11/2026')
+    expect(onChange).toHaveBeenLastCalledWith({ ...NO_FILTERS, period: { from: '2026-11-05' } })
+  })
+
+  it('data que não existe mostra a frase e não muda o filtro', async () => {
+    const user = userEvent.setup()
+    const start: LibraryFilters = { ...NO_FILTERS, period: { from: '2026-10-01' } }
+    const { onChange } = renderPanel(start)
+    await user.clear(screen.getByLabelText('De'))
+    onChange.mockClear()
+    await user.type(screen.getByLabelText('De'), '31022026')
+    expect(screen.getByRole('alert')).toHaveTextContent('Essa data não existe.')
+    expect(onChange).not.toHaveBeenCalled()
+  })
+
+  it('apagar o campo limpa só aquela ponta', async () => {
+    const user = userEvent.setup()
+    const start: LibraryFilters = { ...NO_FILTERS, period: { from: '2026-10-01', to: '2026-10-31' } }
+    const { onChange } = renderPanel(start)
+    await user.clear(screen.getByLabelText('Até'))
+    expect(onChange).toHaveBeenLastCalledWith({ ...start, period: { from: '2026-10-01', to: undefined } })
+  })
+
+  it('o calendário de "De" escolhe um dia e o filtro recebe aaaa-mm-dd', async () => {
+    const user = userEvent.setup()
+    const { onChange } = renderPanel({ ...NO_FILTERS, period: { from: '2026-10-01' } })
+    await user.click(screen.getByRole('button', { name: 'Abrir o calendário: De' }))
+    const calendar = screen.getByRole('dialog', { name: 'Calendário: De' })
+    expect(within(calendar).getByText('outubro de 2026')).toBeInTheDocument()
+    await user.click(within(calendar).getByRole('button', { name: /15 de outubro de 2026/ }))
+    expect(onChange).toHaveBeenLastCalledWith({ ...NO_FILTERS, period: { from: '2026-10-15' } })
+  })
+
+  it('na gaveta do celular, Esc fecha só o calendário; o segundo Esc fecha a gaveta', async () => {
+    const user = userEvent.setup()
+    const onClose = vi.fn()
+    renderPanel({ ...NO_FILTERS, period: { from: '2026-10-01' } }, { drawer: true, open: true, onClose })
+    await user.click(screen.getByRole('button', { name: 'Abrir o calendário: De' }))
+    expect(screen.getByRole('dialog', { name: 'Calendário: De' })).toBeInTheDocument()
+    await user.keyboard('{Escape}')
+    expect(screen.queryByRole('dialog', { name: 'Calendário: De' })).toBeNull()
+    expect(onClose).not.toHaveBeenCalled()
+    await user.keyboard('{Escape}')
+    expect(onClose).toHaveBeenCalledTimes(1)
   })
 })

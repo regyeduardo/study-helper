@@ -246,7 +246,9 @@ describe('Novo conteúdo', () => {
 
     it('sem marcar, o pedido vai com o "Modelo da IA" e sem a marca', async () => {
       await open(video(), DEAF.uid)
-      expect(screen.getByLabelText(BOX)).not.toBeChecked()
+      // as in the test above: the box comes once the dialog has read the video and the models
+      await waitFor(() => expect(checked()).toEqual(['Só a transcrição']))
+      expect(await screen.findByLabelText(BOX)).not.toBeChecked()
       fireEvent.click(screen.getByLabelText(BOX))
       fireEvent.click(screen.getByLabelText(BOX))
       expect(screen.getByLabelText('Modelo da IA')).toBeEnabled()

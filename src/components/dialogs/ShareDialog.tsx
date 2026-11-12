@@ -54,7 +54,8 @@ interface MediaProgress {
   percent: number
 }
 
-function CreatedShare({ share, mediaFailed }: { share: ShareRecord; mediaFailed: string[] }) {
+/** `already`: the link made before, still valid, shown when the dialog opens again for the same item. */
+function CreatedShare({ share, mediaFailed, already = false }: { share: ShareRecord; mediaFailed: string[]; already?: boolean }) {
   const toast = useUiStore(state => state.toast)
   const timeZone = useLibraryStore(state => state.index.settings.timezone)
   const url = shareUrl(share.id)
@@ -64,6 +65,12 @@ function CreatedShare({ share, mediaFailed }: { share: ShareRecord; mediaFailed:
   }
   return (
     <>
+      {already && (
+        <p className="share-state">
+          <b>Já compartilhado</b>
+          {` em ${dateTime(share.createdAt, timeZone)}. Vale até ${dateTime(share.expiresAt, timeZone)} e mostra a versão daquele dia.`}
+        </p>
+      )}
       <div className="field">
         <label htmlFor="share-link">Link público, só para leitura</label>
         <div className="share-copy">
@@ -75,7 +82,9 @@ function CreatedShare({ share, mediaFailed }: { share: ShareRecord; mediaFailed:
         </div>
       </div>
       <span className="muted" style={{ fontSize: 13 }}>
-        Vale por 3 dias, até {dateTime(share.expiresAt, timeZone)}, e mostra a versão de agora. Se mudar alguma coisa, apague em Compartilhados e compartilhe de novo.
+        {already
+          ? '“Renovar” cria outro link, com a versão de agora, por mais 3 dias. Este continua valendo até vencer.'
+          : `Vale por 3 dias, até ${dateTime(share.expiresAt, timeZone)}, e mostra a versão de agora. Se mudar alguma coisa, apague em Compartilhados e compartilhe de novo.`}
       </span>
       {mediaFailed.length > 0 && (
         <div className="banner" role="alert">
@@ -109,6 +118,9 @@ export function ShareDialog({ target, id }: { target: ShareKind; id: string }) {
   const [captchaRound, setCaptchaRound] = useState(0)
   const [busy, setBusy] = useState(false)
   const [created, setCreated] = useState<ShareRecord | null>(null)
+  // the link of this item made before and still valid comes first: copy it, or "Renovar" to share the version of now
+  const valid = useLibraryStore(state => state.index.shares.find(record => record.kind === target && record.itemId === id && Date.parse(record.expiresAt) > Date.now()) ?? null)
+  const [renewing, setRenewing] = useState(false)
   const google = account.kind === 'google'
   const configured = isShareConfigured()
   const token = (options?: { force?: boolean }) => tokenFor(account.id, options)
@@ -205,6 +217,17 @@ export function ShareDialog({ target, id }: { target: ShareKind; id: string }) {
         Entrar com o Google
       </button>
     </>
+  ) : valid && !renewing && !created && configured ? (
+    <>
+      <button className="btn quiet" onClick={ui.close}>
+        Fechar
+      </button>
+      {/* "Copiar link", in the body, is the one primary action here */}
+      <button className="btn" onClick={() => setRenewing(true)}>
+        <Icon name="sync" />
+        Renovar
+      </button>
+    </>
   ) : created ? (
     <>
       <button
@@ -253,6 +276,8 @@ export function ShareDialog({ target, id }: { target: ShareKind; id: string }) {
             <Icon name="warn" />
             <span>O compartilhamento ainda não foi configurado neste site.</span>
           </div>
+        ) : valid && !renewing && !created ? (
+          <CreatedShare share={valid} mediaFailed={[]} already />
         ) : created ? (
           <CreatedShare share={created} mediaFailed={mediaFailed} />
         ) : (

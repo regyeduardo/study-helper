@@ -1,10 +1,11 @@
-import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { type ReactNode, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 
 import type { FileMeta, FileSidecar, FileType, HighlightColor, RecordingMark } from '@/types/domain'
 import { SaveToDrive } from '@/components/library/SaveToDrive'
 import { SharedBadge } from '@/components/library/SharedBadge'
 import { Icon } from '@/components/ui/Icon'
+import { Popover } from '@/components/ui/Popover'
 import { MasteryMeter, MotherBadge, TypeDot } from '@/components/library/Badges'
 import { DocumentNav } from '@/components/reader/DocumentNav'
 import GithubMarkdownView, { type PaintedQuote, type ReaderSelection } from '@/components/reader/GithubMarkdownView'
@@ -27,6 +28,7 @@ import { type Heading, useDocumentStore } from '@/stores/document'
 import { useJobsStore } from '@/stores/jobs'
 import { useLibraryStore } from '@/stores/library'
 import { useUiStore } from '@/stores/ui'
+import '@/styles/reader.css'
 
 const ORIGIN_LABEL: Record<string, string> = {
   file: 'Arquivo',
@@ -113,6 +115,9 @@ export function DocumentHead({ meta, onInfo, transcribed = false }: { meta: File
   const shared = useLibraryStore(state => Boolean(state.sharedView))
   const timeZone = useLibraryStore(state => state.index.settings.timezone)
   const source = useLibraryStore(state => (meta.parentFileId ? state.files.find(file => file.id === meta.parentFileId && !file.deletedAt) : undefined))
+  const [details, setDetails] = useState(false)
+  const detailsId = useId()
+  const folder = !(shared && meta.folderId === null)
   return (
     <div className="doc-head">
       <h1>{meta.name}</h1>
@@ -126,33 +131,65 @@ export function DocumentHead({ meta, onInfo, transcribed = false }: { meta: File
       )}
       <div className="doc-meta">
         <MotherBadge file={meta} />
-        <TypeDot type={meta.type} />
-        {!(shared && meta.folderId === null) && (
-          <button onClick={() => navigate(paths.folder(meta.folderId))}>
-            <Icon name="folder" /> {pathName(meta.folderId)}
+        <span className="doc-facts">
+          <TypeDot type={meta.type} />
+          {meta.readingMinutes > 0 && (
+            <>
+              <span aria-hidden="true">·</span>
+              <span title="Tempo de leitura">{meta.readingMinutes} min</span>
+            </>
+          )}
+          <span aria-hidden="true">·</span>
+          <MasteryMeter value={meta.mastery} />
+        </span>
+        {(folder || meta.origin || meta.tags.length > 0) && (
+          <button className="doc-more" aria-expanded={details} aria-controls={detailsId} onClick={() => setDetails(open => !open)}>
+            {details ? 'Ocultar' : 'Detalhes'}
+            <Icon name="chev" />
           </button>
         )}
-        {meta.readingMinutes > 0 && (
-          <span>
-            <Icon name="clock" /> {meta.readingMinutes} min de leitura
-          </span>
-        )}
-        <MasteryMeter value={meta.mastery} />
-        {meta.origin && <button onClick={onInfo}>Origem: {ORIGIN_LABEL[meta.origin.input] ?? meta.origin.input}</button>}
-        {meta.tags.map(tag => (
-          <button
-            key={tag}
-            className="tag"
-            style={{ textDecoration: 'none' }}
-            onClick={() => {
-              setTag(tag)
-              navigate(paths.library)
-            }}
-          >
-            {tag}
-          </button>
-        ))}
       </div>
+      {details && (
+        <dl className="doc-details" id={detailsId}>
+          {folder && (
+            <div>
+              <dt>Pasta</dt>
+              <dd>
+                <button onClick={() => navigate(paths.folder(meta.folderId))}>
+                  <Icon name="folder" /> {pathName(meta.folderId)}
+                </button>
+              </dd>
+            </div>
+          )}
+          {meta.origin && (
+            <div>
+              <dt>Origem</dt>
+              <dd>
+                <button onClick={onInfo}>{ORIGIN_LABEL[meta.origin.input] ?? meta.origin.input}</button>
+              </dd>
+            </div>
+          )}
+          {meta.tags.length > 0 && (
+            <div>
+              <dt>Tags</dt>
+              <dd>
+                {meta.tags.map(tag => (
+                  <button
+                    key={tag}
+                    className="doc-tag"
+                    onClick={() => {
+                      setTag(tag)
+                      navigate(paths.library)
+                    }}
+                  >
+                    #{tag}
+                  </button>
+                ))}
+              </dd>
+            </div>
+          )}
+        </dl>
+      )}
       <SaveToDrive fileId={meta.id} />
     </div>
   )
@@ -203,7 +240,23 @@ function SelectionPopover({ fileId, selection, onDone }: SelectionPopoverProps) 
   )
 }
 
-function HeadingExplain({ fileId, heading, onDone }: { fileId: string; heading: ReaderSelection; onDone(): void }) {
+const LAMP = 30
+const LAMP_GAP = 6
+/** How long the lamp waits after the mouse leaves the heading, so the mouse can reach it. */
+const LAMP_LEAVE_MS = 300
+
+/** Where the lamp goes, never over the heading's text: in the margin left of it, else right after the text ends, else above it. */
+function lampSpot(heading: ReaderSelection): { top: number; left: number } {
+  const box = heading.rect
+  const start = heading.column?.left ?? 0
+  const end = heading.column?.right ?? window.innerWidth
+  if (box.left - start >= LAMP + LAMP_GAP * 2) return { top: box.top + box.height / 2 - LAMP / 2, left: box.left - LAMP - LAMP_GAP }
+  const text = heading.textEnd
+  if (text && text.right + LAMP_GAP + LAMP <= end - LAMP_GAP) return { top: text.top + text.height / 2 - LAMP / 2, left: text.right + LAMP_GAP }
+  return { top: box.top - LAMP - LAMP_GAP, left: box.left }
+}
+
+function HeadingExplain({ fileId, heading, onDone, onHover }: { fileId: string; heading: ReaderSelection; onDone(): void; onHover(inside: boolean): void }) {
   const open = useUiStore(state => state.open)
   useEffect(() => {
     window.addEventListener('scroll', onDone, { capture: true, once: true })
@@ -214,8 +267,10 @@ function HeadingExplain({ fileId, heading, onDone }: { fileId: string; heading: 
       className="heading-explain"
       title="Explicar esta seção"
       aria-label="Explicar esta seção"
-      style={{ top: heading.rect.top + heading.rect.height / 2 - 15, left: heading.rect.left >= 40 ? heading.rect.left - 36 : Math.min(window.innerWidth - 34, heading.rect.right - 30) }}
+      style={lampSpot(heading)}
       onMouseDown={event => event.preventDefault()}
+      onPointerEnter={() => onHover(true)}
+      onPointerLeave={event => event.pointerType !== 'touch' && onHover(false)}
       onClick={() => {
         open({ kind: 'explain', fileId, excerpt: heading.text })
         onDone()
@@ -223,6 +278,33 @@ function HeadingExplain({ fileId, heading, onDone }: { fileId: string; heading: 
     >
       <Icon name="bulb" />
     </button>
+  )
+}
+
+/** A passage with more than one explanation: the person picks which one to open. */
+function ExplanationMenu({ ids, rect, onDone }: { ids: string[]; rect: DOMRect; onDone(): void }) {
+  const navigate = useNavigate()
+  const files = useLibraryStore(state => state.files)
+  const items = ids.map(id => files.find(file => file.id === id && !file.deletedAt)).filter((file): file is FileMeta => Boolean(file))
+  return (
+    <Popover x={rect.left} y={rect.bottom + 6} onClose={onDone} label="Escolha a explicação">
+      <div className="mh">{items.length} explicações neste trecho</div>
+      {items.map(file => (
+        <button
+          key={file.id}
+          className="mi ex-mi"
+          role="menuitem"
+          onClick={() => {
+            onDone()
+            navigate(paths.file(file.id))
+          }}
+        >
+          <Icon name="bulb" />
+          <span>{file.name}</span>
+          {file.status === 'generating' && <small>gerando…</small>}
+        </button>
+      ))}
+    </Popover>
   )
 }
 
@@ -250,10 +332,12 @@ export function DocumentBody({ fileId, compact = false }: { fileId: string; comp
   const navigate = useNavigate()
   const [selection, setSelection] = useState<ReaderSelection | null>(null)
   const [heading, setHeading] = useState<ReaderSelection | null>(null)
+  const [choosing, setChoosing] = useState<{ ids: string[]; rect: DOMRect } | null>(null)
+  const leaving = useRef(0)
 
   const quotes = useMemo<PaintedQuote[]>(() => {
     const painted: PaintedQuote[] = (opened?.sidecar.highlights ?? []).map(item => ({ quote: item.quote, color: item.color ?? 'yellow' }))
-    for (const child of files.filter(file => file.parentFileId === fileId && file.sourceExcerpt && !file.deletedAt)) painted.push({ quote: child.sourceExcerpt!, color: 'explained', targetId: child.id })
+    for (const child of files.filter(file => file.parentFileId === fileId && file.sourceExcerpt && !file.deletedAt)) painted.push({ quote: child.sourceExcerpt!, color: 'explained', targetId: child.id, title: child.name, generating: child.status === 'generating' })
     return painted
   }, [opened?.sidecar.highlights, files, fileId])
 
@@ -266,7 +350,17 @@ export function DocumentBody({ fileId, compact = false }: { fileId: string; comp
   }, [handoff, showing])
 
   const onHeadings = useCallback((headings: { id: string; level: number; text: string }[]) => setHeadings(fileId, headings), [fileId, setHeadings])
-  const onQuoteClick = useCallback((targetId: string) => navigate(paths.file(targetId)), [navigate])
+  const onQuoteClick = useCallback((targetIds: string[], rect: DOMRect) => (targetIds.length > 1 ? setChoosing({ ids: targetIds, rect }) : navigate(paths.file(targetIds[0]))), [navigate])
+  const closeChoice = useCallback(() => setChoosing(null), [])
+  // The lamp of a heading: shown while the mouse is on the heading or on the lamp, with a moment to go from one to the other.
+  const onHeading = useCallback((next: ReaderSelection | null) => {
+    window.clearTimeout(leaving.current)
+    if (next) setHeading(next)
+    else leaving.current = window.setTimeout(() => setHeading(null), LAMP_LEAVE_MS)
+  }, [])
+  const onLampHover = useCallback((inside: boolean) => (inside ? window.clearTimeout(leaving.current) : onHeading(null)), [onHeading])
+  const closeLamp = useCallback(() => setHeading(null), [])
+  useEffect(() => () => window.clearTimeout(leaving.current), [])
 
   if (!meta) return <div className="empty">Arquivo não encontrado.</div>
   const showInfo = () => ui.set({ inspectorTab: 'info', rightOpen: true, panelAsked: true, columnsSheet: true, focusPop: 'info' })
@@ -280,7 +374,7 @@ export function DocumentBody({ fileId, compact = false }: { fileId: string; comp
   const viewer = live ? (
     <GithubMarkdownView markdown={live} live />
   ) : opened && opened.content && !(recording && meta.type === 'reading') ? (
-    <GithubMarkdownView markdown={ataDocument && !recording ? withImages(forReading(opened.content), ataDocument.images) : opened.content} quotes={quotes} onSelection={setSelection} onQuoteClick={onQuoteClick} onHeadings={onHeadings} onHeading={setHeading} found={found} />
+    <GithubMarkdownView markdown={ataDocument && !recording ? withImages(forReading(opened.content), ataDocument.images) : opened.content} quotes={quotes} onSelection={setSelection} onQuoteClick={onQuoteClick} onHeadings={onHeadings} onHeading={onHeading} found={found} />
   ) : null
   const ataView = ataDocument ? <AtaTab markdown={withImages(forReading(ataDocument.markdown), ataDocument.images)} onHeadings={onHeadings} /> : undefined
   const rename = async (speakerId: string, name: string) => {
@@ -347,7 +441,8 @@ export function DocumentBody({ fileId, compact = false }: { fileId: string; comp
         (viewer ?? (!job && meta.status === 'ready' && !opened && <div className="muted">Abrindo…</div>))
       )}
       {selection && !readOnly && <SelectionPopover fileId={fileId} selection={selection} onDone={() => setSelection(null)} />}
-      {heading && !selection && !readOnly && <HeadingExplain fileId={fileId} heading={heading} onDone={() => setHeading(null)} />}
+      {heading && !selection && !readOnly && <HeadingExplain fileId={fileId} heading={heading} onDone={closeLamp} onHover={onLampHover} />}
+      {choosing && <ExplanationMenu ids={choosing.ids} rect={choosing.rect} onDone={closeChoice} />}
       {!compact && <DocumentNav meta={meta} />}
     </article>
   )

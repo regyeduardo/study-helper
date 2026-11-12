@@ -6,7 +6,7 @@ import { FolderChooserDialog, type FolderSource } from '@/components/dialogs/Fol
 import { Icon } from '@/components/ui/Icon'
 import { useNow } from '@/hooks/use-now'
 import { paths } from '@/lib/paths'
-import { daysLeftText, hasSharedMedia, importSharedEntry, importSharedItem, type MediaPlace, readSharedAttempts } from '@/lib/share'
+import { daysLeftText, hasSharedMedia, importSharedEntry, importSharedItem, prefetchEntryMedia, type MediaPlace, readSharedAttempts } from '@/lib/share'
 import { useAccountStore } from '@/stores/account'
 import { useJobsStore } from '@/stores/jobs'
 import { useLibraryStore } from '@/stores/library'
@@ -20,6 +20,8 @@ export function SharedBadge({ label = false, button = false }: { label?: boolean
   const driveAvailable = useAccountStore(state => state.active().kind === 'google')
   const navigate = useNavigate()
   const [importing, setImporting] = useState(false)
+  // the media of an entrada downloads while the link is still open, with its progress on the button
+  const [downloading, setDownloading] = useState<number | null>(null)
   // the link of an entrada asks first for the folder, among the folders of who imports (FR-068)
   const [ownFolders, setOwnFolders] = useState<FolderMeta[] | null>(null)
   const now = useNow()
@@ -29,14 +31,16 @@ export function SharedBadge({ label = false, button = false }: { label?: boolean
   const importItem = async (place: MediaPlace | null, folderId: string | null) => {
     setImporting(true)
     try {
+      const fetched = place && item.kind === 'entrada' ? await prefetchEntryMedia(item, setDownloading) : {}
+      setDownloading(null)
       leaveShared()
       delete document.documentElement.dataset.shared
       const library = useLibraryStore.getState()
-      const media = place ? { place, repo: library.repo, track: useJobsStore.getState().trackTask } : undefined
+      const media = place ? { place, repo: library.repo, track: useJobsStore.getState().trackTask, ...fetched } : undefined
       const actions = { createFolder: library.createFolder, createFile: library.createFile, updateSidecar: library.updateSidecar }
       if (item.kind === 'entrada') {
         const result = await importSharedEntry(item, readSharedAttempts(item.id), actions, { folderId, existing: library.files, media })
-        toast('Importado para a sua biblioteca')
+        toast(result.mediaFailed ? `Importado, mas a mídia não veio: ${result.mediaFailed}` : 'Importado para a sua biblioteca')
         navigate(paths.file(result.fileId))
         return
       }
@@ -45,6 +49,7 @@ export function SharedBadge({ label = false, button = false }: { label?: boolean
       navigate(result.fileId ? paths.file(result.fileId) : paths.folder(result.folderId))
     } catch (error) {
       toast(error instanceof Error ? error.message : 'Não consegui importar.')
+      setDownloading(null)
       setImporting(false)
     }
   }
@@ -99,7 +104,7 @@ export function SharedBadge({ label = false, button = false }: { label?: boolean
   const action = (
     <button className="btn primary" disabled={importing} onClick={startImport}>
       <Icon name="download" />
-      {importing ? 'Importando…' : 'Importar para a minha biblioteca'}
+      {downloading !== null ? `Baixando a mídia… ${Math.round(downloading * 100)}%` : importing ? 'Importando…' : 'Importar para a minha biblioteca'}
     </button>
   )
   if (!both)

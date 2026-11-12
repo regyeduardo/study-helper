@@ -419,12 +419,22 @@ textarea.input{resize:vertical;min-height:62px}
 .menu .mi{display:flex;align-items:center;gap:9px;padding:7px 9px;border-radius:7px;font-size:13px;text-align:left;width:100%}
 .menu .mi:hover{background:var(--bg-hover)}
 .menu .mi.on{font-weight:600}
+/* a row that holds a select: as tall as the other rows (33 px), and no hover of its own, since the row itself does nothing */
+.menu .mi-theme{cursor:default;padding-block:3px}
+.menu .mi-theme:hover{background:none}
+.menu .mi-theme>span{flex:1}
+.menu .mi-theme select{flex:none;width:auto;height:28px;padding:0 6px;font-size:12.5px}
+@media (max-width:760px){.menu .mi-theme select{height:36px}}
 .menu .mh{padding:6px 9px 4px;font-size:11px;letter-spacing:.07em;text-transform:uppercase;color:var(--fg-faint);font-weight:600}
 .menu .who{display:flex;gap:10px;align-items:center;padding:8px 9px}
 .menu .who div{display:grid;min-width:0}
 .menu .who small{color:var(--fg-muted);overflow-wrap:anywhere}
 .toasts{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);z-index:70;display:grid;gap:6px;justify-items:center;pointer-events:none;width:max-content;max-width:calc(100% - 32px)}
 .toast{background:var(--fg);color:var(--bg);padding:8px 13px;border-radius:9px;font-size:13px;box-shadow:var(--shadow);animation:rise .18s ease-out}
+.toast:has(.toast-act){display:flex;align-items:center;gap:12px;padding-right:6px}
+.toast-act{pointer-events:auto;padding:4px 10px;border-radius:6px;font-weight:600;white-space:nowrap;background:rgba(127,127,127,.25)}
+.toast-act:hover{background:rgba(127,127,127,.4)}
+.toast-act:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 @keyframes rise{from{transform:translateY(6px);opacity:.3}}
 .pal{width:min(620px,100%);background:var(--bg);border:1px solid var(--border);border-radius:14px;box-shadow:var(--shadow);overflow:hidden;display:flex;flex-direction:column;max-height:70%}
 .pal input{border:0;border-bottom:1px solid var(--border-muted);padding:15px 16px;font-size:15px;background:transparent;outline:none;width:100%}
@@ -884,6 +894,9 @@ body.floating-recorder .mini-rec.done{height:100vh}
 .share-size b{font-size:16px;font-weight:600;font-variant-numeric:tabular-nums}
 .share-copy{display:flex;gap:6px}
 .share-copy .input{min-width:0;flex:1}
+/* "Já compartilhado": the state first, in the text color; the dates after it, muted */
+.share-state{margin:0;font-size:13px;line-height:1.45;color:var(--fg-muted);text-wrap:pretty}
+.share-state b{font-weight:600;color:var(--fg)}
 .turnstile{min-height:65px}
 @media (max-width:760px){
   .share-row{grid-template-columns:auto 1fr}

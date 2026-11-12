@@ -1036,14 +1036,14 @@ export const useJobsStore = create<JobsState>((set, get) => {
         }
       }
       const meta = await library().createFile(
-        { name: selectionTitle(excerpt), type: 'explanation', description: source.name, folderId, parentFileId: source.id, sourceExcerpt: excerpt, status: 'generating', origin: { input: 'text', name: `trecho de "${source.name}"`, storage: 'none' } },
+        { name: `${AGENT_LABEL.explanation}: ${selectionTitle(excerpt)}`, type: 'explanation', description: source.name, folderId, parentFileId: source.id, sourceExcerpt: excerpt, status: 'generating', origin: { input: 'text', name: `trecho de "${source.name}"`, storage: 'none' } },
         '',
       )
       const input = selectionInput(source, content, library().files, excerpt, prompt, mode)
       void (async () => {
-        await runOnFile(meta, 'explanation', input, null, 'Explicação', `trecho de "${source.name}"`, undefined, undefined, model)
+        await runOnFile(meta, 'explanation', input, null, 'Explicação', `trecho de "${source.name}"`, undefined, undefined, model, true)
         const saved = useLibraryStore.getState().opened[meta.id]?.content
-        if (saved) await library().updateFile(meta.id, { name: explanationName(saved, excerpt) })
+        if (saved) await library().updateFile(meta.id, { name: `${AGENT_LABEL.explanation}: ${explanationName(saved, excerpt)}` })
       })()
       return meta.id
     },
