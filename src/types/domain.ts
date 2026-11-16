@@ -518,6 +518,8 @@ export interface Settings {
   layout: LayoutId
   storageLimitBytes: number | null
   examOneAtATime: boolean
+  /** The folder of the library: "hide" shows only the notes (the default), "group" groups them under their entrada, "item" lists the entradas as rows. Absent in old indexes: "hide". */
+  folderEntries?: 'hide' | 'group' | 'item'
 }
 
 export interface TrashEntry {

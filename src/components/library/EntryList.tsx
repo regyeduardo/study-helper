@@ -1,18 +1,17 @@
 // Navegação de entradas (FR-026): every live entrada, whatever its folder, with its type, folder, date and what was born of it.
 import { useEffect, useMemo, useState } from 'react'
 
-import type { FileMeta } from '@/types/domain'
 import { plural, SearchBox, sortFiles, type SortColumn, type SortState } from '@/components/library/Explorer'
 import { FileTableRow, SortHead, TableCheck } from '@/components/library/FileRows'
 import { FilterPanel } from '@/components/library/FilterPanel'
 import { ActiveFilters } from '@/components/library/Filters'
 import { SelectionBar } from '@/components/library/SelectionBar'
 import { isTouchScreen, useFileActions } from '@/components/library/use-file-actions'
-import { Icon, type IconName } from '@/components/ui/Icon'
+import { entryKind } from '@/components/library/entry-kind'
+import { Icon } from '@/components/ui/Icon'
 import { useIsNarrow } from '@/hooks/use-is-narrow'
 import { useFilterSource, useLiveLibrary, useSearchHits, useSearchPending } from '@/hooks/use-library-view'
 import { isNote } from '@/lib/family'
-import { mediaOf } from '@/lib/file-types'
 import { filterLibrary, NO_FILTERS, withoutFilter } from '@/lib/library-filters'
 import { searchWords } from '@/lib/library-search'
 import { paths } from '@/lib/paths'
@@ -20,19 +19,8 @@ import { useUiStore } from '@/stores/ui'
 import '@/styles/explorer.css'
 import '@/styles/entry-list.css'
 
-/** What the entrada is, as the person calls it: Vídeo, Áudio, PDF, Link, Texto colado, Tema… */
-export function entryKind(file: Pick<FileMeta, 'origin'>): { label: string; icon: IconName } {
-  const media = mediaOf(file)
-  if (media === 'video') return { label: 'Vídeo', icon: 'monitor' }
-  if (media === 'audio') return { label: 'Áudio', icon: 'mic' }
-  const origin = file.origin
-  if (origin?.input === 'url') return { label: 'Link', icon: 'link' }
-  if (origin?.input === 'youtube') return { label: 'YouTube', icon: 'monitor' }
-  if (origin?.input === 'text') return { label: 'Texto colado', icon: 'text' }
-  if (origin?.input === 'topic') return { label: 'Tema', icon: 'search' }
-  if (origin?.mime === 'application/pdf' || /\.pdf$/i.test(origin?.name ?? '')) return { label: 'PDF', icon: 'file' }
-  return { label: 'Arquivo', icon: 'file' }
-}
+// the name lives in entry-kind.ts (the folder view uses it too); it is still imported from here by the entry page and the share dialog
+export { entryKind }
 
 /** The list of entradas (FR-026, FR-044): the explorer's filter panel and table, over every live entrada of the library, whatever its folder. */
 export function EntryList() {

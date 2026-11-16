@@ -395,7 +395,7 @@ function Snippet({ hit }: { hit: SearchHit }) {
 /** Enter on the row itself (not on its star or ⋯) opens it, like the click. */
 const onEnter = (open: () => void) => (event: React.KeyboardEvent<HTMLElement>) => event.key === 'Enter' && event.target === event.currentTarget && open()
 
-function OptionsButton({ kind, id, name }: { kind: 'file' | 'folder'; id: string; name: string }) {
+export function OptionsButton({ kind, id, name }: { kind: 'file' | 'folder'; id: string; name: string }) {
   const openMenu = useUiStore(state => state.openMenu)
   return (
     <button
@@ -435,13 +435,14 @@ function CheckCell({ show, name, id, draggable }: { show: boolean; name: string;
 }
 
 /** "O que nasceu": what came of it, where it came from (1 click to the mother or the entrada), or "Nada ainda" for an entrada that gave nothing. */
-function Born({ file, quiet = false }: { file: FileMeta; quiet?: boolean }) {
+function Born({ file, quiet = false, under }: { file: FileMeta; quiet?: boolean; under?: string }) {
   const files = useLibraryStore(state => state.files)
   const { notes, artifacts } = familyCount(files, file.id)
   return (
     <>
       <FamilyCount file={file} />
-      <MotherBadge file={file} className="ex-mother" />
+      {/* a note under the header of its own entrada does not say it again */}
+      {file.parentFileId !== under && <MotherBadge file={file} className="ex-mother" />}
       {!quiet && !notes && !artifacts && !isNote(file) && <span className="ex-none">Nada ainda</span>}
     </>
   )
@@ -463,9 +464,11 @@ interface FileTableRowProps extends TableRowProps {
   kindText?: string
   /** The folder it is in, when the list mixes folders. */
   folderName?: string
+  /** The folder view grouped by entrada: the row sits under the header of this entrada (its id), or of "Sem entrada" (`null`). */
+  grouped?: { under: string | null }
 }
 
-export function FileTableRow({ file, hit, onOpen, born = false, place, to, kindText, folderName, narrow, selectable, draggable, actions }: FileTableRowProps) {
+export function FileTableRow({ file, hit, onOpen, born = false, place, to, kindText, folderName, grouped, narrow, selectable, draggable, actions }: FileTableRowProps) {
   const navigate = useNavigate()
   const selected = useUiStore(state => state.selection.has(file.id))
   const open = onOpen ?? (() => (to ? navigate(to) : actions.openFile(file)))
@@ -477,7 +480,7 @@ export function FileTableRow({ file, hit, onOpen, born = false, place, to, kindT
     </>
   )
   return (
-    <tr className={selected ? 'sel' : undefined} aria-label={file.name} data-file-id={file.id} tabIndex={0} onClick={open} onKeyDown={onEnter(open)} {...(draggable ? actions.dragFile(file) : {})}>
+    <tr className={[selected && 'sel', grouped && 'ex-grouped'].filter(Boolean).join(' ') || undefined} aria-label={file.name} data-file-id={file.id} tabIndex={0} onClick={open} onKeyDown={onEnter(open)} {...(draggable ? actions.dragFile(file) : {})}>
       <CheckCell show={selectable} name={file.name} id={file.id} draggable={draggable} />
       <td>
         {to ? (
@@ -490,7 +493,7 @@ export function FileTableRow({ file, hit, onOpen, born = false, place, to, kindT
         <div className="ex-sub">
           <span>{kindText ?? kindLine(file)}</span>
           {folderName && <span className="ex-where">{folderName}</span>}
-          {!born && <Born file={file} quiet />}
+          {!born && <Born file={file} quiet under={grouped?.under ?? undefined} />}
           {file.mastery !== null && <span>Prova {file.mastery}%</span>}
           {file.tags.map(tag => (
             <span key={tag}>#{tag}</span>
