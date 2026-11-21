@@ -45,7 +45,10 @@ export default {
     const path = new URL(request.url).pathname
     const input = await request.json().catch(() => null)
     if (path === '/token' && typeof input?.code === 'string') {
-      const result = await exchange(env, { grant_type: 'authorization_code', code: input.code, redirect_uri: 'postmessage' })
+      // 'postmessage' is the Google window; a redirect_uri is the sign-in made in the same tab (iPhone), and it must be a page of the origin that asked.
+      const redirectUri = typeof input.redirect_uri === 'string' ? input.redirect_uri : 'postmessage'
+      if (redirectUri !== 'postmessage' && redirectUri !== origin && !redirectUri.startsWith(`${origin}/`)) return json({ error: 'invalid_redirect_uri' }, 400, headers)
+      const result = await exchange(env, { grant_type: 'authorization_code', code: input.code, redirect_uri: redirectUri })
       return json(result.body, result.status, headers)
     }
     if (path === '/refresh' && typeof input?.refresh_token === 'string') {

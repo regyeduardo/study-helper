@@ -10,6 +10,8 @@ APP_URL = "https://study.ryns.me"
 # Mídia dos compartilhamentos fica em shared-media/<id>/<nota> e vale 3 dias
 # (o Worker responde 410 depois disso e apaga). Regra opcional de limpeza no R2:
 #   npx wrangler r2 bucket lifecycle add study-helper midia-3-dias shared-media/ --expire-days 3
+# Atenção: "Atualizar o link" dá mais 3 dias ao link e à mídia que já está nele (sem enviar de novo). Com essa regra o R2 apaga a mídia 3 dias
+# depois do envio, mesmo com o link atualizado; ao atualizar de novo, o app vê que ela sumiu e envia outra vez.
 [[r2_buckets]]
 binding = "BUCKET"
 bucket_name = "study-helper"

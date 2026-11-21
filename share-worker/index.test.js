@@ -690,3 +690,229 @@ describe('share of an entrada with its family (FR-070)', () => {
     expect(html).toMatch(/content="Reunião de planejamento: uma entrada, sem notas/)
   })
 })
+
+describe('updating a share in place: same link, current content, media reused', () => {
+  const DAY = 24 * 3600 * 1000
+
+  function note(id, name, content = `Texto de ${name}`) {
+    return { id, name, folderId: null, type: 'meeting', position: 0, description: '', tags: [], content, questions: [], recording }
+  }
+
+  function put(id, files, { token = 'token-ana', media, turnstileToken = 'ok' } = {}) {
+    return call('PUT', `/shares/${id}`, { token, body: { turnstileToken, share: { kind: 'file', title: files[0].name, folders: [], files }, ...(media ? { media } : {}) } })
+  }
+
+  async function sharedWithMedia() {
+    const { id } = await meetingShare()
+    const done = await uploadMedia(id, 'f1', MEDIA)
+    expect(done.status).toBe(200)
+    return id
+  }
+
+  function countPuts() {
+    const puts = []
+    const original = env.BUCKET.put.bind(env.BUCKET)
+    env.BUCKET.put = (key, ...rest) => (puts.push(key), original(key, ...rest))
+    return puts
+  }
+
+  it('replaces the text and keeps the same id and createdAt, with a new expiry of 3 days from now', async () => {
+    env.SERVE_SHARED = 'true'
+    const { id, createdAt } = await meetingShare()
+    vi.setSystemTime(new Date('2026-09-30T15:00:00Z'))
+    const response = await put(id, [note('f1', 'Reunião', 'Versão nova')])
+    expect(response.status).toBe(200)
+    const body = await response.json()
+    expect(body).toMatchObject({ id, createdAt, updatedAt: '2026-09-30T15:00:00.000Z', expiresAt: '2026-10-03T15:00:00.000Z', mediaExpiresAt: '2026-10-03T15:00:00.000Z', media: [] })
+    expect(body.bytes).toBeGreaterThan(0)
+    expect(await (await call('GET', `/shared/${id}/Reuni%C3%A3o.md`)).text()).toBe('Versão nova')
+    const manifest = manifestOf(id)
+    expect(manifest).toMatchObject({ id, createdAt, updatedAt: '2026-09-30T15:00:00.000Z', expiresAt: '2026-10-03T15:00:00.000Z' })
+    expect(env.BUCKET.objects.get(`shared/${id}/share.json`).customMetadata).toMatchObject({ expiresAt: '2026-10-03T15:00:00.000Z' })
+    // the old expiry (day 3) no longer cuts the text, the new one does
+    vi.setSystemTime(new Date('2026-10-02T15:00:00Z'))
+    expect((await call('GET', `/shared/${id}/Reuni%C3%A3o.md`)).status).toBe(200)
+    vi.setSystemTime(new Date('2026-10-03T15:00:01Z'))
+    expect((await call('GET', `/shared/${id}/Reuni%C3%A3o.md`)).status).toBe(404)
+  })
+
+  it('keeps the media already sent: the same R2 object, not written again, still in the manifest and listed in the answer', async () => {
+    const id = await sharedWithMedia()
+    const before = env.BUCKET.objects.get(`shared-media/${id}/f1`)
+    const puts = countPuts()
+    const response = await put(id, [note('f1', 'Reunião', 'Versão nova')])
+    expect(response.status).toBe(200)
+    expect((await response.json()).media).toEqual([{ fileId: 'f1', mime: 'audio/webm', size: 10 }])
+    expect(puts.some(key => key.startsWith('shared-media/'))).toBe(false)
+    expect(env.BUCKET.objects.get(`shared-media/${id}/f1`)).toBe(before)
+    expect(manifestOf(id).files).toEqual([{ id: 'f1', path: 'Reunião', media: { key: `shared-media/${id}/f1`, mime: 'audio/webm', size: 10 } }])
+    expect((await call('GET', `/media/${id}/f1`, { origin: null })).status).toBe(200)
+  })
+
+  it('a renewed share keeps its media for the new 3 days, not only until the first expiry', async () => {
+    const id = await sharedWithMedia()
+    vi.setSystemTime(new Date('2026-09-30T15:00:00Z'))
+    expect((await put(id, [note('f1', 'Reunião')])).status).toBe(200)
+    // day 3 of the first upload is past; day 5 of the new expiry is not
+    vi.setSystemTime(new Date('2026-10-02T15:00:00Z'))
+    const played = await call('GET', `/media/${id}/f1`, { origin: null })
+    expect(played.status).toBe(200)
+    expect([...new Uint8Array(await played.arrayBuffer())]).toEqual([...MEDIA])
+    vi.setSystemTime(new Date('2026-10-03T15:00:00Z'))
+    expect((await call('GET', `/media/${id}/f1`, { origin: null })).status).toBe(410)
+    expect(env.BUCKET.objects.has(`shared-media/${id}/f1`)).toBe(false)
+  })
+
+  it('adds a file to the same link: the old one keeps its media and the new one can receive its own', async () => {
+    const id = await sharedWithMedia()
+    const response = await put(id, [note('f1', 'Reunião'), note('f2', 'Outra reunião')], { media: [{ fileId: 'f2', mime: 'video/mp4', size: 10 }] })
+    expect(response.status).toBe(200)
+    expect((await response.json()).media).toEqual([{ fileId: 'f1', mime: 'audio/webm', size: 10 }])
+    expect(manifestOf(id).files).toEqual([
+      { id: 'f1', path: 'Reunião', media: { key: `shared-media/${id}/f1`, mime: 'audio/webm', size: 10 } },
+      { id: 'f2', path: 'Outra reunião', pendingMedia: { mime: 'video/mp4', size: 10 } },
+    ])
+    expect((await uploadMedia(id, 'f2', MEDIA, { mime: 'video/mp4' })).status).toBe(200)
+    const files = manifestOf(id).files
+    expect(files[1]).toEqual({ id: 'f2', path: 'Outra reunião', media: { key: `shared-media/${id}/f2`, mime: 'video/mp4', size: 10 } })
+    expect([...env.BUCKET.objects.keys()].filter(key => key.startsWith('shared-media/')).sort()).toEqual([`shared-media/${id}/f1`, `shared-media/${id}/f2`])
+  })
+
+  it('a note left out, or renamed, leaves nothing behind: text and media of what is gone are deleted', async () => {
+    const id = await sharedWithMedia()
+    await put(id, [note('f1', 'Reunião'), note('f2', 'Outra')], { media: [{ fileId: 'f2', mime: 'audio/webm', size: 10 }] })
+    await uploadMedia(id, 'f2', MEDIA)
+    expect((await put(id, [note('f1', 'Reunião renomeada')])).status).toBe(200)
+    expect([...env.BUCKET.objects.keys()].sort()).toEqual(
+      [`shared-media/${id}/f1`, `shared/${id}/Reunião renomeada.json`, `shared/${id}/Reunião renomeada.md`, `shared/${id}/share.json`].sort(),
+    )
+    expect(manifestOf(id).files).toEqual([{ id: 'f1', path: 'Reunião renomeada', media: { key: `shared-media/${id}/f1`, mime: 'audio/webm', size: 10 } }])
+  })
+
+  it('a media that is no longer in the bucket is dropped from the manifest and not listed as kept', async () => {
+    const id = await sharedWithMedia()
+    await env.BUCKET.delete(`shared-media/${id}/f1`)
+    const response = await put(id, [note('f1', 'Reunião')], { media: [{ fileId: 'f1', mime: 'audio/webm', size: 10 }] })
+    expect((await response.json()).media).toEqual([])
+    expect(manifestOf(id).files).toEqual([{ id: 'f1', path: 'Reunião', pendingMedia: { mime: 'audio/webm', size: 10 } }])
+  })
+
+  it('refuses without login, from another account, and an unknown or expired share; nothing changes and Turnstile is not spent', async () => {
+    const id = await sharedWithMedia()
+    const before = JSON.stringify([...env.BUCKET.objects.entries()].map(([key, stored]) => [key, stored.etag]))
+    fetch.mockClear()
+    expect((await put(id, [note('f1', 'Reunião')], { token: null })).status).toBe(401)
+    const other = await put(id, [note('f1', 'Reunião')], { token: 'token-bia' })
+    expect(other.status).toBe(403)
+    expect(await other.json()).toEqual({ error: 'not_owner' })
+    const gone = await put('NaoExisteNaoExisteNao1', [note('f1', 'Reunião')])
+    expect(gone.status).toBe(404)
+    expect(await gone.json()).toEqual({ error: 'share_gone' })
+    expect(fetch.mock.calls.some(([url]) => String(url).includes('turnstile'))).toBe(false)
+    expect(JSON.stringify([...env.BUCKET.objects.entries()].map(([key, stored]) => [key, stored.etag]))).toBe(before)
+    vi.setSystemTime(new Date('2026-10-01T15:00:00Z'))
+    const expired = await put(id, [note('f1', 'Reunião')])
+    expect(expired.status).toBe(410)
+    expect(await expired.json()).toEqual({ error: 'expired' })
+  })
+
+  it('refuses a failed Turnstile and a body that is not text, without touching the share', async () => {
+    const id = await sharedWithMedia()
+    const before = JSON.stringify([...env.BUCKET.objects.entries()].map(([key, stored]) => [key, stored.etag]))
+    env.TURNSTILE_SECRET = FAIL_SECRET
+    expect((await put(id, [note('f1', 'Reunião')])).status).toBe(403)
+    env.TURNSTILE_SECRET = PASS_SECRET
+    expect((await call('PUT', `/shares/${id}`, { token: 'token-ana', body: { turnstileToken: 'ok', share: { kind: 'file', title: 'x', folders: [], files: [{ ...note('f1', 'Reunião'), content: 'a\u0000b' }] } } })).status).toBe(415)
+    expect((await call('PUT', `/shares/${id}`, { token: 'token-ana', body: 'oi', contentType: 'text/plain' })).status).toBe(415)
+    expect(JSON.stringify([...env.BUCKET.objects.entries()].map(([key, stored]) => [key, stored.etag]))).toBe(before)
+  })
+
+  it('an upload that finishes while the share is being updated is not lost', async () => {
+    const id = await sharedWithMedia()
+    const original = env.BUCKET.put.bind(env.BUCKET)
+    let raced = false
+    env.BUCKET.put = async (key, body, options) => {
+      // another request rewrites the manifest right before the update writes it
+      if (!raced && key === `shared/${id}/share.json`) {
+        raced = true
+        const current = JSON.parse(env.BUCKET.objects.get(key).body)
+        current.files[0].media = { ...current.files[0].media, size: 10 }
+        await original(key, JSON.stringify(current), { httpMetadata: {}, customMetadata: env.BUCKET.objects.get(key).customMetadata })
+      }
+      return original(key, body, options)
+    }
+    const response = await put(id, [note('f1', 'Reunião', 'Versão nova')])
+    expect(response.status).toBe(200)
+    expect(raced).toBe(true)
+    expect(manifestOf(id).files[0].media).toMatchObject({ size: 10 })
+    expect(env.BUCKET.objects.get(`shared/${id}/share.json`).customMetadata.owner).toMatch(/^account-/)
+  })
+
+  it('the page for people and agents says when the link was updated', async () => {
+    const { id } = await meetingShare()
+    vi.setSystemTime(new Date('2026-09-30T15:00:00Z'))
+    await put(id, [note('f1', 'Reunião', 'Versão nova')])
+    const html = await (await call('GET', `/s/${id}`, { origin: null })).text()
+    expect(html).toContain('Compartilhado em 28/09/2026 15:00 UTC · atualizado em 30/09/2026 15:00 UTC · expira em 03/10/2026 15:00 UTC')
+    expect(html).toContain('Versão nova')
+  })
+})
+
+describe('what the owner can ask about a share, and what the recipient is told while the media goes up', () => {
+  function get(id, token = 'token-ana') {
+    return call('GET', `/shares/${id}`, { token })
+  }
+
+  it('lists the media already in the link and the media still going up, only to the owner', async () => {
+    const note = { id: 'f1', name: 'Reunião', folderId: null, type: 'meeting', position: 0, description: '', tags: [], content: 'Ata', questions: [], recording }
+    const created = await call('POST', '/shares', { token: 'token-ana', body: { turnstileToken: 'ok', share: { kind: 'file', title: 'Reunião', folders: [], files: [note] }, media: [{ fileId: 'f1', mime: 'audio/webm', size: 10 }, { fileId: 'fora', mime: 'audio/webm', size: 1 }, { fileId: 'f1', mime: 'application/pdf', size: 1 }] } })
+    const { id } = await created.json()
+    // a media that is going up shows in the manifest, for the recipient: ids that are not in the share and types that are not audio or video are ignored
+    expect(manifestOf(id).files).toEqual([{ id: 'f1', path: 'Reunião', pendingMedia: { mime: 'audio/webm', size: 10 } }])
+    expect(await (await get(id)).json()).toMatchObject({ id, kind: 'file', title: 'Reunião', media: [], pending: ['f1'] })
+    await uploadMedia(id, 'f1', MEDIA)
+    expect(manifestOf(id).files).toEqual([{ id: 'f1', path: 'Reunião', media: { key: `shared-media/${id}/f1`, mime: 'audio/webm', size: 10 } }])
+    const status = await (await get(id)).json()
+    expect(status).toMatchObject({ media: [{ fileId: 'f1', mime: 'audio/webm', size: 10 }], pending: [] })
+    expect(status.expiresAt).toBe(manifestOf(id).expiresAt)
+    expect((await call('GET', `/shares/${id}`)).status).toBe(401)
+    expect((await get(id, 'token-bia')).status).toBe(403)
+    const gone = await get('NaoExisteNaoExisteNao1')
+    expect(gone.status).toBe(404)
+    expect(await gone.json()).toEqual({ error: 'share_gone' })
+  })
+
+  it('the owner can say the media will not come: the link stops saying it is going up, and a media already in is left alone', async () => {
+    const note = { id: 'f1', name: 'Reunião', folderId: null, type: 'meeting', position: 0, description: '', tags: [], content: 'Ata', questions: [], recording }
+    const created = await call('POST', '/shares', { token: 'token-ana', body: { turnstileToken: 'ok', share: { kind: 'file', title: 'Reunião', folders: [], files: [note, { ...note, id: 'f2', name: 'Outra' }] }, media: [{ fileId: 'f1', mime: 'audio/webm', size: 10 }, { fileId: 'f2', mime: 'audio/webm', size: 10 }] } })
+    const { id } = await created.json()
+    await uploadMedia(id, 'f2', MEDIA)
+    expect((await call('DELETE', `/shares/${id}/media/f1`, { token: 'token-bia' })).status).toBe(403)
+    expect((await call('DELETE', `/shares/${id}/media/f1`)).status).toBe(401)
+    expect(manifestOf(id).files[0].pendingMedia).toBeDefined()
+    const cleared = await call('DELETE', `/shares/${id}/media/f1`, { token: 'token-ana' })
+    expect(cleared.status).toBe(200)
+    expect(await cleared.json()).toEqual({ cleared: true })
+    expect(manifestOf(id).files).toEqual([
+      { id: 'f1', path: 'Reunião' },
+      { id: 'f2', path: 'Outra', media: { key: `shared-media/${id}/f2`, mime: 'audio/webm', size: 10 } },
+    ])
+    // a media that is already in is not taken out by this
+    expect((await call('DELETE', `/shares/${id}/media/f2`, { token: 'token-ana' })).status).toBe(200)
+    expect(manifestOf(id).files[1].media).toMatchObject({ size: 10 })
+    expect((await call('DELETE', `/shares/${id}/media/fora`, { token: 'token-ana' })).status).toBe(404)
+    expect((await get('NaoExisteNaoExisteNao1')).status).toBe(404)
+  })
+
+  it('answers the preflight of a download with Range from the app, and exposes what the download needs to show progress', async () => {
+    const { id } = await meetingShare()
+    await uploadMedia(id, 'f1', MEDIA)
+    const preflight = await worker.fetch(new Request(`https://share.test/media/${id}/f1`, { method: 'OPTIONS', headers: { Origin: ORIGIN, 'Access-Control-Request-Method': 'GET', 'Access-Control-Request-Headers': 'range' } }), env)
+    expect(preflight.status).toBe(204)
+    expect(preflight.headers.get('Access-Control-Allow-Origin')).toBe(ORIGIN)
+    expect(preflight.headers.get('Access-Control-Allow-Headers')).toMatch(/Range/)
+    const whole = await call('GET', `/media/${id}/f1`)
+    expect(whole.headers.get('Access-Control-Expose-Headers')).toMatch(/Content-Length/)
+    expect(whole.headers.get('Content-Length')).toBe('10')
+  })
+})

@@ -174,7 +174,9 @@ function uniqueName(name, taken) {
   return candidate
 }
 
-export function shareTree(share, id, createdAt, expiresAt, mediaExpiresAt) {
+/** `extras`: `retained` (fileId to the media already in the link), `pending` (fileId to the media that is going up) and `updatedAt`, for the update of a link in place. */
+export function shareTree(share, id, createdAt, expiresAt, mediaExpiresAt, extras = {}) {
+  const { retained = new Map(), pending = new Map(), updatedAt } = extras
   const root = `${SHARED_PREFIX}${id}/`
   const folderPaths = new Map()
   const taken = new Map()
@@ -200,9 +202,9 @@ export function shareTree(share, id, createdAt, expiresAt, mediaExpiresAt) {
     const sidecar = { meta, questions: file.questions, attempts: [], highlights: file.highlights, ...(file.transcript !== undefined ? { transcript: file.transcript } : {}), ...(file.recording !== undefined ? { recording: file.recording } : {}), ...(file.documents !== undefined ? { documents: file.documents } : {}), ...(file.artifacts !== undefined ? { artifacts: file.artifacts } : {}) }
     objects.push({ key: `${root}${path}.md`, body: file.content, type: 'text/markdown' })
     objects.push({ key: `${root}${path}.json`, body: JSON.stringify(sidecar, null, 2), type: 'application/json' })
-    return { id: file.id, path }
+    return { id: file.id, path, ...(retained.has(file.id) ? { media: retained.get(file.id) } : {}), ...(pending.has(file.id) ? { pendingMedia: pending.get(file.id) } : {}) }
   })
-  const manifest = { version: 2, id, kind: share.kind, title: share.title, createdAt, expiresAt, mediaExpiresAt, folders, files }
+  const manifest = { version: 2, id, kind: share.kind, title: share.title, createdAt, ...(updatedAt ? { updatedAt } : {}), expiresAt, mediaExpiresAt, folders, files }
   objects.unshift({ key: `${root}${MANIFEST_NAME}`, body: JSON.stringify(manifest, null, 2), type: 'application/json' })
   return objects
 }
@@ -230,6 +232,28 @@ async function removeShareObjects(bucket, id) {
   await removePrefix(bucket, `${MEDIA_PREFIX}${id}/`)
 }
 
+const FILE_ID = /^[A-Za-z0-9_-]{1,64}$/
+
+/** The media the app says it is about to send, by note: only notes of the share, only audio or video, and none that is already in the link. */
+function pendingMediaOf(list, share, retained = new Map()) {
+  const pending = new Map()
+  for (const item of Array.isArray(list) ? list : []) {
+    const mime = typeof item?.mime === 'string' ? item.mime.trim() : ''
+    if (typeof item?.fileId !== 'string' || !FILE_ID.test(item.fileId) || !share.files.some(file => file.id === item.fileId) || retained.has(item.fileId) || !MEDIA_TYPE.test(mime) || hasBinary(mime)) continue
+    pending.set(item.fileId, { mime, size: Math.max(0, Math.floor(Number(item.size)) || 0) })
+  }
+  return pending
+}
+
+async function putShareObjects(bucket, objects, { accountKey, bytes, expiresAt }) {
+  for (const object of objects) {
+    await bucket.put(object.key, object.body, {
+      httpMetadata: { contentType: `${object.type}; charset=utf-8`, cacheControl: SHARED_CACHE },
+      customMetadata: object.key.endsWith(`/${MANIFEST_NAME}`) ? { owner: accountKey, bytes: String(bytes), expiresAt } : { expiresAt },
+    })
+  }
+}
+
 async function createShare(request, env, headers) {
   if (!(request.headers.get('Content-Type') ?? '').toLowerCase().startsWith('application/json')) return json({ error: 'text_only' }, 415, headers)
   const input = await request.json().catch(() => null)
@@ -244,20 +268,115 @@ async function createShare(request, env, headers) {
   const createdAt = new Date(now).toISOString()
   const expiresAt = new Date(now + SHARE_DAYS * DAY_MS).toISOString()
   const mediaExpiresAt = new Date(now + MEDIA_DAYS * DAY_MS).toISOString()
-  const objects = shareTree(share, id, createdAt, expiresAt, mediaExpiresAt)
+  const objects = shareTree(share, id, createdAt, expiresAt, mediaExpiresAt, { pending: pendingMediaOf(input.media, share) })
   const bytes = objects.reduce((sum, object) => sum + bytesOf(object.body), 0)
   try {
-    for (const object of objects) {
-      await env.BUCKET.put(object.key, object.body, {
-        httpMetadata: { contentType: `${object.type}; charset=utf-8`, cacheControl: SHARED_CACHE },
-        customMetadata: object.key.endsWith(`/${MANIFEST_NAME}`) ? { owner: accountKey, bytes: String(bytes), expiresAt } : { expiresAt },
-      })
-    }
+    await putShareObjects(env.BUCKET, objects, { accountKey, bytes, expiresAt })
   } catch (error) {
     await removeShareObjects(env.BUCKET, id).catch(() => undefined)
     throw error
   }
   return json({ id, createdAt, expiresAt, mediaExpiresAt, bytes }, 201, headers)
+}
+
+/** The manifest of a share of this account: refused for who is not logged in, a share that is gone, another account's and one past its expiry. */
+async function ownedManifest(request, env, headers, id) {
+  const accountKey = await identify(request, env)
+  if (!accountKey) return { refused: json({ error: 'login_required' }, 401, headers) }
+  const object = await env.BUCKET.get(manifestKey(id))
+  const manifest = object ? await object.json().catch(() => null) : null
+  // "share_gone", not "not_found": a Worker without these routes answers not_found to anything, and the app tells the two apart
+  if (!manifest || !Array.isArray(manifest.files)) return { refused: json({ error: 'share_gone' }, 404, headers) }
+  if (object.customMetadata?.owner !== accountKey) return { refused: json({ error: 'not_owner' }, 403, headers) }
+  if (isPast(manifest.expiresAt) || isPast(object.customMetadata?.expiresAt)) return { refused: json({ error: 'expired' }, 410, headers) }
+  return { object, manifest, accountKey }
+}
+
+/** The media of the manifest that is really in the bucket and not past its expiry, by note. */
+async function mediaInLink(bucket, id, manifest) {
+  const found = new Map()
+  if (isPast(manifest.mediaExpiresAt)) return found
+  for (const entry of manifest.files) {
+    if (!entry.media) continue
+    const stored = await bucket.head(mediaKey(id, entry.id))
+    if (stored) found.set(entry.id, { key: mediaKey(id, entry.id), mime: stored.httpMetadata?.contentType || entry.media.mime || '', size: stored.size })
+  }
+  return found
+}
+
+function listedMedia(found) {
+  return [...found].map(([fileId, media]) => ({ fileId, mime: media.mime, size: media.size }))
+}
+
+async function shareStatus(request, env, headers, id) {
+  const { refused, manifest } = await ownedManifest(request, env, headers, id)
+  if (refused) return refused
+  const found = await mediaInLink(env.BUCKET, id, manifest)
+  const pending = manifest.files.filter(entry => entry.pendingMedia && !found.has(entry.id)).map(entry => entry.id)
+  return json({ id, kind: manifest.kind, title: manifest.title, createdAt: manifest.createdAt, ...(manifest.updatedAt ? { updatedAt: manifest.updatedAt } : {}), expiresAt: manifest.expiresAt, mediaExpiresAt: manifest.mediaExpiresAt, media: listedMedia(found), pending }, 200, headers)
+}
+
+/** What is in the bucket under the share and not in the new tree: the text of a note left out or renamed, and the media of a note that left. */
+async function removeLeftovers(bucket, id, objects, share) {
+  const kept = new Set(objects.map(object => object.key))
+  const stale = []
+  for (const key of (await listKeys(bucket, `${SHARED_PREFIX}${id}/`))) if (!kept.has(key)) stale.push(key)
+  for (const key of (await listKeys(bucket, `${MEDIA_PREFIX}${id}/`))) if (!share.files.some(file => mediaKey(id, file.id) === key)) stale.push(key)
+  if (stale.length) await bucket.delete(stale)
+}
+
+async function listKeys(bucket, prefix) {
+  const keys = []
+  let cursor
+  do {
+    const page = await bucket.list({ prefix, cursor })
+    keys.push(...page.objects.map(object => object.key))
+    cursor = page.truncated ? page.cursor : undefined
+  } while (cursor)
+  return keys
+}
+
+/**
+ * The same link with the current content: the text is written again, the media already in the bucket stays where it is (same object, no new upload),
+ * and the share and its media get 3 more days. A media that went up while this ran is kept: the manifest is written only if nobody changed it meanwhile.
+ */
+async function updateShare(request, env, headers, id) {
+  if (!(request.headers.get('Content-Type') ?? '').toLowerCase().startsWith('application/json')) return json({ error: 'text_only' }, 415, headers)
+  const input = await request.json().catch(() => null)
+  if (!input) return json({ error: 'invalid_json' }, 400, headers)
+  const owned = await ownedManifest(request, env, headers, id)
+  if (owned.refused) return owned.refused
+  // checked after the cheap refusals: a link that is gone leaves the token unspent, for the app to create a new one
+  if (!(await turnstilePassed(input.turnstileToken, request, env))) return json({ error: 'turnstile_failed' }, 403, headers)
+  const share = cleanShare(input.share)
+  if (!share) return json({ error: 'text_only' }, 415, headers)
+  const now = Date.now()
+  const updatedAt = new Date(now).toISOString()
+  const expiresAt = new Date(now + SHARE_DAYS * DAY_MS).toISOString()
+  const mediaExpiresAt = new Date(now + MEDIA_DAYS * DAY_MS).toISOString()
+  let current = owned
+  for (let attempt = 0; attempt < CAS_ATTEMPTS; attempt++) {
+    const found = await mediaInLink(env.BUCKET, id, current.manifest)
+    const retained = new Map(share.files.filter(file => found.has(file.id)).map(file => [file.id, found.get(file.id)]))
+    const objects = shareTree(share, id, current.manifest.createdAt, expiresAt, mediaExpiresAt, { retained, pending: pendingMediaOf(input.media, share, retained), updatedAt })
+    const bytes = objects.reduce((sum, object) => sum + bytesOf(object.body), 0)
+    const [manifest, ...texts] = objects
+    await putShareObjects(env.BUCKET, texts, { accountKey: owned.accountKey, bytes, expiresAt })
+    const written = await env.BUCKET.put(manifestKey(id), manifest.body, {
+      httpMetadata: { contentType: `${manifest.type}; charset=utf-8`, cacheControl: SHARED_CACHE },
+      customMetadata: { owner: owned.accountKey, bytes: String(bytes), expiresAt },
+      onlyIf: { etagMatches: current.object.etag },
+    })
+    if (written) {
+      await removeLeftovers(env.BUCKET, id, objects, share)
+      return json({ id, createdAt: current.manifest.createdAt, updatedAt, expiresAt, mediaExpiresAt, bytes, media: listedMedia(retained) }, 200, headers)
+    }
+    const object = await env.BUCKET.get(manifestKey(id))
+    const manifestNow = object ? await object.json().catch(() => null) : null
+    if (!manifestNow) return json({ error: 'share_gone' }, 404, headers)
+    current = { ...owned, object, manifest: manifestNow }
+  }
+  throw new Error('manifest_busy')
 }
 
 async function deleteShare(request, env, headers, id) {
@@ -306,9 +425,33 @@ async function addMediaToManifest(bucket, id, fileId, media) {
     const object = await bucket.get(manifestKey(id))
     if (!object) return false
     const manifest = await object.json()
-    manifest.files = manifest.files.map(file => (file.id === fileId ? { ...file, media } : file))
+    manifest.files = manifest.files.map(file => {
+      if (file.id !== fileId) return file
+      // the media is in: it is no longer "going up"
+      const { pendingMedia: _pending, ...done } = file
+      return { ...done, media }
+    })
     const written = await bucket.put(manifestKey(id), JSON.stringify(manifest, null, 2), { httpMetadata: object.httpMetadata, customMetadata: object.customMetadata, onlyIf: { etagMatches: object.etag } })
     if (written) return true
+  }
+  throw new Error('manifest_busy')
+}
+
+/** The owner gives up on a media that was going up (the upload failed): the link stops saying it is coming. A media already in the link is not touched. */
+async function dropPendingMedia(request, env, headers, id, fileId) {
+  const { refused } = await ownedShare(request, env, headers, id, fileId)
+  if (refused) return refused
+  for (let attempt = 0; attempt < CAS_ATTEMPTS; attempt++) {
+    const object = await env.BUCKET.get(manifestKey(id))
+    if (!object) return json({ error: 'not_found' }, 404, headers)
+    const manifest = await object.json()
+    manifest.files = manifest.files.map(file => {
+      if (file.id !== fileId || !file.pendingMedia) return file
+      const { pendingMedia: _pending, ...rest } = file
+      return rest
+    })
+    const written = await env.BUCKET.put(manifestKey(id), JSON.stringify(manifest, null, 2), { httpMetadata: object.httpMetadata, customMetadata: object.customMetadata, onlyIf: { etagMatches: object.etag } })
+    if (written) return json({ cleared: true }, 200, headers)
   }
   throw new Error('manifest_busy')
 }
@@ -341,11 +484,14 @@ export function rangeOf(header, size) {
   return { start, end }
 }
 
+// the share can be renewed (PUT /shares/<id>), which gives its media 3 more days in the manifest: the object keeps the expiry it was written with
 async function mediaExpiryOf(bucket, id, media) {
-  if (media) return media.customMetadata?.expiresAt
+  const own = media?.customMetadata?.expiresAt
+  if (own && !isPast(own)) return own
   const object = await bucket.get(manifestKey(id))
   const manifest = object ? await object.json().catch(() => null) : null
-  return manifest?.mediaExpiresAt
+  if (!media) return manifest?.mediaExpiresAt
+  return [own, manifest?.mediaExpiresAt].filter(Boolean).sort().at(-1)
 }
 
 async function serveMedia(request, env, headers, id, fileId) {
@@ -537,7 +683,7 @@ function shareDocument(share, { origin, appUrl, fileId }) {
     redirect: appLink,
     blocks: [
       heading(1, share.title),
-      paragraph(`Compartilhado em ${dateText(share.createdAt)} · expira em ${dateText(share.expiresAt)}`),
+      paragraph(`Compartilhado em ${dateText(share.createdAt)}${share.updatedAt ? ` · atualizado em ${dateText(share.updatedAt)}` : ''} · expira em ${dateText(share.expiresAt)}`),
       link('', 'Abrir no Estudo', appLink),
       ...(share.kind === 'entrada' && !only.length ? familyBlocks : treeBlocks)(shown, id => `${origin}/media/${share.id}/${encodeURIComponent(id)}`),
     ],
@@ -624,7 +770,7 @@ async function loadShare(bucket, id) {
   const folders = await Promise.all((Array.isArray(manifest.folders) ? manifest.folders : []).map(entry => jsonAt(bucket, `${root}${entry.path}${FOLDER_META_NAME}`)))
   const files = await Promise.all(manifest.files.map(entry => sharedNote(bucket, root, entry)))
   if (folders.includes(null) || files.includes(null)) return { status: 404 }
-  return { status: 200, share: { id, kind: manifest.kind, title: textOrEmpty(manifest.title), createdAt: manifest.createdAt, expiresAt: manifest.expiresAt, folders, files } }
+  return { status: 200, share: { id, kind: manifest.kind, title: textOrEmpty(manifest.title), createdAt: manifest.createdAt, updatedAt: manifest.updatedAt, expiresAt: manifest.expiresAt, folders, files } }
 }
 
 async function serveSharePage(request, env, id, fileId, markdown) {
@@ -652,8 +798,11 @@ export default {
     const uploadMatch = path.match(MEDIA_UPLOAD_PATH)
     const fileMatch = path.match(SHARED_FILE_PATH)
     if (path === '/shares' && request.method === 'POST') return createShare(request, env, headers)
+    if (shareMatch && request.method === 'GET') return shareStatus(request, env, headers, shareMatch[1])
+    if (shareMatch && request.method === 'PUT') return updateShare(request, env, headers, shareMatch[1])
     if (shareMatch && request.method === 'DELETE') return deleteShare(request, env, headers, shareMatch[1])
     if (uploadMatch && !uploadMatch[3] && request.method === 'POST') return startMedia(request, env, headers, uploadMatch[1], uploadMatch[2])
+    if (uploadMatch && !uploadMatch[3] && request.method === 'DELETE') return dropPendingMedia(request, env, headers, uploadMatch[1], uploadMatch[2])
     if (uploadMatch && uploadMatch[3] === 'done' && request.method === 'POST') return finishMedia(request, env, headers, uploadMatch[1], uploadMatch[2])
     if (uploadMatch && /^\d+$/.test(uploadMatch[3] ?? '') && request.method === 'PUT') return putMediaPart(request, env, headers, uploadMatch[1], uploadMatch[2], Number(uploadMatch[3]))
     if (fileMatch && request.method === 'GET' && env.SERVE_SHARED === 'true') return serveShared(env, headers, fileMatch[1], fileMatch[2])
