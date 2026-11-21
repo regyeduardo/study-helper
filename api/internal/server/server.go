@@ -8,6 +8,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/regyeduardo/study-helper/api/internal/blobs"
 )
 
 // GoogleConfig is the Google sign-in done by the server; the URLs are Google's own, replaced by a fake Google in the tests.
@@ -37,6 +39,10 @@ type Config struct {
 	Now           func() time.Time
 	// HTTPClient talks to Google; the tests give one that reaches the fake Google.
 	HTTPClient *http.Client
+	// Blobs is where the library's content lives (R2); nil when not configured, and then the App routes answer 503.
+	Blobs blobs.Store
+	// PartSize is the size of each part of an upload (10 MiB); the tests use a few bytes.
+	PartSize int64
 }
 
 // DefaultGoogle is Google's real sign-in.
@@ -57,6 +63,7 @@ type Server struct {
 	cfg  Config
 	keys *jwksCache
 	mu   sync.Mutex
+	live *hub
 }
 
 func New(db *sql.DB, cfg Config) *Server {
@@ -66,7 +73,10 @@ func New(db *sql.DB, cfg Config) *Server {
 	if cfg.HTTPClient == nil {
 		cfg.HTTPClient = &http.Client{Timeout: 15 * time.Second}
 	}
-	return &Server{db: db, cfg: cfg, keys: &jwksCache{}}
+	if cfg.PartSize == 0 {
+		cfg.PartSize = 10 << 20
+	}
+	return &Server{db: db, cfg: cfg, keys: &jwksCache{}, live: newHub()}
 }
 
 // access says who may call a route: anyone, any signed-in account, or an account freed by a code with "Usar a estrutura do app" on.
@@ -98,6 +108,27 @@ func (srv *Server) Handler() http.Handler {
 	route("GET /v1/devices", signedIn, false, srv.devices)
 	route("PATCH /v1/devices/{id}", signedIn, false, srv.renameDevice)
 	route("DELETE /v1/devices/{id}", signedIn, false, srv.signOutDevice)
+	// entrega 4: the library kept in the App
+	app := func(pattern string, handle handlerFunc) { route(pattern, appOn, false, srv.withBlobs(handle)) }
+	app("GET /v1/library/map", srv.libraryMap)
+	app("GET /v1/library/items/{id}", srv.getLibraryItem)
+	app("PUT /v1/library/items/{id}", srv.putLibraryItem)
+	app("DELETE /v1/library/items/{id}", srv.deleteLibraryItem)
+	app("POST /v1/library/items/batch", srv.libraryBatch)
+	app("GET /v1/library/items/{id}/parts/{part...}", srv.getPart)
+	app("PUT /v1/library/items/{id}/parts/{part...}", srv.putPart)
+	app("DELETE /v1/library/items/{id}/parts/{part...}", srv.deletePart)
+	app("POST /v1/library/parts/batch", srv.partsBatch)
+	app("GET /v1/library/index", srv.getIndex)
+	app("PUT /v1/library/index", srv.putIndex)
+	app("POST /v1/uploads", srv.startUpload)
+	app("GET /v1/uploads/{id}", srv.getUpload)
+	app("PUT /v1/uploads/{id}/parts/{n}", srv.putUploadPart)
+	app("POST /v1/uploads/{id}/complete", srv.completeUpload)
+	app("DELETE /v1/uploads/{id}", srv.abandonUpload)
+	app("GET /v1/media/{item}/{media}", srv.getMedia)
+	app("DELETE /v1/media/{item}/{media}", srv.deleteMedia)
+	route("GET /v1/live", appOn, false, srv.liveChannel)
 	adminRoute := func(pattern string, handle handlerFunc) { mux.Handle(pattern, srv.adminOnly(handle)) }
 	adminRoute("GET /v1/admin/codes", srv.adminCodes)
 	adminRoute("POST /v1/admin/codes", srv.adminCreateCode)

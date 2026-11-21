@@ -9,6 +9,7 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
+	"io"
 	"math/big"
 	"net/http"
 	"net/http/cookiejar"
@@ -20,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/regyeduardo/study-helper/api/internal/blobs"
 	"github.com/regyeduardo/study-helper/api/internal/store"
 )
 
@@ -34,6 +36,9 @@ type harness struct {
 	srv    *Server
 	api    *httptest.Server
 	google *fakeGoogle
+	blobs  *blobs.Memory
+	// now is the clock the server reads; tests move it
+	now time.Time
 }
 
 func newHarness(t *testing.T) *harness {
@@ -45,12 +50,13 @@ func newHarness(t *testing.T) *harness {
 	t.Cleanup(func() { db.Close() })
 	google := newFakeGoogle(t)
 	key := bytes.Repeat([]byte{7}, 32)
-	h := &harness{t: t, db: db, google: google}
+	h := &harness{t: t, db: db, google: google, blobs: blobs.NewMemory(), now: time.Now().UTC()}
 	h.api = httptest.NewServer(nil)
 	cfg := Config{
 		AppOrigin: appOrigin, PublicURL: h.api.URL, AdminEmails: []string{"dono@exemplo.com"}, TokenKey: key,
 		Google:  GoogleConfig{ClientID: clientID, ClientSecret: "segredo-do-cliente", AuthURL: google.URL + "/auth", TokenURL: google.URL + "/token", JWKSURL: google.URL + "/jwks", Issuers: []string{"https://accounts.google.com"}},
 		Version: "teste", HTTPClient: google.Client(),
+		Blobs: h.blobs, PartSize: 4, Now: func() time.Time { return h.now },
 	}
 	h.srv = New(db, cfg)
 	h.api.Config.Handler = h.srv.Handler()
@@ -232,4 +238,24 @@ func (h *harness) finish(client *http.Client, query string) *http.Response {
 	h.t.Helper()
 	response, _ := h.do(client, call{path: "/v1/auth/google/callback?" + query})
 	return response
+}
+
+// raw is a call with a body and headers of its own (parts, uploads, media), the app's mark and origin on changes.
+func (h *harness) raw(client *http.Client, method, path string, body []byte, headers map[string]string) (*http.Response, []byte) {
+	h.t.Helper()
+	request, _ := http.NewRequest(method, h.api.URL+path, bytes.NewReader(body))
+	if method != http.MethodGet && method != http.MethodHead {
+		request.Header.Set("X-Estudo", "1")
+		request.Header.Set("Origin", appOrigin)
+	}
+	for name, value := range headers {
+		request.Header.Set(name, value)
+	}
+	response, err := client.Do(request)
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	defer response.Body.Close()
+	out, _ := io.ReadAll(response.Body)
+	return response, out
 }

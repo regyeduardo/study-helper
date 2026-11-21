@@ -57,7 +57,7 @@ export interface RemoteChanges {
 }
 
 export interface Repository {
-  readonly kind: 'local' | 'drive'
+  readonly kind: 'local' | 'drive' | 'app'
   readonly accountId: string
   load(): Promise<Snapshot>
   readContent(fileId: string): Promise<string>

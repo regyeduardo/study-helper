@@ -83,14 +83,19 @@ jobs:
           ADMIN_EMAILS: ${{ secrets.ADMIN_EMAILS }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           DEEPINFRA_API_KEY: ${{ secrets.DEEPINFRA_API_KEY }}
+          R2_ENDPOINT: ${{ vars.R2_ENDPOINT }}
+          R2_BUCKET: ${{ vars.R2_BUCKET }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
         run: |
           mkdir -p bundle/nginx
           cp deploy/compose.yml deploy/deploy.sh bundle/
           cp deploy/nginx/http.conf deploy/nginx/https.conf bundle/nginx/
           owner="${GITHUB_REPOSITORY_OWNER,,}"
           printf 'IMAGE=%s\nTAG=%s\nGHCR_USER=%s\nGHCR_TOKEN=%s\nDOMAIN=%s\n' "ghcr.io/$owner/study-helper-api" "$GITHUB_SHA" "$GITHUB_ACTOR" "$GHCR_TOKEN" "api.study.ryns.me" > bundle/deploy.env
-          printf 'APP_ORIGIN=%s\nPUBLIC_URL=%s\nGOOGLE_CLIENT_ID=%s\nGOOGLE_CLIENT_SECRET=%s\nTOKEN_KEY=%s\nADMIN_EMAILS=%s\nOPENROUTER_API_KEY=%s\nDEEPINFRA_API_KEY=%s\n' \
-            "$APP_ORIGIN" "$PUBLIC_URL" "$GOOGLE_CLIENT_ID" "$GOOGLE_CLIENT_SECRET" "$TOKEN_KEY" "$ADMIN_EMAILS" "$OPENROUTER_API_KEY" "$DEEPINFRA_API_KEY" > bundle/app.env
+          printf 'APP_ORIGIN=%s\nPUBLIC_URL=%s\nGOOGLE_CLIENT_ID=%s\nGOOGLE_CLIENT_SECRET=%s\nTOKEN_KEY=%s\nADMIN_EMAILS=%s\nOPENROUTER_API_KEY=%s\nDEEPINFRA_API_KEY=%s\nR2_ENDPOINT=%s\nR2_BUCKET=%s\nR2_ACCESS_KEY_ID=%s\nR2_SECRET_ACCESS_KEY=%s\n' \
+            "$APP_ORIGIN" "$PUBLIC_URL" "$GOOGLE_CLIENT_ID" "$GOOGLE_CLIENT_SECRET" "$TOKEN_KEY" "$ADMIN_EMAILS" "$OPENROUTER_API_KEY" "$DEEPINFRA_API_KEY" \
+            "$R2_ENDPOINT" "$R2_BUCKET" "$R2_ACCESS_KEY_ID" "$R2_SECRET_ACCESS_KEY" > bundle/app.env
           tar -czf bundle.tgz -C bundle .
       - name: Deploy
         env:

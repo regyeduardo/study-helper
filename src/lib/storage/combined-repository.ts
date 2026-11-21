@@ -4,10 +4,8 @@ import { LocalRepository } from '@/lib/storage/local-repository'
 import { filePlaceOf, folderPlaceOf } from '@/lib/storage/place'
 import type { ConflictResolver, RemoteChanges, Repository, StorageUsage, StoredSize, StoredSource } from '@/lib/storage/repository'
 
-/** Where an item is kept right now: the account's Google Drive or this browser (Local). */
-export type Side = 'drive' | 'local'
-
-const sideOfPlace = (place: Place): Side => (place === 'local' ? 'local' : 'drive')
+/** Where an item is kept right now: the account's Google Drive, this browser (Local) or the App (spec 003, entrega 4). */
+export type Side = 'drive' | 'local' | 'app'
 
 /**
  * The library of a Google account (spec 003, história 9, R16): its Google Drive and this browser's Local in one tree. Each write goes to the
@@ -21,11 +19,37 @@ export class CombinedRepository implements Repository {
   private readonly folders = new Map<string, FolderMeta>()
   /** During a move an item is on both sides: the journal says which one the library shows. */
   private showing: (id: string) => Side | undefined = () => undefined
+  /** The App, only for an account freed by a code with "Usar a estrutura do app" on; without it, nothing changes. */
+  private appRepo: Repository | null = null
 
   constructor(
     readonly drive: Repository,
     readonly local: Repository,
   ) {}
+
+  get app(): Repository | null {
+    return this.appRepo
+  }
+
+  /** Turning the app structure on or off; the library loads again after it. */
+  setApp(app: Repository | null): void {
+    this.appRepo = app
+    if (app && this.resolver) app.setConflictResolver(this.resolver)
+  }
+
+  /** The repository of one side; App falls back to the Drive when it is off. */
+  repoFor(side: Side): Repository {
+    if (side === 'local') return this.local
+    if (side === 'app' && this.appRepo) return this.appRepo
+    return this.drive
+  }
+
+  private sideOfPlace(place: Place): Side {
+    if (place === 'local') return 'local'
+    return place === 'app' && this.appRepo ? 'app' : 'drive'
+  }
+
+  private resolver: ConflictResolver | null = null
 
   get accountId(): string {
     return this.drive.accountId
@@ -68,13 +92,13 @@ export class CombinedRepository implements Repository {
   }
 
   async load(): Promise<Snapshot> {
-    const [drive, local] = await Promise.all([this.drive.load(), this.local.load()])
-    return this.merge(drive, local)
+    const [drive, local, app] = await Promise.all([this.drive.load(), this.local.load(), this.appRepo?.load() ?? Promise.resolve(null)])
+    return this.merge(drive, local, app)
   }
 
   async pullChanges(): Promise<RemoteChanges> {
-    const [{ snapshot, changedFileIds }, local] = await Promise.all([this.drive.pullChanges(), this.local.load()])
-    return { snapshot: this.merge(snapshot, local), changedFileIds }
+    const [{ snapshot, changedFileIds }, local, app] = await Promise.all([this.drive.pullChanges(), this.local.load(), this.appRepo?.pullChanges() ?? Promise.resolve(null)])
+    return { snapshot: this.merge(snapshot, local, app?.snapshot ?? null), changedFileIds: [...new Set([...changedFileIds, ...(app?.changedFileIds ?? [])])] }
   }
 
   async readContent(fileId: string): Promise<string> {
@@ -89,16 +113,16 @@ export class CombinedRepository implements Repository {
 
   async saveFile(sidecar: FileSidecar, content?: string): Promise<FileSidecar> {
     const meta = sidecar.meta
-    return this.writeFileTo(this.sides.get(meta.id) ?? sideOfPlace(filePlaceOf(meta, [...this.folders.values()], 'drive')), sidecar, content)
+    return this.writeFileTo(this.sides.get(meta.id) ?? this.sideOfPlace(filePlaceOf(meta, [...this.folders.values()], 'drive')), sidecar, content)
   }
 
   /** Writes a note to one side, whatever side it is on now: a move copies with it before taking the item out of the other side. */
   async writeFileTo(side: Side, sidecar: FileSidecar, content?: string): Promise<FileSidecar> {
     const meta = sidecar.meta
-    if (side === 'local') {
+    if (side === 'local' || (side === 'app' && this.appRepo)) {
       const { awayFolderId: _away, ...plain } = meta
-      const saved = await this.local.saveFile({ ...sidecar, meta: plain }, content)
-      if (!this.sides.has(meta.id)) this.sides.set(meta.id, 'local')
+      const saved = await this.repoFor(side).saveFile({ ...sidecar, meta: plain }, content)
+      if (!this.sides.has(meta.id)) this.sides.set(meta.id, side)
       return saved
     }
     const folderId = this.driveFolderOf(meta.folderId)
@@ -111,14 +135,14 @@ export class CombinedRepository implements Repository {
 
   /** Reads a note from one side (a move checks what arrived). */
   async readFrom(side: Side, fileId: string): Promise<{ content: string; sidecar: FileSidecar }> {
-    const repo = side === 'local' ? this.local : this.drive
+    const repo = this.repoFor(side)
     const [content, sidecar] = await Promise.all([repo.readContent(fileId), repo.readSidecar(fileId)])
     return { content, sidecar: side === 'drive' ? { ...sidecar, meta: this.trueFile(sidecar.meta) } : sidecar }
   }
 
   /** Takes a note out of one side only. */
   async removeFrom(side: Side, fileId: string): Promise<void> {
-    await (side === 'local' ? this.local : this.drive).removeFile(fileId)
+    await this.repoFor(side).removeFile(fileId)
   }
 
   async removeFile(fileId: string): Promise<void> {
@@ -128,13 +152,13 @@ export class CombinedRepository implements Repository {
 
   async saveFolder(folder: FolderMeta): Promise<void> {
     const tree = [...this.folders.values()].filter(item => item.id !== folder.id).concat(folder)
-    await this.writeFolderTo(this.sides.get(folder.id) ?? sideOfPlace(folderPlaceOf(folder.id, tree, 'drive')), folder)
+    await this.writeFolderTo(this.sides.get(folder.id) ?? this.sideOfPlace(folderPlaceOf(folder.id, tree, 'drive')), folder)
   }
 
   async writeFolderTo(side: Side, folder: FolderMeta): Promise<void> {
-    if (side === 'local') {
+    if (side === 'local' || (side === 'app' && this.appRepo)) {
       const { awayParentId: _away, ...plain } = folder
-      await this.local.saveFolder(plain)
+      await this.repoFor(side).saveFolder(plain)
     } else {
       const parentId = this.driveFolderOf(folder.parentId)
       const away = parentId !== folder.parentId ? (folder.parentId ?? undefined) : folder.awayParentId && !this.folders.has(folder.awayParentId) ? folder.awayParentId : undefined
@@ -151,11 +175,11 @@ export class CombinedRepository implements Repository {
    */
   async removeFolderFrom(side: Side, folderId: string): Promise<void> {
     if (side === 'drive' && this.drive instanceof DriveRepository && this.drive.holdsItems(folderId)) throw new Error('A pasta ainda tem itens no Google Drive; nada foi apagado.')
-    await (side === 'local' ? this.local : this.drive).removeFolder(folderId)
+    await this.repoFor(side).removeFolder(folderId)
   }
 
   async removeFolder(folderId: string): Promise<void> {
-    await (this.sides.get(folderId) === 'local' ? this.local : this.drive).removeFolder(folderId)
+    await this.repoFor(this.sides.get(folderId) ?? 'drive').removeFolder(folderId)
     this.sides.delete(folderId)
     this.folders.delete(folderId)
   }
@@ -169,10 +193,12 @@ export class CombinedRepository implements Repository {
   }
 
   async getSource(ref: string): Promise<Blob> {
+    if (ref.startsWith('app:') && this.appRepo) return this.appRepo.getSource(ref)
     return (await this.inLocal(ref)) ? this.local.getSource(ref) : this.drive.getSource(ref)
   }
 
   async removeSource(ref: string): Promise<void> {
+    if (ref.startsWith('app:') && this.appRepo) return this.appRepo.removeSource(ref)
     await ((await this.inLocal(ref)) ? this.local.removeSource(ref) : this.drive.removeSource(ref))
   }
 
@@ -182,30 +208,44 @@ export class CombinedRepository implements Repository {
 
   async fileSizes(fileIds?: string[]): Promise<Record<string, StoredSize>> {
     if (!fileIds) {
-      const [drive, local] = await Promise.all([this.drive.fileSizes(), this.local.fileSizes()])
-      return { ...drive, ...local }
+      const [drive, local, app] = await Promise.all([this.drive.fileSizes(), this.local.fileSizes(), this.appRepo?.fileSizes() ?? {}])
+      return { ...drive, ...app, ...local }
     }
     const local = fileIds.filter(id => this.sides.get(id) === 'local')
-    const drive = fileIds.filter(id => this.sides.get(id) !== 'local')
-    const [fromDrive, fromLocal] = await Promise.all([drive.length ? this.drive.fileSizes(drive) : {}, local.length ? this.local.fileSizes(local) : {}])
-    return { ...fromDrive, ...fromLocal }
+    const app = this.appRepo ? fileIds.filter(id => this.sides.get(id) === 'app') : []
+    const drive = fileIds.filter(id => !local.includes(id) && !app.includes(id))
+    const [fromDrive, fromLocal, fromApp] = await Promise.all([
+      drive.length ? this.drive.fileSizes(drive) : {},
+      local.length ? this.local.fileSizes(local) : {},
+      app.length && this.appRepo ? this.appRepo.fileSizes(app) : {},
+    ])
+    return { ...fromDrive, ...fromApp, ...fromLocal }
   }
 
   setConflictResolver(resolver: ConflictResolver): void {
+    this.resolver = resolver
     this.drive.setConflictResolver(resolver)
+    this.appRepo?.setConflictResolver(resolver)
   }
 
   /** Forgetting the account clears only the copies of the Drive: what is in Local has no copy anywhere else and stays (FR-055). */
   async forget(): Promise<void> {
     await this.drive.forget()
+    await this.appRepo?.forget()
   }
 
   private repoOf(id: string): Repository {
-    return this.sides.get(id) === 'local' ? this.local : this.drive
+    return this.repoFor(this.sides.get(id) ?? 'drive')
   }
 
   private async inLocal(ref: string): Promise<boolean> {
     return this.local instanceof LocalRepository ? this.local.hasSource(ref) : this.local.getSource(ref).then(() => true, () => false)
+  }
+
+  /** Whether a folder is kept in the Drive (a folder in Local or in the App is not there). */
+  private inDrive(id: string): boolean {
+    const side = this.sides.get(id)
+    return side !== 'local' && side !== 'app'
   }
 
   /** The folder itself when it is in the Drive, else the nearest Drive folder above it; null is the root. */
@@ -214,7 +254,7 @@ export class CombinedRepository implements Repository {
     let current = folderId
     while (current && !seen.has(current)) {
       seen.add(current)
-      if (this.sides.get(current) !== 'local') return current
+      if (this.inDrive(current)) return current
       current = this.folders.get(current)?.parentId ?? null
     }
     return null
@@ -222,35 +262,42 @@ export class CombinedRepository implements Repository {
 
   /** A Drive note's real folder, when that Local folder is in this browser. */
   private trueFile(meta: FileMeta): FileMeta {
-    if (!meta.awayFolderId || this.sides.get(meta.awayFolderId) !== 'local') return meta
+    if (!meta.awayFolderId || this.inDrive(meta.awayFolderId)) return meta
     const { awayFolderId, ...rest } = meta
     return { ...rest, folderId: awayFolderId }
   }
 
-  private merge(drive: Snapshot, local: Snapshot): Snapshot {
+  private merge(drive: Snapshot, local: Snapshot, app: Snapshot | null): Snapshot {
     this.sides.clear()
     this.folders.clear()
-    const chosen = <T extends { id: string }>(fromDrive: T[], fromLocal: T[]): T[] => {
-      const inLocal = new Map(fromLocal.map(item => [item.id, item]))
-      const kept: T[] = []
-      for (const item of fromDrive) {
-        const twin = inLocal.get(item.id)
-        if (twin && this.showing(item.id) === 'local') continue
-        if (twin) inLocal.delete(item.id)
-        this.sides.set(item.id, 'drive')
-        kept.push(item)
+    // an item is on one side; during a move it is on two, and the journal says which one shows (else the Drive, then the App)
+    const chosen = <T extends { id: string }>(lists: [Side, T[]][]): T[] => {
+      const found = new Map<string, Map<Side, T>>()
+      const order: string[] = []
+      for (const [side, items] of lists) {
+        for (const item of items) {
+          if (!found.has(item.id)) {
+            found.set(item.id, new Map())
+            order.push(item.id)
+          }
+          found.get(item.id)!.set(side, item)
+        }
       }
-      for (const item of inLocal.values()) {
-        this.sides.set(item.id, 'local')
-        kept.push(item)
-      }
-      return kept
+      return order.map(id => {
+        const twins = found.get(id)!
+        const wanted = this.showing(id)
+        const side = wanted && twins.has(wanted) ? wanted : (['drive', 'app', 'local'] as Side[]).find(name => twins.has(name))!
+        this.sides.set(id, side)
+        return twins.get(side)!
+      })
     }
-    const folders = chosen(drive.folders, local.folders)
-    const files = chosen(drive.files, local.files)
+    const sides = (pick: (snapshot: Snapshot) => FolderMeta[] | FileMeta[]) =>
+      [['drive', pick(drive)], ...(app ? [['app', pick(app)]] : []), ['local', pick(local)]] as [Side, never[]][]
+    const folders = chosen<FolderMeta>(sides(snapshot => snapshot.folders))
+    const files = chosen<FileMeta>(sides(snapshot => snapshot.files))
     // the away links resolve only after every side is known
     const trueFolders = folders.map(folder => {
-      if (!folder.awayParentId || this.sides.get(folder.awayParentId) !== 'local') return folder
+      if (!folder.awayParentId || this.inDrive(folder.awayParentId)) return folder
       const { awayParentId, ...rest } = folder
       return { ...rest, parentId: awayParentId }
     })

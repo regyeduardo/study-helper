@@ -92,9 +92,19 @@ export function planMoves(repo: CombinedRepository, tree: Tree, ids: string[], t
   return records
 }
 
+/** JSON with the keys in order: a place that stores JSON (the App's server) may give the same fields back in another order. */
+function stable(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stable).join(',')}]`
+  if (value && typeof value === 'object') {
+    const entries = Object.entries(value as Record<string, unknown>).filter(([, item]) => item !== undefined)
+    return `{${entries.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([key, item]) => `${JSON.stringify(key)}:${stable(item)}`).join(',')}}`
+  }
+  return JSON.stringify(value)
+}
+
 /** The parts of a note that must arrive the same: its text and everything in its sidecar but the stamp of the write. */
 function sameNote(a: { content: string; sidecar: FileSidecar }, b: { content: string; sidecar: FileSidecar }): boolean {
-  const plain = ({ meta: { updated: _updated, awayFolderId: _away, folderId: _folder, ...meta }, ...rest }: FileSidecar) => JSON.stringify({ ...rest, meta })
+  const plain = ({ meta: { updated: _updated, awayFolderId: _away, folderId: _folder, ...meta }, ...rest }: FileSidecar) => stable({ ...rest, meta })
   return a.content === b.content && plain(a.sidecar) === plain(b.sidecar)
 }
 
@@ -154,9 +164,8 @@ export async function runMoves(repo: CombinedRepository, journal: MoveJournal, t
           const origin = sidecar.meta.origin
           // the note's file kept in the library goes with it, under a new address at the destination
           if (origin?.storage === 'drive' && origin.storedFileId && !origin.removedAt && !(record.from === 'drive' && record.to === 'drive')) {
-            const source = record.from === 'local' ? repo.local : repo.drive
-            const blob = await source.getSource(origin.storedFileId)
-            const stored = await (record.to === 'local' ? repo.local : repo.drive).putSource(record.id, blob, origin.name)
+            const blob = await repo.repoFor(record.from).getSource(origin.storedFileId)
+            const stored = await repo.repoFor(record.to).putSource(record.id, blob, origin.name)
             sidecar = { ...sidecar, meta: { ...sidecar.meta, origin: { ...origin, storedFileId: stored.ref } } }
           }
           await repo.writeFileTo(record.to, sidecar, from.content)
@@ -170,7 +179,7 @@ export async function runMoves(repo: CombinedRepository, journal: MoveJournal, t
           await repo.removeFrom(record.from, record.id)
           const kept = old?.sidecar.meta.origin
           const arrived = (await repo.readFrom(record.to, record.id)).sidecar.meta.origin
-          if (kept?.storedFileId && kept.storedFileId !== arrived?.storedFileId) await (record.from === 'local' ? repo.local : repo.drive).removeSource(kept.storedFileId).catch(() => undefined)
+          if (kept?.storedFileId && kept.storedFileId !== arrived?.storedFileId) await repo.repoFor(record.from).removeSource(kept.storedFileId).catch(() => undefined)
           repo.adopt(record.id, record.to)
           done++
           doneBytes += record.bytes
@@ -221,5 +230,5 @@ export async function retryFailed(journal: MoveJournal): Promise<void> {
 export function sideOfItem(tree: Tree, id: string): Side {
   const folder = tree.folders.find(item => item.id === id)
   const place = folder ? folderPlaceOf(folder.id, tree.folders, 'drive') : filePlaceOf(tree.files.find(item => item.id === id)!, tree.folders, 'drive')
-  return place === 'local' ? 'local' : 'drive'
+  return place === 'local' ? 'local' : place === 'app' ? 'app' : 'drive'
 }

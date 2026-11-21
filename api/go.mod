@@ -3,6 +3,7 @@ module github.com/regyeduardo/study-helper/api
 go 1.27.4
 
 require (
+	github.com/coder/websocket v1.8.12
 	golang.org/x/crypto v0.59.0
 	modernc.org/sqlite v1.62.0
 )

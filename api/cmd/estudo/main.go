@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/regyeduardo/study-helper/api/internal/blobs"
 	"github.com/regyeduardo/study-helper/api/internal/server"
 	"github.com/regyeduardo/study-helper/api/internal/store"
 )
@@ -43,6 +44,14 @@ func main() {
 			admins = append(admins, email)
 		}
 	}
+	// the library's content (entrega 4): Cloudflare R2 through its S3 API; without it the App routes answer 503
+	var storage blobs.Store
+	if endpoint, bucket := os.Getenv("R2_ENDPOINT"), os.Getenv("R2_BUCKET"); endpoint != "" && bucket != "" {
+		storage = &blobs.S3{Endpoint: endpoint, Bucket: bucket, AccessKey: os.Getenv("R2_ACCESS_KEY_ID"), SecretKey: os.Getenv("R2_SECRET_ACCESS_KEY"), Region: "auto",
+			Client: &http.Client{Timeout: 5 * time.Minute}}
+	} else {
+		log.Print("R2_ENDPOINT/R2_BUCKET not set: the library in the App is off")
+	}
 	api := server.New(db, server.Config{
 		AppOrigin:     env("APP_ORIGIN", "https://study.ryns.me"),
 		PublicURL:     env("PUBLIC_URL", "https://api.study.ryns.me"),
@@ -51,7 +60,25 @@ func main() {
 		Google:        server.DefaultGoogle(os.Getenv("GOOGLE_CLIENT_ID"), os.Getenv("GOOGLE_CLIENT_SECRET")),
 		SecureCookies: env("SECURE_COOKIES", "true") != "false",
 		Version:       version,
+		Blobs:         storage,
 	})
+	// once a day: recount the space and clean the storage (orphans after 31 days, uploads forgotten for 7, tombstones after 60)
+	if storage != nil {
+		go func() {
+			time.Sleep(time.Minute)
+			for {
+				ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+				if err := api.CheckUsage(ctx); err != nil {
+					log.Printf("usage check: %v", err)
+				}
+				if err := api.Clean(ctx); err != nil {
+					log.Printf("cleaning: %v", err)
+				}
+				cancel()
+				time.Sleep(24 * time.Hour)
+			}
+		}()
+	}
 	httpServer := &http.Server{Addr: env("ESTUDO_ADDR", ":8080"), Handler: api.Handler(), ReadHeaderTimeout: 10 * time.Second}
 	go func() {
 		log.Printf("estudo %s listening on %s", version, httpServer.Addr)

@@ -33,6 +33,8 @@ import { activeLinks, saveSharedAttempt, type SharedAttempts, sharedLibrary } fr
 import { setSharedRoot } from '@/lib/paths'
 import { newId, nowIso } from '@/lib/ids'
 import { type LocalMedia, listLocalMedia, removeLocalMedia, watchLocalMedia } from '@/lib/recording/media-library'
+import { openLive } from '@/lib/storage/app-live'
+import { AppRepository } from '@/lib/storage/app-repository'
 import { CombinedRepository } from '@/lib/storage/combined-repository'
 import { openDriveLibrary } from '@/lib/storage/hidden-migration'
 import { LocalRepository } from '@/lib/storage/local-repository'
@@ -40,6 +42,7 @@ import { MoveJournal, showingOf } from '@/lib/storage/moves'
 import type { Repository, StoredSize } from '@/lib/storage/repository'
 import { removeStoredSource } from '@/lib/storage/source-storage'
 import type { TrackedTask } from '@/stores/jobs'
+import { useServerAccount } from '@/stores/server-account'
 import { readingMinutes, wordCount } from '@/utils/format'
 
 export const TRASH_DAYS = 30
@@ -66,6 +69,10 @@ interface LibraryState {
   loadError: string | null
   hiddenPending: boolean
   hiddenWarning: string | null
+  /** The App is one of the places (spec 003, entrega 4): the account was freed by a code and "Usar a estrutura do app" is on. */
+  appOn: boolean
+  /** Turns the App place on or off in the library of a Google account, and loads the library again. */
+  attachApp(on: boolean): Promise<void>
   folders: FolderMeta[]
   files: FileMeta[]
   index: LibraryIndex
@@ -348,8 +355,26 @@ export const useLibraryStore = create<LibraryState>((set, get) => {
     localMedia: [],
     sharedView: null,
 
+    appOn: false,
+
+    attachApp: async on => {
+      const repo = get().repo
+      const accountId = get().accountId
+      if (!(repo instanceof CombinedRepository) || !accountId || on === Boolean(repo.app)) return
+      repo.setApp(on ? new AppRepository(accountId) : null)
+      set({ appOn: on })
+      followLive(repo)
+      try {
+        const snapshot = await repo.load()
+        if (get().repo === repo) get().applySnapshot(snapshot)
+      } catch (error) {
+        if (get().repo === repo) set({ loadError: error instanceof Error ? error.message : 'Não consegui abrir o App.' })
+      }
+    },
+
     connect: async (accountId, tokenProvider) => {
-      set({ repo: null, accountId, ready: false, loadError: null, hiddenPending: false, hiddenWarning: null, folders: [], files: [], opened: {}, openedAt: readOpened(accountId), sizes: {} })
+      followLive(null)
+      set({ repo: null, accountId, appOn: false, ready: false, loadError: null, hiddenPending: false, hiddenWarning: null, folders: [], files: [], opened: {}, openedAt: readOpened(accountId), sizes: {} })
       let repo: Repository
       try {
         if (!tokenProvider) repo = new LocalRepository()
@@ -366,6 +391,9 @@ export const useLibraryStore = create<LibraryState>((set, get) => {
           // The account's Drive and this browser's Local in one tree (spec 003, história 9); a move left open shows its origin until checked.
           const combined = new CombinedRepository(library.repo, new LocalRepository(`study-helper-local-${accountId}`, accountId))
           combined.setShowing(showingOf(await new MoveJournal(accountId).all().catch(() => [])))
+          if (serverAppOn()) combined.setApp(new AppRepository(accountId))
+          set({ appOn: Boolean(combined.app) })
+          followLive(combined)
           repo = combined
           set({ hiddenPending: library.hiddenPending, hiddenWarning: library.warning })
         }
@@ -757,3 +785,26 @@ export function liveFiles(files: FileMeta[], folders: FolderMeta[]): FileMeta[] 
   const live = new Set(liveFolders(folders).map(folder => folder.id))
   return files.filter(file => !file.deletedAt && (file.folderId === null || live.has(file.folderId)))
 }
+
+let stopLive: (() => void) | null = null
+
+/** With the App on, the live channel brings another device's change in seconds (SC-004); without it, the channel is closed. */
+function followLive(repo: CombinedRepository | null): void {
+  stopLive?.()
+  stopLive = null
+  const app = repo?.app
+  if (!(app instanceof AppRepository) || typeof WebSocket === 'undefined') return
+  stopLive = openLive({ seq: () => app.currentSeq, onMap: () => void import('@/stores/sync').then(({ useSyncStore }) => useSyncStore.getState().syncNow()).catch(() => undefined) })
+}
+
+/** Whether the server account has "Usar a estrutura do app" on (freed by a code). */
+function serverAppOn(): boolean {
+  const user = useServerAccount.getState().me?.user
+  return Boolean(user && user.status === 'enabled' && user.appEnabled)
+}
+
+// the account on the server arrives after the library (or the person turns the structure on or off): the App place follows it
+useServerAccount.subscribe(() => {
+  const on = serverAppOn()
+  if (on !== useLibraryStore.getState().appOn) void useLibraryStore.getState().attachApp(on)
+})

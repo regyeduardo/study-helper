@@ -73,7 +73,7 @@ export const usePlacesStore = create<PlacesState>((set, get) => {
     choosePlace: async (ids, place) => {
       const repo = combined()
       if (!repo) throw new Error('Entre com o Google para guardar no Google Drive.')
-      if (place === 'app') throw new Error('O App ainda não está liberado para esta conta.')
+      if (place === 'app' && !repo.app) throw new Error('O App ainda não está liberado para esta conta.')
       const library = useLibraryStore.getState()
       for (const id of ids) {
         const folder = library.folders.find(item => item.id === id)
@@ -86,7 +86,7 @@ export const usePlacesStore = create<PlacesState>((set, get) => {
       }
       const { folders, files, accountId } = useLibraryStore.getState()
       const journal = new MoveJournal(accountId!)
-      const to: Side = place === 'local' ? 'local' : 'drive'
+      const to = sideOfPlace(place)
       for (const record of planMoves(repo, { folders, files }, ids, to, newId(), sizeOf)) await journal.put(record)
       await run()
     },
@@ -125,9 +125,20 @@ export function previewMove(ids: string[], place: Place): { notes: number; bytes
   const { folders, files } = useLibraryStore.getState()
   const chosen = new Set(ids)
   const tree = { folders: folders.filter(item => !item.deletedAt).map(item => (chosen.has(item.id) ? { ...item, place } : item)), files: files.filter(item => !item.deletedAt).map(item => (chosen.has(item.id) ? { ...item, place } : item)) }
-  const records = planMoves(repo, tree, ids, place === 'local' ? 'local' : 'drive', 'preview', sizeOf)
+  const records = planMoves(repo, tree, ids, sideOfPlace(place), 'preview', sizeOf)
   const notes = records.filter(record => record.kind === 'file')
   return { notes: notes.length, bytes: notes.reduce((sum, record) => sum + record.bytes, 0), items: records.length }
+}
+
+/** The side a place means now: App only while the app structure is on (else it stays in the Drive). */
+function sideOfPlace(place: Place): Side {
+  if (place === 'local') return 'local'
+  return place === 'app' && combined()?.app ? 'app' : 'drive'
+}
+
+/** Whether the App can be chosen as a place: the account was freed by a code and "Usar a estrutura do app" is on. */
+export function appPlaceOn(): boolean {
+  return Boolean(combined()?.app)
 }
 
 /** Whether the library mixes the Google Drive and this browser (a Google account): only then a place needs saying. */

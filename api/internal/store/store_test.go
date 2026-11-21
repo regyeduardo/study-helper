@@ -2,11 +2,12 @@ package store
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
 
-var tables = []string{"app_settings", "auth_google", "devices", "promo_code_uses", "promo_codes", "schema_migrations", "shared_links", "shared_links_used", "user"}
+var tables = []string{"app_settings", "auth_google", "devices", "library_index", "library_items", "orphans", "promo_code_uses", "promo_codes", "schema_migrations", "shared_links", "shared_links_used", "upload_parts", "uploads", "user"}
 
 func list(t *testing.T, path string) []string {
 	t.Helper()
@@ -93,5 +94,102 @@ func TestTheSchemaRefusesWhatItMust(t *testing.T) {
 	}
 	if err := insert("f", "", "fabio@exemplo.com", "no-code"); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// Entrega 4 (T061): the library map, the index pointer, the uploads in parts and the orphans, as approved on 2026-11-21.
+func TestLibraryTablesFollowTheApprovedModel(t *testing.T) {
+	db, err := Open(filepath.Join(t.TempDir(), "estudo.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	columns := func(table string) map[string]string {
+		rows, err := db.Query(`SELECT name, type, "notnull", pk FROM pragma_table_info(?)`, table)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer rows.Close()
+		out := map[string]string{}
+		for rows.Next() {
+			var name, kind string
+			var notNull, pk int
+			_ = rows.Scan(&name, &kind, &notNull, &pk)
+			out[name] = kind
+			if notNull == 1 {
+				out[name] += " NOT NULL"
+			}
+			if pk > 0 {
+				out[name] += " PK"
+			}
+		}
+		return out
+	}
+	items := columns("library_items")
+	for name, want := range map[string]string{
+		"user_id": "TEXT NOT NULL PK", "id": "TEXT NOT NULL PK", "item_kind": "TEXT NOT NULL", "note_type": "TEXT", "name": "TEXT NOT NULL",
+		"folder_id": "TEXT", "parent_file_id": "TEXT", "place": "TEXT NOT NULL", "place_own": "INTEGER NOT NULL", "recording": "INTEGER NOT NULL",
+		"position": "REAL NOT NULL", "meta": "TEXT NOT NULL", "parts": "TEXT NOT NULL", "media": "TEXT", "note_bytes": "INTEGER NOT NULL",
+		"media_bytes": "INTEGER NOT NULL", "drive_ref": "TEXT", "created_at": "TEXT NOT NULL", "updated_at": "TEXT NOT NULL", "trashed_at": "TEXT",
+		"trashed_with": "TEXT", "removed_at": "TEXT", "rev": "INTEGER NOT NULL", "seq": "INTEGER NOT NULL",
+	} {
+		if items[name] != want {
+			t.Errorf("library_items.%s = %q, want %q", name, items[name], want)
+		}
+	}
+	if len(items) != 24 {
+		t.Errorf("library_items has %d columns, want 24: %v", len(items), items)
+	}
+	uploads := columns("uploads")
+	for _, name := range []string{"id", "user_id", "item_id", "media_id", "object_key", "file_name", "mime", "declared_bytes", "part_size", "status", "created_at", "updated_at"} {
+		if _, ok := uploads[name]; !ok {
+			t.Errorf("uploads has no %s", name)
+		}
+	}
+	for table, want := range map[string][]string{"upload_parts": {"upload_id", "n", "etag", "bytes", "received_at"}, "orphans": {"object_key", "user_id", "reason", "since"}, "library_index": {"user_id", "version", "bytes", "updated_at"}} {
+		got := columns(table)
+		if len(got) != len(want) {
+			t.Errorf("%s = %v, want %v", table, got, want)
+		}
+	}
+	var indexes []string
+	rows, err := db.Query(`SELECT name FROM sqlite_master WHERE type = 'index' AND name NOT LIKE 'sqlite_%' AND tbl_name IN ('library_items', 'uploads', 'orphans') ORDER BY name`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for rows.Next() {
+		var name string
+		_ = rows.Scan(&name)
+		indexes = append(indexes, name)
+	}
+	rows.Close()
+	wantIndexes := "library_items_by_folder library_items_by_parent library_items_by_seq library_items_by_trash library_items_recordings orphans_by_since uploads_one_open"
+	if got := strings.Join(indexes, " "); got != wantIndexes {
+		t.Errorf("indexes = %q, want %q", got, wantIndexes)
+	}
+
+	// the checks hold
+	now := time.Now().UTC().Format(time.RFC3339)
+	if _, err := db.Exec(`INSERT INTO user (id, email, created_at, updated_at) VALUES ('u1', 'a@b.c', ?, ?)`, now, now); err != nil {
+		t.Fatal(err)
+	}
+	insert := func(kind, place string) error {
+		_, err := db.Exec(`INSERT INTO library_items (user_id, id, item_kind, name, place, created_at, updated_at, seq) VALUES ('u1', ?, ?, 'x', ?, ?, ?, 1)`, kind+place, kind, place, now, now)
+		return err
+	}
+	if err := insert("file", "app"); err != nil {
+		t.Fatalf("a note in the App: %v", err)
+	}
+	if insert("pasta", "app") == nil || insert("folder", "local") == nil {
+		t.Fatal("item_kind and place accept anything")
+	}
+	if _, err := db.Exec(`INSERT INTO uploads (id, user_id, item_id, media_id, object_key, file_name, mime, declared_bytes, created_at, updated_at) VALUES ('up1', 'u1', 'n', 'm', 'k', 'a.webm', 'video/webm', 10, ?, ?)`, now, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO uploads (id, user_id, item_id, media_id, object_key, file_name, mime, declared_bytes, created_at, updated_at) VALUES ('up2', 'u1', 'n', 'm', 'k', 'a.webm', 'video/webm', 10, ?, ?)`, now, now); err == nil {
+		t.Fatal("two open uploads for the same media")
+	}
+	if _, err := db.Exec(`INSERT INTO upload_parts (upload_id, n, etag, bytes, received_at) VALUES ('up1', 10001, 'e', 1, ?)`, now); err == nil {
+		t.Fatal("part number above 10000")
 	}
 }

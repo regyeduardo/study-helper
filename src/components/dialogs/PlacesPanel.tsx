@@ -55,6 +55,7 @@ export function PlacesPanel({ focusId }: { focusId?: string }) {
   const allFiles = useLibraryStore(state => state.files)
   const sizes = useLibraryStore(state => state.sizes)
   const localMedia = useLibraryStore(state => state.localMedia)
+  const appOn = useLibraryStore(state => state.appOn)
   const { running, progress, failed, choosePlace, retry } = usePlacesStore()
   const mixesPlaces = placesApply()
   const signedIn = account.kind === 'google'
@@ -201,7 +202,7 @@ export function PlacesPanel({ focusId }: { focusId?: string }) {
                   </>
                 )}
                 {row.mixed && (
-                  <span className="pl-mixed" title="Tem itens no Google Drive e em Local">
+                  <span className="pl-mixed" title="Tem itens em mais de um lugar">
                     2 lugares
                   </span>
                 )}
@@ -211,8 +212,8 @@ export function PlacesPanel({ focusId }: { focusId?: string }) {
                   <option value={FOLLOW}>{`Segue: ${PLACE_LABEL[row.above]}`}</option>
                   <option value="drive">Google Drive</option>
                   <option value="local">Local (só neste navegador)</option>
-                  <option value="app" disabled>
-                    App · liberar com um código
+                  <option value="app" disabled={!appOn}>
+                    {appOn ? 'App' : 'App · liberar com um código'}
                   </option>
                 </select>
               </span>

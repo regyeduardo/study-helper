@@ -221,6 +221,8 @@ func (srv *Server) adminRevoke(w http.ResponseWriter, r *http.Request, s *Sessio
 		fail(w, http.StatusNotFound, "not_found", nil)
 		return
 	}
+	// every open device of that account hears it now (live channel, entrega 4)
+	srv.notifyAccess(id, deleteAt)
 	writeJSON(w, http.StatusOK, map[string]any{"deleteAt": deleteAt})
 }
 
