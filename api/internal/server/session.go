@@ -15,18 +15,19 @@ const (
 
 // User is the account as the API reads it.
 type User struct {
-	ID          string
-	Email       string
-	Name        sql.NullString
-	PhotoURL    sql.NullString
-	Status      string
-	AppEnabled  bool
-	DeleteAt    *string
-	NotesBytes  int64
-	MediaBytes  int64
-	Reserved    int64
-	HasPassword bool
-	HasGoogle   bool
+	ID            string
+	Email         string
+	EmailVerified bool
+	Name          sql.NullString
+	PhotoURL      sql.NullString
+	Status        string
+	AppEnabled    bool
+	DeleteAt      *string
+	NotesBytes    int64
+	MediaBytes    int64
+	Reserved      int64
+	HasPassword   bool
+	HasGoogle     bool
 }
 
 // Session is the signed-in account and its device.
@@ -36,13 +37,13 @@ type Session struct {
 	Device   string
 }
 
-const userColumns = `u.id, u.email, u.name, u.photo_url, u.status, u.app_enabled, u.delete_at, u.notes_bytes, u.media_bytes, u.reserved_bytes, u.password_hash IS NOT NULL, u.google_sub IS NOT NULL`
+const userColumns = `u.id, u.email, u.email_verified, u.name, u.photo_url, u.status, u.app_enabled, u.delete_at, u.notes_bytes, u.media_bytes, u.reserved_bytes, u.password_hash IS NOT NULL, u.google_sub IS NOT NULL`
 
 func scanUser(row interface{ Scan(...any) error }, extra ...any) (User, error) {
 	var user User
 	var deleteAt sql.NullString
 	var enabled int
-	dest := append([]any{&user.ID, &user.Email, &user.Name, &user.PhotoURL, &user.Status, &enabled, &deleteAt, &user.NotesBytes, &user.MediaBytes, &user.Reserved, &user.HasPassword, &user.HasGoogle}, extra...)
+	dest := append([]any{&user.ID, &user.Email, &user.EmailVerified, &user.Name, &user.PhotoURL, &user.Status, &enabled, &deleteAt, &user.NotesBytes, &user.MediaBytes, &user.Reserved, &user.HasPassword, &user.HasGoogle}, extra...)
 	if err := row.Scan(dest...); err != nil {
 		return user, err
 	}

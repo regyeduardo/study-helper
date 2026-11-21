@@ -8,4 +8,6 @@ export const env = {
   shareWorkerUrl: (import.meta.env.VITE_SHARE_WORKER_URL ?? '').replace(/\/+$/, ''),
   sharedFilesUrl: (import.meta.env.VITE_SHARED_FILES_URL ?? '').replace(/\/+$/, ''),
   turnstileSiteKey: import.meta.env.VITE_TURNSTILE_SITE_KEY ?? '',
+  /** The Estudo backend (spec 003): the local one while developing, the server otherwise. */
+  apiUrl: (import.meta.env.VITE_API_URL || (import.meta.env.DEV ? 'http://localhost:8080' : 'https://api.study.ryns.me')).replace(/\/+$/, ''),
 }

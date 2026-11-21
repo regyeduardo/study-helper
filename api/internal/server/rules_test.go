@@ -115,7 +115,7 @@ func TestOnlyTheAppMayCallWithItsCookie(t *testing.T) {
 
 func TestMeSaysTheAccountTheCodeRuleTheDeviceAndTheSpace(t *testing.T) {
 	h := newHarness(t)
-	client, id := h.account("no-code", false, "dono@exemplo.com")
+	client, id := h.admin()
 	_, body := h.do(client, call{path: "/v1/me"})
 	user := body["user"].(map[string]any)
 	if user["id"] != id || user["status"] != "no-code" || user["appEnabled"] != false || user["admin"] != true {

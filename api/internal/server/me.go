@@ -16,7 +16,7 @@ func (srv *Server) me(w http.ResponseWriter, _ *http.Request, s *Session) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"user": map[string]any{
 			"id": user.ID, "email": user.Email, "name": nullable(user.Name.String, user.Name.Valid), "photoUrl": nullable(user.PhotoURL.String, user.PhotoURL.Valid),
-			"status": user.Status, "appEnabled": user.AppEnabled, "admin": srv.isAdmin(user.Email), "deleteAt": user.DeleteAt,
+			"status": user.Status, "appEnabled": user.AppEnabled, "admin": srv.adminOf(user), "deleteAt": user.DeleteAt,
 			"hasPassword": user.HasPassword, "hasGoogle": user.HasGoogle,
 		},
 		"requireCode": required == "1",

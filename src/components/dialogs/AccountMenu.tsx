@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 
 import { Icon } from '@/components/ui/Icon'
 import { Popover } from '@/components/ui/Popover'
@@ -7,8 +8,26 @@ import { LocalRepository } from '@/lib/storage/local-repository'
 import { applyTheme, savedTheme, type ThemeChoice } from '@/lib/theme'
 import { type Account, initialsOf, useAccountStore } from '@/stores/account'
 import { useLibraryStore } from '@/stores/library'
+import { useServerAccount } from '@/stores/server-account'
 import { useSyncStore } from '@/stores/sync'
 import { useUiStore } from '@/stores/ui'
+
+/** Only for the admin account (spec 003, FR-058); it uses the router, so it is rendered only when that account is signed in. */
+function AdminLink({ onGo }: { onGo(): void }) {
+  const navigate = useNavigate()
+  return (
+    <button
+      className="mi"
+      onClick={() => {
+        onGo()
+        navigate('/administracao')
+      }}
+    >
+      <Icon name="key" />
+      Administração
+    </button>
+  )
+}
 
 function Mini({ account }: { account: Account }) {
   if (account.picture) return <img className="avatar" src={account.picture} alt="" style={{ width: 22, height: 22 }} referrerPolicy="no-referrer" />
@@ -34,6 +53,7 @@ export function AccountMenu() {
   const [busy, setBusy] = useState(false)
   const [theme, setTheme] = useState<ThemeChoice>(savedTheme)
   const [popupClosed, setPopupClosed] = useState(false)
+  const isAdmin = useServerAccount(state => !!state.me?.user.admin)
   const configured = isGoogleLoginConfigured()
   // The Google window has to open inside the tap: the script is brought in before it.
   useEffect(() => {
@@ -139,6 +159,7 @@ export function AccountMenu() {
         <Icon name="gear" />
         Configurações
       </button>
+      {isAdmin && <AdminLink onGo={ui.close} />}
       {active.kind === 'google' && (
         <button className="mi" onClick={() => void signOut()} disabled={busy}>
           <Icon name="logout" />

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Outlet, useNavigate } from 'react-router-dom'
 
+import { ServerAccountGate } from '@/components/account/RevokedScreen'
 import { Overlays } from '@/components/dialogs/Overlays'
 import { ItemMenu } from '@/components/library/ItemMenu'
 import { Icon } from '@/components/ui/Icon'
@@ -159,6 +160,7 @@ export default function App() {
           <span className="muted">Abrindo a biblioteca{account.kind === 'google' ? ' no Google Drive' : ''}…</span>
         </div>
       )}
+      <ServerAccountGate />
       <Overlays />
       <ItemMenu />
       <Toasts />

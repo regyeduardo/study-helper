@@ -93,6 +93,19 @@ func (srv *Server) Handler() http.Handler {
 	route("POST /v1/auth/logout", signedIn, true, srv.logout)
 	route("GET /v1/auth/google/start", public, false, srv.googleStart)
 	route("GET /v1/auth/google/callback", public, false, srv.googleCallback)
+	route("POST /v1/code/use", signedIn, false, srv.useCode)
+	route("POST /v1/structure", signedIn, false, srv.setStructure)
+	route("GET /v1/devices", signedIn, false, srv.devices)
+	route("PATCH /v1/devices/{id}", signedIn, false, srv.renameDevice)
+	route("DELETE /v1/devices/{id}", signedIn, false, srv.signOutDevice)
+	adminRoute := func(pattern string, handle handlerFunc) { mux.Handle(pattern, srv.adminOnly(handle)) }
+	adminRoute("GET /v1/admin/codes", srv.adminCodes)
+	adminRoute("POST /v1/admin/codes", srv.adminCreateCode)
+	adminRoute("POST /v1/admin/codes/{id}/cancel", srv.adminCancelCode)
+	adminRoute("GET /v1/admin/accounts", srv.adminAccounts)
+	adminRoute("POST /v1/admin/accounts/{id}/revoke", srv.adminRevoke)
+	adminRoute("GET /v1/admin/settings", srv.adminSettings)
+	adminRoute("PUT /v1/admin/settings", srv.adminSetSettings)
 	mux.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { fail(w, http.StatusNotFound, "not_found", nil) }))
 	return srv.cors(mux)
 }
@@ -154,9 +167,14 @@ func (srv *Server) rules(who access, revokedOK bool, handle handlerFunc) http.Ha
 	})
 }
 
-func (srv *Server) isAdmin(email string) bool {
+// adminOf says whether the account is the administration: its e-mail is in ADMIN_EMAILS and was proven (by Google). An e-mail typed
+// with a password proves nothing.
+func (srv *Server) adminOf(user User) bool {
+	if !user.EmailVerified {
+		return false
+	}
 	for _, admin := range srv.cfg.AdminEmails {
-		if strings.EqualFold(strings.TrimSpace(admin), email) {
+		if strings.EqualFold(strings.TrimSpace(admin), user.Email) {
 			return true
 		}
 	}

@@ -3,6 +3,7 @@ import 'fake-indexeddb/auto'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { MemoryRouter, Route, Routes } from 'react-router-dom'
 
 const { mockEnv } = vi.hoisted(() => ({
   mockEnv: { googleClientId: 'client-id', authWorkerUrl: 'https://auth.example.workers.dev', googleApiBase: 'https://api.example.test', googleAccountsScript: 'https://gsi.example.test/client', basePath: '/' },
@@ -19,6 +20,7 @@ import { deleteDatabase } from '@/lib/storage/idb'
 import { LocalRepository, LOCAL_ACCOUNT_ID } from '@/lib/storage/local-repository'
 import { type Account, LOCAL_ACCOUNT, useAccountStore } from '@/stores/account'
 import { useLibraryStore } from '@/stores/library'
+import { useServerAccount } from '@/stores/server-account'
 import { useUiStore } from '@/stores/ui'
 import { type GoogleFake, installFetch, installGoogle, type WorkerFake } from '@/test/account/google-fakes'
 
@@ -184,5 +186,39 @@ describe('AccountMenu sign in on a phone', () => {
     fireEvent.click(add())
     await screen.findByRole('alert')
     expect(screen.queryByRole('button', { name: 'Entrar nesta aba' })).toBeNull()
+  })
+})
+
+describe('AccountMenu › Administração (spec 003, FR-058)', () => {
+  const me = (admin: boolean) => ({
+    user: { id: 'u1', email: 'dono@exemplo.com', name: 'Dono', photoUrl: null, status: 'enabled' as const, appEnabled: true, admin, deleteAt: null, hasPassword: false, hasGoogle: true },
+    requireCode: true,
+    device: { id: 'd1', name: 'Chrome no Linux' },
+    space: { notes: 0, media: 0, reserved: 0, limit: 10737418240, warnAt: 0.9 },
+  })
+  const open = () =>
+    render(
+      <MemoryRouter initialEntries={['/biblioteca']}>
+        <Routes>
+          <Route path="/biblioteca" element={<AccountMenu />} />
+          <Route path="/administracao" element={<h1>Página da Administração</h1>} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+  afterEach(() => useServerAccount.setState({ me: null, status: 'unknown' }))
+
+  it('shows the link only to the admin account, and it opens the page', () => {
+    useServerAccount.setState({ me: me(true), status: 'signed-in' })
+    open()
+    fireEvent.click(screen.getByRole('button', { name: 'Administração' }))
+    expect(screen.getByRole('heading', { name: 'Página da Administração' })).toBeTruthy()
+    expect(useUiStore.getState().overlay).toBeNull()
+  })
+
+  it('any other account does not see it', () => {
+    useServerAccount.setState({ me: me(false), status: 'signed-in' })
+    open()
+    expect(screen.queryByRole('button', { name: 'Administração' })).toBeNull()
   })
 })

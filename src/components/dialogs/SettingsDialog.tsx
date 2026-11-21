@@ -2,7 +2,9 @@ import { useEffect, useMemo, useState } from 'react'
 
 import type { Settings } from '@/types/domain'
 import { AiSettings } from '@/components/dialogs/AiSettings'
+import { AppStructureSection, useStructureOn } from '@/components/dialogs/AppStructure'
 import { IntegrationStatus } from '@/components/dialogs/IntegrationStatus'
+import { ServerDevices } from '@/components/dialogs/ServerDevices'
 import { Icon } from '@/components/ui/Icon'
 import { PlacesPanel } from '@/components/dialogs/PlacesPanel'
 import { isNarrowScreen } from '@/hooks/use-is-narrow'
@@ -13,6 +15,7 @@ import { storageBreakdown, type StorageBreakdown } from '@/lib/storage/storage-u
 import { useAccountStore } from '@/stores/account'
 import { useLibraryStore } from '@/stores/library'
 import { useModelsStore } from '@/stores/models'
+import { useServerAccount } from '@/stores/server-account'
 import { isOnline, useSyncStore } from '@/stores/sync'
 import { type SettingsTab, useUiStore } from '@/stores/ui'
 import { agoText, formatBytes } from '@/utils/format'
@@ -124,6 +127,21 @@ function StorageTab({ focusId }: { focusId?: string }) {
 }
 
 function DevicesTab() {
+  const account = useAccountStore(state => state.active())
+  const signedIn = useServerAccount(state => state.status === 'signed-in')
+  // With a session on the Estudo server, its devices come first (spec 003, entrega 3, opção B); the Drive presence stays below.
+  if (signedIn) {
+    return (
+      <>
+        <ServerDevices />
+        {account.kind !== 'local' && <DriveDevices />}
+      </>
+    )
+  }
+  return <DriveDevices />
+}
+
+function DriveDevices() {
   const account = useAccountStore(state => state.active())
   const devices = useSyncStore(state => state.devices)
   const me = currentDevice()
@@ -285,6 +303,7 @@ function OthersTab() {
     : []
   return (
     <>
+      <AppStructureSection />
       <div className="field">
         <span className="lab">Integração no computador</span>
         <IntegrationStatus />
@@ -333,7 +352,11 @@ export function SettingsDialog({ initial, focusId }: { initial?: SettingsTab; fo
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [close])
-  const label = TABS.find(([id]) => id === tab)?.[1] ?? 'Configurações'
+  // With the structure of the app on, the app gives the AI: its section goes away (FR-032).
+  const structureOn = useStructureOn()
+  const tabs = structureOn ? TABS.filter(([id]) => id !== 'ai') : TABS
+  const current = tabs.some(([id]) => id === tab) ? tab : 'others'
+  const label = tabs.find(([id]) => id === current)?.[1] ?? 'Configurações'
   return (
     <div className="scrim" inert={adding} onMouseDown={event => event.target === event.currentTarget && close()}>
       <div className="dialog settings" role="dialog" aria-label="Configurações">
@@ -353,10 +376,10 @@ export function SettingsDialog({ initial, focusId }: { initial?: SettingsTab; fo
         </div>
         <div className={`set-grid${menu ? ' is-menu' : ''}`}>
           <nav className="set-nav" aria-label="Seções">
-            {TABS.map(([id, name]) => (
+            {tabs.map(([id, name]) => (
               <button
                 key={id}
-                aria-pressed={tab === id}
+                aria-pressed={current === id}
                 onClick={() => {
                   setTab(id)
                   setMenu(false)
@@ -366,13 +389,13 @@ export function SettingsDialog({ initial, focusId }: { initial?: SettingsTab; fo
               </button>
             ))}
           </nav>
-          <div className={`set-body${tab === 'ai' ? ' ias' : ''}`}>
-            {tab === 'ai' && <AiSettings />}
-            {tab === 'links' && <LinksTab />}
-            {tab === 'storage' && <StorageTab focusId={focusId} />}
-            {tab === 'devices' && <DevicesTab />}
-            {tab === 'general' && <GeneralTab />}
-            {tab === 'others' && <OthersTab />}
+          <div className={`set-body${current === 'ai' ? ' ias' : ''}`}>
+            {current === 'ai' && <AiSettings />}
+            {current === 'links' && <LinksTab />}
+            {current === 'storage' && <StorageTab focusId={focusId} />}
+            {current === 'devices' && <DevicesTab />}
+            {current === 'general' && <GeneralTab />}
+            {current === 'others' && <OthersTab />}
           </div>
         </div>
       </div>

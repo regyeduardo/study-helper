@@ -235,7 +235,14 @@ func (srv *Server) googleAccount(claims *idClaims, tokens *googleTokens) (string
 	var id string
 	err := srv.db.QueryRow(`SELECT id FROM user WHERE google_sub = ?`, claims.Sub).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
-		err = srv.db.QueryRow(`SELECT id FROM user WHERE email = ? AND google_sub IS NULL`, claims.Email).Scan(&id)
+		var verified bool
+		err = srv.db.QueryRow(`SELECT id, email_verified FROM user WHERE email = ? AND google_sub IS NULL`, claims.Email).Scan(&id, &verified)
+		if err == nil && !verified {
+			// whoever typed this e-mail with a password never proved it: that password and its devices stop working
+			if _, err = srv.db.Exec(`UPDATE user SET password_hash = NULL, login_failures = 0, login_blocked_until = NULL WHERE id = ?`, id); err == nil {
+				_, err = srv.db.Exec(`UPDATE devices SET signed_out_at = ? WHERE user_id = ? AND signed_out_at IS NULL`, now, id)
+			}
+		}
 		if err == nil {
 			_, err = srv.db.Exec(`UPDATE user SET google_sub = ?, email_verified = 1, name = COALESCE(name, NULLIF(?, '')), photo_url = NULLIF(?, ''), updated_at = ? WHERE id = ?`, claims.Sub, claims.Name, claims.Picture, now, id)
 		} else if errors.Is(err, sql.ErrNoRows) {

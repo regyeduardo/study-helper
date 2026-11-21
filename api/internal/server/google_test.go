@@ -65,16 +65,31 @@ func TestSigningInAgainFindsTheSameAccount(t *testing.T) {
 	}
 }
 
-func TestGoogleJoinsAnEmailAndPasswordAccountWithTheSameEmail(t *testing.T) {
+// Whoever typed that e-mail with a password never proved it was theirs: when Google proves it, the account joins Google, and that
+// password and its devices stop working (otherwise someone could make an account with another person's e-mail beforehand and keep
+// a way into it).
+func TestGoogleJoinsAnEmailAndPasswordAccountWithTheSameEmailAndDropsTheUnprovenPassword(t *testing.T) {
 	h := newHarness(t)
-	register(h, h.browser(), "ana@exemplo.com", "senha-forte-1")
+	early := h.browser()
+	register(h, early, "ana@exemplo.com", "senha-forte-1")
 	client, google := h.start("/")
 	h.googleGives("codigo-1", google, claimsFor("google-sub-ana", "ana@exemplo.com"), "", nil)
 	h.finish(client, "code=codigo-1&state="+url.QueryEscape(google.Get("state")))
 	_, me := h.do(client, call{path: "/v1/me"})
 	user := me["user"].(map[string]any)
-	if user["hasPassword"] != true || user["hasGoogle"] != true {
+	if user["hasPassword"] != false || user["hasGoogle"] != true {
 		t.Fatalf("me: %v", me)
+	}
+	var users int
+	_ = h.db.QueryRow(`SELECT COUNT(*) FROM user`).Scan(&users)
+	if users != 1 {
+		t.Fatalf("%d accounts, want 1", users)
+	}
+	if response, _ := login(h, h.browser(), "ana@exemplo.com", "senha-forte-1"); response.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("the unproven password still signs in: %d", response.StatusCode)
+	}
+	if response, _ := h.do(early, call{path: "/v1/me"}); response.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("the device signed in with the unproven password still works: %d", response.StatusCode)
 	}
 }
 
