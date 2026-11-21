@@ -1,7 +1,7 @@
 import { Cancelled } from '@/controllers/ai.controller'
 import type { FrameSource, SeeFn } from '@/lib/generation/ata-types'
 import { extractJson } from '@/lib/generation/mermaid'
-import { MICROPHONE, RECORDER } from '@/lib/transcription/turns'
+import { distinctNames, MICROPHONE, RECORDER, sameName } from '@/lib/transcription/turns'
 import type { RecordingData, RecordingSpeaker, TranscriptBlock } from '@/types/domain'
 
 export const WHO_PROMPT = 'Esta é a tela de uma chamada de vídeo. Olhe os quadros de vídeo dos participantes (cada um com um nome escrito). Quem está FALANDO agora é o quadro com o indicador de som aceso: ondinha ou barrinhas de áudio animadas ao lado do nome, ou borda acesa. NÃO são sinal de fala: o ícone de compartilhar tela (seta ou monitor, muitas vezes verde), o microfone apenas ligado, e o nome escrito embaixo ou em cima da tela compartilhada (é de quem compartilha). Devolva SOMENTE um JSON: {"falando": "nome escrito no quadro com o indicador de som aceso, ou \'\' se nenhum", "pista": "o que na tela mostra isso", "compartilhando": "quem está compartilhando a tela, se aparece, ou \'\'", "participantes": ["nomes escritos nos quadros"]}'
@@ -172,9 +172,18 @@ export async function speakersFromTiles(
     if (name) assign(MICROPHONE, name)
   }
 
+  // A voice no tile went to keeps the name the conversation gave it only while no other voice took that name from the tiles (FR-059).
+  const released = (speaker: RecordingSpeaker) => !assigned.has(speaker.id) && [...taken].some(name => sameName(name, names.get(speaker.id)!))
+  const used = [...names.values()]
+  const label = () => {
+    let number = 1
+    while (used.some(name => sameName(name, `Falante ${number}`))) number++
+    used.push(`Falante ${number}`)
+    return `Falante ${number}`
+  }
   const speakers: RecordingSpeaker[] = recording.speakers.map(speaker => {
-    const name = names.get(speaker.id)!
+    const name = released(speaker) ? label() : names.get(speaker.id)!
     return name === speaker.name ? speaker : { ...speaker, name, suggested: false }
   })
-  return { recording: { ...recording, speakers }, votes, tiles }
+  return { recording: { ...recording, speakers: distinctNames(recording.speakers, speakers) }, votes, tiles }
 }

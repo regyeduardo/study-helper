@@ -232,10 +232,13 @@ describe('onde guardar a mídia', () => {
     expect(memory.putSource).not.toHaveBeenCalled()
   })
 
-  it('sem o Drive, não pergunta: a mídia fica neste navegador', async () => {
+  it('sem o Drive, pergunta se baixa a mídia: "Neste navegador" guarda nas mídias do navegador', async () => {
     renderBadge(sharedItem())
-    expect(await screen.findByText('biblioteca')).toBeInTheDocument()
+    expect(await screen.findByText('Baixar a mídia?')).toBeInTheDocument()
     expect(screen.queryByText('Onde guardar a mídia?')).not.toBeInTheDocument()
+    expect(fetch).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: 'Neste navegador' }))
+    expect(await screen.findByText('biblioteca')).toBeInTheDocument()
     const [note] = useLibraryStore.getState().files
     await waitFor(() => expect(useLibraryStore.getState().localMedia.map(item => item.fileIds)).toEqual([[note.id]]))
     expect(note.origin).toMatchObject({ storage: 'none', mime: 'video/mp4' })

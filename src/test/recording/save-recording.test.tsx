@@ -96,24 +96,24 @@ const open = () =>
     </MemoryRouter>,
   )
 
-describe('Gravação pronta asks only whether to transcribe', () => {
-  it('"Não, só a mídia" saves a note of the recording, linked to the media, and opens it, with no transcription', async () => {
+describe('Gravação pronta: guardar ou transcrever', () => {
+  it('"Só guardar" saves a note of the recording, linked to the media, and opens it, with no transcription', async () => {
     open()
-    expect(screen.getByRole('radiogroup', { name: 'Quer a transcrição?' })).toBeInTheDocument()
-    expect(screen.getByRole('radio', { name: /Sim, transcrever/ })).toHaveAttribute('aria-checked', 'true')
+    expect(screen.getByRole('radiogroup', { name: 'O que fazer com a gravação' })).toBeInTheDocument()
+    expect(screen.getByRole('radio', { name: /Só transcrever/ })).toHaveAttribute('aria-checked', 'true')
     expect(screen.queryByText('O que gerar')).not.toBeInTheDocument()
-    fireEvent.click(screen.getByRole('radio', { name: /Não, só a mídia/ }))
+    fireEvent.click(screen.getByRole('radio', { name: /Só guardar/ }))
     fireEvent.click(screen.getByRole('button', { name: 'Salvar' }))
     await waitFor(() => expect(navigate).toHaveBeenCalled())
     const note = useLibraryStore.getState().files[0]
     expect(navigate).toHaveBeenCalledWith(`/arquivo/${note.id}`)
-    expect(note).toMatchObject({ name: 'Reunião 14-10-2026, 09-00-00', type: 'reading', status: 'ready', origin: { input: 'recording', mime: 'audio/webm', durationSeconds: 65 } })
+    expect(note).toMatchObject({ name: 'Reunião 14-10-2026, 09-00-00', type: 'audio', status: 'ready', origin: { input: 'recording', mime: 'audio/webm', durationSeconds: 65 } })
     expect(memory.sidecars.get(note.id)?.recording?.marks).toHaveLength(1)
     expect((await listLocalMedia())[0].fileIds).toEqual([note.id])
     expect(transcribe).not.toHaveBeenCalled()
   })
 
-  it('"Sim, transcrever" saves and transcribes inside the note', async () => {
+  it('"Só transcrever" saves and transcribes inside the note', async () => {
     open()
     fireEvent.click(screen.getByRole('button', { name: 'Salvar' }))
     await waitFor(() => expect(transcribe).toHaveBeenCalled())

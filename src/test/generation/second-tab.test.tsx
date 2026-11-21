@@ -196,7 +196,7 @@ describe('"O que gerar" chooses only the second tab', () => {
     useJobsStore.setState({ generateAta })
     const id = await useJobsStore.getState().startNewContent({ ...recordingRequest('meeting'), ataParts: ['resumo', 'tarefas'] })
     await waitFor(() => expect(generateAta).toHaveBeenCalledWith(id, ['resumo', 'tarefas']))
-    expect(useLibraryStore.getState().files.find(file => file.id === id)).toMatchObject({ type: 'reading', status: 'ready' })
+    expect(useLibraryStore.getState().files.find(file => file.id === id)).toMatchObject({ type: 'audio', status: 'ready' })
     expect(memory.contents.get(id!)).toContain('Bruno [00:04]:')
   })
 
@@ -205,7 +205,7 @@ describe('"O que gerar" chooses only the second tab', () => {
     useJobsStore.setState({ generateAta })
     const id = await useJobsStore.getState().startNewContent({ ...recordingRequest('meeting'), ataParts: [], ataModel: 'cornell' })
     await waitFor(() => expect(generateAta).toHaveBeenCalledWith(id, [], 'cornell'))
-    expect(useLibraryStore.getState().files.find(file => file.id === id)).toMatchObject({ type: 'reading', status: 'ready' })
+    expect(useLibraryStore.getState().files.find(file => file.id === id)).toMatchObject({ type: 'audio', status: 'ready' })
     expect(memory.contents.get(id!)).toContain('Bruno [00:04]:')
   })
 

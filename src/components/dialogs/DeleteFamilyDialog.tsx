@@ -7,17 +7,17 @@ import { Dialog } from '@/components/ui/Dialog'
 import { Icon, type IconName } from '@/components/ui/Icon'
 import { descendantsOf, familyCount } from '@/lib/family'
 import { mediaOf } from '@/lib/file-types'
+import { itemsOf, working } from '@/lib/working'
 import { useLibraryStore } from '@/stores/library'
 import { type Overlay, useUiStore } from '@/stores/ui'
 
 const KIND_ICON: Record<ArtifactKind, IconName> = { mapa: 'layers', cartoes: 'note', tutor: 'bulb' }
 
 const counted = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`
-const wordOf = (file: Pick<FileMeta, 'role'>) => (file.role === 'entrada' ? 'entrada' : 'nota')
 
 /** An item without a family that has media: does the media go too? */
 export function mediaChoice(file: FileMeta, trash: (media: boolean) => Promise<void>): Extract<Overlay, { kind: 'confirm' }> {
-  const word = wordOf(file)
+  const word = 'nota'
   return {
     kind: 'confirm',
     title: `Apagar "${file.name}"?`,
@@ -85,10 +85,10 @@ export function DeleteFamilyDialog({ fileId, fileIds }: { fileId: string; fileId
 
   if (one && !familyOf(one).length) {
     const trash = async (media: boolean) => {
-      await library.trashFiles([one.id], { media })
-      done(`"${one.name}" foi para a lixeira${media ? ', com a mídia' : ''}`)
+      const ok = await working(`Apagando "${one.name}"…`, () => library.trashFiles([one.id], { media }), { message: media ? 'Apagando a nota e a mídia' : 'Mandando para a lixeira' })
+      if (ok) done(`"${one.name}" foi para a lixeira${media ? ', com a mídia' : ''}`)
     }
-    const confirm = library.hasMedia(one.id) ? mediaChoice(one, trash) : { kind: 'confirm' as const, title: `Apagar "${one.name}"?`, text: `A ${wordOf(one)} vai para a lixeira e dá para restaurar.`, ok: 'Apagar', danger: true, onConfirm: () => trash(false) }
+    const confirm = library.hasMedia(one.id) ? mediaChoice(one, trash) : { kind: 'confirm' as const, title: `Apagar "${one.name}"?`, text: `A nota vai para a lixeira e dá para restaurar.`, ok: 'Apagar', danger: true, onConfirm: () => trash(false) }
     return <ConfirmDialog overlay={confirm} />
   }
 
@@ -101,10 +101,11 @@ export function DeleteFamilyDialog({ fileId, fileIds }: { fileId: string; fileId
   const born = [notes && counted(notes, 'nota', 'notas'), artifacts && counted(artifacts, 'artefato', 'artefatos')].filter(Boolean).join(' · ')
   const total = tops.reduce((sum, file) => sum + 1 + familyOf(file).length, 0)
 
-  const run = (action: () => Promise<void>, message: string) => async () => {
+  // the window closes at once, the items leave the list, and a line says how many are going (one Drive write each)
+  const run = (action: () => Promise<void>, message: string, count: number) => async () => {
     ui.close()
-    await action()
-    done(message)
+    const ok = await working(`Apagando ${itemsOf(count)}…`, action, { message: 'Mandando para a lixeira' })
+    if (ok) done(message)
   }
   const trashAll = async () => {
     for (const file of tops) await (familyOf(file).length ? library.trashFamily(file.id) : library.trashFiles([file.id]))
@@ -126,10 +127,10 @@ export function DeleteFamilyDialog({ fileId, fileIds }: { fileId: string; fileId
           <button className="btn quiet" onClick={ui.close}>
             Cancelar
           </button>
-          <button className="btn" onClick={run(trashSelected, one ? `Só “${one.name}” foi para a Lixeira. ${stayed}` : `Só os ${selected.length} selecionados foram para a Lixeira. ${stayed}`)}>
+          <button className="btn" onClick={run(trashSelected, one ? `Só “${one.name}” foi para a Lixeira. ${stayed}` : `Só os ${selected.length} selecionados foram para a Lixeira. ${stayed}`, selected.length)}>
             {one ? 'Apagar só esta' : 'Apagar só estas'}
           </button>
-          <button className="btn danger" onClick={run(trashAll, one ? `“${one.name}” e mais ${counted(notes, 'nota', 'notas')} foram para a Lixeira.` : `${total} itens foram para a Lixeira.`)}>
+          <button className="btn danger" onClick={run(trashAll, one ? `“${one.name}” e mais ${counted(notes, 'nota', 'notas')} foram para a Lixeira.` : `${total} itens foram para a Lixeira.`, total)}>
             Apagar tudo
           </button>
         </>

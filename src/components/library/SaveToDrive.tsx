@@ -6,9 +6,11 @@ import { create } from 'zustand'
 import type { FileMeta } from '@/types/domain'
 import { Dialog } from '@/components/ui/Dialog'
 import { Icon } from '@/components/ui/Icon'
+import { preloadGoogleAccounts } from '@/controllers/google-auth.controller'
 import { isNote } from '@/lib/family'
 import { placeOf } from '@/lib/library-filters'
-import { saveToDrive } from '@/lib/storage/source-storage'
+import type { LocalMedia } from '@/lib/recording/media-library'
+import { saveLocalMediaToDrive, saveToDrive } from '@/lib/storage/source-storage'
 import { useAccountStore } from '@/stores/account'
 import { useLibraryStore } from '@/stores/library'
 import { useUiStore } from '@/stores/ui'
@@ -20,6 +22,7 @@ const ACTION = 'Salvar no meu Drive'
 const SAVING = 'Salvando no Drive…'
 const RISK = 'Hoje este arquivo está só neste navegador: se os dados do navegador forem limpos, ele se perde. No Drive, ele fica na sua conta, disponível em qualquer aparelho.'
 const SAVED = 'Salvo no seu Drive. Agora ele está disponível em qualquer aparelho.'
+const NEW_ENTRY = 'Para ir ao Drive, a mídia vira uma nota de mídia na biblioteca.'
 
 /** What is uploading now, because the same file can be on screen twice: in a list and in its note. */
 const useSaving = create<{ ids: ReadonlySet<string> }>(() => ({ ids: new Set() }))
@@ -34,7 +37,7 @@ export function useOnlyHere(): (file: FileMeta) => boolean {
   return file => placeOf(file, { localMedia, library, now: Date.now() }) === 'navegador'
 }
 
-function AskToSave({ size, onCancel, onSave }: { size: string; onCancel(): void; onSave(): void }) {
+function AskToSave({ size, extra, onCancel, onSave }: { size: string; extra?: string; onCancel(): void; onSave(): void }) {
   // Esc closes this window only, not Mídias under it.
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -69,6 +72,7 @@ function AskToSave({ size, onCancel, onSave }: { size: string; onCancel(): void;
             {RISK}
             {size && ` Tamanho: ${size}.`}
           </span>
+          {extra && <span className="muted">{extra}</span>}
         </div>
       </Dialog>
     </div>,
@@ -77,34 +81,45 @@ function AskToSave({ size, onCancel, onSave }: { size: string; onCancel(): void;
 }
 
 interface SaveToDriveProps {
-  fileId: string
+  /** The item that keeps the media. */
+  fileId?: string
+  /** A media in Mídias with no item yet (T136): saving gives it an entrada, without a note, and sends it to the Drive. */
+  media?: LocalMedia
   /** The one line of the lists. Only with a Google account: in the Local profile every row would say the same. */
   compact?: boolean
+  /** Only the action: where the media is, the screen already says. */
+  bare?: boolean
 }
 
-export function SaveToDrive({ fileId, compact = false }: SaveToDriveProps) {
-  const file = useLibraryStore(state => state.files.find(item => item.id === fileId))
-  const local = useLibraryStore(state => state.localMedia.find(item => item.fileIds.includes(fileId)))
+export function SaveToDrive({ fileId, media, compact = false, bare = false }: SaveToDriveProps) {
+  // what is uploading is told by this key; an entrada made on the way (T136) takes the key too, as the list below moves to it
+  const key = fileId ?? media?.storedName ?? ''
+  const file = useLibraryStore(state => (fileId ? state.files.find(item => item.id === fileId) : undefined))
+  const local = useLibraryStore(state => (fileId ? state.localMedia.find(item => item.fileIds.includes(fileId)) : undefined))
   const repoKind = useLibraryStore(state => state.repo?.kind)
   const shared = useLibraryStore(state => Boolean(state.sharedView))
-  const saving = useSaving(state => state.ids.has(fileId))
+  const saving = useSaving(state => state.ids.has(key))
   const onlyHere = useOnlyHere()
   const openOverlay = useUiStore(state => state.open)
   const toast = useUiStore(state => state.toast)
   const [asking, setAsking] = useState(false)
   const [signingIn, setSigningIn] = useState(false)
+  // The Google window has to open inside the tap: the script is brought in before it.
+  useEffect(() => {
+    if (repoKind && repoKind !== 'drive') preloadGoogleAccounts()
+  }, [repoKind])
 
-  if (!file || !repoKind || shared || (compact && repoKind !== 'drive') || !onlyHere(file)) return null
+  if ((!file && !media) || !repoKind || shared || (compact && repoKind !== 'drive') || (file && !onlyHere(file))) return null
 
   // An entrada kept in the Mídias of another browser: there is nothing here to upload.
-  const canSave = isNote(file) || Boolean(local || file.origin?.storedFileId)
+  const canSave = Boolean(media) || isNote(file!) || Boolean(local || file!.origin?.storedFileId)
   const busy = saving || signingIn
   const busyText = saving ? SAVING : 'Entrando…'
 
   const signIn = async () => {
     setSigningIn(true)
     try {
-      await useAccountStore.getState().addGoogleAccount()
+      await useAccountStore.getState().addGoogleAccount({ sendLocal: true })
       // Same road as the account menu: what is in the Local profile does not follow the sign-in by itself.
       openOverlay({ kind: 'send-local' })
     } catch (failure) {
@@ -116,14 +131,21 @@ export function SaveToDrive({ fileId, compact = false }: SaveToDriveProps) {
 
   const save = async () => {
     setAsking(false)
-    useSaving.setState(state => ({ ids: new Set(state.ids).add(fileId) }))
+    const marked = [key]
+    const mark = (id: string) => useSaving.setState(state => ({ ids: new Set(state.ids).add(id) }))
+    mark(key)
     try {
-      await saveToDrive(fileId)
+      if (media) {
+        await saveLocalMediaToDrive(media, entryId => {
+          marked.push(entryId)
+          mark(entryId)
+        })
+      } else await saveToDrive(fileId!)
       toast(SAVED)
     } catch (failure) {
       toast(failureOf(failure, 'Não deu para salvar no Drive.'))
     } finally {
-      useSaving.setState(state => ({ ids: new Set([...state.ids].filter(id => id !== fileId)) }))
+      useSaving.setState(state => ({ ids: new Set([...state.ids].filter(id => !marked.includes(id))) }))
     }
   }
 
@@ -137,15 +159,15 @@ export function SaveToDrive({ fileId, compact = false }: SaveToDriveProps) {
     },
     onKeyDown: (event: React.KeyboardEvent) => event.stopPropagation(),
   }
-  const bytes = local?.size || file.origin?.sizeBytes
-  const ask = asking && <AskToSave size={bytes ? formatBytes(bytes) : ''} onCancel={() => setAsking(false)} onSave={() => void save()} />
+  const bytes = media?.size || local?.size || file?.origin?.sizeBytes
+  const ask = asking && <AskToSave size={bytes ? formatBytes(bytes) : ''} extra={media ? NEW_ENTRY : undefined} onCancel={() => setAsking(false)} onSave={() => void save()} />
 
   if (compact) {
     if (!canSave) return <span className="sdrive-row">{NOTICE}</span>
     const line = `${NOTICE} · ${busy ? busyText : ACTION}`
     return (
       <>
-        <button className="sdrive-row" aria-label={busy ? line : `${line}: ${file.name}`} {...control}>
+        <button className="sdrive-row" aria-label={busy ? line : `${line}: ${file!.name}`} {...control}>
           {line}
         </button>
         {ask}
@@ -155,7 +177,7 @@ export function SaveToDrive({ fileId, compact = false }: SaveToDriveProps) {
 
   return (
     <span className="sdrive">
-      <span>{NOTICE}</span>
+      {!bare && <span>{NOTICE}</span>}
       {canSave && (
         <button className="btn sdrive-btn" {...control}>
           <Icon name="upload" />

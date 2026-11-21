@@ -18,11 +18,19 @@ const INDEX_KEY = 'index'
 
 export class LocalRepository implements Repository {
   readonly kind = 'local' as const
-  readonly accountId = LOCAL_ACCOUNT_ID
   private readonly db: KeyValueStore
 
-  constructor(private readonly databaseName = 'study-helper-local') {
+  /** The profile without login keeps `study-helper-local`; an account's Local lives in `study-helper-local-<conta>` (spec 003, R16). */
+  constructor(
+    private readonly databaseName = 'study-helper-local',
+    readonly accountId: string = LOCAL_ACCOUNT_ID,
+  ) {
     this.db = new KeyValueStore(databaseName)
+  }
+
+  /** Whether this browser keeps the file `ref` (the Local half of a combined library asks before reading). */
+  async hasSource(ref: string): Promise<boolean> {
+    return (await this.db.keys('sources')).includes(ref)
   }
 
   async load(): Promise<Snapshot> {

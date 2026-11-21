@@ -88,7 +88,7 @@ function build(note: boolean, source: SearchSource): Doc {
   return { pieces, folded: pieces.map(item => item.folded).join('\n') }
 }
 
-function docOf(file: Pick<FileMeta, 'role'>, source: SearchSource): Doc {
+function docOf(file: Pick<FileMeta, 'role' | 'type'>, source: SearchSource): Doc {
   let doc = docs.get(source)
   if (!doc) {
     doc = build(isNote(file), source)

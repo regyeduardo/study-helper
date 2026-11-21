@@ -18,6 +18,7 @@ import { useLibraryStore } from '@/stores/library'
 import { useUiStore } from '@/stores/ui'
 
 import { CONTENTS, ENTRY_NAME, entryFamily } from './entry-family'
+import { isSourceNote } from '@/lib/file-types'
 
 const GOOGLE: Account = { id: 'google-1', kind: 'google', name: 'Bia', email: 'bia@example.com', picture: '', token: { accessToken: 'at-1', expiresAt: Date.now() + 3600_000 } }
 const SHARE_ID = 'MidiaDaEntradaImportada1'
@@ -228,9 +229,11 @@ async function importLink() {
   const chooser = await screen.findByRole('dialog', { name: 'Importar para a minha biblioteca' })
   fireEvent.click(within(chooser).getByRole('treeitem', { name: /Trabalho da Bia/ }))
   fireEvent.click(within(chooser).getByRole('button', { name: 'Importar aqui' }))
+  // without a Google account the media is asked about too: "Neste navegador" is the only place
+  if (useAccountStore.getState().active().kind !== 'google') fireEvent.click(await screen.findByRole('button', { name: 'Neste navegador' }))
 }
 
-const imported = () => useLibraryStore.getState().files.find(file => file.role === 'entrada')!
+const imported = () => useLibraryStore.getState().files.find(file => isSourceNote(file))!
 
 async function bytesOf(blob: Blob): Promise<number[]> {
   return [...new Uint8Array(await bufferOf(blob))]
@@ -281,7 +284,7 @@ describe('a mídia demora ou não vem', () => {
     // still the link: what the store shows is the link itself, and nothing was imported yet
     expect(useLibraryStore.getState().files.some(file => file.sharedFrom)).toBe(false)
     expect(screen.getByRole('heading', { level: 1, name: ENTRY_NAME })).toBeInTheDocument()
-    expect(screen.queryByText('Entrada não encontrada.')).not.toBeInTheDocument()
+    expect(screen.queryByText('Nota não encontrada.')).not.toBeInTheDocument()
     finish()
     expect(await screen.findByText('midia disponivel')).toBeInTheDocument()
     expect(imported().kept).toBe('arquivo')
@@ -296,7 +299,7 @@ describe('a mídia demora ou não vem', () => {
     expect(await screen.findByText('midia ausente')).toBeInTheDocument()
     expect(imported().kept).toBe('registro')
     expect(screen.getByText(/Guardado só como registro/)).toBeInTheDocument()
-    expect(useUiStore.getState().toasts.map(toast => toast.text)).toEqual(['Importado, mas a mídia não veio: Não consegui baixar a mídia compartilhada.'])
+    expect(useUiStore.getState().toasts.map(toast => toast.text)).toEqual(['Importado, mas a mídia não veio: O serviço de compartilhamento não respondeu direito (erro 500). Tente de novo daqui a pouco.'])
     expect(useLibraryStore.getState().localMedia).toEqual([])
     expect(useLibraryStore.getState().files.map(file => file.name).sort()).toEqual([ENTRY_NAME, 'Ata', 'Aula', 'Explicação: contratos'].sort())
   })

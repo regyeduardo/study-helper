@@ -218,11 +218,11 @@ describe('com conta do Google, o que está só neste navegador', () => {
       await waitFor(() => expect(rowOf('gravada')).not.toHaveTextContent(NOTICE))
     })
 
-    it('a lista de Entradas avisa só em quem está só aqui', () => {
+    it('a lista de Gravações avisa em quem está só aqui; o que o app não gravou não está nela (003)', () => {
       renderApp(<EntryList />)
       expect(rowOf('aula3')).toHaveTextContent(ANY_NOTICE)
       expect(within(rowOf('aula3')).getByRole('button', { name: ANY_ACTION })).toBeInTheDocument()
-      for (const id of ['kickoff', 'reuniao', 'guia']) expectNoOffer(rowOf(id))
+      for (const id of ['kickoff', 'reuniao', 'guia']) expect(document.querySelector(`[data-file-id="${id}"]`)).toBeNull()
     })
   })
 
@@ -323,7 +323,8 @@ describe('com conta do Google, o que está só neste navegador', () => {
     it('a mídia só aqui avisa e oferece salvar; a que já está no Drive, não', async () => {
       renderApp(null)
       const here = await itemOf('aula3.webm')
-      expect(here).toHaveTextContent(NOTICE)
+      // Mídias says it in its own words: the copy is "neste computador"
+      expect(here).toHaveTextContent('Só neste computador')
       expect(actionIn(here)).toBeInTheDocument()
       expectNoOffer(await itemOf('planejamento.webm'))
     })
@@ -334,7 +335,7 @@ describe('com conta do Google, o que está só neste navegador', () => {
       expect(saveToDrive).toHaveBeenCalledWith('aula3')
       await waitFor(() => {
         const row = screen.queryByText('aula3.webm')?.closest('li')
-        expect(row ? within(row as HTMLElement).queryByText(NOTICE) : null).toBeNull()
+        expect(row ? within(row as HTMLElement).queryByText('Só neste computador') : null).toBeNull()
       })
     })
   })

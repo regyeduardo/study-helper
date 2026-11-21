@@ -6,7 +6,7 @@ const { startNewContent } = vi.hoisted(() => ({ startNewContent: vi.fn(async (..
 
 vi.mock('@/stores/jobs', async () => {
   const { create } = await import('zustand')
-  return { useJobsStore: create(() => ({ jobs: [], saveRecording: startNewContent })) }
+  return { useJobsStore: create(() => ({ jobs: [], saveRecording: startNewContent, trackTask: () => ({ update: () => undefined, done: () => undefined, fail: () => undefined, drop: () => undefined }) })) }
 })
 
 vi.mock('@/routes', () => ({ router: { navigate: vi.fn() } }))

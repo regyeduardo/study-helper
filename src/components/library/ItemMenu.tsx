@@ -2,14 +2,15 @@ import { useNavigate } from 'react-router-dom'
 
 import type { FolderColor } from '@/types/domain'
 import { mediaChoice } from '@/components/dialogs/DeleteFamilyDialog'
-import { againOf, madeLine } from '@/components/dialogs/FromNoteFields'
+import { madeLine, redoOf } from '@/components/dialogs/FromNoteFields'
 import { Icon } from '@/components/ui/Icon'
 import { Popover } from '@/components/ui/Popover'
-import { exportFileAsMarkdown, exportFileAsPdf, exportFileAsZip } from '@/lib/exports/library-export'
+import { exportWithFeedback } from '@/components/library/slow-actions'
 import { descendantsOf } from '@/lib/family'
-import { mediaOf } from '@/lib/file-types'
+import { isSourceNote, mediaOf } from '@/lib/file-types'
 import { isCourseFolder } from '@/lib/generation/course-lesson'
 import { paths } from '@/lib/paths'
+import { working } from '@/lib/working'
 import { useJobsStore } from '@/stores/jobs'
 import { useLibraryStore } from '@/stores/library'
 import { useUiStore } from '@/stores/ui'
@@ -32,9 +33,25 @@ export function ItemMenu() {
   const menu = ui.menu
   if (!menu) return null
   const close = () => ui.openMenu(null)
+  // an action that fails (the Drive is off) says so; what the list already showed goes back
   const act = (run: () => unknown) => () => {
     close()
-    void run()
+    void (async () => {
+      try {
+        await run()
+      } catch (error) {
+        ui.toast(`Não deu certo: ${error instanceof Error ? error.message : 'tente de novo.'}`)
+      }
+    })()
+  }
+
+  // the AI reads the note: the line is there from the click, and the end says what came out
+  const suggestTags = async (fileId: string) => {
+    const ok = await working('Sugerindo etiquetas…', () => jobs.suggestTags(fileId), { message: 'A IA está lendo a nota' })
+    if (!ok) return
+    const found = useLibraryStore.getState().files.find(item => item.id === fileId)?.suggestedTags?.length ?? 0
+    if (found) ui.toast(`${found} ${found === 1 ? 'etiqueta sugerida' : 'etiquetas sugeridas'}.`, { label: 'Ver na nota', to: paths.file(fileId) })
+    else ui.toast('Não saíram etiquetas novas para esta nota.')
   }
 
   if (menu.kind === 'folder') {
@@ -55,6 +72,10 @@ export function ItemMenu() {
         <button className="mi" onClick={act(() => ui.open({ kind: 'move', fileIds: [], folderIds: [folder.id] }))}>
           <Icon name="move" />
           Mover para…
+        </button>
+        <button className="mi" onClick={act(() => ui.open({ kind: 'settings', tab: 'storage', focusId: folder.id }))}>
+          <Icon name="cloud" />
+          Onde fica…
         </button>
         <button className="mi" onClick={act(() => library.updateFolder(folder.id, { favorite: !folder.favorite }))}>
           <Icon name="star" />
@@ -88,9 +109,9 @@ export function ItemMenu() {
               <Icon name="sort" />
               Ordenar aulas e módulos
             </button>
-            <button className="mi" onClick={act(() => jobs.generateRemaining(folder.id))}>
+            <button className="mi" onClick={act(() => ui.open({ kind: 'pending', folderId: folder.id }))}>
               <Icon name="sync" />
-              Gerar as aulas que faltam
+              Gerar as aulas que faltam…
             </button>
           </>
         )}
@@ -117,7 +138,8 @@ export function ItemMenu() {
   const fromMedia = library.localMedia.some(item => item.fileIds.includes(file.id)) || Boolean(file.origin?.storedFileId || file.origin?.storedUrl)
   const gate = (label: string) => (fromMedia && (label === 'Ata' || label === 'Aula') ? undefined : needs)
   const generate = (agent: 'meeting' | 'lesson') => act(() => ui.open({ kind: 'generate', fileId: file.id, agent }))
-  const again = againOf(file, library.files)
+  // the window that writes it again, with what it was made with
+  const again = redoOf(file, library.files, library.folders)
   const tools: [string, Parameters<typeof Icon>[0]['name'], (() => void) | null][] = [
     ['Mapa mental', 'layers', act(() => ui.open({ kind: 'mindmap', fileId: file.id }))],
     ['Cartões', 'note', act(() => ui.open({ kind: 'cards', fileId: file.id }))],
@@ -132,7 +154,7 @@ export function ItemMenu() {
       {again && (
         <button
           className="mi"
-          onClick={act(() => ui.open(again.ata ? { kind: 'ata-parts', fileId: again.source.id, again: file.id } : { kind: 'generate', fileId: again.source.id, agent: file.type === 'meeting' ? 'meeting' : 'lesson', again: file.id }))}
+          onClick={act(() => ui.open(again))}
         >
           <Icon name="sync" />
           <span className="mi-two">
@@ -152,7 +174,7 @@ export function ItemMenu() {
         </button>
       ))}
       <div className="sep" />
-      <button className="mi" disabled={!hasText} onClick={act(() => jobs.suggestTags(file.id))}>
+      <button className="mi" disabled={!hasText} onClick={act(() => suggestTags(file.id))}>
         <Icon name="bulb" />
         Sugerir etiquetas
       </button>
@@ -170,6 +192,10 @@ export function ItemMenu() {
         <Icon name="move" />
         Mover
       </button>
+      <button className="mi" onClick={act(() => ui.open({ kind: 'settings', tab: 'storage', focusId: file.id }))}>
+        <Icon name="cloud" />
+        Onde fica…
+      </button>
       <button className="mi" onClick={act(() => ui.open({ kind: 'rename', target: 'file', id: file.id }))}>
         <Icon name="pen" />
         Renomear
@@ -178,20 +204,20 @@ export function ItemMenu() {
         <Icon name="star" />
         {file.favorite ? 'Tirar dos favoritos' : 'Favoritar'}
       </button>
-      <button className="mi" onClick={act(() => ui.open({ kind: 'share', target: file.role === 'entrada' ? 'entrada' : 'file', id: file.id }))}>
+      <button className="mi" onClick={act(() => ui.open({ kind: 'share', target: isSourceNote(file) ? 'entrada' : 'file', id: file.id }))}>
         <Icon name="link" />
         Compartilhar
       </button>
       <div className="sep" />
-      <button className="mi" onClick={act(() => exportFileAsMarkdown(file.id))}>
+      <button className="mi" onClick={act(() => exportWithFeedback('md', file.id))}>
         <Icon name="download" />
         Exportar .md
       </button>
-      <button className="mi" onClick={act(() => exportFileAsZip(file.id))}>
+      <button className="mi" onClick={act(() => exportWithFeedback('zip', file.id))}>
         <Icon name="download" />
         Exportar .zip (com a prova)
       </button>
-      <button className="mi" onClick={act(() => exportFileAsPdf(file.id))}>
+      <button className="mi" onClick={act(() => exportWithFeedback('pdf', file.id))}>
         <Icon name="download" />
         Exportar PDF
       </button>
@@ -200,9 +226,10 @@ export function ItemMenu() {
         className="mi danger"
         onClick={act(() => {
           if (descendantsOf(library.files, file.id).length) return ui.open({ kind: 'delete-family', fileId: file.id })
+          // the note leaves the list at once and a line says it is being removed (one Drive write, more with the media)
           const trash = async (media: boolean) => {
-            await library.trashFiles([file.id], { media })
-            ui.toast(`"${file.name}" foi para a lixeira${media ? ', com a mídia' : ''}`)
+            const ok = await working(`Apagando "${file.name}"…`, () => library.trashFiles([file.id], { media }), { message: media ? 'Apagando a nota e a mídia' : 'Mandando para a lixeira' })
+            if (ok) ui.toast(`"${file.name}" foi para a lixeira${media ? ', com a mídia' : ''}`)
           }
           if (!library.hasMedia(file.id)) return trash(false)
           ui.open(mediaChoice(file, trash))

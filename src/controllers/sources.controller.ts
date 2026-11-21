@@ -64,7 +64,7 @@ export async function fetchWebPageController(url: string, signal?: AbortSignal):
   return { title, content }
 }
 
-async function youtubeTitle(url: string, signal?: AbortSignal): Promise<string> {
+export async function youtubeTitle(url: string, signal?: AbortSignal): Promise<string> {
   for (const endpoint of [
     `https://www.youtube.com/oembed?format=json&url=${encodeURIComponent(url)}`,
     `https://noembed.com/embed?url=${encodeURIComponent(url)}`,

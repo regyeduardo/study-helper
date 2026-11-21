@@ -148,7 +148,9 @@ describe('importar o link de uma entrada', () => {
     const files = useLibraryStore.getState().files
     expect(files).toHaveLength(4)
     const entry = files.find(file => file.id === result.fileId)!
-    expect(entry).toMatchObject({ name: ENTRY_NAME, role: 'entrada', kept: 'registro', parentFileId: null, folderId: 'destino', sharedFrom: SHARE_ID })
+    // no more entradas (003): the root of the family comes as a note of its type, the link still says role entrada
+    expect(entry).toMatchObject({ name: ENTRY_NAME, type: 'video', kept: 'registro', parentFileId: null, folderId: 'destino', sharedFrom: SHARE_ID })
+    expect(entry.role).toBeUndefined()
     expect(entry.origin).toMatchObject({ input: 'file', name: 'planejamento.mp4', mime: 'video/mp4', storage: 'none' })
     const byName = (name: string) => files.find(file => file.name === name)!
     expect(byName('Ata')).toMatchObject({ parentFileId: entry.id, folderId: 'destino', type: 'meeting' })

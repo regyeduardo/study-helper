@@ -3,7 +3,7 @@ import { create } from 'zustand'
 import type { DeviceRecord } from '@/types/domain'
 import { currentDevice } from '@/lib/device'
 import { nowIso } from '@/lib/ids'
-import { DriveRepository } from '@/lib/storage/drive-repository'
+import { driveOf } from '@/lib/storage/combined-repository'
 import type { Conflict, StorageUsage } from '@/lib/storage/repository'
 import { useLibraryStore } from '@/stores/library'
 
@@ -59,7 +59,7 @@ export const useSyncStore = create<SyncState>((set, get) => ({
     set({ lastSyncAt: null, error: null, devices: [], usage: null })
     const repo = useLibraryStore.getState().repo
     repo?.setConflictResolver(conflict => get().askConflict(conflict))
-    if (repo instanceof DriveRepository) {
+    if (driveOf(repo)) {
       void get().syncNow()
       timer = window.setInterval(() => void get().syncNow(), SYNC_INTERVAL_MS)
     } else {
@@ -77,10 +77,11 @@ export const useSyncStore = create<SyncState>((set, get) => ({
     try {
       const { snapshot, changedFileIds } = await repo.pullChanges()
       useLibraryStore.getState().applySnapshot(snapshot, changedFileIds)
-      if (repo instanceof DriveRepository) {
+      const drive = driveOf(repo)
+      if (drive) {
         const device = currentDevice()
-        await repo.heartbeat({ id: device.id, name: device.name, lastSeen: nowIso(), accountId: repo.accountId })
-        set({ devices: await repo.listDevices() })
+        await drive.heartbeat({ id: device.id, name: device.name, lastSeen: nowIso(), accountId: drive.accountId })
+        set({ devices: await drive.listDevices() })
       }
       set({ lastSyncAt: Date.now() })
       await get().refreshUsage()
@@ -115,6 +116,6 @@ export const useSyncStore = create<SyncState>((set, get) => ({
 
   removeThisDevice: async () => {
     const repo = useLibraryStore.getState().repo
-    if (repo instanceof DriveRepository) await repo.removeDevice(currentDevice().id).catch(() => undefined)
+    await driveOf(repo)?.removeDevice(currentDevice().id).catch(() => undefined)
   },
 }))

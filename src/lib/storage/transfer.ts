@@ -1,4 +1,5 @@
 import type { FolderMeta } from '@/types/domain'
+import { CombinedRepository } from '@/lib/storage/combined-repository'
 import { LocalRepository } from '@/lib/storage/local-repository'
 import { hasTextConflict, joinHunks, mergeText } from '@/lib/sync/merge'
 import { useLibraryStore } from '@/stores/library'
@@ -92,4 +93,40 @@ export async function transferLocalToCurrent(): Promise<number> {
   const { snapshot: fresh } = await library.repo.pullChanges()
   useLibraryStore.getState().applySnapshot(fresh)
   return moved
+}
+
+/**
+ * T029 (spec 003, R16): the profile without login (`study-helper-local`) becomes this account's Local, without sending anything to the
+ * Drive. It is a copy: the profile stays as it was. What was at the top of the profile gets "Local" as its own choice, so what is made in
+ * it later stays in this browser too. Returns how many folders and notes came.
+ */
+export async function bringLocalToAccount(): Promise<number> {
+  const repo = useLibraryStore.getState().repo
+  if (!(repo instanceof CombinedRepository)) throw new Error('Entre com o Google antes.')
+  const profile = new LocalRepository()
+  const snapshot = await profile.load()
+  const folderIds = new Set(snapshot.folders.map(folder => folder.id))
+  const top = (parentId: string | null) => !parentId || !folderIds.has(parentId)
+  let count = 0
+  for (const folder of snapshot.folders) {
+    await repo.local.saveFolder({ ...folder, ...(top(folder.parentId) ? { place: 'local' as const } : {}) })
+    count++
+  }
+  for (const meta of snapshot.files) {
+    const [sidecar, content] = await Promise.all([profile.readSidecar(meta.id), profile.readContent(meta.id)])
+    let next = { ...sidecar, meta: { ...sidecar.meta, ...(top(meta.folderId) ? { place: 'local' as const } : {}) } }
+    const origin = sidecar.meta.origin
+    // the file kept with the note in the profile is copied with it
+    if (origin?.storage === 'drive' && origin.storedFileId && !origin.removedAt) {
+      const blob = await profile.getSource(origin.storedFileId).catch(() => null)
+      if (blob) {
+        const stored = await repo.local.putSource(meta.id, blob, origin.name)
+        next = { ...next, meta: { ...next.meta, origin: { ...origin, storedFileId: stored.ref } } }
+      }
+    }
+    await repo.local.saveFile(next, content)
+    count++
+  }
+  useLibraryStore.getState().applySnapshot(await repo.load())
+  return count
 }

@@ -5,6 +5,10 @@
 .doc-more .ic{transition:transform .15s ease}
 .doc-more[aria-expanded="true"] .ic{transform:rotate(180deg)}
 @media (prefers-reduced-motion: reduce){.doc-more .ic{transition:none}}
+/* "Refazer…" of a note the AI wrote: beside "Detalhes", in the same quiet weight, with its own outline so it reads as an action */
+.doc-meta .doc-redo{gap:5px;padding:2px 8px;border:1px solid var(--border);border-radius:6px;text-decoration:none;color:var(--fg-muted)}
+.doc-meta .doc-redo:hover{background:var(--bg-hover);color:var(--fg)}
+.doc-meta .doc-redo:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
 
 .doc-details{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:8px 16px;justify-self:start;min-width:min(100%,320px);max-width:100%;margin:0;padding:10px 14px;border:1px solid var(--border-muted);border-radius:8px;background:var(--bg-subtle);font-size:13px}
 .doc-details>div{display:contents}
@@ -16,6 +20,12 @@
 .doc-details .ic{width:14px;height:14px;flex:none;color:var(--fg-muted)}
 .doc-details .doc-tag{color:var(--fg-muted);text-decoration:none}
 .doc-details .doc-tag:hover{color:var(--fg)}
+/* Where a note made of a link, a text or a topic came from, and "Virar entrada". */
+.doc-source a{display:inline-flex;align-items:center;gap:5px;min-width:0;max-width:100%;color:var(--accent);overflow-wrap:anywhere}
+.doc-source-text{min-width:0;color:var(--fg);overflow-wrap:anywhere}
+.doc-details dd .doc-source-act{padding:2px 9px;border:1px solid var(--border);border-radius:6px;background:var(--bg);text-decoration:none;font-size:12.5px}
+.doc-details dd .doc-source-act:hover{border-color:var(--fg-muted)}
+.doc-details dd .doc-source-act:disabled{opacity:.7}
 
 /* The menu of a passage with more than one explanation. */
 .ex-mi{max-width:340px}

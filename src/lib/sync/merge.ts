@@ -1,6 +1,6 @@
 import { diffArrays } from 'diff'
 
-import type { DiagnosisRecord, FileSidecar, FolderMeta } from '@/types/domain'
+import type { DiagnosisRecord, FileSidecar, FolderMeta, ShareRecord } from '@/types/domain'
 import { artifactMeta, placeholderName } from '@/lib/artifacts'
 import type { FieldConflict } from '@/lib/storage/repository'
 
@@ -163,6 +163,21 @@ export function mergeKept<T extends { id: string }>(base: T[], mine: T[], theirs
   const mineIds = new Set(mine.map(item => item.id))
   const removed = new Set(base.filter(item => !mineIds.has(item.id)).map(item => item.id))
   return [...mine, ...theirs.filter(item => !mineIds.has(item.id) && !removed.has(item.id))]
+}
+
+/**
+ * The links made: like `mergeKept`, but a link that both sides have (updated in place on one of them) keeps the later expiry,
+ * and a link the other device deleted does not come back just because this one still had it (unless this one changed it since).
+ */
+export function mergeShares(base: ShareRecord[], mine: ShareRecord[], theirs: ShareRecord[]): ShareRecord[] {
+  const baseById = new Map(base.map(item => [item.id, item]))
+  const theirsById = new Map(theirs.map(item => [item.id, item]))
+  return mergeKept(base, mine, theirs)
+    .filter(own => theirsById.has(own.id) || !baseById.has(own.id) || JSON.stringify(own) !== JSON.stringify(baseById.get(own.id)))
+    .map(own => {
+      const other = theirsById.get(own.id)
+      return other && Date.parse(other.expiresAt) > Date.parse(own.expiresAt) ? other : own
+    })
 }
 
 export interface SidecarMerge {

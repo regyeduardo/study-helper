@@ -6,8 +6,11 @@ import { Icon } from '@/components/ui/Icon'
 import { fetchSharedItemController } from '@/controllers/share.controller'
 import type { ViewRoute } from '@/hooks/use-view-route'
 import { nowIso } from '@/lib/ids'
-import { isExpired, readSharedAttempts } from '@/lib/share'
+import { isExpired, linkMediaState, readSharedAttempts } from '@/lib/share'
 import { useLibraryStore } from '@/stores/library'
+
+/** How often a link whose media is still going up is read again, to show the media as soon as it is there. */
+export const sharedPoll = { ms: 5000 }
 
 type LoadState = { kind: 'loading' } | { kind: 'unavailable' } | { kind: 'ready'; item: SharedItem }
 
@@ -50,6 +53,25 @@ export function useSharedRoute(shareId: string): ViewRoute {
       leaveShared()
     }
   }, [shareId])
+
+  // the sharer is still sending the media: the page asks again until it is there (or past its days), instead of staying as it was when opened
+  const waiting = state.kind === 'ready' && linkMediaState(state.item).kind === 'pending'
+  useEffect(() => {
+    if (!waiting) return
+    let alive = true
+    const timer = window.setInterval(() => {
+      void fetchSharedItemController(shareId).then(item => {
+        if (!alive || !item) return
+        if (linkMediaState(item).kind === 'pending') return
+        enterShared(item, readSharedAttempts(item.id))
+        setState({ kind: 'ready', item })
+      })
+    }, sharedPoll.ms)
+    return () => {
+      alive = false
+      window.clearInterval(timer)
+    }
+  }, [waiting, shareId])
 
   if (state.kind !== 'ready') return { view: 'shared', folderId: null, fileId: null, shareId, unavailable: state.kind === 'unavailable' }
   return sharedRoute(state.item, pathname)

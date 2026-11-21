@@ -3,26 +3,31 @@ import { useNavigate } from 'react-router-dom'
 
 import type { Artifact, ArtifactKind, ArtifactSummary, FileMeta, Highlight, Settings, StudyCard } from '@/types/domain'
 import { madeModelName } from '@/components/dialogs/ArtifactGenerateDialog'
+import { DownloadMedia } from '@/components/library/DownloadMedia'
 import { Icon, type IconName } from '@/components/ui/Icon'
 import { Popover } from '@/components/ui/Popover'
 import { NoteParts } from '@/components/reader/Details'
 import { artifactsOf } from '@/lib/artifacts'
 import { dueCount } from '@/lib/generation/cards'
+import { scopeOf } from '@/lib/generation/tutor'
 import { scrollToHeading } from '@/components/reader/GithubMarkdownView'
 import { providerOf } from '@/lib/ai/providers'
 import { lineageOf } from '@/lib/generation/course-lesson'
 import { newId, nowIso } from '@/lib/ids'
 import { paths } from '@/lib/paths'
+import { sharedMediaState } from '@/lib/share'
 import { transcriptFileName, transcriptOf } from '@/lib/generation/transcript'
 import { fileBytes } from '@/lib/storage/file-sizes'
 import { downloadStoredSource, removeStoredSource, sourceExpired } from '@/lib/storage/source-storage'
 import { ENGINES } from '@/lib/transcription'
+import { useBusy } from '@/hooks/use-busy'
 import { isNarrowScreen } from '@/hooks/use-is-narrow'
 import { useDocumentStore } from '@/stores/document'
 import { useLibraryStore } from '@/stores/library'
 import { type InspectorTab, type Overlay, useUiStore } from '@/stores/ui'
 import { downloadBlob } from '@/utils/download'
 import { dateTime, duration, formatBytes, shortDate } from '@/utils/format'
+import { isSourceNote } from '@/lib/file-types'
 
 const INPUT_LABEL: Record<string, string> = { file: 'Arquivo', url: 'Link', youtube: 'YouTube', topic: 'Tema', text: 'Texto', recording: 'Gravação', import: 'Importado', shared: 'Compartilhamento' }
 const STORAGE_LABEL: Record<string, string> = { drive: 'Google Drive', gofile: 'Gofile', litterbox: 'Litterbox', filebin: 'filebin', tmpfiles: 'tmpfiles', onlyfiles: 'OnlyFiles', none: 'Não guardada' }
@@ -59,12 +64,19 @@ export function NotesPanel({ fileId }: { fileId: string }) {
   const marks = highlights.filter(item => item.kind === 'highlight')
   const notes = highlights.filter(item => item.kind === 'note')
 
+  // the note shows in the list at once and the box closes; if the Drive refuses, the box comes back with the text and a toast says why
+  const failed = (error: unknown) => useUiStore.getState().toast(`Não deu para salvar a nota: ${error instanceof Error ? error.message : 'tente de novo.'}`)
+
   const saveNote = async (note: Highlight, text: string) => {
-    await saveHighlight(fileId, { ...note, text, updatedAt: nowIso() })
+    const saving = saveHighlight(fileId, { ...note, text, updatedAt: nowIso() })
     setEditing(state => {
       const next = { ...state }
       delete next[note.id]
       return next
+    })
+    await saving.catch(error => {
+      setEditing(state => ({ ...state, [note.id]: text }))
+      failed(error)
     })
   }
 
@@ -82,8 +94,13 @@ export function NotesPanel({ fileId }: { fileId: string }) {
               disabled={!draft.trim()}
               onClick={async () => {
                 const at = nowIso()
-                await saveHighlight(fileId, { id: newId(), kind: 'note', quote: '', text: draft.trim(), color: 'yellow', startOffset: null, endOffset: null, createdAt: at, updatedAt: at })
+                const text = draft.trim()
+                const saving = saveHighlight(fileId, { id: newId(), kind: 'note', quote: '', text, color: 'yellow', startOffset: null, endOffset: null, createdAt: at, updatedAt: at })
                 setDraft(null)
+                await saving.catch(error => {
+                  setDraft(text)
+                  failed(error)
+                })
               }}
             >
               Salvar nota
@@ -179,31 +196,12 @@ function TranscriptDownload({ meta }: { meta: FileMeta }) {
   )
 }
 
-/** Whoever opens a shared link gets the media from the link itself, never from the owner's storage. */
-function SharedMediaDownload({ url, name }: { url: string; name: string }) {
-  const toast = useUiStore(state => state.toast)
-  const [busy, setBusy] = useState(false)
+/** Whoever opens a shared link gets the media from the link itself, never from the owner's storage; the reason it did not come is the one the Worker gave. */
+function SharedMediaDownload({ fileId, url, name }: { fileId: string; url: string; name: string }) {
   return (
-    <button
-      className="btn"
-      style={{ marginTop: 10 }}
-      disabled={busy}
-      onClick={async () => {
-        setBusy(true)
-        try {
-          const response = await fetch(url)
-          if (!response.ok) throw new Error('Não deu para baixar a mídia do link.')
-          downloadBlob(await response.blob(), name)
-        } catch (error) {
-          toast(error instanceof Error ? error.message : 'Não deu para baixar a mídia do link.')
-        } finally {
-          setBusy(false)
-        }
-      }}
-    >
-      <Icon name="download" />
-      {busy ? 'Baixando a mídia…' : 'Baixar a mídia'}
-    </button>
+    <div style={{ marginTop: 10 }}>
+      <DownloadMedia fileId={fileId} name={name} url={url} label="Baixar a mídia" />
+    </div>
   )
 }
 
@@ -211,11 +209,22 @@ function SourceActions({ meta }: { meta: FileMeta }) {
   const library = useLibraryStore()
   const ui = useUiStore()
   const [confirming, setConfirming] = useState(false)
+  const [downloading, download] = useBusy()
+  const [removing, remove] = useBusy()
   const origin = meta.origin!
-  const sharedMedia = library.sharedView?.item.files.find(file => file.id === meta.id)?.media ?? null
-  if (library.sharedView) return sharedMedia ? <SharedMediaDownload url={sharedMedia.url} name={origin.name} /> : null
+  // only a media that is in the link and still in its days has a button: an expired one is told by the player, not offered
+  const shared = library.sharedView ? sharedMediaState(library.sharedView.item, library.sharedView.item.files.find(file => file.id === meta.id)) : null
+  if (library.sharedView) return shared?.kind === 'ready' ? <SharedMediaDownload fileId={meta.id} url={shared.media.url} name={origin.name} /> : null
   const stored = (origin.storedFileId || origin.storedUrl) && !origin.removedAt
-  if (!stored) return null
+  if (!stored) {
+    // only in this computer: the copy of Mídias is still the file
+    const here = library.localMedia.some(item => item.fileIds.includes(meta.id))
+    return here ? (
+      <div style={{ display: 'flex', gap: 6, marginTop: 10, flexWrap: 'wrap' }}>
+        <DownloadMedia fileId={meta.id} name={origin.name} label="Baixar a mídia" />
+      </div>
+    ) : null
+  }
   const expired = sourceExpired(origin)
   return (
     <>
@@ -223,18 +232,22 @@ function SourceActions({ meta }: { meta: FileMeta }) {
         {!expired && (
           <button
             className="btn"
-            onClick={async () => {
-              try {
-                const source = await downloadStoredSource(origin, library.repo!)
-                if (typeof source === 'string') window.open(source, '_blank', 'noopener')
-                else downloadBlob(source, origin.name)
-              } catch (error) {
-                ui.toast(error instanceof Error ? error.message : 'Não deu para baixar.')
-              }
-            }}
+            disabled={downloading}
+            onClick={() =>
+              // the file comes from the Drive: the button answers at once and does not download twice
+              void download(async () => {
+                try {
+                  const source = await downloadStoredSource(origin, library.repo!)
+                  if (typeof source === 'string') window.open(source, '_blank', 'noopener')
+                  else downloadBlob(source, origin.name)
+                } catch (error) {
+                  ui.toast(error instanceof Error ? error.message : 'Não deu para baixar.')
+                }
+              })
+            }
           >
-            <Icon name="download" />
-            Baixar a fonte
+            {downloading ? <Icon name="sync" className="spinning" /> : <Icon name="download" />}
+            {downloading ? 'Baixando…' : 'Baixar a fonte'}
           </button>
         )}
         <button className="btn danger" onClick={() => setConfirming(true)}>
@@ -249,14 +262,23 @@ function SourceActions({ meta }: { meta: FileMeta }) {
             : `O ${STORAGE_LABEL[origin.storage]} não deixa apagar pelo app; a nota passa a guardar só o nome.`}
           <button
             className="btn danger"
-            onClick={async () => {
-              const next = await removeStoredSource(origin, library.repo!)
-              await library.updateFile(meta.id, { origin: next })
-              setConfirming(false)
-              ui.toast('Fonte removida; ficou só o nome')
-            }}
+            disabled={removing}
+            onClick={() =>
+              // deleting the stored file is a trip to the Drive: the button answers at once
+              void remove(async () => {
+                try {
+                  const next = await removeStoredSource(origin, library.repo!)
+                  await library.updateFile(meta.id, { origin: next })
+                  setConfirming(false)
+                  ui.toast('Fonte removida; ficou só o nome')
+                } catch (error) {
+                  ui.toast(error instanceof Error ? error.message : 'Não deu para remover a fonte.')
+                }
+              })
+            }
           >
-            Remover
+            {removing && <Icon name="sync" className="spinning" />}
+            {removing ? 'Removendo…' : 'Remover'}
           </button>
           <button className="btn quiet" onClick={() => setConfirming(false)}>
             Manter
@@ -342,7 +364,7 @@ export function InfoPanel({ fileId }: { fileId: string }) {
         <div className="sec">
           <h4>Origem</h4>
           <dl className="kv">
-            <dt>Entrada</dt>
+            <dt>Veio de</dt>
             <dd>{INPUT_LABEL[origin.input]}</dd>
             <dt>{origin.url ? 'Endereço' : 'Nome'}</dt>
             <dd>
@@ -724,7 +746,7 @@ function ThisNote({ fileId }: { fileId: string }) {
   return (
     <>
       {KINDS.map(section => (
-        <ArtifactSection key={section.kind} fileId={fileId} section={section} items={newestFirst(list.filter(item => item.kind === section.kind))} readOnly={readOnly} />
+        <ArtifactSection key={section.kind} fileId={fileId} section={section} items={newestFirst(list.filter(item => item.kind === section.kind && (item.kind !== 'tutor' || scopeOf(item, isSourceNote(meta)) === 'tutor')))} readOnly={readOnly} />
       ))}
       <Marks highlights={sidecar?.highlights ?? []} />
       {meta.questionCount > 0 && (

@@ -2,6 +2,7 @@ import { type ComponentProps, type CSSProperties, type ReactNode, type RefObject
 
 import type { FileMeta } from '@/types/domain'
 import { readLocalMedia } from '@/lib/recording/media-library'
+import { sharedMediaState } from '@/lib/share'
 import { downloadStoredSource, sourceExpired } from '@/lib/storage/source-storage'
 import { clockTime } from '@/lib/transcription/export'
 import { useLibraryStore } from '@/stores/library'
@@ -18,6 +19,8 @@ export interface MeetingMedia {
 }
 
 export const SHARED_MEDIA_EXPIRED = 'A mídia deste compartilhamento expirou (fica 3 dias).'
+export const SHARED_MEDIA_PENDING = 'A mídia ainda está sendo enviada por quem compartilhou. Ela aparece aqui quando terminar; se demorar, peça para atualizar o link.'
+export const SHARED_MEDIA_MISSING = 'O arquivo não está disponível neste aparelho: quem compartilhou não enviou a mídia (o envio pode ter falhado). Peça para atualizar o link.'
 
 const MEDIA_FAILURES: Record<number, string> = {
   2: 'A mídia parou de baixar. Confira a internet.',
@@ -42,7 +45,7 @@ const nothing = async () => undefined
 export function useMeetingMedia(meta: FileMeta | null): MeetingMedia {
   const fileId = meta?.id ?? null
   const sharedItem = useLibraryStore(state => state.sharedView?.item ?? null)
-  const sharedMedia = sharedItem?.files.find(file => file.id === fileId)?.media ?? null
+  const sharedFile = sharedItem?.files.find(file => file.id === fileId)
   const local = useLibraryStore(state => state.localMedia.find(item => fileId !== null && item.fileIds.includes(fileId)) ?? null)
   const repo = useLibraryStore(state => state.repo)
   const toast = useUiStore(state => state.toast)
@@ -61,7 +64,11 @@ export function useMeetingMedia(meta: FileMeta | null): MeetingMedia {
   useEffect(() => {
     let alive = true
     setUrl(null)
-    if (local) void readLocalMedia(local).then(file => alive && show(file), () => undefined)
+    if (local)
+      void readLocalMedia(local)
+        .then(file => alive && show(file))
+        // a media that does not open (or a page without object URLs) just does not play
+        .catch(() => undefined)
     return () => {
       alive = false
     }
@@ -84,10 +91,12 @@ export function useMeetingMedia(meta: FileMeta | null): MeetingMedia {
   }, [url, local, kept, origin, repo, show, toast])
 
   if (sharedItem) {
-    const video = (sharedMedia?.mime || origin?.mime || '').startsWith('video/')
-    if (!sharedMedia) return { url: null, available: false, video, request: nothing }
-    if (sharedItem.mediaExpiresAt && Date.parse(sharedItem.mediaExpiresAt) <= Date.now()) return { url: null, available: false, video, notice: SHARED_MEDIA_EXPIRED, request: nothing }
-    return { url: sharedMedia.url, available: true, video, remote: true, size: sharedMedia.size, request: nothing }
+    const state = sharedMediaState(sharedItem, sharedFile)
+    const video = (sharedFile?.media?.mime || sharedFile?.mediaPending?.mime || origin?.mime || '').startsWith('video/')
+    if (state.kind === 'ready') return { url: state.media.url, available: true, video, remote: true, size: state.media.size, request: nothing }
+    // why there is nothing to play: still going up, past its days, or the sharer chose the media and it never arrived
+    const notice = state.kind === 'pending' ? SHARED_MEDIA_PENDING : state.kind === 'expired' ? SHARED_MEDIA_EXPIRED : meta?.kept === 'arquivo' ? SHARED_MEDIA_MISSING : undefined
+    return { url: null, available: false, video, ...(notice ? { notice } : {}), request: nothing }
   }
   return { url, available: Boolean(local) || kept, video: (local?.mime || origin?.mime || '').startsWith('video/'), request }
 }
@@ -97,6 +106,10 @@ interface MediaPlayerProps {
   media: MeetingMedia
   onTime(seconds: number): void
   onPlayFrom(seconds: number): void
+  /** Marks the moment the media is at: the button "Marcar este momento" and the key B. Without it, neither exists. */
+  onMark?(seconds: number): void
+  /** A video big in its own column (the Chat's), not the thumbnail beside the bar. Audio ignores it. */
+  docked?: boolean
 }
 
 const wired = new WeakSet<HTMLMediaElement>()
@@ -169,6 +182,7 @@ const ICONS = {
   shrink: <path d="M20 10h-6V4M4 14h6v6M14 10l7-7M3 21l7-7" />,
   fullscreen: <path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5" />,
   leave: <path d="M9 4v5H4M15 4v5h5M20 15h-5v5M4 15h5v5" />,
+  flag: <path d="M6 21V4.5M6 5h11l-2 3.5 2 3.5H6" />,
 }
 
 function Glyph({ playing }: { playing: boolean }) {
@@ -260,7 +274,7 @@ function Tool({ label, hint, icon, className, ...rest }: { label: string; hint: 
   )
 }
 
-export function MediaPlayer({ player, media, onTime, onPlayFrom }: MediaPlayerProps) {
+export function MediaPlayer({ player, media, onTime, onPlayFrom, onMark, docked }: MediaPlayerProps) {
   const [playing, setPlaying] = useState(false)
   const [time, setTime] = useState(0)
   const [duration, setDuration] = useState(0)
@@ -309,6 +323,11 @@ export function MediaPlayer({ player, media, onTime, onPlayFrom }: MediaPlayerPr
     const element = player.current
     if (element && duration) moveTo(Math.min(Math.max(element.currentTime + seconds, 0), duration))
   }
+  // where the media is now, to a tenth of a second; with no file loaded there is no "now"
+  const mark = () => {
+    if (!onMark || !media.url) return
+    onMark(Math.round((player.current?.currentTime ?? time) * 10) / 10)
+  }
   const keep = (change: Partial<Prefs>) => {
     const next = { ...prefs, ...change }
     setPrefs(next)
@@ -354,6 +373,7 @@ export function MediaPlayer({ player, media, onTime, onPlayFrom }: MediaPlayerPr
     if (!ownKey(target, key)) return
     if (key === ' ' || key === 'k') toggle()
     else if (key === 'm') mute()
+    else if (key === 'b' && onMark && !failure) mark()
     else if (key === 'f' && media.video) {
       setBig(true)
       toggleFullscreen()
@@ -514,6 +534,7 @@ export function MediaPlayer({ player, media, onTime, onPlayFrom }: MediaPlayerPr
         ref={box}
         className="mplayer-box"
         data-big={expanded ? 'true' : undefined}
+        data-docked={docked && media.video ? 'true' : undefined}
         data-fullscreen={fullscreen ? 'true' : undefined}
         data-idle={watching && idle ? 'true' : undefined}
         onMouseMove={watching ? wake : undefined}
@@ -556,6 +577,7 @@ export function MediaPlayer({ player, media, onTime, onPlayFrom }: MediaPlayerPr
             <>
               <Tool label="Voltar 10 segundos" hint="Voltar 10 segundos (J)" icon={<Icon name="back" size={20} />} onClick={() => skip(-SKIP)} disabled={!duration} />
               <Tool label="Avançar 10 segundos" hint="Avançar 10 segundos (L)" icon={<Icon name="forward" size={20} />} onClick={() => skip(SKIP)} disabled={!duration} />
+              {onMark && <Tool className="mplayer-mark" label="Marcar este momento" hint="Marcar este momento (B)" icon={<Icon name="flag" />} onClick={mark} disabled={!media.url} />}
               <div className="mplayer-scrub">
                 <span className="mplayer-time">{clockTime(time)}</span>
                 <input

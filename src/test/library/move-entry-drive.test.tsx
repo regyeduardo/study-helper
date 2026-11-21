@@ -68,8 +68,9 @@ async function moveOnPage() {
   const dialog = await screen.findByRole('dialog', { name: 'Mover 1 item' })
   fireEvent.click(within(tree(dialog)).getByRole('treeitem', { name: 'Atas' }))
   fireEvent.click(within(dialog).getByRole('button', { name: 'Mover' }))
+  // the window closes at once; the toast comes when the Drive has the move
   await waitFor(() => expect(useUiStore.getState().overlay).toBeNull(), { timeout: 3000 })
-  expect(useUiStore.getState().toasts.at(-1)?.text).toBe('Movido para Atas')
+  await waitFor(() => expect(useUiStore.getState().toasts.at(-1)?.text).toBe('Movido para Atas'), { timeout: 3000 })
   expect(stored(entryId).folderId).toBe(atas.id)
   const fresh = new DriveRepository(account, token, drive.appDataGranted ? 'appDataFolder' : 'drive')
   const snapshot = await fresh.load()

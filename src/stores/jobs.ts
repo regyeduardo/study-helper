@@ -3,6 +3,7 @@ import { create } from 'zustand'
 import type { AiSettings, AiStep, AiUse, AtaModelId, AtaPart, AtaStepModels, CourseAnalysis, FileMeta, FileType, FolderMeta, GenerationChoice, GenerationMeta, MediaAnalysis, MeetingDocument, RecordingData, RecordingMark, SourceMeta, SourceStorage, StageTime, StoredQuestion } from '@/types/domain'
 import { Cancelled } from '@/controllers/ai.controller'
 import type { LitterboxTime } from '@/controllers/hosting.controller'
+import { youtubeId, youtubeTitle } from '@/controllers/sources.controller'
 import { storedFromRaw } from '@/lib/exam'
 import { aiConfigOf, modelByUid, providerById, targetFor, targetOf, transcriptionOf, uidFor } from '@/lib/ai/config'
 import { modelOf } from '@/lib/ai/providers'
@@ -28,15 +29,19 @@ import { GenerationSession } from '@/lib/generation/session'
 import { suggestTags } from '@/lib/generation/tags'
 import { newId, nowIso } from '@/lib/ids'
 import { sourceKey } from '@/lib/entry-migration'
-import { mediaOf, type NoteMedia, recordingName } from '@/lib/file-types'
+import { isSourceNote, isYoutube, mediaOf, type NoteMedia, readsAsTranscript, recordingName, sourceTypeOf } from '@/lib/file-types'
+import { entryOfSource, entryOriginOf, keptInNote, linkIn, noteSourceOf } from '@/lib/note-source'
+import { cannotWatch, youtubeParts } from '@/lib/generation/youtube-video'
 import { downloadStoredSource, sourceExpired, storeSource } from '@/lib/storage/source-storage'
-import { keepLocalMedia, linkLocalMedia, readLocalMedia } from '@/lib/recording/media-library'
+import { keepLocalMedia, linkLocalMedia, listLocalMedia, readLocalMedia } from '@/lib/recording/media-library'
 import { transcribe } from '@/lib/transcription'
 import { StageClock } from '@/lib/transcription/types'
 import { transcriptText } from '@/lib/transcription/export'
 import { recorderName, useAccountStore } from '@/stores/account'
 import { liveFolders, useLibraryStore } from '@/stores/library'
 import { mediaOfModel, searchesWeb, useModelsStore } from '@/stores/models'
+import { askOf } from '@/stores/retry'
+import type { Overlay } from '@/stores/ui'
 
 export type Agent = 'lesson' | 'explanation' | 'meeting' | 'reading'
 
@@ -71,6 +76,8 @@ export interface Job {
   fraction: number | null
   error: string | null
   startedAt: number
+  /** The window that asked for it, as it was filled in: a failure offers "Tentar de novo" with it. */
+  retry?: Overlay
 }
 
 export interface NewContentRequest {
@@ -114,6 +121,22 @@ export interface SaveRecordingRequest {
   transcribe: boolean
   /** The Transcrição model picked when saving (else the default). */
   transcriptionModel?: string | null
+  /** A note to write from the recording right after saving it (Ata, Aula, Explicação). It transcribes first when it needs the text, so `transcribe` stays off. */
+  write?: RecordingWrite
+}
+
+/** The note a recording starts as soon as it is saved: the entrada's child, in the entrada's folder, as "Gerar desta entrada" makes it. */
+export interface RecordingWrite {
+  agent: NoteAgent
+  /** Who writes (the video model when it also writes); null: the default. */
+  model: string | null
+  instruction?: string
+  /** Of a video, what the AI analyzes (FR-046); absent: as the model allows. */
+  analyze?: MediaAnalysis
+  /** Ata: the parts that go into the document. */
+  parts?: AtaPart[]
+  /** Ata: the "Modelo da ata", in place of the parts. */
+  ataModel?: AtaModelId
 }
 
 export interface CourseProposal {
@@ -126,24 +149,36 @@ interface JobsState {
   jobs: Job[]
   live: Record<string, string>
   proposals: CourseProposal[]
-  startNewContent(request: NewContentRequest, onJob?: (jobId: string) => void): Promise<string | null>
+  /** `retry`: the window as it was filled in, kept on the job for "Tentar de novo". */
+  startNewContent(request: NewContentRequest, onJob?: (jobId: string) => void, retry?: Overlay): Promise<string | null>
   saveRecording(request: SaveRecordingRequest): Promise<string>
-  transcribeNote(fileId: string, source?: File, transcriptionModel?: string | null): Promise<void>
+  /** `instruction`: what the person asks of the revision (names, words), as in "Refazer a transcrição". */
+  transcribeNote(fileId: string, source?: File, transcriptionModel?: string | null, instruction?: string): Promise<void>
   acceptCourse(proposal: CourseProposal, folderId: string | null): Promise<string>
   declineCourse(proposal: CourseProposal): Promise<string>
-  generatePending(fileId: string, model?: string | null): Promise<void>
+  /** `instruction` absent: the one the note kept. */
+  generatePending(fileId: string, model?: string | null, instruction?: string): Promise<void>
   generateSecondTab(fileId: string, agent: SecondTabAgent, model?: string | null, instruction?: string): Promise<void>
-  redoTranscript(fileId: string, instruction: string): Promise<void>
+  redoTranscript(fileId: string, instruction: string, model?: string | null): Promise<void>
   /** `analyze`: of a video entrada, what the AI analyzes (FR-046); an audio entrada always goes by its transcription, made first when missing. */
   generateFromNote(fileId: string, agent: NoteAgent, model?: string | null, place?: Target, instruction?: string, analyze?: MediaAnalysis): Promise<string | null>
   /** `file`: the media in hand (Novo conteúdo), heard straight even when the entrada does not keep it. `analyze`: as in `generateFromNote`. */
   generateAta(fileId: string, parts: AtaPart[], model?: AtaModelId, ai?: AtaModels, place?: Target, instruction?: string, file?: File, analyze?: MediaAnalysis): Promise<string | undefined>
   suggestTags(fileId: string): Promise<void>
-  generateRemaining(folderId: string): Promise<void>
+  /** Every lesson still to write in the course folder, all with the same model (and instruction, when given). */
+  generateRemaining(folderId: string, model?: string | null, instruction?: string): Promise<void>
   regenerate(fileId: string): Promise<void>
-  explainSelection(fileId: string, excerpt: string, prompt: string, mode: 'concept' | 'context', model?: string | null): Promise<string>
-  explainGaps(target: { fileId: string | null; folderId: string | null }, notes: { title: string; excerpt: string }[]): Promise<string[]>
-  createQuestions(fileId: string, wrong?: WrongQuestion[], model?: string | null): Promise<{ count: number; web: WebOutcome }>
+  /** `place`: Gerar de novo of an explanation, over it (`replace`) or in a folder; absent, where the mode puts it. */
+  explainSelection(fileId: string, excerpt: string, prompt: string, mode: 'concept' | 'context', model?: string | null, place?: Target): Promise<string>
+  /**
+   * "Gerar a partir disto": a link or a passage selected in a note. The new note is the note's child and keeps what was selected as its source;
+   * a YouTube link becomes an entrada inside the note, and the new note is born of it (`analyze` as in `generateFromNote`).
+   */
+  generateFromSelection(fileId: string, excerpt: string, agent: NoteAgent, model?: string | null, place?: { folderId: string | null }, instruction?: string, analyze?: MediaAnalysis): Promise<string | null>
+  /** "Virar entrada": the source the note keeps becomes an entrada, as Novo conteúdo made it before, and the note its child. Again, nothing new: the id of that entrada. */
+  turnIntoEntry(fileId: string): Promise<string | null>
+  explainGaps(target: { fileId: string | null; folderId: string | null }, notes: { title: string; excerpt: string }[], model?: string | null): Promise<string[]>
+  createQuestions(fileId: string, wrong?: WrongQuestion[], model?: string | null, instruction?: string): Promise<{ count: number; web: WebOutcome }>
   readingExam(content: string, title: string): Promise<StoredQuestion[]>
   cancel(jobId: string): void
   dismiss(jobId: string): void
@@ -154,6 +189,8 @@ export interface TrackedTask {
   update(message: string, fraction: number | null): void
   done(message: string): void
   fail(error: string): void
+  /** The line leaves the panel without a trace: whoever started it says the end another way (a toast). */
+  drop?(): void
 }
 
 const controllers = new Map<string, AbortController>()
@@ -222,6 +259,17 @@ export function meetingStart(meta: FileMeta): Date {
   return new Date(new Date(meta.created.at).getTime() - (meta.origin?.durationSeconds ?? 0) * 1000)
 }
 
+/** The lessons still to write in a course folder and in the folders inside it. */
+export function remainingIn(folderId: string, folders: FolderMeta[], files: FileMeta[]): FileMeta[] {
+  const ids = new Set<string>([folderId])
+  let grew = true
+  while (grew) {
+    grew = false
+    for (const folder of folders) if (folder.parentId && ids.has(folder.parentId) && !ids.has(folder.id)) (ids.add(folder.id), (grew = true))
+  }
+  return files.filter(file => file.folderId && ids.has(file.folderId) && file.status === 'pending' && !file.deletedAt)
+}
+
 /** The folder named after a note: the one it is in, one beside it with that name, or (id null) the one to make beside it. */
 export function homeFolderOf(source: FileMeta, folders: FolderMeta[]): Pick<FolderMeta, 'name' | 'parentId'> & { id: string | null } {
   const live = liveFolders(folders)
@@ -261,10 +309,10 @@ async function hearsAudio(use: AiUse, pick?: string | null): Promise<string | nu
 }
 
 const NOT_HEARD = 'O modelo escolhido não ouve a mídia: escolha um que ouça áudio, ou "Só a transcrição".'
-const NO_MEDIA = 'A mídia desta entrada não está mais guardada: use "Só a transcrição".'
+const NO_MEDIA = 'A mídia desta nota não está mais guardada: use "Só a transcrição".'
 const MEDIA_WONT_GO = 'Não deu para mandar a mídia ao modelo (longa demais ou sem áudio): use "Só a transcrição".'
-const NOTHING_TO_READ = 'Esta entrada não tem texto nem arquivo para a IA ler.'
-const NO_TRANSCRIPT = 'Esta entrada não tem transcrição, e a mídia não pôde ser transcrita.'
+const NOTHING_TO_READ = 'Esta nota não tem texto nem arquivo para a IA ler.'
+const NO_TRANSCRIPT = 'Esta nota não tem transcrição, e a mídia não pôde ser transcrita.'
 
 /** The media for ONE call to the use's model, when it hears audio and the light audio fits; null keeps the transcription path. `required` (the person chose the media): it fails saying why instead. */
 async function directMedia(use: AiUse, pick: string | null | undefined, open: () => Promise<File>, required = false): Promise<MediaParts | null> {
@@ -277,6 +325,29 @@ async function directMedia(use: AiUse, pick: string | null | undefined, open: ()
   const file = await open().catch(() => null)
   if (!file) return refuse(NO_MEDIA)
   return (await mediaParts(file, provider)) ?? refuse(MEDIA_WONT_GO)
+}
+
+/** A YouTube link as video for ONE call to the use's model, only when the person chose it ("Só o vídeo", "Transcrição + vídeo"); a model that cannot watch it fails saying why. */
+async function youtubeMedia(use: AiUse, pick: string | null | undefined, asked: MediaAnalysis | undefined, url: string): Promise<MediaParts | null> {
+  if (asked !== 'video' && asked !== 'ambos') return null
+  const config = aiConfigOf(library().index.settings)
+  const uid = (pick && modelByUid(config, pick) ? pick : undefined) ?? uidFor(config, use)
+  const provider = providerById(config, modelByUid(config, uid)?.pid)
+  if (provider && useModelsStore.getState().live[provider.id]?.state !== 'ok') await useModelsStore.getState().read(provider, false)
+  const { live, probes } = useModelsStore.getState()
+  const reason = cannotWatch(config, uid, uid ? mediaOfModel(config, live, probes, uid) : null)
+  if (reason) throw new Error(reason)
+  return youtubeParts(url)
+}
+
+/** The YouTube link of a request, when it is one. */
+const youtubeLink = (input: ContentInput): string | null => (input.kind === 'link' && youtubeId(input.url) ? input.url.trim() : null)
+
+/** A YouTube link the writer watches ("Só o vídeo"): only its title is read, never the legenda. */
+async function watchedInput(url: string, progress: (message: string) => void, signal: AbortSignal): Promise<ResolvedInput> {
+  progress('Lendo o título do vídeo')
+  const title = await youtubeTitle(url, signal)
+  return { content: '', title, description: url, origin: { input: 'youtube', name: title, url, storage: 'none' }, transcription: null }
 }
 
 /** What the AI analyzes of a media (FR-046): of a video, what the person chose (absent: the media when the model hears it, else the transcription); of an audio, always the transcription. */
@@ -317,11 +388,25 @@ async function entryInput(meta: FileMeta): Promise<ContentInput | null> {
   return { kind: 'file', file: await mediaFileOf(meta) }
 }
 
+/** What is read again of the source a note keeps in itself: its link, its text, its topic. */
+function sourceInput(meta: FileMeta): ContentInput | null {
+  const source = meta.source
+  if (source?.kind === 'link' && source.url) return { kind: 'link', url: source.url }
+  if (source?.kind === 'text' && source.text?.trim()) return { kind: 'text', text: source.text }
+  if (source?.kind === 'topic' && source.text?.trim()) return { kind: 'topic', topic: source.text }
+  return null
+}
+
+/** "Virar entrada" asked twice before the first ends: the same answer. */
+const turning = new Map<string, Promise<string | null>>()
+
 export const useJobsStore = create<JobsState>((set, get) => {
   const patchJob = (id: string, patch: Partial<Job>) => set(state => ({ jobs: state.jobs.map(job => (job.id === id ? { ...job, ...patch } : job)) }))
 
   const openJob = (kind: Job['kind'], title: string, fileId: string | null): { job: Job; controller: AbortController } => {
-    const job: Job = { id: newId(), kind, title, fileId, status: 'running', message: 'Começando', fraction: null, error: null, startedAt: Date.now() }
+    // a generation asked in a window keeps it, for "Tentar de novo"
+    const retry = kind === 'generation' || kind === 'transcription' ? askOf(fileId) : undefined
+    const job: Job = { id: newId(), kind, title, fileId, status: 'running', message: 'Começando', fraction: null, error: null, startedAt: Date.now(), ...(retry ? { retry } : {}) }
     const controller = new AbortController()
     controllers.set(job.id, controller)
     set(state => ({ jobs: [job, ...state.jobs] }))
@@ -333,8 +418,59 @@ export const useJobsStore = create<JobsState>((set, get) => {
     patchJob(id, { status, message, error, fraction: status === 'done' ? 1 : null })
   }
 
-  /** A generation refused before it started: a failed job says why. */
-  const refuseJob = (title: string, fileId: string, message: string, error: unknown) => closeJob(openJob('generation', title, fileId).job.id, 'error', message, failureText(error))
+  const dropJob = (id: string) => {
+    controllers.delete(id)
+    set(state => ({ jobs: state.jobs.filter(job => job.id !== id) }))
+  }
+
+  /**
+   * From the click until the real job exists (models read, media opened, notes read) the person sees a "Preparando" line, so the wait never looks like a click that did nothing.
+   * The line is the job of the generation: it turns into the failure if the preparation fails, and `stopped()` makes its "Cancelar" real.
+   */
+  const preparing = (title: string, fileId: string) => {
+    let id: string | null = null
+    let controller: AbortController | null = null
+    const open = () => {
+      const opened = openJob('generation', title, fileId)
+      id = opened.job.id
+      controller = opened.controller
+      patchJob(id, { message: 'Preparando' })
+    }
+    const end = () => {
+      if (id) dropJob(id)
+      id = null
+    }
+    open()
+    return {
+      /** The person pressed "Cancelar": the line says so and the generation does not go on. */
+      stopped: (): boolean => {
+        if (!id || !controller?.signal.aborted) return false
+        closeJob(id, 'cancelled', 'Cancelado por você.')
+        id = null
+        return true
+      },
+      /** The preparation failed: the same line turns into the error (or into "Cancelado", if she cancelled meanwhile). */
+      refuse: (message: string, error: unknown) => {
+        if (!id) return
+        const cancelled = controller?.signal.aborted
+        closeJob(id, cancelled ? 'cancelled' : 'error', cancelled ? 'Cancelado por você.' : message, cancelled ? null : failureText(error))
+        id = null
+      },
+      /** Another job (the transcription) takes the file for a while: the line steps aside and comes back after. */
+      around: async <T>(run: () => Promise<T>): Promise<T> => {
+        const cancelled = Boolean(controller?.signal.aborted)
+        end()
+        try {
+          return await run()
+        } finally {
+          open()
+          if (cancelled) (controller as AbortController | null)?.abort()
+        }
+      },
+      /** The real job starts (or nothing will): the line leaves. */
+      end,
+    }
+  }
 
   /** The material of a source the entrada does not hold as text; null when it cannot be read, with a failed job saying why. */
   const readEntrySource = async (source: FileMeta, title: string): Promise<string | null> => {
@@ -345,6 +481,21 @@ export const useJobsStore = create<JobsState>((set, get) => {
       const { content } = await resolveInput(input, library().index.settings, '', (message, fraction) => patchJob(job.id, { message, fraction: fraction ?? null }), controller.signal)
       closeJob(job.id, 'done', 'Material lido.')
       return content
+    } catch (error) {
+      const cancelled = controller.signal.aborted
+      closeJob(job.id, cancelled ? 'cancelled' : 'error', cancelled ? 'Cancelado por você.' : 'A geração não começou.', cancelled ? null : failureText(error))
+      return null
+    }
+  }
+
+  /** The material of a link, a text or a topic, read under a job of its own; null when it cannot be read, with the failed job saying why. */
+  const readInput = async (fileId: string, title: string, input: ContentInput | null): Promise<ResolvedInput | null> => {
+    const { job, controller } = openJob('generation', title, fileId)
+    try {
+      if (!input) throw new Error('Esta nota não guardou de onde veio: não há o que a IA ler.')
+      const resolved = await resolveInput(input, library().index.settings, '', (message, fraction) => patchJob(job.id, { message, fraction: fraction ?? null }), controller.signal)
+      closeJob(job.id, 'done', 'Material lido.')
+      return resolved
     } catch (error) {
       const cancelled = controller.signal.aborted
       closeJob(job.id, cancelled ? 'cancelled' : 'error', cancelled ? 'Cancelado por você.' : 'A geração não começou.', cancelled ? null : failureText(error))
@@ -461,13 +612,12 @@ export const useJobsStore = create<JobsState>((set, get) => {
   const isMedia = (origin: SourceMeta) => mediaOf({ origin }) !== 'text'
 
   /** What a request says of a video's analysis, when it is about a video. */
-  const requestChoice = (request: NewContentRequest): Pick<GenerationChoice, 'analyze'> => (request.input.kind === 'file' || request.input.kind === 'recording' ? analyzedOf(mediaOfFile(request.input.file), request.analyze) : {})
+  const requestChoice = (request: NewContentRequest): Pick<GenerationChoice, 'analyze'> =>
+    request.input.kind === 'file' || request.input.kind === 'recording' ? analyzedOf(mediaOfFile(request.input.file), request.analyze) : youtubeLink(request.input) ? analyzedOf('video', request.analyze) : {}
 
   /** Kept for "Tentar de novo" and "Gerar de novo": the instruction and what the AI analyzed, when there is one. */
-  const madeOf = (request: NewContentRequest, agent: Agent): { made?: GenerationChoice } => {
-    const kept = { ...instructionOf(request.prompt), ...requestChoice(request) }
-    return agent !== 'reading' && Object.keys(kept).length ? { made: choiceOf(AGENT_USE[agent], request.models?.write, kept) } : {}
-  }
+  const madeOf = (request: NewContentRequest, agent: Agent): { made?: GenerationChoice } =>
+    agent !== 'reading' ? { made: choiceOf(AGENT_USE[agent], request.models?.write, { ...instructionOf(request.prompt), ...requestChoice(request) }) } : {}
 
   /** What a note made from an entrada says of where it came from: the source of a link or document; for media, the entrada (the media lives there). */
   const noteOrigin = (origin: SourceMeta, entry: FileMeta): SourceMeta => (isMedia(origin) ? { input: 'text', name: entry.name, storage: 'none' } : { ...origin })
@@ -481,13 +631,14 @@ export const useJobsStore = create<JobsState>((set, get) => {
     const meta = await library().createFile(
       {
         name: name || request.name.trim() || resolved.title || AGENT_LABEL[agent],
-        type: FILE_TYPE[agent],
+        // the note that keeps the source has the type of the source (no more entradas); with "Sem rastro", the type of what is written
+        type: traceless ? FILE_TYPE[agent] : sourceTypeOf(resolved.origin),
         description: request.description.trim() || resolved.description,
         folderId: request.folderId,
         status: agent === 'reading' ? 'ready' : 'generating',
         pendingExcerpt: agent === 'reading' ? null : resolved.content,
         origin: traceless ? null : resolved.origin,
-        ...(traceless ? {} : { role: 'entrada' as const, kept: 'registro' as const }),
+        ...(traceless ? {} : { kept: 'registro' as const }),
         // kept for "Tentar de novo"
         ...(traceless ? madeOf(request, agent) : {}),
       },
@@ -505,7 +656,7 @@ export const useJobsStore = create<JobsState>((set, get) => {
 
   /** "Registro e arquivo" keeps the media in Mídias, linked to the entrada. */
   const keepMedia = async (request: NewContentRequest, file: File, entry: FileMeta, durationSeconds: number): Promise<void> => {
-    if (keepOf(request) !== 'arquivo' || entry.role !== 'entrada') return
+    if (keepOf(request) !== 'arquivo' || !isSourceNote(entry)) return
     const kept = await keepLocalMedia(file, entry.id, durationSeconds).then(
       () => true,
       () => false,
@@ -517,11 +668,11 @@ export const useJobsStore = create<JobsState>((set, get) => {
   const entryFor = async (request: NewContentRequest, resolved: ResolvedInput): Promise<FileMeta | null> => {
     if (keepOf(request) === 'sem-rastro') return null
     const key = sourceKey(resolved.origin)
-    const found = library().files.find(file => file.role === 'entrada' && !file.deletedAt && file.origin && sourceKey(file.origin) === key)
+    const found = library().files.find(file => isSourceNote(file) && !file.deletedAt && file.origin && sourceKey(file.origin) === key)
     if (found) return found
     const pasted = request.input.kind === 'text' ? request.input.text.trim() : ''
     return library().createFile(
-      { name: pasted ? resolved.title : resolved.origin.name, role: 'entrada', kept: 'registro', type: 'reading', description: resolved.description, folderId: request.folderId, status: 'ready', origin: resolved.origin },
+      { name: pasted ? resolved.title : resolved.origin.name, kept: 'registro', type: sourceTypeOf(resolved.origin), description: resolved.description, folderId: request.folderId, status: 'ready', origin: resolved.origin },
       pasted,
     )
   }
@@ -530,7 +681,11 @@ export const useJobsStore = create<JobsState>((set, get) => {
   const sourceEntry = (request: NewContentRequest, resolved: ResolvedInput): Promise<FileMeta | null> =>
     keepOf(request) !== 'sem-rastro' && isMedia(resolved.origin) ? createHolder(request, resolved, 'reading', resolved.title) : entryFor(request, resolved)
 
-  /** The note made of the source: the entrada's child, or (with "Sem rastro") a note without mother and origin. */
+  /** Of a link, a text or a topic, the note keeps where it came from in itself (no entrada); null for what becomes an entrada. */
+  const keptSource = (request: NewContentRequest, resolved: ResolvedInput): Pick<FileMeta, 'origin' | 'source'> | null =>
+    keptInNote(request.input) ? { origin: { ...resolved.origin }, source: noteSourceOf(request.input, resolved, nowIso()) } : null
+
+  /** The note made of the source: the entrada's child; of a link, a text or a topic, a note that keeps it; with "Sem rastro", a note without mother and origin. */
   const createChild = (request: NewContentRequest, resolved: ResolvedInput, agent: Agent, entry: FileMeta | null): Promise<FileMeta> =>
     library().createFile(
       {
@@ -541,15 +696,16 @@ export const useJobsStore = create<JobsState>((set, get) => {
         parentFileId: entry?.id ?? null,
         status: agent === 'reading' ? 'ready' : 'generating',
         pendingExcerpt: agent === 'reading' ? null : resolved.content,
-        origin: entry ? noteOrigin(resolved.origin, entry) : null,
+        ...(keptSource(request, resolved) ?? { origin: entry ? noteOrigin(resolved.origin, entry) : null }),
         // kept for "Tentar de novo"
         ...madeOf(request, agent),
       },
       agent === 'reading' ? resolved.content.replace(/^# Conteúdo\n\n/, '') : '',
     )
 
-  /** The note of a request whose material is already read: under its entrada, which keeps the file when asked. Transcribed media with "Só a transcrição" is the entrada alone. */
+  /** The note of a request whose material is already read: under its entrada, which keeps the file when asked. Transcribed media with "Só a transcrição" is the entrada alone. A link, a text or a topic: the note alone, keeping it. */
   const createForRequest = async (request: NewContentRequest, resolved: ResolvedInput, agent: Agent): Promise<FileMeta> => {
+    if (keptInNote(request.input)) return createChild(request, resolved, agent, null)
     if (keepOf(request) === 'sem-rastro') return createHolder(request, resolved, agent)
     if (agent === 'reading' && isMedia(resolved.origin)) {
       const entry = await createHolder(request, resolved, agent)
@@ -581,7 +737,7 @@ export const useJobsStore = create<JobsState>((set, get) => {
   const finishEarlyNote = async (request: NewContentRequest, read: ResolvedInput, meta: FileMeta, agent: Agent, job: Job, signal: AbortSignal, both: MediaParts | null): Promise<void> => {
     const progress = (message: string, fraction?: number) => patchJob(job.id, { message, fraction: fraction ?? null })
     // the entrada keeps the transcription; with "Sem rastro", the note itself does
-    const entry = meta.role === 'entrada' ? meta : null
+    const entry = isSourceNote(meta) ? meta : null
     try {
       await keepSource(request, read, entry, null)
       const resolved = await polished(read, request.marks ?? [], progress, signal, request.input.kind === 'recording' || request.input.kind === 'file' ? request.input.file : null)
@@ -594,7 +750,7 @@ export const useJobsStore = create<JobsState>((set, get) => {
       const makesAta = Boolean(ataModel) || ataParts.length > 0
       if (agent === 'reading' || makesAta || entry) {
         const polishing = polishSessions.get(resolved.transcription!)
-        await library().saveContent(meta.id, resolved.content.replace(/^# Conteúdo\n\n/, ''), { name, description, pendingExcerpt: null, ...(makesAta || entry ? { type: 'reading' as const, status: 'ready' as const } : {}), ...(polishing ? { generation: generationMeta(polishing, resolved, resolved.transcription?.stages) } : {}) })
+        await library().saveContent(meta.id, resolved.content.replace(/^# Conteúdo\n\n/, ''), { name, description, pendingExcerpt: null, ...(makesAta || entry ? { ...(entry ? {} : { type: 'reading' as const }), status: 'ready' as const } : {}), ...(polishing ? { generation: generationMeta(polishing, resolved, resolved.transcription?.stages) } : {}) })
         closeJob(job.id, 'done', 'Material lido.')
         if (entry && !makesAta && agent !== 'reading') {
           // the text written of the transcription is a note of its own, under the entrada
@@ -635,7 +791,7 @@ export const useJobsStore = create<JobsState>((set, get) => {
     }
   }
 
-  const polished = async (resolved: ResolvedInput, marks: RecordingMark[], progress: (message: string) => void, signal: AbortSignal, source: File | null): Promise<ResolvedInput> => {
+  const polished = async (resolved: ResolvedInput, marks: RecordingMark[], progress: (message: string) => void, signal: AbortSignal, source: File | null, instruction = ''): Promise<ResolvedInput> => {
     const heard = resolved.transcription?.recording
     if (!resolved.transcription || !heard) return resolved
     const session = sessionFor('titulo', signal)
@@ -646,7 +802,7 @@ export const useJobsStore = create<JobsState>((set, get) => {
     const look = () => lookAtScreen(heard, video, visionSettingsOf(library().index.settings), session)
     const seen = await (video ? clock.run('Olhar a tela gravada', look) : look())
     progress('Dando título, nomes e revisando a transcrição')
-    const finished = await clock.run('Acabamento: título, nomes e revisão', () => polishTranscript(seen, session, library().index.settings.transcription.terms ?? ''))
+    const finished = await clock.run('Acabamento: título, nomes e revisão', () => polishTranscript(seen, session, library().index.settings.transcription.terms ?? '', instruction))
     const recording = { ...finished.recording, marks }
     const text = transcriptText(recording).trim()
     const transcription = { ...resolved.transcription, text, recording, stages: clock.stages }
@@ -685,13 +841,16 @@ export const useJobsStore = create<JobsState>((set, get) => {
     live: {},
     proposals: [],
 
-    startNewContent: async (request, onJob) => {
+    startNewContent: async (request, onJob, retry) => {
       const agent: Agent = request.input.kind === 'topic' && request.agent === 'lesson' ? 'explanation' : request.agent
       const { job, controller } = openJob('generation', request.name || AGENT_LABEL[agent], null)
+      if (retry) patchJob(job.id, { retry })
       onJob?.(job.id)
       let resolved: ResolvedInput
       // "Transcrição + vídeo": the media waits for the transcription, to go with it in the same call
       let both: MediaParts | null = null
+      // "Só o vídeo" of a YouTube link: the writer watches it, and the legenda is not read
+      let watched: MediaParts | null = null
       try {
         const progress = (message: string, fraction?: number) => patchJob(job.id, { message, fraction: fraction ?? null })
         const heardBy = request.models?.transcription
@@ -703,8 +862,12 @@ export const useJobsStore = create<JobsState>((set, get) => {
           if (asked === 'ambos') both = media
           else if (media) return await startFromMedia(request, agent, file, media, makesAta, job)
         }
+        const link = youtubeLink(request.input)
+        const seen = link && agent !== 'reading' ? await youtubeMedia(AGENT_USE[agent], request.models?.write, request.analyze, link) : null
+        if (seen && request.analyze === 'ambos') both = seen
+        else if (seen) watched = seen
         // the instruction goes as its own block when writing, not inside the material
-        const read = request.input.kind === 'recording' ? await resolveRecording(request.input.file, progress, controller.signal, heardBy) : await resolveInput(request.input, library().index.settings, '', progress, controller.signal, heardBy)
+        const read = link && watched ? await watchedInput(link, progress, controller.signal) : request.input.kind === 'recording' ? await resolveRecording(request.input.file, progress, controller.signal, heardBy) : await resolveInput(request.input, library().index.settings, '', progress, controller.signal, heardBy)
         if (read.transcription?.recording && agent !== 'lesson') {
           patchJob(job.id, { title: request.name || read.title })
           const meta = await createHolder(request, read, agent)
@@ -721,7 +884,7 @@ export const useJobsStore = create<JobsState>((set, get) => {
       patchJob(job.id, { title: request.name || resolved.title })
 
       // with the media in the call it is one note: the lessons of a course are written from text
-      if (agent === 'lesson' && !both) {
+      if (agent === 'lesson' && !both && !watched) {
         patchJob(job.id, { message: 'Vendo se cabe numa aula ou se rende várias, em módulos' })
         try {
           const analysis = await analyzeCourse(resolved.content, sessionFor('curso', controller.signal))
@@ -751,15 +914,15 @@ export const useJobsStore = create<JobsState>((set, get) => {
         if (polishing) await library().updateFile(meta.id, { generation: generationMeta(polishing, resolved, resolved.transcription?.stages) })
         return meta.id
       }
-      void runOnFile(meta, agent, resolved.content, resolved, AGENT_LABEL[agent], resolved.origin.url ?? resolved.origin.name, undefined, undefined, request.models?.write, false, withMaterial(both, resolved.content), request.prompt)
+      void runOnFile(meta, agent, resolved.content, resolved, AGENT_LABEL[agent], resolved.origin.url ?? resolved.origin.name, undefined, undefined, request.models?.write, false, watched ?? withMaterial(both, resolved.content), request.prompt)
       return meta.id
     },
 
     saveRecording: async request => {
       const { file } = request
       const origin: SourceMeta = { input: 'recording', name: file.name, sizeBytes: file.size, mime: file.type || 'application/octet-stream', durationSeconds: request.durationSeconds, storage: 'none' }
-      // the recording is an entrada: the transcription and what is generated from it live under it
-      const meta = await library().createFile({ name: recordingName(file.name), role: 'entrada', kept: 'registro', type: 'reading', description: '', folderId: request.folderId, status: 'ready', pendingExcerpt: null, origin }, '')
+      // the recording is a media note (Vídeo or Áudio): the transcription and what is generated from it live under it
+      const meta = await library().createFile({ name: recordingName(file.name), kept: 'registro', type: sourceTypeOf(origin), description: '', folderId: request.folderId, status: 'ready', pendingExcerpt: null, origin }, '')
       if (request.marks.length) await library().updateSidecar(meta.id, sidecar => ({ ...sidecar, recording: { blocks: [], speakers: [], marks: request.marks } }))
       if (request.storedName)
         await linkLocalMedia(request.storedName, meta.id).then(
@@ -772,10 +935,20 @@ export const useJobsStore = create<JobsState>((set, get) => {
           .catch(error => get().trackTask(`Guardar a mídia: ${meta.name}`).fail(failureText(error)))
       }
       if (request.transcribe) void get().transcribeNote(meta.id, file, request.transcriptionModel)
+      const { write } = request
+      if (write) {
+        const place = { folderId: request.folderId }
+        void (async () => {
+          // the media just linked has to be known as kept here before the note asks for it
+          useLibraryStore.setState({ localMedia: await listLocalMedia().catch(() => library().localMedia) })
+          if (write.agent === 'meeting') return get().generateAta(meta.id, write.ataModel ? [] : (write.parts ?? []), write.ataModel, { model: write.model }, place, write.instruction, file, write.analyze)
+          return get().generateFromNote(meta.id, write.agent, write.model, place, write.instruction, write.analyze)
+        })().catch(error => get().trackTask(`${AGENT_LABEL[write.agent]}: ${meta.name}`).fail(failureText(error)))
+      }
       return meta.id
     },
 
-    transcribeNote: async (fileId, source, transcriptionModel) => {
+    transcribeNote: async (fileId, source, transcriptionModel, instruction) => {
       const meta = library().files.find(file => file.id === fileId)
       if (!meta?.origin || get().jobs.some(job => job.fileId === fileId && job.status === 'running')) return
       const origin = meta.origin
@@ -788,7 +961,7 @@ export const useJobsStore = create<JobsState>((set, get) => {
         const transcription = await transcribe(file, transcriptionOf(library().index.settings, transcriptionModel), progress, controller.signal, { microphoneOnLeft: origin.input === 'recording', recorder: recorderName(useAccountStore.getState().active()) })
         const read: ResolvedInput = { content: `${CONTENT_HEADER}${transcription.text}`, title: meta.name, description: meta.description, origin, transcription }
         const marks = (await library().openFile(fileId)).sidecar.recording?.marks ?? []
-        const resolved = await polished(read, marks, progress, controller.signal, file)
+        const resolved = await polished(read, marks, progress, controller.signal, file, instruction)
         const done = resolved.transcription!
         await library().updateSidecar(fileId, sidecar => ({ ...sidecar, transcript: done.text, ...(done.recording ? { recording: done.recording } : {}) }))
         const fresh = library().files.find(file => file.id === fileId) ?? meta
@@ -807,7 +980,9 @@ export const useJobsStore = create<JobsState>((set, get) => {
     acceptCourse: async (proposal, folderId) => {
       set(state => ({ proposals: state.proposals.filter(item => item !== proposal) }))
       const { analysis, resolved } = proposal
-      const entry = await sourceEntry(proposal.request, resolved)
+      // a link or a text stays in each lesson, with no entrada
+      const kept = keptSource(proposal.request, resolved)
+      const entry = kept ? null : await sourceEntry(proposal.request, resolved)
       await keepSource(proposal.request, resolved, entry, null).catch(() => undefined)
       const root = await library().createFolder({
         name: analysis.name || 'Aulas',
@@ -825,7 +1000,7 @@ export const useJobsStore = create<JobsState>((set, get) => {
         for (const [position, plan] of plans.entries()) {
           created.push(
             await library().createFile(
-              { name: plan.title, type: 'class', folderId: parent.id, description: plan.covers, pendingExcerpt: plan.excerpt || null, status: 'pending', position: module.lessons.length ? position : index, parentFileId: entry?.id ?? null, origin: entry ? noteOrigin(resolved.origin, entry) : null, ...(proposal.request.prompt.trim() ? { made: choiceOf('aula', proposal.request.models?.write, instructionOf(proposal.request.prompt)) } : {}) },
+              { name: plan.title, type: 'class', folderId: parent.id, description: plan.covers, pendingExcerpt: plan.excerpt || null, status: 'pending', position: module.lessons.length ? position : index, parentFileId: entry?.id ?? null, ...(kept ?? { origin: entry ? noteOrigin(resolved.origin, entry) : null }), ...(proposal.request.prompt.trim() ? { made: choiceOf('aula', proposal.request.models?.write, instructionOf(proposal.request.prompt)) } : {}) },
               '',
             ),
           )
@@ -843,16 +1018,24 @@ export const useJobsStore = create<JobsState>((set, get) => {
       return meta.id
     },
 
-    generatePending: async (fileId, model) => {
+    generatePending: async (fileId, model, instruction) => {
       const { files, folders } = library()
       const meta = files.find(file => file.id === fileId)
       if (!meta || get().jobs.some(job => job.fileId === fileId && job.status === 'running')) return
-      if (courseOf(folders, meta.folderId)) {
-        await runOnFile(meta, 'lesson', courseLessonInput(meta, folders, files), null, 'Aula', meta.description || meta.name, undefined, undefined, model, false, undefined, meta.made?.instruction)
+      const course = Boolean(courseOf(folders, meta.folderId))
+      const agent: Agent = course ? 'lesson' : meta.type === 'explanation' ? 'explanation' : meta.type === 'meeting' ? 'meeting' : 'lesson'
+      // what this time asks stays with the note, for the next "Tentar de novo" and "Gerar de novo"
+      const said = instruction ?? meta.made?.instruction ?? ''
+      const made = choiceOf(AGENT_USE[agent], model, instructionOf(said))
+      await library().updateFile(meta.id, { made })
+      if (course) {
+        await runOnFile({ ...meta, made }, 'lesson', courseLessonInput(meta, folders, files), null, 'Aula', meta.description || meta.name, undefined, undefined, model, false, undefined, said)
         return
       }
-      const agent: Agent = meta.type === 'explanation' ? 'explanation' : meta.type === 'meeting' ? 'meeting' : 'lesson'
-      await runOnFile(meta, agent, meta.pendingExcerpt ?? `# ${meta.name}`, null, 'Nova tentativa', meta.origin?.url ?? meta.origin?.name ?? meta.name, undefined, undefined, undefined, false, undefined, meta.made?.instruction)
+      // written again ("Refazer"), a note that keeps its link, text or topic reads it again
+      const material = meta.pendingExcerpt ?? (meta.source ? (await readInput(meta.id, meta.name, sourceInput(meta)))?.content : undefined)
+      if (meta.source && material === undefined) return
+      await runOnFile({ ...meta, made }, agent, material ?? `# ${meta.name}`, null, 'Nova tentativa', meta.origin?.url ?? meta.origin?.name ?? meta.name, undefined, undefined, model, false, undefined, said)
     },
 
     generateSecondTab: async (fileId, agent, model, instruction) => {
@@ -860,45 +1043,60 @@ export const useJobsStore = create<JobsState>((set, get) => {
       if (!meta || get().jobs.some(job => job.fileId === fileId && job.status === 'running')) return
       const recording = (await library().openFile(fileId)).sidecar.recording
       if (!recording) return
-      await library().updateFile(fileId, { type: FILE_TYPE[agent] })
-      await runOnFile({ ...meta, type: FILE_TYPE[agent] }, agent, `${CONTENT_HEADER}${transcriptText(recording)}`, null, AGENT_LABEL[agent], meta.origin?.name ?? meta.name, undefined, undefined, model, false, undefined, instruction)
+      const made = choiceOf(AGENT_USE[agent], model, instructionOf(instruction))
+      await library().updateFile(fileId, { type: FILE_TYPE[agent], made })
+      await runOnFile({ ...meta, type: FILE_TYPE[agent], made }, agent, `${CONTENT_HEADER}${transcriptText(recording)}`, null, AGENT_LABEL[agent], meta.origin?.name ?? meta.name, undefined, undefined, model, false, undefined, instruction)
     },
 
     generateFromNote: async (fileId, agent, model, place = 'home', instruction, analyze) => {
       const source = library().files.find(file => file.id === fileId)
       if (!source) return null
-      const asked = analysisOf(mediaOf(source), analyze)
-      let media: MediaParts | null
+      // from here to the real job, a "Preparando" line shows that the click worked
+      const prep = preparing(`${AGENT_LABEL[agent]}: ${source.name}`, fileId)
       try {
-        media = await entryMedia(AGENT_USE[agent], model, asked, keptMedia(source), () => mediaFileOf(source))
-      } catch (error) {
-        refuseJob(`${AGENT_LABEL[agent]}: ${source.name}`, fileId, 'A geração não começou.', error)
-        return null
-      }
-      const needsText = !media || asked === 'ambos'
-      // the transcription is needed and missing: made first, and it stays in the entrada
-      const before = (await library().openFile(fileId)).sidecar
-      if (needsText && keptMedia(source) && !before.recording?.blocks.length && !before.transcript?.trim()) await get().transcribeNote(fileId)
-      const { content, sidecar } = await library().openFile(fileId)
-      const recording = sidecar.recording?.blocks.length ? sidecar.recording : undefined
-      const held = recording ? transcriptText(recording) : content || (sidecar.transcript ?? '')
-      const material = needsText && !held.trim() ? await readEntrySource(source, `${AGENT_LABEL[agent]}: ${source.name}`) : `${CONTENT_HEADER}${held}`
-      if (material === null) return null
-      const parts = asked === 'ambos' ? withMaterial(media, material) : (media ?? undefined)
-      const made = choiceOf(AGENT_USE[agent], model, { ...instructionOf(instruction), ...analyzedOf(mediaOf(source), asked) })
-      if (typeof place === 'object' && 'replace' in place) {
-        const meta = library().files.find(file => file.id === place.replace)
-        if (!meta || get().jobs.some(job => job.fileId === meta.id && job.status === 'running')) return null
-        await library().updateFile(meta.id, { made })
-        void runOnFile(meta, agent, material, null, AGENT_LABEL[agent], source.name, undefined, recording, model, true, parts, instruction)
+        // a YouTube entrada is a video seen by its link
+        const kind: NoteMedia = isYoutube(source) ? 'video' : mediaOf(source)
+        const asked = analysisOf(kind, analyze)
+        let media: MediaParts | null
+        try {
+          media = isYoutube(source) ? await youtubeMedia(AGENT_USE[agent], model, asked, source.origin!.url!) : await entryMedia(AGENT_USE[agent], model, asked, keptMedia(source), () => mediaFileOf(source))
+        } catch (error) {
+          prep.refuse('A geração não começou.', error)
+          return null
+        }
+        if (prep.stopped()) return null
+        const needsText = !media || asked === 'ambos'
+        // the transcription is needed and missing: made first, and it stays in the entrada
+        const before = (await library().openFile(fileId)).sidecar
+        if (needsText && keptMedia(source) && !before.recording?.blocks.length && !before.transcript?.trim()) await prep.around(() => get().transcribeNote(fileId))
+        if (prep.stopped()) return null
+        const { content, sidecar } = await library().openFile(fileId)
+        const recording = sidecar.recording?.blocks.length ? sidecar.recording : undefined
+        const held = recording ? transcriptText(recording) : content || (sidecar.transcript ?? '')
+        const material = needsText && !held.trim() ? await prep.around(() => readEntrySource(source, `${AGENT_LABEL[agent]}: ${source.name}`)) : `${CONTENT_HEADER}${held}`
+        if (material === null || prep.stopped()) return null
+        const parts = asked === 'ambos' ? withMaterial(media, material) : (media ?? undefined)
+        const made = choiceOf(AGENT_USE[agent], model, { ...instructionOf(instruction), ...analyzedOf(kind, asked) })
+        if (typeof place === 'object' && 'replace' in place) {
+          const meta = library().files.find(file => file.id === place.replace)
+          if (!meta || get().jobs.some(job => job.fileId === meta.id && job.status === 'running')) return null
+          await library().updateFile(meta.id, { made })
+          void runOnFile(meta, agent, material, null, AGENT_LABEL[agent], source.name, undefined, recording, model, true, parts, instruction)
+          return meta.id
+        }
+        const meta = await library().createFile(
+          { name: `${AGENT_LABEL[agent]}: ${source.name}`, type: FILE_TYPE[agent], description: `gerado de ${source.name}`, folderId: await folderFor(source, place), parentFileId: source.id, status: 'generating', pendingExcerpt: material, origin: { input: 'text', name: source.name, storage: 'none' }, made },
+          '',
+        )
+        void runOnFile(meta, agent, material, null, AGENT_LABEL[agent], source.name, undefined, recording, model, false, parts, instruction)
         return meta.id
+      } catch (error) {
+        prep.refuse('A geração não começou.', error)
+        return null
+      } finally {
+        // the writing job (opened in the same turn) takes the line's place
+        prep.end()
       }
-      const meta = await library().createFile(
-        { name: `${AGENT_LABEL[agent]}: ${source.name}`, type: FILE_TYPE[agent], description: `gerado de ${source.name}`, folderId: await folderFor(source, place), parentFileId: source.id, status: 'generating', pendingExcerpt: material, origin: { input: 'text', name: source.name, storage: 'none' }, made },
-        '',
-      )
-      void runOnFile(meta, agent, material, null, AGENT_LABEL[agent], source.name, undefined, recording, model, false, parts, instruction)
-      return meta.id
     },
 
     generateAta: async (fileId, parts, model, chosen, place = 'home', instruction, file, analyze) => {
@@ -908,19 +1106,27 @@ export const useJobsStore = create<JobsState>((set, get) => {
       const at = replaced?.id ?? fileId
       // a transcription running beside it no longer holds the Ata
       if (!source || !(model || chosenParts(parts).length) || get().jobs.some(job => job.fileId === at && job.status === 'running' && job.kind !== 'transcription')) return
+      // from here to the real job, a "Preparando" line shows that the click worked
+      const prep = preparing(`Ata: ${source.name}`, at)
       const asked = analysisOf(mediaOf(source), analyze)
       let media: MediaParts | null
+      let heard: RecordingData | undefined
       try {
         media = await entryMedia('ata', chosen?.model, asked, Boolean(file) || keptMedia(source), async () => file ?? mediaFileOf(source))
+        if (prep.stopped()) return
+        const needsText = !media || asked === 'ambos'
+        // the transcription is needed and missing: made first, and it stays in the entrada
+        if (needsText && keptMedia(source) && !(await library().openFile(fileId)).sidecar.recording?.blocks.length) await prep.around(() => get().transcribeNote(fileId))
+        if (prep.stopped()) return
+        heard = (await library().openFile(fileId)).sidecar.recording
+        if (needsText && !heard?.blocks.length) return
       } catch (error) {
-        refuseJob(`Ata: ${source.name}`, at, 'A ata não saiu.', error)
+        prep.refuse('A ata não saiu.', error)
         return
+      } finally {
+        // the real job opens in the same turn and takes the line's place
+        prep.end()
       }
-      const needsText = !media || asked === 'ambos'
-      // the transcription is needed and missing: made first, and it stays in the entrada
-      if (needsText && keptMedia(source) && !(await library().openFile(fileId)).sidecar.recording?.blocks.length) await get().transcribeNote(fileId)
-      const heard = (await library().openFile(fileId)).sidecar.recording
-      if (needsText && !heard?.blocks.length) return
       const { job, controller } = openJob('generation', `Ata: ${source.name}`, at)
       const activityId = await library().startActivity({ kind: 'meeting', label: `Ata: ${source.name}`, origin: source.origin?.name ?? source.name, destination: replaced ? `nota "${replaced.name}"` : 'nota nova', fileId: at })
       const progress = (message: string) => patchJob(job.id, { message })
@@ -949,7 +1155,7 @@ export const useJobsStore = create<JobsState>((set, get) => {
         const done = await buildAta({ recording: heard!, parts, model, startedAt: meetingStart(source), instruction, onProgress: progress }, { ai, frames, difference: signatureDifference, renderPrint: (image, marks, caption) => renderPrint(image, marks, caption) })
         if (done.recording !== heard) {
           await library().updateSidecar(fileId, sidecar => (sidecar.recording ? { ...sidecar, recording: { ...sidecar.recording, speakers: done.recording.speakers }, transcript: transcriptText({ ...sidecar.recording, speakers: done.recording.speakers }) } : sidecar))
-          if (source.type === 'reading') await library().saveContent(fileId, transcriptText(done.recording).trim())
+          if (readsAsTranscript(source)) await library().saveContent(fileId, transcriptText(done.recording).trim())
         }
         return await saveAta(done)
       } catch (error) {
@@ -983,7 +1189,7 @@ export const useJobsStore = create<JobsState>((set, get) => {
 
     suggestTags: fileId => suggestTagsFor(fileId),
 
-    redoTranscript: async (fileId, instruction) => {
+    redoTranscript: async (fileId, instruction, model) => {
       const meta = library().files.find(file => file.id === fileId)
       if (!meta || get().jobs.some(job => job.fileId === fileId && job.status === 'running')) return
       const recording = (await library().openFile(fileId)).sidecar.recording
@@ -991,10 +1197,10 @@ export const useJobsStore = create<JobsState>((set, get) => {
       const { job, controller } = openJob('transcription', `Refazer a transcrição: ${meta.name}`, fileId)
       try {
         patchJob(job.id, { message: 'Refazendo a transcrição' })
-        const session = sessionFor('estudo', controller.signal)
+        const session = sessionFor('estudo', controller.signal, model)
         const redone = await redoTranscript(recording, instruction, session, library().index.settings.transcription.terms ?? '')
         await library().updateSidecar(fileId, sidecar => ({ ...sidecar, recording: redone }))
-        if (meta.type === 'reading') await library().saveContent(fileId, transcriptText(redone).trim())
+        if (readsAsTranscript(meta)) await library().saveContent(fileId, transcriptText(redone).trim())
         closeJob(job.id, 'done', 'Transcrição refeita.')
       } catch (error) {
         const cancelled = error instanceof Cancelled || controller.signal.aborted
@@ -1002,15 +1208,9 @@ export const useJobsStore = create<JobsState>((set, get) => {
       }
     },
 
-    generateRemaining: async folderId => {
+    generateRemaining: async (folderId, model, instruction) => {
       const { folders, files } = library()
-      const ids = new Set<string>([folderId])
-      let grew = true
-      while (grew) {
-        grew = false
-        for (const folder of folders) if (folder.parentId && ids.has(folder.parentId) && !ids.has(folder.id)) (ids.add(folder.id), (grew = true))
-      }
-      await Promise.all(files.filter(file => file.folderId && ids.has(file.folderId) && file.status === 'pending' && !file.deletedAt).map(file => get().generatePending(file.id)))
+      await Promise.all(remainingIn(folderId, folders, files).map(file => get().generatePending(file.id, model, instruction)))
     },
 
     regenerate: async fileId => {
@@ -1022,12 +1222,17 @@ export const useJobsStore = create<JobsState>((set, get) => {
       await runOnFile(meta, meta.type === 'explanation' ? 'explanation' : 'lesson', `# ${meta.name}\n\n${content}`, null, 'Nova versão', meta.name, prompt)
     },
 
-    explainSelection: async (fileId, excerpt, prompt, mode, model) => {
+    explainSelection: async (fileId, excerpt, prompt, mode, model, place) => {
       const source = library().files.find(file => file.id === fileId)
       if (!source) throw new Error('Arquivo de origem não encontrado.')
       const { content } = await library().openFile(fileId)
+      // the model and the question stay with the explanation, for "Gerar de novo"
+      const made = choiceOf('explicacao', model, instructionOf(prompt))
+      const replaced = typeof place === 'object' && 'replace' in place ? library().files.find(file => file.id === place.replace) : undefined
       let folderId: string | null = null
-      if (mode === 'context') {
+      if (typeof place === 'object' && 'folderId' in place) folderId = place.folderId
+      else if (place === 'home') folderId = await folderFor(source, 'home')
+      else if (mode === 'context') {
         folderId = source.folderId
         if (!folderId) {
           const home = await library().createFolder({ name: source.name })
@@ -1035,20 +1240,99 @@ export const useJobsStore = create<JobsState>((set, get) => {
           folderId = home.id
         }
       }
-      const meta = await library().createFile(
-        { name: `${AGENT_LABEL.explanation}: ${selectionTitle(excerpt)}`, type: 'explanation', description: source.name, folderId, parentFileId: source.id, sourceExcerpt: excerpt, status: 'generating', origin: { input: 'text', name: `trecho de "${source.name}"`, storage: 'none' } },
-        '',
-      )
+      if (replaced) await library().updateFile(replaced.id, { made })
+      const meta =
+        replaced ??
+        (await library().createFile(
+          { name: `${AGENT_LABEL.explanation}: ${selectionTitle(excerpt)}`, type: 'explanation', description: source.name, folderId, parentFileId: source.id, sourceExcerpt: excerpt, status: 'generating', origin: { input: 'text', name: `trecho de "${source.name}"`, storage: 'none' }, made },
+          '',
+        ))
       const input = selectionInput(source, content, library().files, excerpt, prompt, mode)
       void (async () => {
         await runOnFile(meta, 'explanation', input, null, 'Explicação', `trecho de "${source.name}"`, undefined, undefined, model, true)
         const saved = useLibraryStore.getState().opened[meta.id]?.content
-        if (saved) await library().updateFile(meta.id, { name: `${AGENT_LABEL.explanation}: ${explanationName(saved, excerpt)}` })
+        // replaced: the same name, the text new
+        if (saved && !replaced) await library().updateFile(meta.id, { name: `${AGENT_LABEL.explanation}: ${explanationName(saved, excerpt)}` })
       })()
       return meta.id
     },
 
-    explainGaps: async (target, notes) => {
+    generateFromSelection: async (fileId, excerpt, agent, model, place, instruction = '', analyze) => {
+      const note = library().files.find(file => file.id === fileId)
+      if (!note) return null
+      const folderId = place ? place.folderId : note.folderId
+      const url = linkIn(excerpt)
+      if (url && youtubeId(url)) {
+        // the video is an entrada of its own, inside the note; the new note is born of it, as from any YouTube entrada
+        const origin: SourceMeta = { input: 'youtube', name: '', url, storage: 'none' }
+        const key = sourceKey(origin)
+        const known = library().files.find(file => isSourceNote(file) && !file.deletedAt && file.parentFileId === note.id && file.origin && sourceKey(file.origin) === key)
+        const title = known ? known.name : await youtubeTitle(url)
+        const entry = known ?? (await library().createFile({ name: title, kept: 'registro', type: 'video', description: url, folderId, parentFileId: note.id, status: 'ready', origin: { ...origin, name: title } }, ''))
+        return get().generateFromNote(entry.id, agent, model, { folderId }, instruction, analyze)
+      }
+      const input: ContentInput = url ? { kind: 'link', url } : { kind: 'text', text: excerpt }
+      const passage = `trecho de "${note.name}"`
+      // a link's page is read; a passage is the material as it is
+      const resolved = url
+        ? await readInput(note.id, `${AGENT_LABEL[agent]}: ${url}`, input)
+        : { content: `${CONTENT_HEADER}${excerpt.trim()}`, title: selectionTitle(excerpt), description: passage, origin: { input: 'text' as const, name: passage, sizeBytes: new Blob([excerpt.trim()]).size, mime: 'text/plain', storage: 'none' as const }, transcription: null }
+      if (!resolved) return null
+      const meta = await library().createFile(
+        {
+          name: `${AGENT_LABEL[agent]}: ${resolved.title}`,
+          type: FILE_TYPE[agent],
+          description: `gerado de ${note.name}`,
+          folderId,
+          parentFileId: note.id,
+          status: 'generating',
+          pendingExcerpt: resolved.content,
+          origin: { ...resolved.origin },
+          source: noteSourceOf(input, resolved, nowIso()),
+          made: choiceOf(AGENT_USE[agent], model, instructionOf(instruction)),
+        },
+        '',
+      )
+      void runOnFile(meta, agent, resolved.content, resolved, AGENT_LABEL[agent], url ?? passage, undefined, undefined, model, false, undefined, instruction)
+      return meta.id
+    },
+
+    turnIntoEntry: fileId => {
+      const running = turning.get(fileId)
+      if (running) return running
+      const turn = (async (): Promise<string | null> => {
+        const note = library().files.find(file => file.id === fileId)
+        const origin = note && entryOriginOf(note)
+        if (!note?.source || !origin) return null
+        const made = entryOfSource(library().files, note)
+        if (made) return made.id
+        // as Novo conteúdo made it: the entrada of the same source already in the library, or a new one ("Só o registro")
+        const key = sourceKey(origin)
+        const text = note.source.kind === 'text' ? (note.source.text ?? '').trim() : ''
+        const entry =
+          library().files.find(file => isSourceNote(file) && !file.deletedAt && file.origin && sourceKey(file.origin) === key) ??
+          (await library().createFile(
+            {
+              name: text ? note.source.title || 'Texto colado' : origin.name,
+              kept: 'registro',
+              type: sourceTypeOf(origin),
+              description: note.source.kind === 'link' ? (note.source.url ?? '') : origin.name,
+              folderId: note.folderId,
+              // a note born of another: the entrada stays inside that one
+              parentFileId: note.parentFileId,
+              status: 'ready',
+              origin,
+            },
+            text,
+          ))
+        await library().updateFile(note.id, { parentFileId: entry.id })
+        return entry.id
+      })()
+      turning.set(fileId, turn)
+      return turn.finally(() => turning.delete(fileId))
+    },
+
+    explainGaps: async (target, notes, model) => {
       const source = target.fileId ? (library().files.find(file => file.id === target.fileId) ?? null) : null
       let folderId = target.folderId
       let context = ''
@@ -1069,13 +1353,13 @@ export const useJobsStore = create<JobsState>((set, get) => {
           '',
         )
         const input = source ? selectionInput(source, context, library().files, note.excerpt, '', 'context') : `Trecho selecionado:\n\n${note.excerpt}\n\nInstrução:\n\n${GAP_INSTRUCTION}`
-        void runOnFile(meta, 'explanation', input, null, 'Explicação', origin)
+        void runOnFile(meta, 'explanation', input, null, 'Explicação', origin, undefined, undefined, model)
         ids.push(meta.id)
       }
       return ids
     },
 
-    createQuestions: async (fileId, wrong, model) => {
+    createQuestions: async (fileId, wrong, model, instruction) => {
       const meta = library().files.find(file => file.id === fileId)
       if (!meta) return { count: 0, web: { found: 0, note: '' } }
       const { content } = await library().openFile(fileId)
@@ -1084,7 +1368,7 @@ export const useJobsStore = create<JobsState>((set, get) => {
       try {
         patchJob(job.id, { message: 'Preparando as questões' })
         const session = sessionFor('prova', controller.signal, model)
-        const { questions, web } = await generateQuestions(content, meta.name, meta.type, session, wrong, webTarget())
+        const { questions, web } = await generateQuestions(content, meta.name, meta.type, session, wrong, webTarget(), instruction)
         if (!questions.length) throw new Error('A IA não devolveu nenhuma questão válida. Tente de novo.')
         await library().setQuestions(fileId, questions.map(storedFromRaw), Boolean(wrong?.length))
         const done = `${questions.length} questões geradas. ${web.note}`
@@ -1118,6 +1402,7 @@ export const useJobsStore = create<JobsState>((set, get) => {
         update: (message, fraction) => patchJob(job.id, { message, fraction }),
         done: message => closeJob(job.id, 'done', message),
         fail: error => closeJob(job.id, 'error', 'Não terminou', error),
+        drop: () => dropJob(job.id),
       }
     },
     cancel: jobId => {

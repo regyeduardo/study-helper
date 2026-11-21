@@ -142,12 +142,12 @@ describe('explorer table', () => {
     expect(within(rowNamed('Exercícios')).queryByRole('img')).toBeNull()
   })
 
-  it('an entrada is not a row of the folder: it is in Entradas, with "O que nasceu" (FR-073)', () => {
+  it('what was an entrada is a row of the folder, a note of its type (003); the folder does not say "Nada ainda"', () => {
     change(files => [...files, entrada('video', 'Aula sem notas', 'calc', VIDEO)])
     renderAt('/biblioteca/calc')
-    expect(screen.queryByRole('row', { name: 'Aula sem notas' })).toBeNull()
+    expect(screen.getByRole('row', { name: 'Aula sem notas' })).toHaveTextContent('Vídeo')
     expect(table()).not.toHaveTextContent('Nada ainda')
-    expect(rows()).toHaveLength(6)
+    expect(rows()).toHaveLength(7)
   })
 
   it('the panel filters what is here: the folders go, and what is elsewhere stays out', () => {
@@ -174,11 +174,11 @@ describe('explorer table', () => {
     expect(option(/^Cálculo I\b/)).not.toBeChecked()
   })
 
-  it('no Tudo, Entradas and Notas tabs: the folder lists its notes (FR-073)', () => {
+  it('no Tudo, Entradas and Notas tabs: the folder lists its notes of every type (003)', () => {
     change(files => [...files, entrada('video', 'Aula em vídeo', 'calc', VIDEO), entrada('video2', 'Outra aula', 'calc', VIDEO)])
     renderAt('/biblioteca/calc')
     expect(screen.queryByRole('group', { name: 'Mostrar' })).toBeNull()
-    expect(rows()).toHaveLength(6)
+    expect(rows()).toHaveLength(8)
   })
 
   it('"Domínio abaixo de 60%" stays in the toolbar, and is cleared with the rest', () => {
@@ -243,9 +243,9 @@ describe('"Guardado" in the row, only when it is not with the library', () => {
     ])
   })
 
-  it('the entradas are not rows of the folder, and a note never says it is with the library', () => {
+  it('what was an entrada is a row of the folder and says where its media is; a note never says it is with the library (003)', () => {
     renderAt('/biblioteca/calc')
-    expect(names()).not.toContain('Sem mídia')
+    expect(nameCell('Sem mídia')).toHaveTextContent('Mídia apagada')
     expect(nameCell('Limites laterais e continuidade')).not.toHaveTextContent('No meu Drive')
   })
 

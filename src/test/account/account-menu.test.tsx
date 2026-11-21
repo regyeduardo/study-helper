@@ -12,6 +12,7 @@ vi.mock('@/lib/env', () => ({ env: mockEnv }))
 
 import { AccountMenu } from '@/components/dialogs/AccountMenu'
 import { newFileMeta, newFolderMeta, newSidecar } from '@/lib/defaults'
+import { page } from '@/controllers/google-redirect.controller'
 import { currentDevice } from '@/lib/device'
 import { DriveRepository } from '@/lib/storage/drive-repository'
 import { deleteDatabase } from '@/lib/storage/idb'
@@ -133,5 +134,55 @@ describe('AccountMenu send local data on login', () => {
     render(<AccountMenu />)
     fireEvent.click(screen.getByRole('button', { name: /Adicionar conta Google/ }))
     expect(await screen.findByRole('alert')).toHaveTextContent('O Google não liberou o acesso.')
+  })
+})
+
+describe('AccountMenu sign in on a phone', () => {
+  const IPHONE = 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1'
+  const add = () => screen.getByRole('button', { name: /Adicionar conta Google/ })
+
+  afterEach(() => {
+    delete (navigator as { userAgent?: string }).userAgent
+  })
+
+  it('opens the Google window inside the tap, before anything is awaited', async () => {
+    // A Local profile with content makes the menu read the browser database: that read must not come before the window.
+    const local = new LocalRepository()
+    await local.load()
+    await local.saveFolder(newFolderMeta({ name: 'Pasta' }))
+    render(<AccountMenu />)
+    fireEvent.click(add())
+    expect(google.codeConfigs).toHaveLength(1)
+    await waitFor(() => expect(useUiStore.getState().overlay?.kind).toBe('send-local'))
+  })
+
+  it('goes to Google in the same tab on an iPhone', async () => {
+    Object.defineProperty(navigator, 'userAgent', { configurable: true, value: IPHONE })
+    const go = vi.spyOn(page, 'go').mockImplementation(() => undefined)
+    render(<AccountMenu />)
+    fireEvent.click(add())
+    await waitFor(() => expect(go).toHaveBeenCalledTimes(1))
+    expect(google.codeConfigs).toHaveLength(0)
+    expect(String(go.mock.calls[0][0])).toContain('https://accounts.google.com/o/oauth2/v2/auth')
+  })
+
+  it('offers to go on in this tab when the Google window was closed with no answer', async () => {
+    google.codePopup = 'popup_closed'
+    const go = vi.spyOn(page, 'go').mockImplementation(() => undefined)
+    render(<AccountMenu />)
+    expect(screen.queryByRole('button', { name: 'Entrar nesta aba' })).toBeNull()
+    fireEvent.click(add())
+    expect(await screen.findByRole('alert')).toHaveTextContent('A janela do Google foi fechada.')
+    expect(go).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: 'Entrar nesta aba' }))
+    await waitFor(() => expect(go).toHaveBeenCalledTimes(1))
+  })
+
+  it('does not offer it for any other failure', async () => {
+    google.nextCode = { error: 'access_denied' }
+    render(<AccountMenu />)
+    fireEvent.click(add())
+    await screen.findByRole('alert')
+    expect(screen.queryByRole('button', { name: 'Entrar nesta aba' })).toBeNull()
   })
 })

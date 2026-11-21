@@ -7,6 +7,7 @@ import { filterLibrary, type FilterSource, type PlaceContext } from '@/lib/libra
 import { indexSome, type SearchHit, searchLibrary, searchWords } from '@/lib/library-search'
 import type { View } from '@/lib/paths'
 import { fileBytes, folderBytes } from '@/lib/storage/file-sizes'
+import { CombinedRepository } from '@/lib/storage/combined-repository'
 import { liveFiles, liveFolders, type OpenedFile, useLibraryStore } from '@/stores/library'
 import { useUiStore } from '@/stores/ui'
 
@@ -46,7 +47,12 @@ export function useFilterSource(): FilterSource & { library: PlaceContext['libra
   const media = useLibraryStore(state => state.localMedia)
   const library = useLibraryStore(state => (state.repo?.kind === 'drive' ? 'drive' : 'navegador'))
   const timeZone = useLibraryStore(state => state.index.settings.timezone)
-  return useMemo(() => ({ files, folders, localMedia: media.flatMap(item => item.fileIds), library, timeZone, now: Date.now() }), [files, folders, media, library, timeZone])
+  const repo = useLibraryStore(state => state.repo)
+  // "Guardado › Só neste navegador" counts the notes kept in Local too, not only the media kept in this browser (spec 003, FR-055)
+  return useMemo(() => {
+    const local = repo instanceof CombinedRepository ? files.filter(file => repo.sideOf(file.id) === 'local').map(file => file.id) : []
+    return { files, folders, localMedia: [...media.flatMap(item => item.fileIds), ...local], library, timeZone, now: Date.now() }
+  }, [files, folders, media, library, timeZone, repo])
 }
 
 export function useFileBytes(file: FileMeta): number {
@@ -204,8 +210,8 @@ export function useLibraryView(view: View, folderId: string | null) {
     const folder = folders.find(item => item.id === folderId) ?? null
     // the Pasta filter looks beyond the folder being browsed, as in the explorer
     const browsing = view === 'folder' && !trimmed && !filters.folders.length
-    // the lists of the layouts are of notes, as the folder of the explorer (FR-073); a search also finds an entrada by what was said in it
-    let list = trimmed ? files : files.filter(isNote)
+    // the lists of the layouts are of notes of every type, as the folder of the explorer (003, história 10)
+    let list = files
     if (browsing) list = list.filter(file => file.folderId === folderId)
     if (view === 'review') list = list.filter(file => isNote(file) && file.mastery !== null && file.mastery < REVIEW_BELOW)
     if (view === 'favorites') list = list.filter(file => file.favorite)
@@ -215,7 +221,7 @@ export function useLibraryView(view: View, folderId: string | null) {
     if (trimmed) list = list.filter(file => `${file.name} ${file.description} ${file.tags.join(' ')} ${searchTextOf(file, contents[file.id])}`.toLowerCase().includes(trimmed))
 
     // the panel's filters, with the counts of what is left to filter
-    const result = filterLibrary({ ...source, only: new Set(list.map(file => file.id)), foundEntries: Boolean(trimmed) }, { ...filters, scope: 'notas' })
+    const result = filterLibrary({ ...source, only: new Set(list.map(file => file.id)) }, { ...filters, scope: 'notas' })
     const kept = new Set(result.items.map(file => file.id))
     list = list.filter(file => kept.has(file.id))
 

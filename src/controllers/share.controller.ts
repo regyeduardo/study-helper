@@ -14,6 +14,32 @@ interface WorkerError {
   error?: string
 }
 
+/** A media the app is about to send, told to the Worker with the text so the link says it is coming. */
+export interface PlannedMedia {
+  fileId: string
+  mime: string
+  size: number
+}
+
+/** The answer of the update of a link in place: `media` is what was already in the link and stays (it is not sent again). */
+export interface UpdatedShare extends CreatedShare {
+  updatedAt: string
+  media: PlannedMedia[]
+}
+
+/** What the Worker knows about a link of this account: the media in it, and the notes whose media is still going up. */
+export interface ShareStatus {
+  id: string
+  kind: SharedItem['kind']
+  title: string
+  createdAt: string
+  updatedAt?: string
+  expiresAt: string
+  mediaExpiresAt?: string
+  media: PlannedMedia[]
+  pending: string[]
+}
+
 interface MediaPart {
   partNumber: number
   etag: string
@@ -29,6 +55,8 @@ const ERROR_MESSAGES: Record<string, string> = {
   media_expired: 'A mídia deste compartilhamento expirou (fica 3 dias).',
   not_owner: 'Só quem compartilhou pode apagar.',
   not_found: 'Esse compartilhamento não existe mais.',
+  share_gone: 'Esse compartilhamento não existe mais.',
+  expired: 'Esse compartilhamento já venceu.',
 }
 
 export class ShareError extends Error {
@@ -67,8 +95,17 @@ async function call<T>(token: TokenProvider, path: string, init: RequestInit = {
   throw new ShareError(response.status, code, ERROR_MESSAGES[code] ?? 'O compartilhamento falhou. Tente de novo.')
 }
 
-export function createShareController(token: TokenProvider, turnstileToken: string, share: ShareContent): Promise<CreatedShare> {
-  return call<CreatedShare>(token, '/shares', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ turnstileToken, share }) })
+export function createShareController(token: TokenProvider, turnstileToken: string, share: ShareContent, media: PlannedMedia[] = []): Promise<CreatedShare> {
+  return call<CreatedShare>(token, '/shares', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ turnstileToken, share, ...(media.length ? { media } : {}) }) })
+}
+
+/** The same link with the current content and 3 more days; the media already in it stays. A Worker without this route answers 404 `not_found`, a link that is gone 404 `share_gone`. */
+export function updateShareController(token: TokenProvider, id: string, turnstileToken: string, share: ShareContent, media: PlannedMedia[] = []): Promise<UpdatedShare> {
+  return call<UpdatedShare>(token, `/shares/${encodeURIComponent(id)}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ turnstileToken, share, ...(media.length ? { media } : {}) }) })
+}
+
+export function shareStatusController(token: TokenProvider, id: string): Promise<ShareStatus> {
+  return call<ShareStatus>(token, `/shares/${encodeURIComponent(id)}`)
 }
 
 export async function deleteShareController(token: TokenProvider, id: string): Promise<void> {
@@ -89,6 +126,11 @@ export async function uploadShareMediaController(token: TokenProvider, shareId: 
   return done.size
 }
 
+/** The upload of a media failed: tells the Worker, so the link stops saying that the media is going up. Best effort: an old Worker answers 404 and nothing is lost. */
+export async function forgetShareMediaController(token: TokenProvider, shareId: string, fileId: string): Promise<void> {
+  await call<unknown>(token, `/shares/${encodeURIComponent(shareId)}/media/${encodeURIComponent(fileId)}`, { method: 'DELETE' }).catch(() => undefined)
+}
+
 interface ShareManifest {
   version: number
   id: string
@@ -98,7 +140,7 @@ interface ShareManifest {
   expiresAt: string
   mediaExpiresAt?: string
   folders: { id: string; path: string }[]
-  files: { id: string; path: string; media?: { mime: string; size: number } }[]
+  files: { id: string; path: string; media?: { mime: string; size: number }; pendingMedia?: { mime: string; size: number } }[]
 }
 
 function sharedPathUrl(id: string, path: string): string {
@@ -129,7 +171,7 @@ export async function fetchSharedItemController(id: string): Promise<SharedItem 
       const [content, sidecar] = await Promise.all([sharedText(id, `${entry.path}.md`), sharedJson<Omit<FileSidecar, 'artifacts'> & Pick<SharedFile, 'artifacts'>>(id, `${entry.path}.json`)])
       if (content === null || !sidecar) return null
       const { meta } = sidecar
-      const file: SharedFile = { id: entry.id, name: meta.name, folderId: meta.folderId, type: meta.type, position: meta.position, description: meta.description, tags: meta.tags ?? [], content, questions: sidecar.questions ?? [], highlights: sidecar.highlights ?? [], ...(sidecar.transcript !== undefined ? { transcript: sidecar.transcript } : {}), ...(sidecar.recording ? { recording: sidecar.recording } : {}), ...(sidecar.documents ? { documents: sidecar.documents } : {}), ...(sidecar.artifacts ? { artifacts: sidecar.artifacts } : {}), ...(entry.media ? { media: { url: sharedMediaUrl(id, entry.id), mime: entry.media.mime, size: entry.media.size } } : {}), meta }
+      const file: SharedFile = { id: entry.id, name: meta.name, folderId: meta.folderId, type: meta.type, position: meta.position, description: meta.description, tags: meta.tags ?? [], content, questions: sidecar.questions ?? [], highlights: sidecar.highlights ?? [], ...(sidecar.transcript !== undefined ? { transcript: sidecar.transcript } : {}), ...(sidecar.recording ? { recording: sidecar.recording } : {}), ...(sidecar.documents ? { documents: sidecar.documents } : {}), ...(sidecar.artifacts ? { artifacts: sidecar.artifacts } : {}), ...(entry.media ? { media: { url: sharedMediaUrl(id, entry.id), mime: entry.media.mime, size: entry.media.size } } : entry.pendingMedia ? { mediaPending: { mime: entry.pendingMedia.mime, size: entry.pendingMedia.size } } : {}), meta }
       return file
     }),
   )

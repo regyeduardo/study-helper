@@ -2,6 +2,7 @@ import { create } from 'zustand'
 
 import {
   getGoogleProfileController,
+  GooglePopupError,
   GoogleReconnectError,
   type GoogleToken,
   isDurableLoginConfigured,
@@ -10,6 +11,7 @@ import {
   requestGoogleTokenController,
   revokeGoogleTokenController,
 } from '@/controllers/google-auth.controller'
+import { finishGoogleRedirect, prefersRedirectLogin, startGoogleRedirect } from '@/controllers/google-redirect.controller'
 import { LOCAL_ACCOUNT_ID } from '@/lib/storage/local-repository'
 
 const ACCOUNTS_KEY = 'study-helper:accounts'
@@ -72,11 +74,14 @@ interface AccountState {
   reconnectId: string | null
   reconnectMessage: string
   active(): Account
-  addGoogleAccount(): Promise<Account>
+  /** `sendLocal`: whether the Local profile's content is offered to the new account once the sign-in is done (decided before leaving, if the sign-in leaves the page). */
+  addGoogleAccount(options?: { redirect?: boolean; sendLocal?: boolean | Promise<boolean> }): Promise<Account>
+  /** On the way back from a sign-in made in the same tab: finishes it. Null when this load is not such a return. */
+  finishRedirectLogin(): Promise<{ returnTo: string; message?: string; sendLocal?: boolean } | null>
   switchTo(id: string): void
   forgetAccount(id: string): Promise<void>
   tokenFor(id: string, options?: { force?: boolean }): Promise<string>
-  reauthorize(id: string): Promise<void>
+  reauthorize(id: string, options?: { redirect?: boolean }): Promise<void>
 }
 
 const RECONNECT_MESSAGE = 'O Google pediu pra você entrar de novo.'
@@ -120,6 +125,32 @@ export const useAccountStore = create<AccountState>((set, get) => {
     }
   }
 
+  const registerGranted = async (granted: GoogleToken, durable: boolean): Promise<Account> => {
+    const profile = await getGoogleProfileController(granted.accessToken)
+    const previous = get().accounts.find(item => item.kind === 'google' && (item.id === profile.sub || (profile.email !== '' && item.email === profile.email)))
+    const token = keepRefreshToken(granted, previous?.token)
+    const account: Account = { id: previous?.id ?? profile.sub, kind: 'google', name: profile.name, email: profile.email, picture: profile.picture, token }
+    const others = get().accounts.filter(item => item.id !== account.id)
+    const next = [...others, account]
+    const missingOffline = durable && !token.refreshToken
+    set({ accounts: next, activeId: account.id, ...(missingOffline ? { reconnectId: account.id, reconnectMessage: CONFIRM_OFFLINE_MESSAGE } : {}) })
+    persist(next, account.id)
+    if (missingOffline) await revokeGoogleTokenController(granted.accessToken)
+    return account
+  }
+
+  const finishReauthorize = async (id: string, granted: GoogleToken, durable: boolean): Promise<void> => {
+    const account = get().accounts.find(item => item.id === id)
+    if (!account || account.kind !== 'google') return
+    const token = keepRefreshToken(granted, account.token)
+    saveToken(id, token)
+    if (durable && !token.refreshToken) {
+      await revokeGoogleTokenController(token.accessToken)
+      askReconnect(id, CONFIRM_OFFLINE_MESSAGE)
+    }
+    set({ reconnectId: null, reconnectMessage: '' })
+  }
+
   return {
     accounts,
     activeId: readActive(accounts),
@@ -128,20 +159,35 @@ export const useAccountStore = create<AccountState>((set, get) => {
 
     active: () => get().accounts.find(account => account.id === get().activeId) ?? LOCAL_ACCOUNT,
 
-    addGoogleAccount: async () => {
+    addGoogleAccount: async (options = {}) => {
       const durable = isDurableLoginConfigured()
-      const granted = durable ? await requestGoogleCodeController({ selectAccount: true }) : await requestGoogleTokenController({ prompt: 'select_account' })
-      const profile = await getGoogleProfileController(granted.accessToken)
-      const previous = get().accounts.find(item => item.kind === 'google' && (item.id === profile.sub || (profile.email !== '' && item.email === profile.email)))
-      const token = keepRefreshToken(granted, previous?.token)
-      const account: Account = { id: previous?.id ?? profile.sub, kind: 'google', name: profile.name, email: profile.email, picture: profile.picture, token }
-      const others = get().accounts.filter(item => item.id !== account.id)
-      const next = [...others, account]
-      const missingOffline = durable && !token.refreshToken
-      set({ accounts: next, activeId: account.id, ...(missingOffline ? { reconnectId: account.id, reconnectMessage: CONFIRM_OFFLINE_MESSAGE } : {}) })
-      persist(next, account.id)
-      if (missingOffline) await revokeGoogleTokenController(granted.accessToken)
-      return account
+      const leave = async () => startGoogleRedirect({ intent: { kind: 'add', sendLocal: await (options.sendLocal ?? false) }, selectAccount: true })
+      if (options.redirect || prefersRedirectLogin()) return leave()
+      let granted: GoogleToken
+      try {
+        granted = durable ? await requestGoogleCodeController({ selectAccount: true }) : await requestGoogleTokenController({ prompt: 'select_account' })
+      } catch (error) {
+        // The browser would not open the Google window: the same sign-in goes on in this tab.
+        if (error instanceof GooglePopupError && error.reason === 'blocked') return leave()
+        throw error
+      }
+      return registerGranted(granted, durable)
+    },
+
+    finishRedirectLogin: async () => {
+      const outcome = await finishGoogleRedirect()
+      if (!outcome) return null
+      if (!outcome.ok) return { returnTo: outcome.returnTo, message: outcome.message }
+      try {
+        if (outcome.intent.kind === 'add') {
+          await registerGranted(outcome.token, outcome.durable)
+          return { returnTo: outcome.returnTo, sendLocal: outcome.intent.sendLocal }
+        }
+        await finishReauthorize(outcome.intent.accountId, outcome.token, outcome.durable)
+        return { returnTo: outcome.returnTo }
+      } catch (error) {
+        return { returnTo: outcome.returnTo, message: error instanceof Error ? error.message : 'O login falhou.' }
+      }
     },
 
     switchTo: id => {
@@ -174,21 +220,29 @@ export const useAccountStore = create<AccountState>((set, get) => {
       return token.accessToken
     },
 
-    reauthorize: async id => {
+    reauthorize: async (id, options = {}) => {
       const account = get().accounts.find(item => item.id === id)
       if (!account || account.kind !== 'google') return
-      if (!isDurableLoginConfigured()) {
-        saveToken(id, await requestGoogleTokenController({ prompt: 'consent', loginHint: account.email }))
-        set({ reconnectId: null })
-        return
+      const durable = isDurableLoginConfigured()
+      const leave = (): Promise<never> => startGoogleRedirect({ intent: { kind: 'reauthorize', accountId: id }, selectAccount: false, loginHint: account.email })
+      if (options.redirect || prefersRedirectLogin()) return leave()
+      try {
+        if (!durable) {
+          saveToken(id, await requestGoogleTokenController({ prompt: 'consent', loginHint: account.email }))
+          set({ reconnectId: null })
+          return
+        }
+        const token = keepRefreshToken(await requestGoogleCodeController({ selectAccount: false, loginHint: account.email }), account.token)
+        saveToken(id, token)
+        if (!token.refreshToken) {
+          await revokeGoogleTokenController(token.accessToken)
+          askReconnect(id, CONFIRM_OFFLINE_MESSAGE)
+        }
+        set({ reconnectId: null, reconnectMessage: '' })
+      } catch (error) {
+        if (error instanceof GooglePopupError && error.reason === 'blocked') return leave()
+        throw error
       }
-      const token = keepRefreshToken(await requestGoogleCodeController({ selectAccount: false, loginHint: account.email }), account.token)
-      saveToken(id, token)
-      if (!token.refreshToken) {
-        await revokeGoogleTokenController(token.accessToken)
-        askReconnect(id, CONFIRM_OFFLINE_MESSAGE)
-      }
-      set({ reconnectId: null, reconnectMessage: '' })
     },
   }
 })

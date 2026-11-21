@@ -1,23 +1,42 @@
 import { useId, useMemo, useState } from 'react'
 
-import type { AtaStepModels, FileMeta, Settings } from '@/types/domain'
+import type { AtaStepModels, FileMeta, FolderMeta, Settings } from '@/types/domain'
 import { FolderChooserDialog } from '@/components/dialogs/FolderChooser'
 import { usePathName } from '@/hooks/use-library-view'
 import { aiConfigOf, modelByUid } from '@/lib/ai/config'
 import { mediaOf } from '@/lib/file-types'
 import { ATA_MODELS } from '@/lib/generation/ata'
-import { homeFolderOf, type Placement } from '@/stores/jobs'
+import { courseOf } from '@/lib/generation/course-lesson'
+import { entryOfSource } from '@/lib/note-source'
+import { homeFolderOf, type NoteAgent, type Placement } from '@/stores/jobs'
 import { useLibraryStore } from '@/stores/library'
+import type { Overlay } from '@/stores/ui'
 import { shortDate } from '@/utils/format'
 
 // The picker's value for the folder named after the source while it does not exist.
 const NEW_HOME = 'pasta-nova'
 
-/** "Gerar de novo" of a note made from another (Ata, Aula): its source, and whether it is the Ata of a recording. */
+/** "Gerar de novo" of a note made from another (Ata, Aula, Explicação): its source, and whether it is the Ata of a recording. */
 export function againOf(file: FileMeta, files: FileMeta[]): { source: FileMeta; ata: boolean } | null {
   const source = file.parentFileId ? files.find(item => item.id === file.parentFileId && !item.deletedAt) : undefined
-  if (!source || file.sourceExcerpt || (file.type !== 'meeting' && file.type !== 'class') || mediaOf(file) !== 'text') return null
+  if (!source || mediaOf(file) !== 'text') return null
+  // an explanation of a passage (its passage goes again), or one written from a note (it kept how it was made)
+  if (file.type === 'explanation') return file.sourceExcerpt || file.made ? { source, ata: false } : null
+  if (file.sourceExcerpt || (file.type !== 'meeting' && file.type !== 'class')) return null
   return { source, ata: file.type === 'meeting' && mediaOf(source) !== 'text' }
+}
+
+const AGENT_OF: Partial<Record<FileMeta['type'], NoteAgent>> = { meeting: 'meeting', class: 'lesson', explanation: 'explanation' }
+
+/** The window that writes this note again, with what it was made with: "Gerar de novo" of a note made from another, or a lesson of a course written again from its piece. Null: the AI did not write it. */
+export function redoOf(file: FileMeta, files: FileMeta[], folders: FolderMeta[]): Overlay | null {
+  // a lesson of a course comes from its piece of the course, not from the whole source
+  if (file.type === 'class' && file.status === 'ready' && mediaOf(file) === 'text' && courseOf(folders, file.folderId)) return { kind: 'pending', fileId: file.id }
+  // a note that keeps its link, text or topic in itself (no entrada of it yet) is written again from that
+  if (file.source && AGENT_OF[file.type] && !entryOfSource(files, file)) return { kind: 'pending', fileId: file.id }
+  const again = againOf(file, files)
+  if (again) return again.ata ? { kind: 'ata-parts', fileId: again.source.id, again: file.id } : { kind: 'generate', fileId: again.source.id, agent: AGENT_OF[file.type] ?? 'lesson', again: file.id }
+  return null
 }
 
 /** How it came out the last time: "Ata Fathom · DeepSeek V3 · em 28/10". */
@@ -44,14 +63,14 @@ export function lastSteps(file: FileMeta | undefined, settings: Settings): AtaSt
   return { ...(video ? { video } : {}), ...(context ? { context } : {}) }
 }
 
-/** "Salvar em" of a note made from another: the folder named after the source comes chosen; "Trocar" opens the folder window. */
-export function useNoteFolder(sourceId: string) {
+/** "Salvar em" of a note made from another: the folder named after the source comes chosen (or `initial`, the one picked before); "Trocar" opens the folder window. */
+export function useNoteFolder(sourceId: string, initial?: string | null) {
   const source = useLibraryStore(state => state.files.find(file => file.id === sourceId))
   const folders = useLibraryStore(state => state.folders)
   const pathName = usePathName()
   const home = useMemo(() => (source ? homeFolderOf(source, folders) : null), [source, folders])
   const homeValue = home ? (home.id ?? NEW_HOME) : null
-  const [picked, setPicked] = useState<string | null | undefined>(undefined)
+  const [picked, setPicked] = useState<string | null | undefined>(initial)
   const [open, setOpen] = useState(false)
   // NEW_HOME means the home folder: once it is made, its real id
   const value = picked === undefined || picked === NEW_HOME ? homeValue : picked

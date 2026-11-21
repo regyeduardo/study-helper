@@ -6,6 +6,7 @@ import { FolderIcon } from '@/components/ui/FolderIcon'
 import { Icon, type IconName } from '@/components/ui/Icon'
 import { FamilyCount, FileIcon, MasteryMeter, MotherBadge, PendingBadge, Tags, TypeDot } from '@/components/library/Badges'
 import { SaveToDrive } from '@/components/library/SaveToDrive'
+import { AwayMark, LocalMark, useIsLocal } from '@/components/library/SyncLocal'
 import { useFileActions } from '@/components/library/use-file-actions'
 import { useFileBytes, usePathName } from '@/hooks/use-library-view'
 import { familyCount, isNote } from '@/lib/family'
@@ -287,7 +288,7 @@ interface TableRowProps {
 
 const KIND_TEXT: Record<ItemKind, string> = { video: 'Vídeo', audio: 'Áudio', pdf: 'PDF', link: 'Link', texto: 'Texto', tema: 'Tema', arquivo: 'Arquivo', nota: 'Nota' }
 /** The type of the note, the same the folder filters by (FR-073). */
-const NOTE_TEXT: Record<NoteKind, string> = { ata: 'Ata', aula: 'Aula', explicacao: 'Explicação', leitura: 'Leitura', nota: 'Nota · escrita direto' }
+const NOTE_TEXT: Record<NoteKind, string> = { ata: 'Ata', aula: 'Aula', explicacao: 'Explicação', leitura: 'Leitura', nota: 'Nota · escrita direto', video: 'Vídeo', audio: 'Áudio', pdf: 'PDF', link: 'Link', texto: 'Texto', tema: 'Tema', arquivo: 'Outro arquivo' }
 const KIND_ICON: Record<ItemKind, IconName> = { video: 'monitor', audio: 'mic', pdf: 'file', link: 'link', texto: 'text', tema: 'bulb', arquivo: 'file', nota: 'note' }
 
 function kindLine(file: FileMeta): string {
@@ -471,6 +472,7 @@ interface FileTableRowProps extends TableRowProps {
 export function FileTableRow({ file, hit, onOpen, born = false, place, to, kindText, folderName, grouped, narrow, selectable, draggable, actions }: FileTableRowProps) {
   const navigate = useNavigate()
   const selected = useUiStore(state => state.selection.has(file.id))
+  const local = useIsLocal(file.id)
   const open = onOpen ?? (() => (to ? navigate(to) : actions.openFile(file)))
   const name = (
     <>
@@ -499,7 +501,9 @@ export function FileTableRow({ file, hit, onOpen, born = false, place, to, kindT
             <span key={tag}>#{tag}</span>
           ))}
           {place && <span className="ex-place">{place}</span>}
-          <SaveToDrive fileId={file.id} compact />
+          {/* a note kept only in this browser says it; its media goes with it in "Sincronizar", so no separate "Salvar no Drive" */}
+          {local ? <LocalMark id={file.id} /> : <SaveToDrive fileId={file.id} compact />}
+          <AwayMark awayId={file.awayFolderId} />
         </div>
         {hit && <Snippet hit={hit} />}
         {narrow && (
@@ -547,6 +551,8 @@ export function FolderTableRow({ folder, items, narrow, selectable, draggable, a
         </div>
         <div className="ex-sub">
           <span>{`Pasta · ${items} ${items === 1 ? 'item' : 'itens'}`}</span>
+          <LocalMark id={folder.id} />
+          <AwayMark awayId={folder.awayParentId} />
         </div>
         {narrow && (
           <div className="ex-sub">

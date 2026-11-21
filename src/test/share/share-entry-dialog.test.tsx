@@ -123,7 +123,7 @@ describe('de onde se abre', () => {
 describe('janela de compartilhar uma entrada', () => {
   it('a árvore da família com uma caixa por item: tudo marcado, menos cartões e conversas do Tutor; a transcrição vai sempre, sem caixa', async () => {
     openDialog()
-    expect(screen.getByRole('dialog', { name: `Compartilhar entrada · ${ENTRY_NAME}` })).toBeInTheDocument()
+    expect(screen.getByRole('dialog', { name: `Compartilhar · ${ENTRY_NAME}` })).toBeInTheDocument()
     const tree = await screen.findByRole('group', { name: 'O que vai no link' })
     expect(within(tree).getAllByRole('checkbox')).toHaveLength(7)
     expect(box('Mídia').checked).toBe(true)
@@ -190,7 +190,7 @@ describe('janela de compartilhar uma entrada', () => {
     await waitFor(() => expect(share).toBeEnabled())
     fireEvent.click(share)
     await screen.findByDisplayValue(new RegExp(`/s/${SHARE_ID}$`))
-    expect(screen.getByRole('dialog', { name: `Compartilhar entrada · ${ENTRY_NAME}` })).toBeInTheDocument()
+    expect(screen.getByRole('dialog', { name: `Compartilhar · ${ENTRY_NAME}` })).toBeInTheDocument()
     const sent = calls.find(call => call.url === 'https://share.test/shares')!.body as { share: { kind: string; files: SharedFile[] } }
     expect(sent.share.kind).toBe('entrada')
     expect(sent.share.files.map(file => file.name)).toEqual([ENTRY_NAME, 'Ata'])

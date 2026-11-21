@@ -4,22 +4,26 @@ import { Link, useLocation, useNavigate } from 'react-router-dom'
 
 import type { ArtifactKind, FileMeta, SourceMeta, SourceStorage } from '@/types/domain'
 import { entryKind } from '@/components/library/EntryList'
+import { DownloadMedia } from '@/components/library/DownloadMedia'
 import { SaveToDrive } from '@/components/library/SaveToDrive'
 import { SharedBadge } from '@/components/library/SharedBadge'
+import { MarkList } from '@/components/reader/Markers'
 import { MediaPlayer, type MeetingMedia, useMeetingMedia } from '@/components/reader/MediaPlayer'
 import { TranscriptTab } from '@/components/reader/TranscriptTab'
+import { saveMarks, useMarks } from '@/components/reader/use-marks'
 import { usePlayback } from '@/components/reader/use-playback'
 import { Icon, type IconName } from '@/components/ui/Icon'
 import { Popover } from '@/components/ui/Popover'
 import { useDocument } from '@/hooks/use-document'
 import { usePathName } from '@/hooks/use-library-view'
 import { descendantsOf, familyCount } from '@/lib/family'
-import { mediaLength, mediaOf } from '@/lib/file-types'
+import { isSourceNote, mediaLength, mediaOf } from '@/lib/file-types'
 import { courseOf } from '@/lib/generation/course-lesson'
 import { paths } from '@/lib/paths'
 import { downloadStoredSource, sourceExpired } from '@/lib/storage/source-storage'
-import { transcriptText } from '@/lib/transcription/export'
-import { renameSpeaker, withRecorder } from '@/lib/transcription/turns'
+import { renameSpeakerEverywhere } from '@/lib/transcription/rename-everywhere'
+import { SyncLocalBanner } from '@/components/library/SyncLocal'
+import { withRecorder } from '@/lib/transcription/turns'
 import { recorderName, useAccountStore } from '@/stores/account'
 import { type Job, useJobsStore } from '@/stores/jobs'
 import { type OpenedFile, useLibraryStore } from '@/stores/library'
@@ -119,11 +123,12 @@ function MediaOriginal({ entry, origin, media, playback, date, stays }: { entry:
       </>
     )
   }
-  if (media.available && entry.kept !== 'registro') {
+  // the media of a link is shown even when the sharer's entrada was marked "só registro": what is in the link is what was sent
+  if (media.available && (entry.kept !== 'registro' || media.remote)) {
     const stored = isStored(origin)
     return (
       <>
-        <MediaPlayer player={playback.player} media={media} onTime={playback.setTime} onPlayFrom={playback.playFrom} />
+        <MediaPlayer player={playback.player} media={media} onTime={playback.setTime} onPlayFrom={playback.playFrom} onMark={playback.onMark} />
         <Facts
           rows={[
             ['Mídia', was],
@@ -131,6 +136,7 @@ function MediaOriginal({ entry, origin, media, playback, date, stays }: { entry:
             ['Fica até', stored ? (origin.expiresAt ? date(origin.expiresAt) : 'Você apagar') : ''],
           ]}
         />
+        <DownloadMedia fileId={entry.id} name={origin.name} url={media.remote ? (media.url ?? undefined) : undefined} className="btn ep-mt ep-download" />
       </>
     )
   }
@@ -207,7 +213,7 @@ function Original({ entry, opened, media, playback, date, notes }: { entry: File
     return (
       <>
         <Notice title={origin.name}>
-          <div className="muted">{stored ? 'O arquivo está guardado com a entrada.' : `Guardado só como registro: o arquivo não foi copiado. ${whatStays(false, notes)}`}</div>
+          <div className="muted">{stored ? 'O arquivo está guardado com a nota.' : `Guardado só como registro: o arquivo não foi copiado. ${whatStays(false, notes)}`}</div>
           {stored && <DownloadSource origin={origin} />}
         </Notice>
         <Facts rows={[['Arquivo', size], ['Guardado em', stored ? STORAGE_LABEL[origin.storage] : ''], ['Veio de', stored ? '' : ARRIVED_BY[origin.input]]]} />
@@ -250,31 +256,29 @@ function Failure({ text, onRetry }: { text: string; onRetry?(): void }) {
   )
 }
 
-function Transcript({ entry, opened, canTranscribe, canPlay, playback }: { entry: FileMeta; opened: OpenedFile | null; canTranscribe: boolean; canPlay: boolean; playback: ReturnType<typeof usePlayback> }) {
+function Transcript({ entry, opened, canTranscribe, canPlay, playback, marking }: { entry: FileMeta; opened: OpenedFile | null; canTranscribe: boolean; canPlay: boolean; playback: ReturnType<typeof usePlayback>; marking: ReturnType<typeof useMarks> }) {
   // "?t=95": the speech a search found (FR-074), or a moment of the Ata
   const asked = new URLSearchParams(useLocation().search).get('t')
   const found = asked !== null && Number.isFinite(Number(asked)) ? Number(asked) : null
   const openOverlay = useUiStore(state => state.open)
   const readOnly = useLibraryStore(state => Boolean(state.sharedView))
   const job = useJobsStore(state => state.jobs.find(item => item.fileId === entry.id && item.kind === 'transcription' && (item.status === 'running' || item.status === 'error')))
+  const dismiss = useJobsStore(state => state.dismiss)
   if (!opened) return <div className="muted">Abrindo…</div>
   const { recording, transcript } = opened.sidecar
   const running = job?.status === 'running'
-  const status = job && (running ? <JobProgress job={job} /> : job.error && <Failure text={job.error} />)
+  // a transcription asked in a window offers it again, as it was filled in
+  const retry = job?.retry
+  const status = job && (running ? <JobProgress job={job} /> : job.error && <Failure text={job.error} onRetry={retry && !readOnly ? () => (dismiss(job.id), openOverlay(retry)) : undefined} />)
   // from scratch, with the same window as the first time
   const redo = canTranscribe && !running ? () => openOverlay({ kind: 'transcribe', fileId: entry.id }) : undefined
   if (recording?.blocks.length) {
-    // The same rename as in the note: every speech of that voice, the transcript and the entry's text
-    const rename = async (speakerId: string, name: string) => {
-      const renamed = renameSpeaker(recording, speakerId, name)
-      const library = useLibraryStore.getState()
-      await library.updateSidecar(entry.id, sidecar => ({ ...sidecar, recording: renamed, transcript: transcriptText(renamed).trim() }))
-      if (entry.type === 'reading' && opened.content.trim()) await library.saveContent(entry.id, transcriptText(renamed).trim())
-    }
+    // The same rename as in the note: every speech of that voice, the transcript, the note's text and the notes born of it (FR-060)
+    const rename = (speakerId: string, name: string) => renameSpeakerEverywhere(entry.id, speakerId, name)
     return (
       <>
         {status}
-        <TranscriptTab recording={withRecorder(recording, readOnly ? '' : recorderName(useAccountStore.getState().active()))} name={entry.name} time={playback.time} onPlay={canPlay ? playback.playFrom : undefined} onRename={readOnly ? undefined : (speakerId, name) => void rename(speakerId, name)} onRetranscribe={redo} found={found} />
+        <TranscriptTab recording={withRecorder(recording, readOnly ? '' : recorderName(useAccountStore.getState().active()))} name={entry.name} time={playback.time} onPlay={canPlay ? playback.playFrom : undefined} onRename={readOnly ? undefined : (speakerId, name) => void rename(speakerId, name)} onMarks={readOnly ? undefined : marks => saveMarks(entry.id, marks)} editing={marking.editing} onEditing={marking.setEditing} onRetranscribe={redo} found={found} />
       </>
     )
   }
@@ -290,6 +294,7 @@ function Transcript({ entry, opened, canTranscribe, canPlay, playback }: { entry
             </button>
           </div>
         )}
+        <MarkList marks={recording?.marks ?? []} actions={marking.actions} onPlay={canPlay ? playback.playFrom : undefined} />
         <p className="ep-plain">{transcript.trim()}</p>
       </>
     )
@@ -297,6 +302,7 @@ function Transcript({ entry, opened, canTranscribe, canPlay, playback }: { entry
   return (
     <>
       {status}
+      <MarkList marks={recording?.marks ?? []} actions={marking.actions} onPlay={canPlay ? playback.playFrom : undefined} />
       {!running && (
         <div className="empty ep-empty">
           <div>
@@ -332,7 +338,8 @@ const nodeName = (name: string) => (
 
 function Node({ file, ...tree }: { file: FileMeta } & Omit<TreeProps, 'parentId' | 'extra'>) {
   const job = useJobsStore(state => state.jobs.find(item => item.fileId === file.id && item.kind === 'generation' && (item.status === 'running' || item.status === 'error')))
-  const generatePending = useJobsStore(state => state.generatePending)
+  const openOverlay = useUiStore(state => state.open)
+  const dismiss = useJobsStore(state => state.dismiss)
   const folders = useLibraryStore(state => state.folders)
   // a shared link brings no folder of who shared
   const readOnly = useLibraryStore(state => Boolean(state.sharedView))
@@ -341,16 +348,27 @@ function Node({ file, ...tree }: { file: FileMeta } & Omit<TreeProps, 'parentId'
   // a lesson of a course waits for its turn: nothing went wrong
   const waiting = unfinished && !job && Boolean(courseOf(folders, file.folderId))
   const failed = unfinished && !waiting
+  // a note that keeps a source inside another note (a YouTube link of "Gerar a partir disto"): its own icon, and it says its kind
+  const entrada = isSourceNote(file)
+  const name = entrada ? (
+    <>
+      <Icon name={entryKind(file).icon} />
+      <span>{file.name}</span>
+    </>
+  ) : (
+    nodeName(file.name)
+  )
   return (
     <li>
       <div className="ep-node">
         {running || failed ? (
-          <span className="ep-node-name">{nodeName(file.name)}</span>
+          <span className="ep-node-name">{name}</span>
         ) : (
           <Link className="ep-node-name" to={paths.file(file.id)}>
-            {nodeName(file.name)}
+            {name}
           </Link>
         )}
+        {entrada && <span className="ep-kind-tag">{entryKind(file).label}</span>}
         {running && <span className="pending">gerando…</span>}
         {waiting && <span className="pending">ainda não escrita</span>}
         {failed && <span className="ep-fail">falhou</span>}
@@ -362,7 +380,7 @@ function Node({ file, ...tree }: { file: FileMeta } & Omit<TreeProps, 'parentId'
         )}
       </div>
       {running && <JobProgress job={job} />}
-      {failed && <Failure text={job?.error ?? 'A geração não terminou. O material ficou guardado para tentar de novo.'} onRetry={() => void generatePending(file.id)} />}
+      {failed && <Failure text={job?.error ?? 'A geração não terminou. O material ficou guardado para tentar de novo.'} onRetry={() => (job && dismiss(job.id), openOverlay(job?.retry ?? { kind: 'pending', fileId: file.id }))} />}
       {Boolean(file.artifacts?.length) && (
         <div className="ep-arts">
           {file.artifacts!.map(artifact => (
@@ -406,11 +424,12 @@ function JobNode({ job, onRetry }: { job: Job; onRetry(): void }) {
 function EntryView({ fileId }: { fileId: string }) {
   const { meta: entry, opened, error } = useDocument(fileId)
   const media = useMeetingMedia(entry)
-  const playback = usePlayback(media)
+  const readOnly = useLibraryStore(state => Boolean(state.sharedView))
+  const marking = useMarks(opened?.sidecar.recording?.marks ?? [], readOnly ? undefined : marks => saveMarks(fileId, marks))
+  const playback = usePlayback(media, marking.add)
   const files = useLibraryStore(state => state.files)
   const folders = useLibraryStore(state => state.folders)
   const timeZone = useLibraryStore(state => state.index.settings.timezone)
-  const readOnly = useLibraryStore(state => Boolean(state.sharedView))
   const hasMedia = useLibraryStore(state => state.hasMedia(fileId))
   const jobs = useJobsStore(state => state.jobs)
   const dismiss = useJobsStore(state => state.dismiss)
@@ -433,9 +452,9 @@ function EntryView({ fileId }: { fileId: string }) {
   if (!entry) {
     return (
       <div className="empty">
-        <span>Entrada não encontrada.</span>
-        <Link className="btn" to={paths.entries}>
-          Ver as entradas
+        <span>Nota não encontrada.</span>
+        <Link className="btn" to={paths.library}>
+          Ver a biblioteca
         </Link>
       </div>
     )
@@ -453,7 +472,7 @@ function EntryView({ fileId }: { fileId: string }) {
     ui.open({
       kind: 'confirm',
       title: 'Apagar só a mídia?',
-      text: 'O arquivo sai e o espaço é liberado. A entrada fica marcada como mídia apagada, com a transcrição e as notas.',
+      text: 'O arquivo sai e o espaço é liberado. A nota fica marcada como mídia apagada, com a transcrição e as notas filhas.',
       ok: 'Apagar só a mídia',
       danger: true,
       onConfirm: () => useLibraryStore.getState().removeMedia(entry.id),
@@ -474,6 +493,7 @@ function EntryView({ fileId }: { fileId: string }) {
 
   return (
     <div className="entry-page">
+      <SyncLocalBanner fileId={entry.id} />
       <article className="ep-entry" aria-label={entry.name}>
         <header className="ep-head">
           <div className="ep-title">
@@ -483,7 +503,7 @@ function EntryView({ fileId }: { fileId: string }) {
             <div className="ep-title-text">
               <h1>{entry.name}</h1>
               <div className="doc-meta">
-                <span className="ep-kind">Entrada · {kind.label}</span>
+                <span className="ep-kind">{kind.label}</span>
                 {readOnly ? (
                   <SharedBadge label />
                 ) : (
@@ -509,7 +529,7 @@ function EntryView({ fileId }: { fileId: string }) {
               </button>
               <button className="btn primary ep-gen" onClick={generate}>
                 <Icon name="plus" />
-                Gerar desta entrada
+                Gerar desta nota
               </button>
               <button
                 className="ibtn"
@@ -524,7 +544,7 @@ function EntryView({ fileId }: { fileId: string }) {
                 <Icon name="dots" />
               </button>
               {menu && (
-                <Popover x={menu.x} y={menu.y} onClose={() => setMenu(null)} label="Ações da entrada">
+                <Popover x={menu.x} y={menu.y} onClose={() => setMenu(null)} label="Ações da nota">
                   {action('pen', 'Renomear', () => ui.open({ kind: 'rename', target: 'file', id: entry.id }))}
                   {action('move', 'Mover para…', () => ui.open({ kind: 'move', fileIds: [entry.id], folderIds: [] }))}
                   {action('link', 'Compartilhar…', () => ui.open({ kind: 'share', target: 'entrada', id: entry.id }))}
@@ -550,7 +570,7 @@ function EntryView({ fileId }: { fileId: string }) {
                 {transcribed && <span className="ep-hint">Faz parte da mídia</span>}
               </h2>
               <div className="ep-card-body">
-                <Transcript entry={entry} opened={opened} canPlay={canPlay} canTranscribe={canPlay && !readOnly} playback={playback} />
+                <Transcript entry={entry} opened={opened} canPlay={canPlay} canTranscribe={canPlay && !readOnly} playback={playback} marking={marking} />
               </div>
             </section>
           )}
@@ -572,7 +592,9 @@ function EntryView({ fileId }: { fileId: string }) {
                       job={job}
                       onRetry={() => {
                         dismiss(job.id)
-                        generate()
+                        // the window that asked comes back as it was filled in
+                        if (job.retry) ui.open(job.retry)
+                        else generate()
                       }}
                     />
                   ))}
@@ -581,12 +603,12 @@ function EntryView({ fileId }: { fileId: string }) {
                 <div className="empty ep-empty">
                   <div>
                     <b>{readOnly ? 'Nenhuma nota veio no link' : 'Nada nasceu daqui ainda'}</b>
-                    <div className="muted">{readOnly ? 'Quem compartilhou mandou só a entrada.' : !isMedia ? 'Gere uma nota a partir desta entrada.' : canPlay && !transcribed ? 'Gere uma transcrição, uma ata ou uma aula a partir desta gravação.' : 'Gere uma ata, uma aula ou uma explicação a partir desta entrada.'}</div>
+                    <div className="muted">{readOnly ? 'Quem compartilhou mandou só esta nota, sem as filhas.' : !isMedia ? 'Gere uma nota filha a partir desta.' : canPlay && !transcribed ? 'Gere uma transcrição, uma ata ou uma aula a partir desta mídia.' : 'Gere uma ata, uma aula ou uma explicação a partir desta nota.'}</div>
                   </div>
                   {!readOnly && (
                     <button className="btn primary" onClick={generate}>
                       <Icon name="plus" />
-                      Gerar desta entrada
+                      Gerar desta nota
                     </button>
                   )}
                 </div>

@@ -4,6 +4,7 @@ import type { MediaAnalysis } from '@/types/domain'
 import type { ModelChoice } from '@/components/dialogs/ModelPick'
 import { Icon } from '@/components/ui/Icon'
 import { aiConfigOf, modelByUid } from '@/lib/ai/config'
+import { cannotWatch } from '@/lib/generation/youtube-video'
 import { useLibraryStore } from '@/stores/library'
 import { mediaOfModel, useModelsStore } from '@/stores/models'
 
@@ -11,6 +12,13 @@ const ANALYSES: { id: MediaAnalysis; label: string; hint: string }[] = [
   { id: 'video', label: 'Só o vídeo', hint: 'A mídia vai direto ao modelo.' },
   { id: 'transcricao', label: 'Só a transcrição', hint: 'Só o texto; se faltar, ela é feita antes.' },
   { id: 'ambos', label: 'Transcrição + vídeo', hint: 'Os dois na mesma chamada.' },
+]
+
+/** A YouTube link: the model watches it by the link (the speech and the screen), or reads its legenda as before. */
+const YOUTUBE_ANALYSES: { id: MediaAnalysis; label: string; hint: string }[] = [
+  { id: 'video', label: 'Só o vídeo', hint: 'O modelo assiste o vídeo pelo link: a fala e a tela (slides, código, diagramas). Só vídeo público.' },
+  { id: 'transcricao', label: 'Só a transcrição', hint: 'Só o texto da legenda do vídeo.' },
+  { id: 'ambos', label: 'Transcrição + vídeo', hint: 'O vídeo e a legenda na mesma chamada.' },
 ]
 
 const NOT_HEARD = 'O modelo escolhido não ouve a mídia.'
@@ -26,10 +34,12 @@ export interface MediaAnalysisOptions {
   ata?: boolean
   /** What the last Ata analyzed ("Gerar de novo"). */
   initial?: MediaAnalysis
+  /** A YouTube link: the video goes only to a model that watches it, and "Só a transcrição" comes chosen, as before. */
+  youtube?: boolean
 }
 
 /** "O que a IA analisa" (FR-046): comes with the media when the model hears it, else the transcription. `unavailable`: why the media cannot go. `sent`: only what the person marked, so that untouched the request stays as today; in the Ata of a video it is always the choice shown. */
-export function useMediaAnalysis(choice: ModelChoice | null, on: boolean, unavailable: string | null = null, { ata = false, initial }: MediaAnalysisOptions = {}) {
+export function useMediaAnalysis(choice: ModelChoice | null, on: boolean, unavailable: string | null = null, { ata = false, initial, youtube = false }: MediaAnalysisOptions = {}) {
   const settings = useLibraryStore(state => state.index.settings)
   const live = useModelsStore(state => state.live)
   const probes = useModelsStore(state => state.probes)
@@ -43,14 +53,14 @@ export function useMediaAnalysis(choice: ModelChoice | null, on: boolean, unavai
   const media = choice?.model ? mediaOfModel(config, live, probes, choice.model) : null
   const writer = choice?.model ? modelByUid(config, choice.model)?.name : undefined
   const hears = media?.audio === true && (!ata || media.video !== false)
-  const reason = unavailable ?? (hears ? null : ata ? `Só abre com um modelo que veja vídeo: o ${writer ?? 'modelo escolhido'} não vê vídeo.` : NOT_HEARD)
-  const value: MediaAnalysis = ata ? (picked === 'video' && !reason ? 'video' : 'transcricao') : picked && (picked === 'transcricao' || !reason) ? picked : reason ? 'transcricao' : 'video'
-  return { value, reason, pick: setPicked, sent: ata || picked === value ? value : undefined, ata, writer }
+  const reason = unavailable ?? (youtube ? cannotWatch(config, choice?.model, media) : hears ? null : ata ? `Só abre com um modelo que veja vídeo: o ${writer ?? 'modelo escolhido'} não vê vídeo.` : NOT_HEARD)
+  const value: MediaAnalysis = ata ? (picked === 'video' && !reason ? 'video' : 'transcricao') : picked && (picked === 'transcricao' || !reason) ? picked : reason || youtube ? 'transcricao' : 'video'
+  return { value, reason, pick: setPicked, sent: ata || picked === value ? value : undefined, ata, writer, youtube }
 }
 
 /** Options the model or the entrada cannot do stay visible, disabled, saying why. */
 export function MediaAnalysisField({ analysis }: { analysis: ReturnType<typeof useMediaAnalysis> }) {
-  const items = analysis.ata ? ATA_ANALYSES : ANALYSES.map(item => ({ ...item, tag: undefined, hint: () => item.hint, recommended: false }))
+  const items = analysis.ata ? ATA_ANALYSES : (analysis.youtube ? YOUTUBE_ANALYSES : ANALYSES).map(item => ({ ...item, tag: undefined, hint: () => item.hint, recommended: false }))
   return (
     <div className="field">
       <span className="lab">O que a IA analisa</span>

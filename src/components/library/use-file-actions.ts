@@ -43,17 +43,9 @@ export function useFileActions() {
 
   /** `found`: the words of the search that led to it, marked in the note (FR-074). */
   const openFile = (file: FileMeta, found?: string) => {
-    if (file.status === 'pending' && courseOfFolders(library.folders, file.folderId) && !library.sharedView) {
-      ui.open({
-        kind: 'confirm',
-        title: file.name,
-        text: 'Esta aula ainda não foi escrita. O recorte do material já está guardado. Gerar agora?',
-        ok: 'Gerar agora',
-        onConfirm: () => {
-          void jobs.generatePending(file.id)
-          navigate(paths.file(file.id))
-        },
-      })
+    // a lesson still to write: who writes it is chosen first, then it opens
+    if (file.status === 'pending' && courseOfFolders(library.folders, file.folderId) && !library.sharedView && !jobs.jobs.some(job => job.fileId === file.id && job.status === 'running')) {
+      ui.open({ kind: 'pending', fileId: file.id, go: true })
       return
     }
     library.markOpened(file.id)

@@ -1,13 +1,13 @@
 // Filtros combináveis das listas da biblioteca (FR-044, FR-045): E entre os grupos, OU dentro de cada grupo, com a contagem de cada opção.
-// A pasta lista só notas, e o "Tipo" dela é o tipo da nota; o tipo da entrada e "O que gerou" são da lista de Entradas (FR-073).
+// A pasta lista as notas de todos os tipos (003, história 10), e o "Tipo" dela é o tipo da nota; "O que gerou" é da lista de Gravações.
 import type { FileMeta, FileType, FolderMeta } from '@/types/domain'
 import { descendantsOf, isNote } from '@/lib/family'
 import { mediaOf } from '@/lib/file-types'
 
 export type Scope = 'tudo' | 'entradas' | 'notas'
 export type ItemKind = 'video' | 'audio' | 'pdf' | 'link' | 'texto' | 'tema' | 'arquivo' | 'nota'
-/** The type of a note: "nota" is one written directly, born of nothing. */
-export type NoteKind = 'ata' | 'aula' | 'explicacao' | 'leitura' | 'nota'
+/** The type of a note: "nota" is one written directly, born of nothing; the others after "leitura" are the notes that keep a source. */
+export type NoteKind = 'ata' | 'aula' | 'explicacao' | 'leitura' | 'nota' | 'video' | 'audio' | 'pdf' | 'link' | 'texto' | 'tema' | 'arquivo'
 export type Generated = 'ata' | 'aula' | 'explicacao' | 'leitura' | 'mapa' | 'cartoes' | 'tutor' | 'nada'
 export type DateField = 'updated' | 'created'
 export type PeriodPreset = 'hoje' | '7dias' | '30dias'
@@ -58,8 +58,6 @@ export interface FilterSource {
   timeZone?: string
   /** The search hits, while searching: nothing else appears or is counted, but the total stays the library's. */
   only?: ReadonlySet<string> | null
-  /** While searching, an entrada found passes the list of notes too (FR-074). */
-  foundEntries?: boolean
 }
 
 export interface FacetOption<Id> {
@@ -135,6 +133,13 @@ const NOTE_KINDS: Option<NoteKind>[] = [
   { id: 'explicacao', label: 'Explicação', chip: 'explicação' },
   { id: 'leitura', label: 'Leitura', chip: 'leitura' },
   { id: 'nota', label: 'Nota', chip: 'nota' },
+  { id: 'video', label: 'Vídeo', chip: 'vídeo' },
+  { id: 'audio', label: 'Áudio', chip: 'áudio' },
+  { id: 'pdf', label: 'PDF', chip: 'PDF' },
+  { id: 'link', label: 'Link', chip: 'link' },
+  { id: 'texto', label: 'Texto', chip: 'texto' },
+  { id: 'tema', label: 'Tema', chip: 'tema' },
+  { id: 'arquivo', label: 'Outro arquivo', chip: 'outro arquivo' },
 ]
 
 const GENERATED: Option<Generated>[] = [
@@ -162,7 +167,7 @@ const PLACES: Option<Place>[] = [
   { id: 'apagado', label: 'Mídia apagada', chip: 'mídia apagada' },
 ]
 
-const NOTE_GENERATED: Record<FileType, Generated> = { meeting: 'ata', class: 'aula', explanation: 'explicacao', reading: 'leitura' }
+const NOTE_GENERATED: Partial<Record<FileType, Generated>> = { meeting: 'ata', class: 'aula', explanation: 'explicacao', reading: 'leitura' }
 
 const ROOT_LABEL = 'Biblioteca'
 const MAX_DEPTH = 64
@@ -182,8 +187,9 @@ export function kindOf(file: FileMeta): ItemKind {
   return origin.mime === 'application/pdf' || /\.pdf$/i.test(origin.name) ? 'pdf' : 'arquivo'
 }
 
-/** Ata, Aula, Explicação, Leitura, or Nota for one written directly (FR-022): no entrada, no mother, never generated. */
+/** Ata, Aula, Explicação, Leitura, or Nota for one written directly (FR-022): no source, no mother, never generated; a note that keeps a source, its kind (Vídeo, PDF…). */
 export function noteKindOf(file: FileMeta): NoteKind {
+  if (!isNote(file)) return kindOf(file) as NoteKind
   if (file.type === 'reading' && !file.parentFileId && !file.origin && !file.generation) return 'nota'
   return NOTE_GENERATED[file.type] as NoteKind
 }
@@ -207,7 +213,10 @@ export function placeOf(file: FileMeta, { localMedia, library, now }: PlaceConte
 function generatedOf(files: FileMeta[], file: FileMeta, isLive: (item: FileMeta) => boolean): Set<Generated> {
   const family = descendantsOf(files, file.id).filter(isLive)
   const found = new Set<Generated>()
-  for (const item of family) if (isNote(item)) found.add(NOTE_GENERATED[item.type])
+  for (const item of family) {
+    const made = isNote(item) ? NOTE_GENERATED[item.type] : undefined
+    if (made) found.add(made)
+  }
   for (const item of [file, ...family]) {
     for (const artifact of item.artifacts ?? []) found.add(artifact.kind)
     if (item.hasMindmap) found.add('mapa')
@@ -361,7 +370,7 @@ export function filterLibrary(source: FilterSource, filters: LibraryFilters): Fi
     (file): Facts => ({
       file,
       note: isNote(file),
-      noteKind: isNote(file) ? noteKindOf(file) : null,
+      noteKind: noteKindOf(file),
       kind: kindOf(file),
       // what the entradas gave, only where "O que gerou" is offered
       generated: filters.scope === 'notas' ? new Set() : generatedOf(files, file, isLive),
@@ -383,7 +392,8 @@ export function filterLibrary(source: FilterSource, filters: LibraryFilters): Fi
 
   const notesList = filters.scope === 'notas'
   const passes: Record<Group, (item: Facts) => boolean> = {
-    scope: item => filters.scope === 'tudo' || item.note === notesList || (notesList && Boolean(source.foundEntries)),
+    // every item is a note now: the folder lists them all; the list of Gravações ("entradas") only those that keep a source
+    scope: item => filters.scope !== 'entradas' || !item.note,
     noteKinds: item => !notesList || !filters.noteKinds.length || (item.noteKind !== null && filters.noteKinds.includes(item.noteKind)),
     kinds: item => notesList || !filters.kinds.length || filters.kinds.includes(item.kind),
     generated: item => notesList || !filters.generated.length || generatedMatches(item),
@@ -405,8 +415,7 @@ export function filterLibrary(source: FilterSource, filters: LibraryFilters): Fi
     for (const group of failed.length ? failed : groups) countedFor.get(group)!.push(item)
   }
 
-  // the folder counts its notes; the other lists, everything alive
-  const total = notesList ? facts.filter(item => item.note).length : facts.length
+  const total = facts.length
   const scopes: Record<Scope, number> = { tudo: 0, entradas: 0, notas: 0 }
   for (const item of countedFor.get('scope')!) {
     scopes.tudo++

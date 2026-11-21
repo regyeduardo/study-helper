@@ -12,7 +12,8 @@ export const paths = {
   favorites: '/favoritos',
   trash: '/lixeira',
   file: (id: string) => (sharedRoot ? `${sharedRoot}/arquivo/${id}` : `/arquivo/${id}`),
-  entries: '/entradas',
+  /** Gravações (was "Entradas"; the old address still opens it). */
+  entries: '/gravacoes',
   entry: (id: string) => `/entrada/${id}`,
   shares: '/compartilhados',
   sharedWithMe: '/compartilhados-comigo',

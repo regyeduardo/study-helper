@@ -96,7 +96,8 @@ async function highlightBlocks(html: string): Promise<string> {
       ? toHtml(starryNight.highlight(source, scope), { characterReferences: { useNamedReferences: true } })
       : body.replace(/\n$/, '')
     const wrapper = scope ? ` highlight-${scope.replace(/\./g, '-')}` : ''
-    painted = painted.replace(whole, `<div class="highlight${wrapper}"><pre>${inner}</pre></div>`)
+    // a function, so the code's own `$&`, `$'`, `$$` are not read as replacement patterns
+    painted = painted.replace(whole, () => `<div class="highlight${wrapper}"><pre>${inner}</pre></div>`)
   }
   return painted.replace(/<pre><code>([\s\S]*?)<\/code><\/pre>/g, (_, body: string) => `<div class="highlight"><pre>${body.replace(/\n$/, '')}</pre></div>`)
 }

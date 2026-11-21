@@ -35,6 +35,8 @@
 .ep-gone{background:var(--warn-soft)}
 .ep-gone .ic{color:var(--warn);flex:none}
 .ep-mt{margin-top:8px}
+/* "Baixar" of the media: in the column of the card, as wide as its text */
+.ep-download{align-self:flex-start}
 .ep-paste{margin:0;padding:10px 14px;border-left:3px solid var(--border);color:var(--fg-muted);background:var(--bg-subtle);border-radius:0 8px 8px 0;white-space:pre-wrap;overflow-wrap:anywhere}
 .ep-plain{margin:0;font-size:13.5px;white-space:pre-wrap;overflow-wrap:anywhere}
 
@@ -55,6 +57,7 @@ a.ep-node-name:hover span{text-decoration:underline;text-underline-offset:3px}
 .ep-node-name .ic{flex:none;margin-top:1px;color:var(--fg-muted)}
 .ep-where{display:inline-flex;gap:4px;align-items:center;font-size:12px;color:var(--fg-muted);min-width:0;overflow-wrap:anywhere}
 .ep-where .ic{width:13px;height:13px;flex:none}
+.ep-kind-tag{font-size:11.5px;color:var(--fg-muted);border:1px solid var(--border);padding:0 7px;border-radius:9px;white-space:nowrap}
 .ep-fail{font-size:11.5px;color:var(--bad);background:var(--bad-soft);padding:1px 7px;border-radius:9px;white-space:nowrap}
 .ep-progress{display:grid;gap:5px;padding:0 6px 6px 28px;font-size:12px;color:var(--fg-muted)}
 .ep-progress .bar{height:4px}
@@ -80,8 +83,8 @@ a.ep-node-name:hover span{text-decoration:underline;text-underline-offset:3px}
   .ep-cards,.ep-cards.ep-three{display:flex;flex-direction:column;flex:none;gap:14px}
   .ep-card{flex:none}
   .ep-original .ep-card-body{overflow:visible}
-  .ep-trans .ep-card-body{max-height:60vh}
-  .ep-family .ep-card-body{max-height:70vh}
+  .ep-trans .ep-card-body{max-height:60vh;max-height:60dvh}
+  .ep-family .ep-card-body{max-height:70vh;max-height:70dvh}
   .ep-title{flex-basis:100%}
   .ep-actions{width:100%}
   .ep-gen{flex:1;justify-content:center}

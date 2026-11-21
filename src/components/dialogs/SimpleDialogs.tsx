@@ -3,11 +3,16 @@ import { useNavigate } from 'react-router-dom'
 
 import { FolderChooserDialog } from '@/components/dialogs/FolderChooser'
 import { Dialog } from '@/components/ui/Dialog'
+import { Icon } from '@/components/ui/Icon'
+import { useBusy } from '@/hooks/use-busy'
 import { usePathName } from '@/hooks/use-library-view'
 import { descendantsOf, isNote } from '@/lib/family'
 import { paths } from '@/lib/paths'
+import { itemsOf } from '@/lib/working'
+import { useJobsStore } from '@/stores/jobs'
 import { useLibraryStore } from '@/stores/library'
 import { type Overlay, useUiStore } from '@/stores/ui'
+import { isSourceNote } from '@/lib/file-types'
 
 export function ConfirmDialog({ overlay }: { overlay: Extract<Overlay, { kind: 'confirm' }> }) {
   const close = useUiStore(state => state.close)
@@ -46,6 +51,25 @@ export function ConfirmDialog({ overlay }: { overlay: Extract<Overlay, { kind: '
   )
 }
 
+/** The main button of a window that waits for a write: the spinner and the new text show at once, and it is off until the write ends. */
+export function BusyButton({ busy, label, busyLabel, disabled = false, onClick }: { busy: boolean; label: string; busyLabel: string; disabled?: boolean; onClick(): void }) {
+  return (
+    <button className="btn primary" disabled={disabled || busy} onClick={onClick}>
+      {busy && <Icon name="sync" className="spinning" />}
+      {busy ? busyLabel : label}
+    </button>
+  )
+}
+
+export function FailureBanner({ text }: { text: string }) {
+  return (
+    <div className="banner" role="alert">
+      <Icon name="warn" />
+      <span>{text}</span>
+    </div>
+  )
+}
+
 export function NewFolderDialog({ parentId }: { parentId: string | null }) {
   const close = useUiStore(state => state.close)
   const toast = useUiStore(state => state.toast)
@@ -53,9 +77,21 @@ export function NewFolderDialog({ parentId }: { parentId: string | null }) {
   const pathName = usePathName()
   const navigate = useNavigate()
   const [name, setName] = useState('')
+  const [busy, run] = useBusy()
+  const [error, setError] = useState<string | null>(null)
   const create = async () => {
     if (!name.trim()) return
-    const folder = await createFolder({ name: name.trim(), parentId })
+    setError(null)
+    // a folder is a write to the Drive: the button answers at once and does not make two
+    const folder = await run(async () => {
+      try {
+        return await createFolder({ name: name.trim(), parentId })
+      } catch (failure) {
+        setError(failure instanceof Error ? failure.message : 'Não deu para criar a pasta.')
+        return undefined
+      }
+    })
+    if (!folder) return
     close()
     toast(`Pasta "${folder.name}" criada`)
     navigate(paths.folder(folder.id))
@@ -70,9 +106,7 @@ export function NewFolderDialog({ parentId }: { parentId: string | null }) {
           <button className="btn quiet" onClick={close}>
             Cancelar
           </button>
-          <button className="btn primary" disabled={!name.trim()} onClick={() => void create()}>
-            Criar pasta
-          </button>
+          <BusyButton busy={busy} label="Criar pasta" busyLabel="Criando…" disabled={!name.trim()} onClick={() => void create()} />
         </>
       }
     >
@@ -81,6 +115,7 @@ export function NewFolderDialog({ parentId }: { parentId: string | null }) {
           <label htmlFor="nf-name">Nome</label>
           <input className="input" id="nf-name" autoFocus placeholder="Ex.: Direito tributário" value={name} onChange={event => setName(event.target.value)} onKeyDown={event => event.key === 'Enter' && void create()} />
         </div>
+        {error && <FailureBanner text={error} />}
       </div>
     </Dialog>
   )
@@ -92,13 +127,23 @@ export function RenameDialog({ target, id }: { target: 'file' | 'folder'; id: st
   const current = target === 'file' ? library.files.find(file => file.id === id) : library.folders.find(folder => folder.id === id)
   const [name, setName] = useState(current?.name ?? '')
   const [description, setDescription] = useState(current?.description ?? '')
+  const [busy, run] = useBusy()
+  const [error, setError] = useState<string | null>(null)
   const save = async () => {
     if (!name.trim()) return
-    if (target === 'file') await library.updateFile(id, { name: name.trim(), description })
-    else {
-      await library.updateFolder(id, { name: name.trim(), description })
-    }
-    close()
+    setError(null)
+    // the new name shows in the list at once; the window waits for the write, saying so, and saves once
+    const saved = await run(async () => {
+      try {
+        if (target === 'file') await library.updateFile(id, { name: name.trim(), description })
+        else await library.updateFolder(id, { name: name.trim(), description })
+        return true
+      } catch (failure) {
+        setError(failure instanceof Error ? failure.message : 'Não deu para salvar.')
+        return false
+      }
+    })
+    if (saved) close()
   }
   return (
     <Dialog
@@ -110,9 +155,7 @@ export function RenameDialog({ target, id }: { target: 'file' | 'folder'; id: st
           <button className="btn quiet" onClick={close}>
             Cancelar
           </button>
-          <button className="btn primary" disabled={!name.trim()} onClick={() => void save()}>
-            Salvar
-          </button>
+          <BusyButton busy={busy} label="Salvar" busyLabel="Salvando…" disabled={!name.trim()} onClick={() => void save()} />
         </>
       }
     >
@@ -125,6 +168,7 @@ export function RenameDialog({ target, id }: { target: 'file' | 'folder'; id: st
           <label htmlFor="rn-desc">Descrição</label>
           <textarea className="input" id="rn-desc" value={description} onChange={event => setDescription(event.target.value)} />
         </div>
+        {error && <FailureBanner text={error} />}
       </div>
     </Dialog>
   )
@@ -136,29 +180,43 @@ export function MoveDialog({ fileIds, folderIds }: { fileIds: string[]; folderId
   const count = fileIds.length + folderIds.length
   const folderName = (target: string | null) => useLibraryStore.getState().folders.find(folder => folder.id === target)?.name ?? 'Biblioteca'
   const move = async (target: string | null, family: string[]) => {
+    const moving = [...new Set([...fileIds, ...family])]
+    const total = moving.length + folderIds.length
+    const only = useLibraryStore.getState().files.find(file => file.id === moving[0])?.name ?? useLibraryStore.getState().folders.find(folder => folder.id === folderIds[0])?.name
+    // the window closes at once and the items are already in the new folder; the writes (one per item) go on, with a line saying so
+    ui.close()
+    const task = useJobsStore.getState().trackTask(total === 1 ? `Movendo "${only}"…` : `Movendo ${itemsOf(total)}…`)
+    task.update(`Levando para ${folderName(target)}`, null)
     try {
-      await library.moveFiles([...new Set([...fileIds, ...family])], target)
+      await library.moveFiles(moving, target)
       for (const id of folderIds) await library.updateFolder(id, { parentId: target })
-      ui.close()
+      task.drop?.()
       ui.clearSelection()
-      ui.toast(`Movido para ${folderName(target)}${family.length ? `, com ${family.length} ${family.length === 1 ? 'nota' : 'notas'}` : ''}`)
+      const notes = family.filter(id => useLibraryStore.getState().files.some(file => file.id === id && isNote(file))).length
+      ui.toast(`Movido para ${folderName(target)}${notes ? `, com ${notes} ${notes === 1 ? 'nota' : 'notas'}` : ''}`)
     } catch (error) {
+      // what the list showed in the new folder goes back (the store does it); the reason is a toast
+      task.drop?.()
       ui.toast(`Não deu para mover: ${error instanceof Error ? error.message : 'tente de novo.'}`)
     }
   }
-  // an entrada with notes born of it: after the folder, the person says whether the notes go too (B)
+  // a note with notes born of it (a video, a PDF…): after the folder, the person says whether the notes go too (B)
   const choose = (target: string | null) => {
     const { files } = useLibraryStore.getState()
-    const born = [...new Set(fileIds.filter(id => files.find(file => file.id === id)?.role === 'entrada').flatMap(id => descendantsOf(files, id).filter(isNote).map(file => file.id)))].filter(id => !fileIds.includes(id))
+    // the family goes whole: a YouTube note inside one of the notes ("Gerar a partir disto") goes too; the window counts the notes
+    const keepsSource = (id: string) => files.some(file => file.id === id && isSourceNote(file))
+    const born = [...new Set(fileIds.filter(keepsSource).flatMap(id => descendantsOf(files, id).map(file => file.id)))].filter(id => !fileIds.includes(id))
     if (!born.length) return void move(target, [])
-    const many = born.length === 1 ? '1 nota nasceu desta entrada' : `${born.length} notas nasceram desta entrada`
+    const notes = born.filter(id => files.some(file => file.id === id && isNote(file))).length
+    const where = `“${folderName(target)}”`
+    const many = notes === 1 ? `Há 1 nota filha (Ata, Aula, Explicação…). Ela pode ir junto para ${where} ou ficar onde está.` : `Há ${notes} notas filhas (Ata, Aula, Explicação…). Elas podem ir junto para ${where} ou ficar onde estão.`
     ui.open({
       kind: 'confirm',
       title: 'Levar as notas também?',
-      text: `${many} (Ata, Aula, Explicação…). Elas podem ir junto para “${folderName(target)}” ou ficar onde estão.`,
-      ok: 'A entrada e as notas',
+      text: many,
+      ok: 'Levar as filhas junto',
       onConfirm: () => move(target, born),
-      alt: { label: 'Só a entrada', onConfirm: () => move(target, []) },
+      alt: { label: count === 1 ? 'Só mover esta' : 'Só mover estas', onConfirm: () => move(target, []) },
     })
   }
   return <FolderChooserDialog value={null} exclude={folderIds} title={`Mover ${count} ${count === 1 ? 'item' : 'itens'}`} confirmLabel="Mover" onConfirm={choose} onClose={ui.close} />

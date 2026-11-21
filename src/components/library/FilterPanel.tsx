@@ -28,7 +28,7 @@ const LONG_LIST = 5
 const MAX_INDENT = 5
 const DATE_FIELDS: DateField[] = ['updated', 'created']
 const KIND_ICONS: Record<ItemKind, IconName> = { video: 'monitor', audio: 'mic', pdf: 'file', link: 'link', texto: 'text', tema: 'bulb', arquivo: 'file', nota: 'note' }
-const NOTE_KIND_ICONS: Record<NoteKind, IconName> = { ata: 'list', aula: 'book', explicacao: 'bulb', leitura: 'file', nota: 'pen' }
+const NOTE_KIND_ICONS: Record<NoteKind, IconName> = { ata: 'list', aula: 'book', explicacao: 'bulb', leitura: 'file', nota: 'pen', video: 'monitor', audio: 'mic', pdf: 'file', link: 'link', texto: 'text', tema: 'bulb', arquivo: 'file' }
 
 const itemsLabel = (count: number) => (count === 1 ? '1 item' : `${count} itens`)
 const activeLabel = (count: number) => (count === 1 ? '1 ativo' : `${count} ativos`)

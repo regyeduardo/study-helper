@@ -208,11 +208,12 @@ describe('SaveToDrive', () => {
     return (await screen.findByText(media.name)).closest('li') as HTMLElement
   }
 
-  it('em Mídias, o que ainda não virou nota continua como era', async () => {
+  // T136: with no note yet, the media still says where it is and can go to the Drive (the flow itself: src/test/library/media-places.test.tsx)
+  it('em Mídias, o que ainda não virou nota diz onde está e também oferece salvar no Drive', async () => {
     const item = await mediaItem({ ...MEDIA, fileIds: [] })
     expect(item).toHaveTextContent('Ainda não virou nota.')
-    expect(item).not.toHaveTextContent(NOTICE)
-    expect(within(item).queryByRole('button', { name: /Salvar no meu Drive/ })).not.toBeInTheDocument()
+    expect(item).toHaveTextContent('Só neste computador')
+    expect(within(item).getByRole('button', { name: /Salvar no meu Drive/ })).toBeInTheDocument()
   })
 
   it('em Mídias, a gravação de vários itens oferece salvar o que ainda falta', async () => {

@@ -109,7 +109,7 @@ export function EntryShareTree({ tree, chosen, onToggle, media, transcribed }: E
             ))}
           </ul>
         ) : (
-          !sources && <p className="sh-empty">Vai só a entrada: nada nasceu dela ainda.</p>
+          !sources && <p className="sh-empty">Vai só esta nota: nada nasceu dela ainda.</p>
         )}
       </div>
     </div>

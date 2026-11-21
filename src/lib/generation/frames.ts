@@ -13,7 +13,7 @@ import type { GenerationSession } from '@/lib/generation/session'
 import { openVideoFrames } from '@/lib/generation/video-source'
 import { type GrabbedFrame, grabFrames } from '@/lib/recording/frame-grab'
 import { transcriptText } from '@/lib/transcription/export'
-import { MICROPHONE, RECORDER } from '@/lib/transcription/turns'
+import { distinctNames, MICROPHONE, RECORDER } from '@/lib/transcription/turns'
 
 const LOOK_AFTER = [0, 2, 5]
 const SAME_SCREEN = 8
@@ -163,7 +163,8 @@ export async function lookAtScreen(recording: RecordingData, video: Blob | null,
     })
     frames.sort((a, b) => a.at - b.at)
     const screenTerms = voteTerms(await reading).exact
-    return { ...recording, speakers, ...(frames.length ? { frames } : {}), ...(screenTerms.length ? { screenTerms } : {}), ...(await kept()) }
+    // a lit tile can be someone else's: a name read for two voices, or one another voice already has, goes to no one (FR-059)
+    return { ...recording, speakers: distinctNames(recording.speakers, speakers), ...(frames.length ? { frames } : {}), ...(screenTerms.length ? { screenTerms } : {}), ...(await kept()) }
   } catch (error) {
     if (error instanceof Cancelled) throw error
     return { ...recording, warning: [recording.warning, 'Não deu para ler a tela gravada; a nota foi feita só com o som.'].filter(Boolean).join(' '), ...(await kept()) }

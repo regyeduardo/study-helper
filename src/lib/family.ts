@@ -1,9 +1,10 @@
-// Família de um item: a entrada (vídeo, PDF, link…) e as notas que nasceram dela.
+// Família de um item: a nota de fonte (vídeo, PDF, link…) e as notas que nasceram dela.
 import type { FileMeta } from '@/types/domain'
+import { isSourceNote } from '@/lib/file-types'
 
-/** Review, content search, the home panel and the exam only consider notes, never an entrada. */
-export function isNote(file: Pick<FileMeta, 'role'>): boolean {
-  return file.role !== 'entrada'
+/** A written note (Aula, Explicação, Leitura, Ata): review, content search, the home panel and the exam only consider these, never a note that keeps a source. */
+export function isNote(file: Pick<FileMeta, 'role' | 'type'>): boolean {
+  return !isSourceNote(file)
 }
 
 interface FamilyIndex {

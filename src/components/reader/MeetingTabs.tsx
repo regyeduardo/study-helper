@@ -4,6 +4,7 @@ import type { RecordingData, RecordingMark } from '@/types/domain'
 import { MediaPlayer, type MeetingMedia, playAt } from '@/components/reader/MediaPlayer'
 import { MinutesTab } from '@/components/reader/MinutesTab'
 import { TranscriptTab } from '@/components/reader/TranscriptTab'
+import { useMarks } from '@/components/reader/use-marks'
 import { Icon } from '@/components/ui/Icon'
 import { clockTime, speakerName } from '@/lib/transcription/export'
 import type { SecondTabAgent } from '@/stores/jobs'
@@ -23,7 +24,7 @@ interface MeetingTabsProps {
   onRename?(speakerId: string, name: string): void
   onGenerate?(agent: SecondTabAgent): void
   onRedo?(): void
-  onRedoTranscript?(instruction: string): void
+  onRedoTranscript?(instruction: string, model: string | null): void
   onMarks?(marks: RecordingMark[]): void
   startAt?: number
 }
@@ -35,6 +36,13 @@ export function MeetingTabs({ recording, media, name, second, ata, onChooseParts
   const [tab, setTab] = useState<TabId>(startAt !== undefined ? 'transcript' : ata ? 'ata' : second ? 'second' : 'transcript')
   const [time, setTime] = useState<number | null>(startAt ?? null)
   const [waiting, setWaiting] = useState<number | null>(startAt ?? null)
+  const marking = useMarks(recording.marks, onMarks)
+  // a mark made at the player lives in the transcription: that is where its field opens
+  const addMark = marking.add
+  const markHere = addMark && ((seconds: number) => {
+    addMark(seconds)
+    setTab('transcript')
+  })
 
   useEffect(() => {
     if (startAt !== undefined && !media.url) void media.request()
@@ -121,7 +129,7 @@ export function MeetingTabs({ recording, media, name, second, ata, onChooseParts
       ) : shown === 'second' && second ? (
         <MinutesTab frames={recording.frames} onMoment={playFrom}>{second.node}</MinutesTab>
       ) : (
-        <TranscriptTab recording={recording} name={name} time={time} onPlay={media.available ? playFrom : undefined} onRename={onRename} onMarks={onMarks} onRedo={onRedoTranscript} />
+        <TranscriptTab recording={recording} name={name} time={time} onPlay={media.available ? playFrom : undefined} onRename={onRename} onMarks={onMarks} editing={marking.editing} onEditing={marking.setEditing} onRedo={onRedoTranscript} />
       )}
       {media.available && (
         <div className="meeting-dock">
@@ -131,7 +139,7 @@ export function MeetingTabs({ recording, media, name, second, ata, onChooseParts
               <span>{speaking.text}</span>
             </button>
           )}
-          <MediaPlayer player={player} media={media} onTime={setTime} onPlayFrom={playFrom} />
+          <MediaPlayer player={player} media={media} onTime={setTime} onPlayFrom={playFrom} onMark={markHere} />
         </div>
       )}
       {!media.available && media.notice && (

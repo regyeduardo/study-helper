@@ -140,6 +140,8 @@ input,select,textarea{font:inherit;color:inherit}
 .doc-media{font-size:13px;margin:-2px 0 8px}
 .media-only{display:grid;gap:14px;margin-top:20px}
 .media-only .mplayer{height:64px}
+/* on a phone the controls wrap into more rows than 64 px: the player takes the height it needs (and keeps 64 when it opens big) */
+@media (max-width:760px){.media-only .mplayer{height:auto;min-height:64px}}
 .media-only-act{display:flex;flex-wrap:wrap;align-items:center;gap:10px;font-size:12.5px}
 .mg{padding:6px 9px 2px;font-size:12px;color:var(--fg-faint)}
 .insp-tabs button{white-space:nowrap}
@@ -166,7 +168,7 @@ input,select,textarea{font:inherit;color:inherit}
 .mindmap ul ul{list-style:none;margin:6px 0 0;padding:0 0 0 12px;border-left:1px solid var(--border-muted);display:grid;gap:4px}
 .mm-node{font-size:13.5px;line-height:1.35}
 .mindmap ul ul .mm-node{color:var(--fg-muted)}
-.tutor-talk{list-style:none;margin:0;padding:0;display:grid;gap:10px;max-height:min(50vh,420px);overflow:auto}
+.tutor-talk{list-style:none;margin:0;padding:0;display:grid;gap:10px;max-height:min(50vh,420px);max-height:min(50dvh,420px);overflow:auto}
 .tutor-talk li{padding:10px 12px;border-radius:10px;font-size:14px;line-height:1.5}
 .tutor-talk li p{margin:4px 0 0;white-space:pre-wrap}
 .tutor-talk .from-tutor{background:var(--bg-subtle);border:1px solid var(--border-muted)}
@@ -267,6 +269,14 @@ button.tr-who:hover{text-decoration:underline}
 .tr-mark-del{display:inline-grid;place-items:center;width:22px;height:22px;border-radius:6px;color:var(--bad)}
 .tr-mark-del:hover{background:var(--bad-soft)}
 .tr-mark-del .ic{color:inherit}
+.tr-mark-play{display:inline-flex;align-items:center;gap:6px;flex:none;border-radius:6px}
+.tr-mark-play:hover time{color:var(--fg);text-decoration:underline}
+.tr-mark-play:focus-visible,.tr-mark-open:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.tr-mark-open .ic{color:var(--fg-faint)}
+.mark-list{margin:12px 0}
+.mark-list h3{margin:0 0 6px;font-size:12.5px;font-weight:600;color:var(--fg-muted)}
+.mark-list .tr-marks{flex-direction:column;align-items:flex-start;margin-top:0}
+@media (pointer:coarse){.tr-mark-play,.tr-mark-open{min-height:30px}}
 .tr-add{display:inline-grid;place-items:center;width:20px;height:20px;border-radius:6px;color:var(--fg-faint);opacity:0;margin-left:auto}
 .tr-add .ic{width:14px;height:14px}
 .tr-block:hover .tr-add,.tr-add:focus-visible{opacity:1}
@@ -317,11 +327,13 @@ button.tr-time:hover{color:var(--accent);text-decoration:underline}
 .mplayer-retry{margin-left:auto}
 .mplayer-stage .mplayer-failure{position:absolute;inset:0;flex:none;display:grid;place-items:center;padding:24px;background:#000;font-size:15px;line-height:1.4;text-align:center;color:#fff}
 @media (max-width:760px){.mplayer-controls{gap:4px 8px}.mplayer-speed,.mplayer-retry{height:36px}.mplayer-bar,.mplayer-vol{height:28px}.mplayer-bar::-webkit-slider-thumb,.mplayer-vol::-webkit-slider-thumb{width:16px;height:16px;margin-top:-6px}.mplayer-bar::-moz-range-thumb,.mplayer-vol::-moz-range-thumb{width:16px;height:16px}}
+/* the mark button is one more 36 px control: with the thumbnail beside them, the controls of a phone still fit in two rows */
+@media (max-width:480px){.mplayer-controls{column-gap:4px}}
 @container (max-width:559px){.mplayer-vol{display:none}}
 @container (max-width:439px){.mplayer-scrub,.mplayer-controls>.mplayer-failure{order:-1;flex:1 0 100%}.mplayer-speed{margin-left:auto}}
 /* the screen made big: the whole player (video and controls) is one box over a dimmed page */
 .mplayer-backdrop{position:fixed;inset:0;z-index:60;background:rgba(0,0,0,.6);cursor:zoom-out;animation:mplayer-fade .16s ease-out}
-.mplayer-box[data-big]{position:fixed;z-index:61;inset:0;margin:auto;flex-direction:column;align-items:stretch;gap:0;padding:0;width:min(960px,calc(100vw - 24px));width:min(960px,calc(100vw - 24px),max(320px,calc((100dvh - 150px) * 16 / 9)));height:fit-content;max-height:calc(100vh - 16px);overflow:hidden;animation:mplayer-in .16s ease-out}
+.mplayer-box[data-big]{position:fixed;z-index:61;inset:0;margin:auto;flex-direction:column;align-items:stretch;gap:0;padding:0;width:min(960px,calc(100vw - 24px));width:min(960px,calc(100vw - 24px),max(320px,calc((100dvh - 150px) * 16 / 9)));height:fit-content;max-height:calc(100vh - 16px);max-height:calc(100dvh - 16px);overflow:hidden;animation:mplayer-in .16s ease-out}
 .mplayer-box[data-big] .mplayer-stage{width:100%;height:auto;aspect-ratio:16/9;border-radius:0;cursor:pointer}
 .mplayer-box[data-big] .mplayer-controls{flex:none;padding:6px 10px 8px}
 .mplayer-box[data-big] .mplayer-state,.mplayer-box[data-fullscreen] .mplayer-state{top:12px;left:12px;right:auto;bottom:auto;border-color:transparent;background:rgba(0,0,0,.7);box-shadow:none;color:#fff}
@@ -415,6 +427,7 @@ textarea.input{resize:vertical;min-height:62px}
 .progress .step.done{color:var(--fg)}
 .progress .step.now{color:var(--fg);font-weight:500}
 .progress .step .ic{color:var(--ok)}
+.progress .step.failed .ic{color:var(--bad)}
 .bar{height:6px;border-radius:3px;background:var(--bg-muted);overflow:hidden}
 .bar i{display:block;height:100%;background:var(--accent);width:var(--v);transition:width .3s}
 .menu{position:fixed;z-index:45;background:var(--bg);border:1px solid var(--border);border-radius:11px;box-shadow:var(--shadow);padding:6px;min-width:240px;display:grid;gap:1px}
@@ -869,13 +882,13 @@ input.lib-search{width:220px}
 .gaps{margin:0;padding-left:18px;display:grid;gap:8px;font-size:13.5px}
 .gaps li{display:grid;gap:2px}
 .gaps span{color:var(--fg-muted)}
-.mini-rec.done{width:360px;max-height:calc(100vh - 36px);display:flex;flex-direction:column}
+.mini-rec.done{width:360px;max-height:calc(100vh - 36px);max-height:calc(100dvh - 36px);display:flex;flex-direction:column}
 .mini-rec.done .body{overflow:auto}
 .mini-rec.done .acts{position:sticky;bottom:-12px;margin:0 -14px -12px;padding:10px 14px 12px;background:var(--bg);border-top:1px solid var(--border-muted)}
 .mini-rec .toggles .btn[aria-pressed="false"]{color:var(--fg-muted)}
 body.floating-recorder{margin:0;background:var(--bg);color:var(--fg);font:14px/1.45 system-ui,sans-serif}
-body.floating-recorder .mini-rec{position:static;width:auto;max-height:none;border:0;border-radius:0;box-shadow:none;min-height:100vh}
-body.floating-recorder .mini-rec.done{height:100vh}
+body.floating-recorder .mini-rec{position:static;width:auto;max-height:none;border:0;border-radius:0;box-shadow:none;min-height:100vh;min-height:100dvh}
+body.floating-recorder .mini-rec.done{height:100vh;height:100dvh}
 .reconnect-bar.notice{z-index:30}
 .shared-exam{display:flex;flex-wrap:wrap;gap:6px 12px;align-items:center;padding:10px 12px;border:1px solid var(--border-muted);border-radius:9px;background:var(--bg-subtle);font-size:12.5px}
 .sharing{display:grid;gap:12px;align-content:start;min-width:0}
@@ -1211,7 +1224,7 @@ body.floating-recorder .mini-rec.done{height:100vh}
   .map-canvas{margin:8px}
   .map-chat.sheet{flex:none;position:relative;z-index:2;gap:8px;margin-top:-4px;padding:0 12px 12px;border-top:1px solid var(--border);border-radius:14px 14px 0 0;box-shadow:0 -8px 24px rgba(0,0,0,.12)}
   .map-chat.sheet.open{height:62%}
-  .map-chat.sheet.shut .map-talk{flex:none;max-height:40vh}
+  .map-chat.sheet.shut .map-talk{flex:none;max-height:40vh;max-height:40dvh}
   .map-chat.sheet.shut .map-talk li:not(:last-child){display:none}
   .map-chat.sheet.shut .map-talk li>p{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
   .map-handle{align-self:stretch;height:36px;display:grid;place-items:center;flex:none}

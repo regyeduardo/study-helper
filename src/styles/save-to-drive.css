@@ -6,8 +6,18 @@
 button.sdrive-row:hover{text-decoration:underline;text-underline-offset:3px}
 button.sdrive-row:disabled{cursor:progress;text-decoration:none}
 .ex-table .sdrive-row{margin:3px 0 0 24px}
+/* Mídias (T136): where each media is, and the one thing that is missing. */
+.media-where{display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px}
+.media-where>.btn{height:26px}
+.media-where>.btn .ic{width:14px;height:14px}
+.media-place{display:inline-flex;align-items:center;padding:1px 9px;border-radius:10px;font-size:12px;font-weight:500;line-height:1.5;color:var(--fg-muted);background:var(--bg-subtle)}
+.media-place[data-place="aqui"]{color:var(--warn);background:var(--warn-soft)}
+.media-place[data-place="drive"]{color:var(--accent);background:var(--accent-soft)}
+.media-place[data-place="dois"]{color:var(--ok);background:var(--ok-soft)}
+.media-section{margin-top:6px;font-size:13px;font-weight:600;color:var(--fg-muted)}
 /* On the phone these are the targets of a row that opens on tap: the same 36 px as the app's phone buttons. */
 @media (max-width:700px){
   .sdrive .sdrive-btn{height:36px}
   .sdrive-row{min-height:36px}
+  .media-where>.btn{height:36px}
 }

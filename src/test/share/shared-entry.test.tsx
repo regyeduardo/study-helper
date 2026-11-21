@@ -16,6 +16,7 @@ import { useLibraryStore } from '@/stores/library'
 import { useUiStore } from '@/stores/ui'
 
 import { CONTENTS, ENTRY_NAME, entryFamily, memoryRepository } from './entry-family'
+import { isSourceNote } from '@/lib/file-types'
 
 const GOOGLE: Account = { id: 'google-1', kind: 'google', name: 'Bia', email: 'bia@example.com', picture: '', token: { accessToken: 'at-1', expiresAt: Date.now() + 3600_000 } }
 const SHARE_ID = 'FamiliaFamiliaFamilia1'
@@ -131,7 +132,7 @@ function renderLink(path = `/shared/${SHARE_ID}`) {
 }
 
 describe('quem abre o link vê a mesma página da entrada, só leitura', () => {
-  it('o original, a transcrição e a árvore só com o escolhido; "Importar…" no lugar de "Gerar desta entrada"', async () => {
+  it('o original, a transcrição e a árvore só com o escolhido; "Importar…" no lugar de "Gerar desta nota"', async () => {
     serve(await anasLink())
     renderLink()
     expect(await screen.findByRole('heading', { level: 1, name: ENTRY_NAME })).toBeInTheDocument()
@@ -146,7 +147,7 @@ describe('quem abre o link vê a mesma página da entrada, só leitura', () => {
     expect(within(family).queryByText('Aula')).not.toBeInTheDocument()
     expect(within(family).queryByText('Cartões da reunião')).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Importar para a minha biblioteca' })).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'Gerar desta entrada' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Gerar desta nota' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Mais ações' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Chat' })).not.toBeInTheDocument()
     expect(screen.queryByText('Reuniões da Ana')).not.toBeInTheDocument()
@@ -166,9 +167,9 @@ describe('quem abre o link vê a mesma página da entrada, só leitura', () => {
     renderLink()
     const family = await screen.findByRole('region', { name: 'O que nasceu daqui' })
     expect(within(family).getByText('Nenhuma nota veio no link')).toBeInTheDocument()
-    expect(within(family).getByText('Quem compartilhou mandou só a entrada.')).toBeInTheDocument()
+    expect(within(family).getByText('Quem compartilhou mandou só esta nota, sem as filhas.')).toBeInTheDocument()
     expect(within(family).queryByText(/Gere uma/)).not.toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'Gerar desta entrada' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Gerar desta nota' })).not.toBeInTheDocument()
   })
 
   it('o endereço da própria entrada no link abre a página dela', async () => {
@@ -188,7 +189,7 @@ describe('importar o link de uma entrada', () => {
 
   const imported = () => {
     const files = useLibraryStore.getState().files
-    const entry = files.find(file => file.role === 'entrada')!
+    const entry = files.find(file => isSourceNote(file))!
     return { files, entry }
   }
 
@@ -196,8 +197,11 @@ describe('importar o link de uma entrada', () => {
     const chooser = await startImport()
     fireEvent.click(within(chooser).getByRole('treeitem', { name: /Trabalho da Bia/ }))
     fireEvent.click(within(chooser).getByRole('button', { name: 'Importar aqui' }))
-    await waitFor(() => expect(screen.getByText(/^aberto \/arquivo\//)).toBeInTheDocument())
+    // without a Google account it asks too, but only "Neste navegador" is a place
+    expect(await screen.findByText('Baixar a mídia?')).toBeInTheDocument()
     expect(screen.queryByText('Onde guardar a mídia?')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Neste navegador' }))
+    await waitFor(() => expect(screen.getByText(/^aberto \/arquivo\//)).toBeInTheDocument())
     expect(useLibraryStore.getState().sharedView).toBeNull()
     const { files, entry } = imported()
     expect(screen.getByText(`aberto /arquivo/${entry.id}`)).toBeInTheDocument()
@@ -228,6 +232,7 @@ describe('importar o link de uma entrada', () => {
     expect(await within(chooser).findByRole('treeitem', { name: /Da família/, selected: true })).toBeInTheDocument()
     expect(memory.folders.size).toBe(1)
     fireEvent.click(within(chooser).getByRole('button', { name: 'Importar aqui' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Neste navegador' }))
     await waitFor(() => expect(screen.getByText(/^aberto \/arquivo\//)).toBeInTheDocument())
     const folder = useLibraryStore.getState().folders.find(item => item.name === 'Da família')!
     expect(folder).toBeDefined()
@@ -240,5 +245,40 @@ describe('importar o link de uma entrada', () => {
     expect(screen.queryByRole('dialog', { name: 'Importar para a minha biblioteca' })).not.toBeInTheDocument()
     expect(useLibraryStore.getState().sharedView).not.toBeNull()
     expect(screen.getByRole('heading', { level: 1, name: ENTRY_NAME })).toBeInTheDocument()
+  })
+})
+
+// FR-076 / T137: whoever opens the link downloads the media from the link itself, never from the owner's storage.
+describe('baixar a mídia de uma entrada compartilhada', () => {
+  const createUrl = URL.createObjectURL
+
+  beforeEach(() => {
+    URL.createObjectURL = vi.fn(() => 'blob:link')
+  })
+
+  afterEach(async () => {
+    ;(await import('@testing-library/react')).cleanup()
+    URL.createObjectURL = createUrl
+  })
+
+  it('"Baixar" busca a mídia no endereço do link e entrega com o nome do original', async () => {
+    const download = await import('@/utils/download')
+    const save = vi.spyOn(download, 'downloadBlob').mockImplementation(() => undefined)
+    serve(await anasLink())
+    renderLink()
+    const original = await screen.findByRole('region', { name: 'Original' })
+    fireEvent.click(await within(original).findByRole('button', { name: 'Baixar' }))
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(1))
+    expect(fetch).toHaveBeenCalledWith(MEDIA_URL)
+    expect(save.mock.calls[0][1]).toBe('planejamento.mp4')
+  })
+
+  it('sem a mídia no link, não há "Baixar"', async () => {
+    const item = await anasLink()
+    serve({ ...item, files: item.files.map(file => (file.id === 'e' ? { ...file, media: undefined } : file)) })
+    renderLink()
+    const original = await screen.findByRole('region', { name: 'Original' })
+    await within(original).findByText(/não está disponível neste aparelho/)
+    expect(within(original).queryByRole('button', { name: /^Baixar/ })).not.toBeInTheDocument()
   })
 })

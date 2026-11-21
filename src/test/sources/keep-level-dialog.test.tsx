@@ -16,6 +16,8 @@ installBlobShim()
 
 const GOOGLE = { id: 'g-1', kind: 'google' as const, name: 'Ana Souza', email: 'ana@example.com', picture: '', token: { accessToken: 'a', expiresAt: Date.now() + 3600_000 } }
 const LEVELS = ['Sem rastro', 'Só o registro', 'Registro e arquivo']
+// a link of a page, a text and a topic stay in the note and have no level: the level of a link is that of a YouTube one
+const YOUTUBE = 'https://www.youtube.com/watch?v=dQw4w9WgXcQ'
 
 const startNewContent = vi.fn(async (_request: NewContentRequest) => null)
 
@@ -29,6 +31,11 @@ function open() {
       <NewContentDialog />
     </MemoryRouter>,
   )
+}
+
+function openYoutube() {
+  open()
+  fireEvent.change(screen.getByLabelText('Link'), { target: { value: YOUTUBE } })
 }
 
 const levels = () => within(screen.getByRole('radiogroup', { name: 'O que guardar da fonte' }))
@@ -57,25 +64,24 @@ beforeEach(() => {
 })
 
 describe('o nível com que cada tipo começa', () => {
-  it('um link oferece os três níveis e começa em "Só o registro", sem perguntar onde guardar', () => {
-    open()
+  it('um link do YouTube oferece os três níveis e começa em "Só o registro", sem perguntar onde guardar', () => {
+    openYoutube()
     expect(names(levels())).toEqual(LEVELS)
     expect(checked(levels())).toBe('Só o registro')
     expect(levels().getByText('Fica só a nota.')).toBeInTheDocument()
     expect(where()).toBeNull()
   })
 
-  it('texto e tema começam em "Só o registro"', () => {
+  it('texto e tema não têm nível: ficam guardados na nota', () => {
     open()
     fireEvent.click(screen.getByRole('button', { name: 'Texto' }))
-    expect(checked(levels())).toBe('Só o registro')
+    expect(screen.queryByRole('radiogroup', { name: 'O que guardar da fonte' })).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: 'Tema' }))
-    expect(names(levels())).toEqual(LEVELS)
-    expect(checked(levels())).toBe('Só o registro')
+    expect(screen.queryByRole('radiogroup', { name: 'O que guardar da fonte' })).toBeNull()
   })
 
   it('sem arquivo, "Registro e arquivo" não dá para escolher', () => {
-    open()
+    openYoutube()
     fireEvent.click(levels().getByText('Registro e arquivo'))
     expect(checked(levels())).toBe('Só o registro')
     expect(where()).toBeNull()
@@ -129,8 +135,7 @@ describe('Ata', () => {
   })
 
   it('"Sem rastro" escolhido antes vira "Só o registro" ao escolher a Ata, e é o que vai no pedido', async () => {
-    open()
-    fireEvent.change(screen.getByLabelText('Link'), { target: { value: 'https://exemplo.com/reuniao' } })
+    openYoutube()
     fireEvent.click(levels().getByText('Sem rastro'))
     fireEvent.click(screen.getByRole('radio', { name: /Ata de reunião/ }))
     expect(names(levels())).toEqual(['Só o registro', 'Registro e arquivo'])
@@ -140,18 +145,19 @@ describe('Ata', () => {
 })
 
 describe('o pedido leva o nível escolhido', () => {
-  it('link com "Sem rastro"', async () => {
-    open()
-    fireEvent.change(screen.getByLabelText('Link'), { target: { value: 'https://exemplo.com/fotossintese' } })
+  it('link do YouTube com "Sem rastro"', async () => {
+    openYoutube()
     fireEvent.click(levels().getByText('Sem rastro'))
     expect(await sent('Gerar aula')).toMatchObject({ keep: 'sem-rastro', storage: 'none' })
   })
 
-  it('tema no nível de partida', async () => {
+  it('tema sem nível', async () => {
     open()
     fireEvent.click(screen.getByRole('button', { name: 'Tema' }))
     fireEvent.change(screen.getByLabelText('Tema'), { target: { value: 'Buracos negros' } })
-    expect(await sent('Gerar explicação')).toMatchObject({ keep: 'registro', storage: 'none' })
+    const request = await sent('Gerar explicação')
+    expect(request).toMatchObject({ storage: 'none' })
+    expect(request.keep).toBeUndefined()
   })
 
   it('documento com "Registro e arquivo" leva o lugar escolhido', async () => {

@@ -10,12 +10,13 @@ import { type ModelChoice, ModelPick, useModelChoice } from '@/components/dialog
 import { Dialog } from '@/components/ui/Dialog'
 import { Icon } from '@/components/ui/Icon'
 import { useDocument } from '@/hooks/use-document'
-import { mediaOf } from '@/lib/file-types'
+import { isYoutube, mediaOf } from '@/lib/file-types'
 import { ATA_MODELS, PART_ORDER } from '@/lib/generation/ata'
 import { sourceExpired } from '@/lib/storage/source-storage'
 import { type NoteAgent, useJobsStore } from '@/stores/jobs'
 import { type OpenedFile, useLibraryStore } from '@/stores/library'
-import { useUiStore } from '@/stores/ui'
+import { asking } from '@/stores/retry'
+import { type GenerationPrefill, useUiStore } from '@/stores/ui'
 
 type Goal = NoteAgent | 'transcribe'
 
@@ -40,7 +41,7 @@ function nothingToRead(entry: FileMeta, opened: OpenedFile, file: boolean): stri
   if (mediaOf(entry) !== 'text') return file ? null : `${missingFile(entry)} e não há transcrição: ${NOTHING_HELD}`
   if (origin?.input === 'topic' || ((origin?.input === 'url' || origin?.input === 'youtube') && origin.url)) return null
   if (origin?.input === 'file') return file ? null : `${missingFile(entry)}: ${NOTHING_HELD}`
-  return `O texto desta entrada não foi guardado: ${NOTHING_HELD}`
+  return `O texto desta nota não foi guardado: ${NOTHING_HELD}`
 }
 
 /** "Modelo da ata" and parts of the last time: the newest Ata made from this entrada, else the newest made from any entrada; Padrão with the Resumo when there is none. `note`: the Ata of this entrada, whose models and analysis also come back. */
@@ -52,8 +53,8 @@ function lastAta(files: FileMeta[], fileId: string): { model: AtaModelId | null;
   return { model: last?.made?.ataModel ?? null, parts: last?.made?.parts?.length ? last.made.parts : ['resumo'], note: own }
 }
 
-/** "Gerar desta entrada": only what makes sense for its kind and for what it keeps; the note is the entrada's child, and the page stays open. */
-export function GenerateEntryDialog({ fileId }: { fileId: string }) {
+/** "Gerar desta entrada": only what makes sense for its kind and for what it keeps; the note is the entrada's child, and the page stays open. `prefill`: the window as it was when that generation failed. */
+export function GenerateEntryDialog({ fileId, prefill }: { fileId: string; prefill?: GenerationPrefill }) {
   const close = useUiStore(state => state.close)
   const { meta: entry, opened } = useDocument(fileId)
   const inBrowser = useLibraryStore(state => state.localMedia.some(item => item.fileIds.includes(fileId)))
@@ -65,13 +66,20 @@ export function GenerateEntryDialog({ fileId }: { fileId: string }) {
   const isMedia = Boolean(entry) && mediaOf(entry!) !== 'text'
   const files = useLibraryStore(state => state.files)
   const settings = useLibraryStore(state => state.index.settings)
-  const [ata, setAta] = useState(() => lastAta(files, fileId))
+  const [ata, setAta] = useState(() => (prefill?.goal === 'meeting' ? { ...lastAta(files, fileId), model: prefill.ataModel ?? null, parts: prefill.parts ?? ['resumo'] } : lastAta(files, fileId)))
+  // after a failure, the model of what was asked comes back as it was
+  const asked = (goal: Goal) => (prefill?.goal === goal ? { ...(prefill.model ? { pick: prefill.model } : {}), ...(prefill.videoWrites ? { videoWrites: true } : {}) } : undefined)
   // the Escrita of the Ata comes back as it was the last time ("Gerar de novo")
-  const choices: Record<Goal, ModelChoice> = { meeting: useModelChoice('ata', false, lastModel(ata.note ?? undefined, settings)), lesson: useModelChoice('aula', isMedia), explanation: useModelChoice('explicacao', isMedia), transcribe: useModelChoice('transcricao') }
-  const [picked, setPicked] = useState<Goal | null>(null)
-  const [folderId, setFolderId] = useState<string | null | undefined>(undefined)
+  const choices: Record<Goal, ModelChoice> = {
+    meeting: useModelChoice('ata', false, asked('meeting') ?? lastModel(ata.note ?? undefined, settings)),
+    lesson: useModelChoice('aula', isMedia, asked('lesson')),
+    explanation: useModelChoice('explicacao', isMedia, asked('explanation')),
+    transcribe: useModelChoice('transcricao', false, asked('transcribe')),
+  }
+  const [picked, setPicked] = useState<Goal | null>(prefill?.goal ?? null)
+  const [folderId, setFolderId] = useState<string | null | undefined>(prefill && 'folderId' in prefill ? prefill.folderId : undefined)
   const [choosing, setChoosing] = useState(false)
-  const [instruction, setInstruction] = useState('')
+  const [instruction, setInstruction] = useState(prefill?.instruction ?? '')
 
   const origin = entry?.origin ?? null
   const hasFile = Boolean(origin && !origin.removedAt && (inBrowser || ((origin.storedFileId || origin.storedUrl) && !sourceExpired(origin))))
@@ -86,10 +94,14 @@ export function GenerateEntryDialog({ fileId }: { fileId: string }) {
   const ataOfMedia = goal === 'meeting' && isMedia && (spoken || !transcribed)
   // the Ata of a video goes step by step, each step with its model, or all in one call (FR-072)
   const ataOfVideo = ataOfMedia && Boolean(entry) && mediaOf(entry!) === 'video'
-  // a video chooses what the AI analyzes; an audio always goes by its transcription
-  const analysis = useMediaAnalysis(choice, writes && Boolean(entry) && mediaOf(entry!) === 'video', canHear || !entry ? null : `${missingFile(entry)}.`, { ata: ataOfVideo, initial: ataOfVideo ? ata.note?.made?.analyze : undefined })
-  const steps = useAtaSteps(choices.meeting, ataOfVideo, lastSteps(ata.note ?? undefined, settings), ata.model ? ATA_MODELS[ata.model].name : undefined)
+  // a video chooses what the AI analyzes (a YouTube one by its link); an audio always goes by its transcription
+  const youtube = Boolean(entry) && isYoutube(entry!)
+  const isVideo = Boolean(entry) && (mediaOf(entry!) === 'video' || youtube)
+  const analysis = useMediaAnalysis(choice, writes && isVideo, canHear || youtube || !entry ? null : `${missingFile(entry)}.`, { ata: ataOfVideo, initial: prefill ? prefill.analyze : ataOfVideo ? ata.note?.made?.analyze : undefined, youtube })
+  const steps = useAtaSteps(choices.meeting, ataOfVideo, prefill?.steps ?? lastSteps(ata.note ?? undefined, settings), ata.model ? ATA_MODELS[ata.model].name : undefined)
   const stepByStep = ataOfVideo && analysis.value === 'transcricao'
+  // an instruction that comes back (after a failure) is in sight
+  const [inSight] = useState(Boolean(instruction))
 
   if (!entry) return null
 
@@ -102,15 +114,30 @@ export function GenerateEntryDialog({ fileId }: { fileId: string }) {
 
   const start = () => {
     close()
-    if (goal === 'transcribe') return void transcribeNote(fileId, undefined, choice.model || null)
+    // a failure brings this window back as it is now
+    const retry = {
+      kind: 'generate-entry' as const,
+      fileId,
+      prefill: {
+        goal,
+        ...(choice.touched && choice.pick ? { model: choice.pick } : {}),
+        ...(choice.videoWrites ? { videoWrites: true } : {}),
+        instruction,
+        ...(folderId !== undefined ? { folderId } : {}),
+        ...(analysis.sent ? { analyze: analysis.sent } : {}),
+        ...(goal === 'meeting' ? { ataModel: ata.model, parts: ata.parts } : {}),
+        ...(stepByStep ? { steps: steps.sent } : {}),
+      },
+    }
+    if (goal === 'transcribe') return void asking([fileId], retry, () => transcribeNote(fileId, undefined, choice.model || null, instruction))
     const place = { folderId: destination }
-    if (ataOfMedia) return void generateAta(fileId, ata.model ? [] : PART_ORDER.filter(part => ata.parts.includes(part)), ata.model ?? undefined, { model: choice.model || null, ...(stepByStep ? steps.sent : {}) }, place, instruction, undefined, analysis.sent)
-    void generateFromNote(fileId, goal, choice.model || null, place, instruction, analysis.sent)
+    if (ataOfMedia) return void asking([fileId], retry, () => generateAta(fileId, ata.model ? [] : PART_ORDER.filter(part => ata.parts.includes(part)), ata.model ?? undefined, { model: choice.model || null, ...(stepByStep ? steps.sent : {}) }, place, instruction, undefined, analysis.sent))
+    void asking([fileId], retry, () => generateFromNote(fileId, goal, choice.model || null, place, instruction, analysis.sent))
   }
 
   return (
     <Dialog
-      title="Gerar desta entrada"
+      title="Gerar desta nota"
       size="narrow"
       onClose={choosing ? undefined : close}
       footer={
@@ -153,7 +180,7 @@ export function GenerateEntryDialog({ fileId }: { fileId: string }) {
             </div>
             {ataOfMedia && <AtaPartsFields parts={ata.parts} onToggle={part => setAta(current => ({ ...current, parts: toggledPart(current.parts, part) }))} model={ata.model} onModel={model => setAta(current => ({ ...current, model }))} />}
             <ModelPick choice={choice} />
-            {writes && mediaOf(entry) === 'video' && <MediaAnalysisField analysis={analysis} />}
+            {writes && isVideo && <MediaAnalysisField analysis={analysis} />}
             {stepByStep && <AtaStepsField steps={steps} />}
             {writes && (
               <div className="field">
@@ -161,11 +188,12 @@ export function GenerateEntryDialog({ fileId }: { fileId: string }) {
                 <FolderField value={destination} onChange={setFolderId} label="Salvar em" title="Onde salvar a nota nova" leaf={`${WRITES.find(item => item.id === goal)?.label}: ${entry.name}`} open={choosing} onOpenChange={setChoosing} />
               </div>
             )}
-            {writes && <MoreOptions instruction={instruction} onInstruction={setInstruction} placeholder="Ex.: foque nas decisões e nas tarefas" />}
+            {/* redoing the transcription, what to fix is in sight; it goes to the revision of the transcription */}
+            <MoreOptions key={writes ? 'nota' : 'transcricao'} instruction={instruction} onInstruction={setInstruction} placeholder={writes ? 'Ex.: foque nas decisões e nas tarefas' : 'Ex.: o nome certo é João Vitor; é PIX, não pics'} open={inSight || (!writes && transcribed)} />
             {busy && (
               <div className="banner" role="status">
                 <Icon name="info" />
-                <span>Já há um trabalho em andamento nesta entrada: espere terminar para pedir este.</span>
+                <span>Já há um trabalho em andamento nesta nota: espere terminar para pedir este.</span>
               </div>
             )}
           </>

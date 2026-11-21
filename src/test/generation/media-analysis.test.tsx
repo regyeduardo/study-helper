@@ -46,6 +46,7 @@ import { type CapturedRequest, installFetch, openAiStream, systemPromptOf } from
 import { meeting, textAnswer } from '@/test/generation/ata-fixture'
 import { installBlobShim } from '@/test/imports/blob-shim'
 import type { FileSidecar, MediaAnalysis } from '@/types/domain'
+import { isSourceNote } from '@/lib/file-types'
 
 const UID = 'openrouter::google/gemini-2.5-flash-lite'
 const LESSON = JSON.stringify({ markdown: { elements: [{ type: 'heading', level: 1, text: 'Fotossíntese' }, { type: 'paragraph', text: 'A planta faz açúcar com a luz.' }], diagrams: [] } })
@@ -111,7 +112,7 @@ const mediaFile = (mime: string) => new File([new Uint8Array([26, 69, 223, 163, 
 
 const files = () => useLibraryStore.getState().files
 const fileOf = (id: string) => files().find(file => file.id === id)!
-const entradas = () => files().filter(file => file.role === 'entrada')
+const entradas = () => files().filter(file => isSourceNote(file))
 
 function request(mime: string, analyze?: MediaAnalysis, fields: Partial<NewContentRequest> = {}): NewContentRequest {
   return { agent: 'lesson', input: { kind: 'file', file: mediaFile(mime) }, name: '', description: '', folderId: null, prompt: '', storage: 'none', litterboxTime: '72h' as NewContentRequest['litterboxTime'], ...(analyze ? { analyze } : {}), ...fields }
@@ -213,7 +214,7 @@ describe('Novo conteúdo de um vídeo: a Ata com as partes', () => {
     const sent = calls.filter(hasMedia)
     expect(sent).toHaveLength(1)
     expect(textOf(sent[0])).toContain(meeting.blocks[1].text)
-    expect(fileOf(id)).toMatchObject({ role: 'entrada', kept: 'registro' })
+    expect(fileOf(id)).toMatchObject({ kept: 'registro' })
     expect(ata(id)).toMatchObject({ made: { analyze: 'ambos', parts: ['resumo'] } })
   })
 

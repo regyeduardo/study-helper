@@ -1,9 +1,9 @@
-import type { Artifact, ArtifactKind, Attempt, FileMeta, FolderMeta, ShareContent, SharedFile, SharedFolder, SharedItem, SharedLink, SharedMedia, ShareKind, SourceMeta } from '@/types/domain'
+import type { Artifact, ArtifactKind, Attempt, FileMeta, FolderMeta, ShareContent, ShareRecord, SharedFile, SharedFolder, SharedItem, SharedLink, SharedMedia, ShareKind, SourceMeta } from '@/types/domain'
 import { artifactMeta, artifactsOf } from '@/lib/artifacts'
 import { currentDevice } from '@/lib/device'
 import { env } from '@/lib/env'
 import { masteryOf } from '@/lib/exam'
-import { FILE_TYPES, mediaOf } from '@/lib/file-types'
+import { FILE_TYPES, mediaOf, SOURCE_TYPES, sourceTypeOf } from '@/lib/file-types'
 import { today } from '@/lib/generation/cards'
 import { mapToMermaid } from '@/lib/generation/map-render'
 import { newFileMeta, newFolderMeta } from '@/lib/defaults'
@@ -48,6 +48,13 @@ export function daysLeftText(expiresAt: string, now = Date.now()): string {
   if (isExpired(expiresAt, now)) return 'expirado'
   const days = daysLeft(expiresAt, now)
   return days === 1 ? '1 dia' : `${days} dias`
+}
+
+/** The link of an item made before and still valid: a note shared as "arquivo" is the same item as when it is an entrada (the migration made the old media notes entradas), a folder is another thing. */
+export function findValidShare(shares: ShareRecord[], target: ShareKind, itemId: string, now = Date.now()): ShareRecord | null {
+  const sameKind = (kind: ShareKind) => (kind === 'folder') === (target === 'folder')
+  const found = shares.filter(record => record.itemId === itemId && sameKind(record.kind) && !isExpired(record.expiresAt, now))
+  return found.reduce<ShareRecord | null>((best, record) => (!best || Date.parse(record.expiresAt) > Date.parse(best.expiresAt) ? record : best), null)
 }
 
 export function activeLinks(links: SharedLink[], now = Date.now()): SharedLink[] {
@@ -125,8 +132,9 @@ function plainOrigin(origin: SourceMeta | null): SourceMeta | null {
  */
 export async function buildEntryShareContent(entryId: string, files: FileMeta[], open: (id: string) => Promise<OpenedFile>, choice: EntryShareChoice, recorder = ''): Promise<ShareContent> {
   const entry = files.find(file => file.id === entryId)
-  if (!entry) throw new Error('Entrada não encontrada.')
-  const entryMeta: Partial<FileMeta> = { ...sharedMeta(entry), folderId: null, parentFileId: null, origin: plainOrigin(entry.origin), kept: choice.media ? (entry.kept ?? 'arquivo') : 'registro' }
+  if (!entry) throw new Error('Nota não encontrada.')
+  // `role: 'entrada'` stays in the link only: links already made and the share-worker know the root of a family by it
+  const entryMeta: Partial<FileMeta> = { ...sharedMeta(entry), role: 'entrada', folderId: null, parentFileId: null, origin: plainOrigin(entry.origin), kept: choice.media ? 'arquivo' : 'registro' }
   const sharedFiles = [sharedFileOf(entry, await open(entry.id), recorder, { folderId: null, withExams: true, artifact: () => false, meta: entryMeta })]
   for (const id of choice.notes) {
     const note = files.find(file => file.id === id)
@@ -235,7 +243,7 @@ export interface ImportActions {
 }
 
 function knownType(type: string): FileMeta['type'] {
-  return FILE_TYPES.find(item => item.id === type)?.id ?? 'reading'
+  return [...FILE_TYPES, ...SOURCE_TYPES].find(item => item.id === type)?.id ?? 'reading'
 }
 
 export type MediaPlace = 'browser' | 'drive'
@@ -254,9 +262,30 @@ export function hasSharedMedia(item: SharedItem, now = Date.now()): boolean {
   return !(item.mediaExpiresAt && isExpired(item.mediaExpiresAt, now)) && item.files.some(file => file.media)
 }
 
+export type SharedMediaState = { kind: 'ready'; media: SharedMedia } | ({ kind: 'pending' } & Omit<SharedMedia, 'url'>) | { kind: 'expired' } | { kind: 'none' }
+
+/** What the link says about the media of a note: there, still going up (or the upload did not finish), past its 3 days, or none. */
+export function sharedMediaState(item: SharedItem, file: SharedFile | undefined, now = Date.now()): SharedMediaState {
+  if (!file?.media && !file?.mediaPending) return { kind: 'none' }
+  if (item.mediaExpiresAt && isExpired(item.mediaExpiresAt, now)) return { kind: 'expired' }
+  if (file.media) return { kind: 'ready', media: file.media }
+  return { kind: 'pending', ...file.mediaPending! }
+}
+
+const MEDIA_EXPIRED_TEXT = 'A mídia deste compartilhamento expirou (fica 3 dias).'
+
+/** The reason a media of a link did not come, from what the Worker answered (`null`: no answer at all). */
+export function sharedMediaFailure(status: number | null): string {
+  if (status === null) return 'Sem conexão com o serviço de compartilhamento. Confira a internet e tente de novo.'
+  if (status === 410) return MEDIA_EXPIRED_TEXT
+  if (status === 404) return 'A mídia ainda não terminou de subir, ou quem compartilhou a apagou.'
+  if (status === 403) return 'Este endereço do app não tem permissão para baixar a mídia do link.'
+  return `O serviço de compartilhamento não respondeu direito (erro ${status}). Tente de novo daqui a pouco.`
+}
+
 async function downloadSharedMedia(media: SharedMedia, progress: (fraction: number) => void): Promise<Blob> {
   const response = await fetch(media.url).catch(() => null)
-  if (!response?.ok) throw new Error('Não consegui baixar a mídia compartilhada.')
+  if (!response?.ok) throw new Error(sharedMediaFailure(response?.status ?? null))
   if (!response.body) return response.blob()
   const total = Number(response.headers.get('Content-Length')) || media.size
   const reader = response.body.getReader()
@@ -273,6 +302,12 @@ async function downloadSharedMedia(media: SharedMedia, progress: (fraction: numb
 /** The entrada of a link: the note that says so, or the first one. */
 function entryOf(item: SharedItem): SharedFile {
   return item.files.find(file => file.meta?.role === 'entrada') ?? item.files[0]
+}
+
+/** What the link says about its media as a whole: the entrada's for an entrada, else the best state among the notes (ready, then going up, then past its days). */
+export function linkMediaState(item: SharedItem, now = Date.now()): SharedMediaState {
+  const states = (item.kind === 'entrada' ? [entryOf(item)] : item.files).map(file => sharedMediaState(item, file, now))
+  return states.find(state => state.kind === 'ready') ?? states.find(state => state.kind === 'pending') ?? states.find(state => state.kind === 'expired') ?? { kind: 'none' }
 }
 
 function failureText(error: unknown, fallback: string): string {
@@ -357,7 +392,7 @@ async function keepImportedMedia(actions: ImportActions, meta: FileMeta, file: S
   }
 }
 
-export async function importSharedItem(item: SharedItem, attempts: SharedAttempts, actions: ImportActions, media?: MediaImport): Promise<{ folderId: string | null; fileId: string | null }> {
+export async function importSharedItem(item: SharedItem, attempts: SharedAttempts, actions: ImportActions, media?: MediaImport): Promise<{ folderId: string | null; fileId: string | null; mediaFailed?: string }> {
   const withMedia = media && hasSharedMedia(item) ? media : null
   const folderIds = new Map<string, string>()
   const pending = [...item.folders]
@@ -374,6 +409,7 @@ export async function importSharedItem(item: SharedItem, attempts: SharedAttempt
     folderIds.set(folder.id, created.id)
   }
   let firstFileId: string | null = null
+  let mediaFailed: string | undefined
   for (const file of item.files) {
     const meta = await actions.createFile(
       { name: file.name, type: knownType(file.type), folderId: file.folderId ? (folderIds.get(file.folderId) ?? null) : null, position: file.position, description: file.description, tags: file.tags, origin: { input: 'shared', name: item.title, url: shareUrl(item.id), storage: 'none' } },
@@ -381,10 +417,10 @@ export async function importSharedItem(item: SharedItem, attempts: SharedAttempt
     )
     firstFileId ??= meta.id
     await fillImported(actions, meta.id, file, attempts, item.createdAt)
-    if (withMedia && file.media) await keepImportedMedia(actions, meta, file, file.media, withMedia)
+    if (withMedia && file.media) mediaFailed ??= (await keepImportedMedia(actions, meta, file, file.media, withMedia)) ?? undefined
   }
   const rootId = item.folders.find(folder => folder.parentId === null)?.id
-  return { folderId: rootId ? (folderIds.get(rootId) ?? null) : null, fileId: item.kind === 'file' ? firstFileId : null }
+  return { folderId: rootId ? (folderIds.get(rootId) ?? null) : null, fileId: item.kind === 'file' ? firstFileId : null, ...(mediaFailed ? { mediaFailed } : {}) }
 }
 
 /** "(cópia N)" when this link was already imported (FR-071): only the entrada changes its name. */
@@ -410,7 +446,7 @@ export async function importSharedEntry(item: SharedItem, attempts: SharedAttemp
   const failedBefore = options.media?.failed?.get(entry.id)
   const withMedia = options.media && entry.media && hasSharedMedia(item) && !failedBefore ? options.media : null
   const base = (file: SharedFile) => ({ type: knownType(file.type), folderId: options.folderId, position: file.position, description: file.description, tags: file.tags, origin: file.meta?.origin ?? null })
-  const created = await actions.createFile({ ...base(entry), name: copyName(entry.name, options.existing, item.id), role: 'entrada', kept: withMedia ? (entry.meta?.kept ?? 'arquivo') : 'registro', parentFileId: null, sharedFrom: item.id }, entry.content)
+  const created = await actions.createFile({ ...base(entry), name: copyName(entry.name, options.existing, item.id), type: sourceTypeOf(entry.meta?.origin), kept: withMedia ? 'arquivo' : 'registro', parentFileId: null, sharedFrom: item.id }, entry.content)
   await fillImported(actions, created.id, entry, attempts, item.createdAt)
   const ids = new Map([[entry.id, created.id]])
   // mothers first: a note whose mother did not come hangs from the entrada

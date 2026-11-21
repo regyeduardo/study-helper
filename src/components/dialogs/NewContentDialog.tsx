@@ -1,9 +1,10 @@
-import { useMemo, useRef, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { type ReactNode, useMemo, useRef, useState } from 'react'
+import { useLocation, useNavigate } from 'react-router-dom'
 
 import type { AtaModelId, AtaPart, SourceStorage } from '@/types/domain'
 import { AtaPartsFields, toggledPart } from '@/components/dialogs/AtaPartsDialog'
 import { FolderField } from '@/components/dialogs/FolderChooser'
+import { goToNew, readingAt } from '@/components/dialogs/go-to-new'
 import { AtaStepsField, useAtaSteps } from '@/components/dialogs/AtaSteps'
 import { MediaAnalysisField, useMediaAnalysis } from '@/components/dialogs/MediaAnalysisField'
 import { ModelPick, useModelChoice } from '@/components/dialogs/ModelPick'
@@ -21,7 +22,7 @@ import { useAccountStore } from '@/stores/account'
 import { type Agent, defaultKeep, type KeepLevel, useJobsStore } from '@/stores/jobs'
 import { useLibraryStore } from '@/stores/library'
 import { useSyncStore } from '@/stores/sync'
-import { useUiStore } from '@/stores/ui'
+import { type NewContentForm, type Overlay, useUiStore } from '@/stores/ui'
 import { formatBytes } from '@/utils/format'
 
 type Tab = 'link' | 'file' | 'text' | 'topic'
@@ -32,9 +33,20 @@ const AGENTS: { id: Agent; label: string; hint: string }[] = [
   { id: 'reading', label: 'Só guardar para ler', hint: 'Guarda o texto como veio, sem IA.' },
 ]
 
+const KEPT_IN_NOTE: Record<Tab, string> = { link: 'O link fica guardado na nota.', text: 'O texto fica guardado na nota.', topic: 'O tema fica guardado na nota.', file: '' }
+
+const WRITTEN_LABEL: Record<Agent, string> ={ lesson: 'Gerando a Aula', explanation: 'Gerando a Explicação', meeting: 'Gerando a Ata', reading: 'Guardado para ler' }
+
+/** "Mais opções", open from the start when it holds something typed (the window came back filled in). */
+function MoreDetails({ filled, children }: { filled: boolean; children: ReactNode }) {
+  const [open] = useState(filled)
+  return <details open={open}>{children}</details>
+}
+
 const ACCEPT = '.mp4,.webm,.avi,.mkv,.mov,.mp3,.wav,.ogg,.m4a,.aac,.flac,.opus,.pdf,.docx,.txt,.md,.csv,.json,.xml,.html,.srt,.vtt,.sbv,.ass'
 
-function GenerationProgress({ jobId, onHide }: { jobId: string; onHide(): void }) {
+/** `onBack`: after a failure, the same window comes back with everything as it was. */
+function GenerationProgress({ jobId, onHide, onBack }: { jobId: string; onHide(): void; onBack(): void }) {
   const job = useJobsStore(state => state.jobs.find(item => item.id === jobId))
   const cancel = useJobsStore(state => state.cancel)
   if (!job) return null
@@ -52,6 +64,15 @@ function GenerationProgress({ jobId, onHide }: { jobId: string; onHide(): void }
               Continuar em segundo plano
             </button>
           </>
+        ) : job.status === 'error' || job.status === 'cancelled' ? (
+          <>
+            <button className="btn quiet" onClick={onHide}>
+              Fechar
+            </button>
+            <button className="btn primary" onClick={onBack}>
+              Voltar e tentar de novo
+            </button>
+          </>
         ) : (
           <button className="btn primary" onClick={onHide}>
             Fechar
@@ -64,8 +85,8 @@ function GenerationProgress({ jobId, onHide }: { jobId: string; onHide(): void }
           <i style={{ '--v': `${Math.round((job.fraction ?? (job.status === 'running' ? 0.15 : 1)) * 100)}%` } as React.CSSProperties} />
         </div>
         <div className="progress">
-          <div className={`step ${job.status === 'running' ? 'now' : 'done'}`}>
-            {job.status === 'running' ? <Icon name="sync" className="spinning" /> : <Icon name="check" />}
+          <div className={`step ${job.status === 'running' ? 'now' : job.status === 'error' ? 'done failed' : 'done'}`}>
+            {job.status === 'running' ? <Icon name="sync" className="spinning" /> : job.status === 'done' ? <Icon name="check" /> : <Icon name={job.status === 'error' ? 'warn' : 'x'} />}
             {job.message}
           </div>
         </div>
@@ -83,30 +104,33 @@ function GenerationProgress({ jobId, onHide }: { jobId: string; onHide(): void }
   )
 }
 
-export function NewContentDialog({ folderId: initialFolder }: { folderId?: string | null }) {
+/** `prefill`: the window as it was when that generation failed ("Tentar de novo" in the corner). */
+export function NewContentDialog({ folderId: initialFolder, prefill }: { folderId?: string | null; prefill?: NewContentForm }) {
   const ui = useUiStore()
   const navigate = useNavigate()
+  const { pathname } = useLocation()
   const settings = useLibraryStore(state => state.index.settings)
   const account = useAccountStore(state => state.active())
   const usage = useSyncStore(state => state.usage)
   const startNewContent = useJobsStore(state => state.startNewContent)
-  const [tab, setTab] = useState<Tab>('link')
-  const [agent, setAgent] = useState<Agent>('lesson')
-  const [url, setUrl] = useState('')
-  const [text, setText] = useState('')
-  const [topic, setTopic] = useState('')
-  const [file, setFile] = useState<File | null>(null)
-  const [isMedia, setIsMedia] = useState(false)
-  const [keep, setKeep] = useState<KeepLevel | null>(null)
-  const [storage, setStorage] = useState<SourceStorage | null>(null)
-  const [litterboxTime, setLitterboxTime] = useState<LitterboxTime>('24h')
-  const [name, setName] = useState('')
-  const [description, setDescription] = useState('')
-  const [prompt, setPrompt] = useState('')
-  const [folderId, setFolderId] = useState<string | null>(initialFolder ?? null)
+  const dismiss = useJobsStore(state => state.dismiss)
+  const [tab, setTab] = useState<Tab>(prefill?.tab ?? 'link')
+  const [agent, setAgent] = useState<Agent>(prefill?.agent ?? 'lesson')
+  const [url, setUrl] = useState(prefill?.url ?? '')
+  const [text, setText] = useState(prefill?.text ?? '')
+  const [topic, setTopic] = useState(prefill?.topic ?? '')
+  const [file, setFile] = useState<File | null>(prefill?.file ?? null)
+  const [isMedia, setIsMedia] = useState(prefill?.isMedia ?? false)
+  const [keep, setKeep] = useState<KeepLevel | null>(prefill?.keep ?? null)
+  const [storage, setStorage] = useState<SourceStorage | null>(prefill?.storage ?? null)
+  const [litterboxTime, setLitterboxTime] = useState<LitterboxTime>(prefill?.litterboxTime ?? '24h')
+  const [name, setName] = useState(prefill?.name ?? '')
+  const [description, setDescription] = useState(prefill?.description ?? '')
+  const [prompt, setPrompt] = useState(prefill?.prompt ?? '')
+  const [folderId, setFolderId] = useState<string | null>(prefill ? prefill.folderId : (initialFolder ?? null))
   const [jobId, setJobId] = useState<string | null>(null)
-  const [ataParts, setAtaParts] = useState<AtaPart[]>(['resumo'])
-  const [ataModel, setAtaModel] = useState<AtaModelId | null>(null)
+  const [ataParts, setAtaParts] = useState<AtaPart[]>(prefill?.ataParts ?? ['resumo'])
+  const [ataModel, setAtaModel] = useState<AtaModelId | null>(prefill?.ataModel ?? null)
   const input = useRef<HTMLInputElement>(null)
 
   const driveAvailable = account.kind === 'google'
@@ -121,17 +145,23 @@ export function NewContentDialog({ folderId: initialFolder }: { folderId?: strin
   // an Ata always has an entrada (FR-055)
   const level: KeepLevel = writes === 'meeting' && wanted === 'sem-rastro' ? 'registro' : wanted === 'arquivo' && fileReason ? 'registro' : wanted
   const isYoutube = Boolean(youtubeId(url))
+  // a link (not YouTube), a text or a topic stays in the note: there is nothing to choose of what to keep
+  const inNote = tab === 'text' || tab === 'topic' || (tab === 'link' && !isYoutube)
   const choosesParts = agent === 'meeting' && tab === 'file' && Boolean(file) && isMedia
   const media = tab === 'file' && Boolean(file) && isMedia
-  const choices = { aula: useModelChoice('aula', media), explicacao: useModelChoice('explicacao', media), ata: useModelChoice('ata') }
-  const heardBy = useModelChoice('transcricao')
+  // a window that comes back after a failure has the models it had
+  const was = (uid: string | undefined, videoWrites = false) => ({ ...(uid ? { pick: uid } : {}), ...(videoWrites && prefill?.models.videoWrites ? { videoWrites: true } : {}) })
+  const choices = { aula: useModelChoice('aula', media, was(prefill?.models.aula, true)), explicacao: useModelChoice('explicacao', media, was(prefill?.models.explicacao, true)), ata: useModelChoice('ata', false, was(prefill?.models.ata)) }
+  const heardBy = useModelChoice('transcricao', false, was(prefill?.models.transcricao))
   const writer = agent === 'reading' ? null : (tab === 'topic' && agent === 'lesson') || agent === 'explanation' ? choices.explicacao : agent === 'meeting' ? choices.ata : choices.aula
+  // a YouTube link is a video too: the writer may watch it by the link
+  const watchesLink = tab === 'link' && isYoutube && Boolean(writer)
   // only a video has the choice; the type is what the store goes by too
-  const analyzes = media && Boolean(writer) && Boolean(file?.type.startsWith('video/'))
+  const analyzes = (media && Boolean(writer) && Boolean(file?.type.startsWith('video/'))) || watchesLink
   // the Ata of a video goes step by step, each step with its model, or all in one call (FR-072)
-  const ataOfVideo = analyzes && agent === 'meeting'
-  const analysis = useMediaAnalysis(writer, analyzes, null, { ata: ataOfVideo })
-  const steps = useAtaSteps(choices.ata, ataOfVideo, {}, ataModel ? ATA_MODELS[ataModel].name : undefined)
+  const ataOfVideo = analyzes && agent === 'meeting' && !watchesLink
+  const analysis = useMediaAnalysis(writer, analyzes, null, { ata: ataOfVideo, youtube: watchesLink, initial: prefill?.analyze })
+  const steps = useAtaSteps(choices.ata, ataOfVideo, prefill?.steps ?? {}, ataModel ? ATA_MODELS[ataModel].name : undefined)
   const stepByStep = ataOfVideo && analysis.value === 'transcricao'
 
   const pickFile = async (picked: File | null) => {
@@ -150,20 +180,60 @@ export function NewContentDialog({ folderId: initialFolder }: { folderId?: strin
     return topic.trim().length > 2 ? { kind: 'topic', topic } : null
   }
 
+  /** Everything the window holds now: a failure brings it back like this. */
+  const formNow = (): NewContentForm => ({
+    tab,
+    agent,
+    url,
+    text,
+    topic,
+    file,
+    isMedia,
+    keep,
+    storage,
+    litterboxTime,
+    name,
+    description,
+    prompt,
+    folderId,
+    ataParts,
+    ataModel,
+    models: {
+      ...(choices.aula.touched ? { aula: choices.aula.pick } : {}),
+      ...(choices.explicacao.touched ? { explicacao: choices.explicacao.pick } : {}),
+      ...(choices.ata.touched ? { ata: choices.ata.pick } : {}),
+      ...(heardBy.touched ? { transcricao: heardBy.pick } : {}),
+      ...(writer?.videoWrites ? { videoWrites: true } : {}),
+    },
+    ...(analyzes && analysis.sent ? { analyze: analysis.sent } : {}),
+    ...(stepByStep ? { steps: steps.sent } : {}),
+  })
+
   const go = async () => {
     const content = contentInput()
     if (!content) return
+    const retry: Overlay = { kind: 'new', ...(initialFolder !== undefined ? { folderId: initialFolder } : {}), prefill: formNow() }
     const fileId = await startNewContent(
-      { agent: writes, input: content, name, description, folderId, prompt, keep: level, storage: level === 'arquivo' ? chosen : 'none', litterboxTime, ...(choosesParts ? (ataModel ? { ataParts: [], ataModel } : { ataParts: PART_ORDER.filter(part => ataParts.includes(part)) }) : {}), models: { write: writer?.model || null, transcription: media ? heardBy.model || null : null, ...(writer?.videoWrites ? { everyStep: true } : {}), ...(stepByStep ? { steps: steps.sent } : {}) }, ...(analyzes && analysis.sent ? { analyze: analysis.sent } : {}) },
+      { agent: writes, input: content, name, description, folderId, prompt, ...(inNote ? {} : { keep: level }), storage: !inNote && level === 'arquivo' ? chosen : 'none', litterboxTime, ...(choosesParts ? (ataModel ? { ataParts: [], ataModel } : { ataParts: PART_ORDER.filter(part => ataParts.includes(part)) }) : {}), models: { write: writer?.model || null, transcription: media ? heardBy.model || null : null, ...(writer?.videoWrites ? { everyStep: true } : {}), ...(stepByStep ? { steps: steps.sent } : {}) }, ...(analyzes && analysis.sent ? { analyze: analysis.sent } : {}) },
       setJobId,
+      retry,
     )
-    if (fileId) {
+    if (!fileId) return
+    // with a note or an entrada open, she stays there: the window closes and a notice offers the new note
+    if (readingAt(pathname)) ui.close()
+    goToNew(paths.file(fileId), WRITTEN_LABEL[writes], pathname, to => {
       ui.set({ handoffFileId: fileId })
-      navigate(paths.file(fileId))
-    }
+      navigate(to)
+    })
   }
 
-  if (jobId) return <GenerationProgress jobId={jobId} onHide={ui.close} />
+  // back to the window as it was: the failed line leaves the corner
+  const back = () => {
+    if (jobId) dismiss(jobId)
+    setJobId(null)
+  }
+
+  if (jobId) return <GenerationProgress jobId={jobId} onHide={ui.close} onBack={back} />
 
   const canGo = Boolean(contentInput()) && !(choosesParts && !ataModel && !ataParts.length) && (!writer || writer.ready) && (!media || heardBy.ready)
   const tabButton = (id: Tab, icon: Parameters<typeof Icon>[0]['name'], label: string) => (
@@ -272,7 +342,11 @@ export function NewContentDialog({ folderId: initialFolder }: { folderId?: strin
         {analyzes && <MediaAnalysisField analysis={analysis} />}
         {stepByStep && <AtaStepsField steps={steps} />}
         {choosesParts && <AtaPartsFields parts={ataParts} onToggle={part => setAtaParts(current => toggledPart(current, part))} model={ataModel} onModel={setAtaModel} />}
-        {(tab !== 'file' || file) && (
+        {inNote ? (
+          <span className="faint" style={{ fontSize: 12.5 }}>
+            {KEPT_IN_NOTE[tab]}
+          </span>
+        ) : (tab !== 'file' || file) && (
           <KeepLevelPicker level={level} onLevel={setKeep} traceless={writes !== 'meeting'} fileReason={fileReason}>
             {file && (
               <SourceStoragePicker
@@ -298,7 +372,7 @@ export function NewContentDialog({ folderId: initialFolder }: { folderId?: strin
             <FolderField value={folderId} onChange={setFolderId} />
           </div>
         </div>
-        <details>
+        <MoreDetails filled={Boolean(prompt.trim() || description.trim())}>
           <summary className="muted" style={{ fontSize: 13, cursor: 'pointer' }}>
             Mais opções
           </summary>
@@ -314,7 +388,7 @@ export function NewContentDialog({ folderId: initialFolder }: { folderId?: strin
               </div>
             )}
           </div>
-        </details>
+        </MoreDetails>
       </div>
     </Dialog>
   )

@@ -295,27 +295,29 @@ describe('filtros combinados', () => {
 })
 
 describe('Tudo, Entradas ou Notas', () => {
-  it('separa as entradas das notas, e cada aba conta com os filtros ativos', () => {
-    expect(run({ scope: 'notas' }).shown).toBe(7)
+  it('a pasta tem as notas de todos os tipos; a lista das notas de fonte, só elas; cada aba conta com os filtros ativos (003)', () => {
+    expect(run({ scope: 'notas' }).shown).toBe(19)
     expect(run({ scope: 'entradas' }).shown).toBe(12)
     expect(run({ scope: 'notas' }).scopes).toEqual({ tudo: 19, entradas: 12, notas: 7 })
-    expect(counts(run({ scope: 'notas' }).facets.noteKinds)).toEqual({ ata: 3, aula: 2, explicacao: 1, leitura: 1, nota: 0 })
+    const kinds = counts(run({ scope: 'notas' }).facets.noteKinds)
+    expect(kinds).toMatchObject({ ata: 3, aula: 2, explicacao: 1, leitura: 1, nota: 0 })
+    expect(['video', 'audio', 'pdf', 'link', 'texto', 'tema', 'arquivo'].reduce((sum, kind) => sum + kinds[kind], 0)).toBe(12)
     expect(run({ scope: 'notas', tags: ['contrato'] }).scopes).toEqual({ tudo: 2, entradas: 1, notas: 1 })
   })
 })
 
 describe('a pasta é uma lista de notas: o "Tipo" dela é o tipo da nota (FR-073)', () => {
-  it('as notas, contadas e filtradas por Ata, Aula, Explicação, Leitura e Nota; o total é o das notas', () => {
+  it('as notas, contadas e filtradas pelo tipo, inclusive os das notas de fonte (003); o total é o de todas', () => {
     const result = run({ scope: 'notas', noteKinds: ['ata'] })
     expect(ids(result)).toEqual(['ata', 'ata-plan', 'ata-youtube'])
-    expect(result.summary).toBe('3 de 7')
+    expect(result.summary).toBe('3 de 19')
     expect(result.active).toEqual([{ group: 'noteKinds', label: 'Tipo', value: 'ata' }])
-    expect(result.facets.noteKinds.map(option => option.label)).toEqual(['Ata', 'Aula', 'Explicação', 'Leitura', 'Nota'])
+    expect(result.facets.noteKinds.map(option => option.label)).toEqual(['Ata', 'Aula', 'Explicação', 'Leitura', 'Nota', 'Vídeo', 'Áudio', 'PDF', 'Link', 'Texto', 'Tema', 'Outro arquivo'])
   })
 
   it('o tipo da entrada e "O que gerou" não são da pasta: não aparecem, não contam e não filtram', () => {
     const result = run({ scope: 'notas', kinds: ['video'], generated: ['mapa'] })
-    expect(result.shown).toBe(7)
+    expect(result.shown).toBe(19)
     expect(result.active).toEqual([])
     expect(result.facets.kinds).toEqual([])
     expect(result.facets.generated).toEqual([])
@@ -334,11 +336,10 @@ describe('a pasta é uma lista de notas: o "Tipo" dela é o tipo da nota (FR-073
     expect(noteKindOf(FILES.find(file => file.id === 'ideias')!)).toBe('aula')
   })
 
-  it('na busca, a entrada achada entra na lista, e sai quando o tipo da nota é escolhido', () => {
+  it('na busca, a nota de fonte achada fica na lista, e sai quando outro tipo é escolhido', () => {
     const only = new Set(['kickoff', 'ata', 'ideias'])
-    expect(ids(run({ scope: 'notas' }, { only, foundEntries: true }))).toEqual(['kickoff', 'ata', 'ideias'])
-    expect(ids(run({ scope: 'notas' }, { only }))).toEqual(['ata', 'ideias'])
-    expect(ids(run({ scope: 'notas', noteKinds: ['ata'] }, { only, foundEntries: true }))).toEqual(['ata'])
+    expect(ids(run({ scope: 'notas' }, { only }))).toEqual(['kickoff', 'ata', 'ideias'])
+    expect(ids(run({ scope: 'notas', noteKinds: ['ata'] }, { only }))).toEqual(['ata'])
   })
 })
 

@@ -1,4 +1,4 @@
-// T119 (FR-073, SC-014): a pasta volta a ser como antes desta feature, só notas, uma por linha; as entradas ficam em "Entradas".
+// T119 (FR-073, SC-014), revisto na 003 (história 10): a pasta lista as notas de todos os tipos, uma por linha; o que era entrada é nota do seu tipo.
 import { beforeEach, describe, expect, it } from 'vitest'
 import { fireEvent, renderHook, screen, within } from '@testing-library/react'
 
@@ -38,17 +38,17 @@ const headers = () => within(table()).getAllByRole('columnheader').map(header =>
 const group = (name: string) => screen.getByRole('group', { name })
 const optionNames = (name: string) => within(group(name)).getAllByRole('checkbox').map(box => box.getAttribute('aria-label')?.split(',')[0])
 
-describe('a pasta mostra só as notas, uma por linha (FR-073, SC-014)', () => {
-  it('nenhuma entrada vira linha e nenhuma nota fica recuada embaixo de outra', () => {
+describe('a pasta mostra as notas de todos os tipos, uma por linha (003, SC-014)', () => {
+  it('o que era entrada é linha, como nota do seu tipo, e nenhuma nota fica recuada embaixo de outra', () => {
     renderAt('/biblioteca/calc')
     // by name, as the table sorts: the nota filha is in its place in the alphabet, not under its mother
-    expect(fileRows().map(row => row.dataset.fileId)).toEqual(['ata-colado', 'aula-pdf', 'derivadas-video', 'derivadas', 'filha', 'limites', 'monitoria'])
+    expect(fileRows().map(row => row.dataset.fileId)).toEqual(['ata-colado', 'aula-pdf', 'derivadas-video', 'derivadas', 'filha', 'limites', 'monitoria', 'colado'])
     for (const row of fileRows()) {
       expect(row).not.toHaveClass('fam-nested')
       expect(row.dataset.depth ?? '0').toBe('0')
       expect(row.getAttribute('style') ?? '').not.toContain('--fam-depth')
     }
-    expect(screen.queryByRole('row', { name: 'texto colado' })).toBeNull()
+    expect(rowOf('colado')).toHaveTextContent('Texto')
   })
 
   it('não há as abas "Tudo / Entradas / Notas" nem a coluna "O que nasceu"', () => {
@@ -65,24 +65,24 @@ describe('a pasta mostra só as notas, uma por linha (FR-073, SC-014)', () => {
     expect(within(rowOf('filha')).getByRole('link', { name: 'de: Limites laterais e continuidade' })).toHaveAttribute('href', '/arquivo/limites')
   })
 
-  it('uma pasta só com entradas diz que não há notas ali e aponta para "Entradas"', () => {
+  it('uma pasta só com um vídeo enviado mostra o vídeo como nota, sem aviso de "só entradas"', () => {
     renderAt('/biblioteca/gravacoes')
-    expect(screen.queryByRole('row', { name: 'Reunião de segunda' })).toBeNull()
-    expect(screen.getByText('Nenhuma nota nesta pasta, só 1 entrada.')).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: /Ver em Entradas/ })).toHaveAttribute('href', '/entradas')
+    expect(screen.getByRole('row', { name: 'Reunião de segunda' })).toHaveTextContent('Vídeo')
+    expect(screen.queryByText(/entrada/i)).toBeNull()
   })
 
-  it('as outras telas (Colunas, Comandos, Foco) também listam só as notas da pasta', () => {
+  it('as outras telas (Colunas, Comandos, Foco) também listam as notas de todos os tipos da pasta', () => {
     const { result } = renderHook(() => useLibraryView('folder', 'calc'))
-    expect(result.current.files.map(file => file.id)).not.toContain('colado')
+    expect(result.current.files.map(file => file.id)).toContain('colado')
     expect(result.current.files.map(file => file.id)).toContain('ata-colado')
   })
 })
 
-describe('na pasta, "Tipo" é o tipo da nota; "O que gerou" e o tipo da entrada ficam em "Entradas" (FR-073)', () => {
-  it('a pasta filtra por Ata, Aula, Explicação, Leitura e Nota, com a contagem de cada um', () => {
+describe('na pasta, "Tipo" é o tipo da nota, de todos os tipos; "O que gerou" fica em Gravações (003)', () => {
+  it('a pasta filtra pelo tipo da nota, inclusive Vídeo, PDF e Texto, com a contagem de cada um', () => {
     renderAt('/biblioteca/calc')
-    expect(optionNames('Tipo')).toEqual(['Ata', 'Aula', 'Explicação', 'Leitura', 'Nota'])
+    expect(optionNames('Tipo')).toEqual(['Ata', 'Aula', 'Explicação', 'Leitura', 'Nota', 'Vídeo', 'Áudio', 'PDF', 'Link', 'Texto', 'Tema', 'Outro arquivo'])
+    expect(within(group('Tipo')).getByRole('checkbox', { name: 'Texto, 1 item' })).toBeInTheDocument()
     expect(screen.queryByRole('group', { name: 'O que gerou' })).toBeNull()
     expect(within(group('Tipo')).getByRole('checkbox', { name: 'Leitura, 2 itens' })).toBeInTheDocument()
     expect(within(group('Tipo')).getByRole('checkbox', { name: 'Nota, 2 itens' })).toBeInTheDocument()
@@ -91,17 +91,19 @@ describe('na pasta, "Tipo" é o tipo da nota; "O que gerou" e o tipo da entrada 
     expect(group('Filtros ativos')).toHaveTextContent(/Tipo\s*aula/)
   })
 
-  it('"Entradas" continua com o tipo da entrada e "O que gerou"', () => {
-    renderAt('/entradas')
-    expect(optionNames('Tipo')).toEqual(expect.arrayContaining(['Vídeo', 'PDF', 'Texto']))
+  it('"Gravações" tem o tipo da gravação e "O que gerou"', () => {
+    const recorded = note('gravada', 'Reunião gravada', 'calc', { type: 'video', kept: 'registro', origin: { input: 'recording', name: 'g.webm', mime: 'video/webm', storage: 'none' } })
+    useLibraryStore.setState(state => ({ files: [...state.files, recorded] }))
+    renderAt('/gravacoes')
+    expect(optionNames('Tipo')).toEqual(expect.arrayContaining(['Vídeo', 'Áudio']))
     expect(optionNames('Tipo')).not.toContain('Explicação')
     expect(optionNames('O que gerou')).toEqual(expect.arrayContaining(['Ata', 'Aula', 'Nada ainda']))
   })
 
-  it('o tipo escolhido em "Entradas" não esvazia a pasta', () => {
+  it('o tipo escolhido em "Gravações" não esvazia a pasta', () => {
     useUiStore.getState().setFilters({ ...useUiStore.getState().filters, kinds: ['video'] })
     renderAt('/biblioteca/calc')
-    expect(fileRows()).toHaveLength(7)
+    expect(fileRows()).toHaveLength(8)
     expect(screen.queryByRole('group', { name: 'Filtros ativos' })).toBeNull()
   })
 })

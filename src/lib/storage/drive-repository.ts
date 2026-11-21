@@ -28,7 +28,7 @@ import {
   type StoredSize,
   type StoredSource,
 } from '@/lib/storage/repository'
-import { applyFieldChoices, hasTextConflict, joinHunks, mergeFolder, mergeKept, mergeSidecar, mergeText } from '@/lib/sync/merge'
+import { applyFieldChoices, hasTextConflict, joinHunks, mergeFolder, mergeKept, mergeShares, mergeSidecar, mergeText } from '@/lib/sync/merge'
 
 export const ROOT_NAME = '.sync-study-helper'
 export const INDEX_NAME = 'study-helper.json'
@@ -252,6 +252,13 @@ export class DriveRepository implements Repository {
       ? await updateDriveFileController(this.token, entry.meta.id, { media: jsonBlob(merged) })
       : await createDriveFileController(this.token, FOLDER_META_NAME, entry.folder.id, jsonBlob(merged), { shKind: 'folder-meta', shId: folder.id })
     await this.remember('folder', folder.id, entry.meta.md5Checksum ?? '', merged)
+  }
+
+  /** Whether a note or a folder of the library still sits inside this Drive folder (deleting a Drive folder deletes what is in it). */
+  holdsItems(folderId: string): boolean {
+    const driveId = this.folders.get(folderId)?.folder.id
+    if (!driveId) return false
+    return [...this.files.values()].some(entry => entry.md?.parents?.[0] === driveId || entry.sidecar?.parents?.[0] === driveId) || [...this.folders.values()].some(entry => entry.folder.parents?.[0] === driveId)
   }
 
   async removeFolder(folderId: string): Promise<void> {
@@ -509,7 +516,7 @@ export class DriveRepository implements Repository {
       ...mine,
       tags: [...new Set([...mine.tags, ...(theirs.tags ?? []).filter(tag => !removedTags.has(tag))])],
       activities: [...byId.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
-      shares: mergeKept(base.value.shares ?? [], mine.shares, theirs.shares ?? []),
+      shares: mergeShares(base.value.shares ?? [], mine.shares, theirs.shares ?? []),
       sharedWithMe: mergeKept(base.value.sharedWithMe ?? [], mine.sharedWithMe, theirs.sharedWithMe ?? []),
       // once one device migrated the entradas, a device that loaded before does not undo the mark
       ...((mine.entriesMigratedAt ?? theirs.entriesMigratedAt) ? { entriesMigratedAt: mine.entriesMigratedAt ?? theirs.entriesMigratedAt } : {}),

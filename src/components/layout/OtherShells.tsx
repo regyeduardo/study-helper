@@ -48,7 +48,7 @@ export function ColumnsShell({ children }: { children: ReactNode }) {
         <nav className="nav">
           {nav('folder', 'book', 'Biblioteca', paths.library, counts.library)}
           {nav('review', 'warn', 'Para revisar', paths.review, counts.review)}
-          {nav('entries', 'upload', 'Entradas', paths.entries, counts.entries)}
+          {nav('entries', 'rec', 'Gravações', paths.entries, counts.entries)}
           {nav('favorites', 'star', 'Favoritos', paths.favorites, counts.favorites)}
           {nav('trash', 'trash', 'Lixeira', paths.trash, counts.trash)}
           {nav('shares', 'link', SHARING_TITLES.shares, paths.shares, counts.shares)}
@@ -139,7 +139,7 @@ export function FocusShell({ children, dock }: { children: ReactNode; dock?: Rea
             Biblioteca
           </button>
           <button aria-current={top === 'entries'} onClick={() => navigate(paths.entries)}>
-            Entradas
+            Gravações
             <span className="n">{counts.entries}</span>
           </button>
         </nav>

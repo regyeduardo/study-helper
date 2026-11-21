@@ -6,11 +6,11 @@ import { EntryShareTree } from '@/components/dialogs/EntryShareTree'
 import { entryKind } from '@/components/library/EntryList'
 import { Dialog } from '@/components/ui/Dialog'
 import { Icon } from '@/components/ui/Icon'
-import { createShareController, isShareConfigured, uploadShareMediaController } from '@/controllers/share.controller'
+import { type CreatedShare as CreatedResult, createShareController, forgetShareMediaController, isShareConfigured, type PlannedMedia, ShareError, type ShareStatus, shareStatusController, type UpdatedShare, updateShareController, uploadShareMediaController } from '@/controllers/share.controller'
 import { env } from '@/lib/env'
 import { paths } from '@/lib/paths'
 import { mediaLength, mediaOf } from '@/lib/file-types'
-import { buildEntryShareContent, buildShareContent, entryMediaOf, questionCountOf, shareBytes, shareMediaOf, shareUrl } from '@/lib/share'
+import { buildEntryShareContent, buildShareContent, entryMediaOf, findValidShare, questionCountOf, shareBytes, shareMediaOf, shareUrl } from '@/lib/share'
 import { choiceCount, choiceOf, defaultChoice, entryShareTree, MEDIA_KEY, toggleChoice } from '@/lib/share-entry'
 import { loadTurnstile } from '@/lib/turnstile'
 import { recorderName, useAccountStore } from '@/stores/account'
@@ -54,8 +54,8 @@ interface MediaProgress {
   percent: number
 }
 
-/** `already`: the link made before, still valid, shown when the dialog opens again for the same item. */
-function CreatedShare({ share, mediaFailed, already = false }: { share: ShareRecord; mediaFailed: string[]; already?: boolean }) {
+/** What the window says about the link: `already` the one made before, still valid; `updated` the same link with the version of now; `notice` why a new link was made instead. */
+function CreatedShare({ share, mediaFailed, already = false, updated = false, notice = null, unlisted = false, status = null, hasMedia = false }: { share: ShareRecord; mediaFailed: string[]; already?: boolean; updated?: boolean; notice?: string | null; unlisted?: boolean; status?: ShareStatus | null; hasMedia?: boolean }) {
   const toast = useUiStore(state => state.toast)
   const timeZone = useLibraryStore(state => state.index.settings.timezone)
   const url = shareUrl(share.id)
@@ -63,13 +63,27 @@ function CreatedShare({ share, mediaFailed, already = false }: { share: ShareRec
     await navigator.clipboard?.writeText(url).catch(() => undefined)
     toast('Link copiado')
   }
+  // the Worker says whether the media of this item is in the link: sent, or the upload never finished
+  const mediaThere = status && hasMedia ? status.media.length > 0 : null
   return (
     <>
       {already && (
         <p className="share-state">
           <b>Já compartilhado</b>
-          {` em ${dateTime(share.createdAt, timeZone)}. Vale até ${dateTime(share.expiresAt, timeZone)} e mostra a versão daquele dia.`}
+          {` em ${dateTime(share.createdAt, timeZone)}${share.updatedAt ? `, atualizado em ${dateTime(share.updatedAt, timeZone)}` : ''}. Vale até ${dateTime(share.expiresAt, timeZone)} e mostra a versão daquele dia.`}
         </p>
+      )}
+      {updated && (
+        <p className="share-state">
+          <b>Link atualizado</b>
+          {`. Vale até ${dateTime(share.expiresAt, timeZone)} e mostra a versão de agora. Quem já tem o link vê a versão nova.`}
+        </p>
+      )}
+      {notice && (
+        <div className="banner info" role="status">
+          <Icon name="link" />
+          <span>{notice}</span>
+        </div>
       )}
       <div className="field">
         <label htmlFor="share-link">Link público, só para leitura</label>
@@ -83,17 +97,46 @@ function CreatedShare({ share, mediaFailed, already = false }: { share: ShareRec
       </div>
       <span className="muted" style={{ fontSize: 13 }}>
         {already
-          ? '“Renovar” cria outro link, com a versão de agora, por mais 3 dias. Este continua valendo até vencer.'
-          : `Vale por 3 dias, até ${dateTime(share.expiresAt, timeZone)}, e mostra a versão de agora. Se mudar alguma coisa, apague em Compartilhados e compartilhe de novo.`}
+          ? '“Atualizar o link” põe a versão de agora neste mesmo link, por mais 3 dias. A mídia que já está lá não sobe de novo.'
+          : updated
+            ? 'Para mudar de novo, abra Compartilhar e atualize o link outra vez.'
+            : `Vale por 3 dias, até ${dateTime(share.expiresAt, timeZone)}, e mostra a versão de agora. Se mudar alguma coisa, abra Compartilhar de novo e atualize o link.`}
       </span>
+      {already && mediaThere === true && (
+        <span className="muted" style={{ fontSize: 13 }}>
+          A mídia vai junto neste link e fica disponível até {dateTime(status?.mediaExpiresAt ?? share.expiresAt, timeZone)}.
+        </span>
+      )}
+      {already && mediaThere === false && (
+        <div className="banner" role="alert">
+          <Icon name="warn" />
+          <span>A mídia não está neste link (o envio não terminou). “Atualizar o link” envia de novo.</span>
+        </div>
+      )}
+      {unlisted && (
+        <div className="banner" role="alert">
+          <Icon name="warn" />
+          <span>Não consegui guardar este link na lista de Compartilhados. Copie o link agora.</span>
+        </div>
+      )}
       {mediaFailed.length > 0 && (
         <div className="banner" role="alert">
           <Icon name="warn" />
-          <span>Não consegui enviar a mídia de {mediaFailed.join(', ')}. O link funciona, mas sem tocar a gravação.</span>
+          <span>Não consegui enviar a mídia de {mediaFailed.join(', ')}. O link funciona, mas sem tocar a gravação. “Atualizar o link” tenta de novo.</span>
         </div>
       )}
     </>
   )
+}
+
+/** Why a new link was made when the same one could not be updated; the Worker answers 404 to a route it does not have, to a link that is gone, 410 past the expiry, 403 for another account's. */
+function fallbackNotice(failure: unknown): string | null {
+  if (!(failure instanceof ShareError)) return null
+  if (failure.code === 'share_gone') return 'O link anterior tinha sido apagado, então criei um link novo.'
+  if (failure.code === 'expired') return 'O link anterior já tinha vencido, então criei um link novo.'
+  if (failure.code === 'not_owner') return 'O link anterior foi criado por outra conta Google, então criei um link novo.'
+  if (failure.status === 404) return 'O serviço de compartilhamento ainda não atualiza o mesmo link, então criei um link novo. O anterior continua valendo até vencer.'
+  return null
 }
 
 export function ShareDialog({ target, id }: { target: ShareKind; id: string }) {
@@ -105,6 +148,7 @@ export function ShareDialog({ target, id }: { target: ShareKind; id: string }) {
   const files = useLibraryStore(state => state.files)
   const openFile = useLibraryStore(state => state.openFile)
   const saveShare = useLibraryStore(state => state.saveShare)
+  const dropShare = useLibraryStore(state => state.dropShare)
   const localMedia = useLibraryStore(state => state.localMedia)
   const repo = useLibraryStore(state => state.repo)
   const [withExams, setWithExams] = useState(false)
@@ -118,9 +162,16 @@ export function ShareDialog({ target, id }: { target: ShareKind; id: string }) {
   const [captchaRound, setCaptchaRound] = useState(0)
   const [busy, setBusy] = useState(false)
   const [created, setCreated] = useState<ShareRecord | null>(null)
-  // the link of this item made before and still valid comes first: copy it, or "Renovar" to share the version of now
-  const valid = useLibraryStore(state => state.index.shares.find(record => record.kind === target && record.itemId === id && Date.parse(record.expiresAt) > Date.now()) ?? null)
+  // the link of this item made before and still valid comes first (a note shared as "arquivo" is the same item as when it is an entrada):
+  // copy it, or "Atualizar o link" to put the version of now in the same link
+  const validId = useLibraryStore(state => findValidShare(state.index.shares, target, id)?.id ?? null)
+  const valid = useLibraryStore(state => state.index.shares.find(record => record.id === validId) ?? null)
   const [renewing, setRenewing] = useState(false)
+  const [status, setStatus] = useState<ShareStatus | null>(null)
+  const [gone, setGone] = useState(false)
+  const [notice, setNotice] = useState<string | null>(null)
+  const [updated, setUpdated] = useState(false)
+  const [unlisted, setUnlisted] = useState(false)
   const google = account.kind === 'google'
   const configured = isShareConfigured()
   const token = (options?: { force?: boolean }) => tokenFor(account.id, options)
@@ -150,6 +201,25 @@ export function ShareDialog({ target, id }: { target: ShareKind; id: string }) {
     void questionCountOf({ kind: target, id }, folders, files).then(setQuestions)
   }, [google, configured])
 
+  // the Worker says whether the link of this item still exists and whether its media is in it
+  useEffect(() => {
+    if (!google || !configured || !validId) return
+    let alive = true
+    setStatus(null)
+    shareStatusController(token, validId).then(
+      found => alive && setStatus(found),
+      failure => {
+        // only "share_gone" says it is gone: a Worker without this route answers not_found to anything
+        if (!alive || !(failure instanceof ShareError) || failure.code !== 'share_gone') return
+        setGone(true)
+        void dropShare(validId).catch(() => undefined)
+      },
+    )
+    return () => {
+      alive = false
+    }
+  }, [validId, google, configured])
+
   useEffect(() => {
     if (!entrada) return
     let alive = true
@@ -167,11 +237,13 @@ export function ShareDialog({ target, id }: { target: ShareKind; id: string }) {
   const mediaBytes = media.every(item => item.size !== null) ? media.reduce((sum, item) => sum + (item.size ?? 0), 0) : null
   const empty = content !== null && content.files.length === 0
 
-  const uploadMedia = async (shareId: string): Promise<{ sent: number; failed: string[] }> => {
-    let total = media.reduce((sum, item) => sum + (item.size ?? 0), 0)
+  /** `skip`: the notes whose media is already in the link (the Worker said so), which are not sent again. */
+  const uploadMedia = async (shareId: string, skip: Set<string>): Promise<{ sent: number; failed: string[] }> => {
+    const todo = media.filter(item => !skip.has(item.fileId))
+    let total = todo.reduce((sum, item) => sum + (item.size ?? 0), 0)
     let sent = 0
     const failed: string[] = []
-    for (const item of media) {
+    for (const item of todo) {
       const show = (bytesSent: number) => setProgress({ name: item.name, percent: total ? Math.min(100, Math.round(((sent + bytesSent) / total) * 100)) : 0 })
       try {
         show(0)
@@ -181,20 +253,55 @@ export function ShareDialog({ target, id }: { target: ShareKind; id: string }) {
         sent += await uploadShareMediaController(token, shareId, item.fileId, blob, item.mime, show)
       } catch {
         failed.push(item.name)
+        // the link must not keep saying that this media is coming
+        await forgetShareMediaController(token, shareId, item.fileId)
       }
     }
     return { sent, failed }
   }
 
-  const share = async () => {
+  /** `update`: the same link with the version of now (the media already in it stays); a Worker that cannot do it, or a link that is gone, ends in a new link, as before. `new`: always a new link. */
+  const share = async (mode: 'update' | 'new') => {
     if (!content) return
     setBusy(true)
     setError(null)
     try {
-      const result = await createShareController(token, captcha, content)
-      const uploaded = await uploadMedia(result.id)
-      const record: ShareRecord = { id: result.id, kind: target, itemId: id, title: content.title, bytes: result.bytes + uploaded.sent, withExams: entrada || withExams, createdAt: result.createdAt, expiresAt: result.expiresAt }
-      await saveShare(record)
+      const planned = media.map(item => ({ fileId: item.fileId, mime: item.mime, size: item.size ?? 0 }))
+      let result: (CreatedResult | UpdatedShare) | null = null
+      let kept: PlannedMedia[] = []
+      let why: string | null = null
+      if (mode === 'update' && valid) {
+        try {
+          const changed = await updateShareController(token, valid.id, captcha, content, planned)
+          result = changed
+          kept = changed.media
+        } catch (failure) {
+          why = fallbackNotice(failure)
+          if (!why) throw failure
+          if (failure instanceof ShareError && failure.code === 'share_gone') await dropShare(valid.id).catch(() => undefined)
+        }
+      }
+      result ??= await createShareController(token, captcha, content, planned)
+      const keptBytes = kept.reduce((sum, item) => sum + item.size, 0)
+      const base: ShareRecord = {
+        id: result.id,
+        kind: target,
+        itemId: id,
+        title: content.title,
+        bytes: result.bytes + keptBytes,
+        withExams: entrada || withExams,
+        createdAt: result.createdAt,
+        ...('updatedAt' in result ? { updatedAt: result.updatedAt } : {}),
+        expiresAt: result.expiresAt,
+      }
+      // the link goes to the list before the media goes up: closing the tab in the middle leaves a link with its record, not a link nobody can find
+      let listed = await saveShare(base).then(() => true, () => false)
+      const uploaded = await uploadMedia(result.id, new Set(kept.map(item => item.fileId)))
+      const record: ShareRecord = { ...base, bytes: base.bytes + uploaded.sent }
+      if (uploaded.sent) listed = (await saveShare(record).then(() => true, () => false)) && listed
+      setUnlisted(!listed)
+      setNotice(why)
+      setUpdated('updatedAt' in result)
       setMediaFailed(uploaded.failed)
       setCreated(record)
     } catch (failure) {
@@ -207,6 +314,8 @@ export function ShareDialog({ target, id }: { target: ShareKind; id: string }) {
     }
   }
 
+  // "Atualizar o link" was chosen for the link made before: the form below puts the version of now in it
+  const updating = Boolean(valid && renewing)
   const footer = !google ? (
     <>
       <button className="btn quiet" onClick={ui.close}>
@@ -217,15 +326,24 @@ export function ShareDialog({ target, id }: { target: ShareKind; id: string }) {
         Entrar com o Google
       </button>
     </>
-  ) : valid && !renewing && !created && configured ? (
+  ) : valid && !renewing && !created && !busy && configured ? (
     <>
       <button className="btn quiet" onClick={ui.close}>
         Fechar
       </button>
+      <button
+        className="btn"
+        onClick={() => {
+          ui.close()
+          navigate(paths.shares)
+        }}
+      >
+        Ver compartilhados
+      </button>
       {/* "Copiar link", in the body, is the one primary action here */}
       <button className="btn" onClick={() => setRenewing(true)}>
         <Icon name="sync" />
-        Renovar
+        Atualizar o link
       </button>
     </>
   ) : created ? (
@@ -256,15 +374,20 @@ export function ShareDialog({ target, id }: { target: ShareKind; id: string }) {
       <button className="btn quiet" onClick={ui.close}>
         Cancelar
       </button>
-      <button className="btn primary" disabled={!configured || !content || empty || !captcha || busy} onClick={() => void share()}>
-        <Icon name="link" />
-        {busy ? 'Compartilhando…' : 'Compartilhar'}
+      {updating && (
+        <button className="btn" disabled={!configured || !content || empty || !captcha || busy} onClick={() => void share('new')}>
+          Criar outro link
+        </button>
+      )}
+      <button className="btn primary" disabled={!configured || !content || empty || !captcha || busy} onClick={() => void share(updating ? 'update' : 'new')}>
+        <Icon name={updating ? 'sync' : 'link'} />
+        {busy ? (updating ? 'Atualizando…' : 'Compartilhando…') : updating ? 'Atualizar o link' : 'Compartilhar'}
       </button>
     </>
   )
 
   return (
-    <Dialog title={`${entrada ? 'Compartilhar entrada' : 'Compartilhar'} · ${name ?? ''}`} size={entrada ? 'normal' : 'narrow'} onClose={ui.close} footer={footer}>
+    <Dialog title={`Compartilhar · ${name ?? ''}`} size={entrada ? 'normal' : 'narrow'} onClose={ui.close} footer={footer}>
       <div className="db">
         {!google ? (
           <div className="banner info" role="status">
@@ -276,14 +399,20 @@ export function ShareDialog({ target, id }: { target: ShareKind; id: string }) {
             <Icon name="warn" />
             <span>O compartilhamento ainda não foi configurado neste site.</span>
           </div>
-        ) : valid && !renewing && !created ? (
-          <CreatedShare share={valid} mediaFailed={[]} already />
+        ) : valid && !renewing && !created && !busy ? (
+          <CreatedShare share={valid} mediaFailed={[]} already status={status} hasMedia={media.length > 0} />
         ) : created ? (
-          <CreatedShare share={created} mediaFailed={mediaFailed} />
+          <CreatedShare share={created} mediaFailed={mediaFailed} updated={updated} notice={notice} unlisted={unlisted} />
         ) : (
           <>
+            {gone && (
+              <div className="banner info" role="status">
+                <Icon name="warn" />
+                <span>O link anterior foi apagado. Compartilhe de novo para ter um link novo.</span>
+              </div>
+            )}
             <span className="muted" style={{ fontSize: 13 }}>
-              Quem tiver o link pode ler, sem entrar em conta. O link vale por 3 dias e mostra a versão de agora.
+              {updating ? 'Quem tiver o link continua com ele e passa a ver a versão de agora, por mais 3 dias a partir de hoje.' : 'Quem tiver o link pode ler, sem entrar em conta. O link vale por 3 dias e mostra a versão de agora.'}
             </span>
             {entrada && <EntryShareTree tree={tree} chosen={chosen} onToggle={key => setChosen(current => toggleChoice(tree, current, key))} media={mediaRow} transcribed={transcribed} />}
             {!entrada && (

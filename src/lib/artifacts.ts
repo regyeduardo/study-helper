@@ -1,5 +1,5 @@
 // Artefatos de uma nota (mapas, baralhos, conversas do Tutor): the list in the sidecar and its summary in the meta.
-import type { Artifact, ArtifactKind, ArtifactSummary, CardsArtifact, FileMeta, FileSidecar, GenerationChoice, MapArtifact, MapDiagram, MindNode, StudyCard, TutorArtifact } from '@/types/domain'
+import type { Artifact, ArtifactKind, ArtifactSummary, CardsArtifact, FileMeta, FileSidecar, GenerationChoice, MapArtifact, MapDiagram, MindNode, StudyCard, TutorArtifact, TutorScope } from '@/types/domain'
 import { mapFromOld } from '@/lib/generation/mindmap'
 import { newId, nowIso } from '@/lib/ids'
 
@@ -19,7 +19,7 @@ function fallbackName(kind: ArtifactKind, at: string): string {
 }
 
 export function summaryOf(artifact: Artifact): ArtifactSummary {
-  return { id: artifact.id, kind: artifact.kind, name: artifact.name, updatedAt: artifact.updatedAt }
+  return { id: artifact.id, kind: artifact.kind, name: artifact.name, updatedAt: artifact.updatedAt, ...(artifact.kind === 'tutor' && artifact.scope ? { scope: artifact.scope } : {}) }
 }
 
 export function decksOf(list: Artifact[], deckId?: string): CardsArtifact[] {
@@ -180,6 +180,6 @@ export function questionName(text = ''): string {
   return plain.length > QUESTION_NAME_CHARS ? `${plain.slice(0, QUESTION_NAME_CHARS).replace(/\s+\S*$/, '')}…` : plain
 }
 
-export function newTutorArtifact({ turns = [], made }: { turns?: TutorArtifact['turns']; made?: GenerationChoice }): TutorArtifact {
-  return { ...baseOf('tutor', { name: questionName(turns[0]?.text), made }), turns }
+export function newTutorArtifact({ turns = [], made, scope }: { turns?: TutorArtifact['turns']; made?: GenerationChoice; scope?: TutorScope }): TutorArtifact {
+  return { ...baseOf('tutor', { name: questionName(turns[0]?.text), made }), ...(scope ? { scope } : {}), turns }
 }

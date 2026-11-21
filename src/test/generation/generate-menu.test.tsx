@@ -157,7 +157,7 @@ describe('the ellipsis menu of a folder', () => {
     const course = newFolderMeta({ name: 'Inglês' })
     useLibraryStore.setState({ folders: [course, newFolderMeta({ name: 'Módulo 1', parentId: course.id })] })
     const list = openFolderMenu(course.id)
-    expect(list).toEqual(expect.arrayContaining(['Compartilhar a pasta', 'Ordenar aulas e módulos', 'Gerar as aulas que faltam']))
+    expect(list).toEqual(expect.arrayContaining(['Compartilhar a pasta', 'Ordenar aulas e módulos', 'Gerar as aulas que faltam…']))
     expect(list.some(item => /curso/i.test(item))).toBe(false)
   })
 
@@ -166,7 +166,7 @@ describe('the ellipsis menu of a folder', () => {
     useLibraryStore.setState({ folders: [marked] })
     const list = openFolderMenu(marked.id)
     expect(list).toContain('Compartilhar a pasta')
-    for (const label of ['Ordenar aulas e módulos', 'Gerar as aulas que faltam']) expect(list).not.toContain(label)
+    for (const label of ['Ordenar aulas e módulos', 'Gerar as aulas que faltam…']) expect(list).not.toContain(label)
     expect(list.some(item => /curso/i.test(item))).toBe(false)
   })
 })

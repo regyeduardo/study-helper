@@ -127,16 +127,16 @@ describe('cabeçalho', () => {
     seed([entrada('video', 'Reunião de kickoff.mp4', VIDEO)])
     renderEntry('video')
     expect(screen.getByRole('heading', { level: 1, name: 'Reunião de kickoff.mp4' })).toBeInTheDocument()
-    const line = metaLine('Entrada · Vídeo')
+    const line = metaLine('Vídeo')
     expect(line).toContain('Projeto Aurora')
     expect(line).toContain('03/11/2026')
     expect(line).toContain('Registro e arquivo')
   })
 
-  it('"Gerar desta entrada" abre a janela de gerar', () => {
+  it('"Gerar desta nota" abre a janela de gerar', () => {
     seed([entrada('video', 'Reunião de kickoff.mp4', VIDEO), ...family('video')])
     renderEntry('video')
-    fireEvent.click(screen.getByRole('button', { name: 'Gerar desta entrada' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Gerar desta nota' }))
     expect(useUiStore.getState().overlay).toEqual({ kind: 'generate-entry', fileId: 'video' })
   })
 
@@ -214,7 +214,7 @@ describe('cabeçalho', () => {
     seed([entrada('video', 'Reunião de kickoff.mp4', VIDEO)])
     useLibraryStore.setState({ sharedView: { item: { files: [] } as never, rootId: null } })
     renderEntry('video')
-    expect(screen.queryByRole('button', { name: 'Gerar desta entrada' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Gerar desta nota' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Mais ações' })).not.toBeInTheDocument()
   })
 })
@@ -233,7 +233,7 @@ describe('Original conforme o tipo', () => {
     const local: LocalMedia = { storedName: 'a.webm', name: 'aula3.webm', mime: 'audio/webm', durationSeconds: 60, size: 2 * MB, createdAt: CREATED.at, fileIds: ['audio'] }
     seed([entrada('audio', 'Gravação da aula 3.webm', { input: 'recording', name: 'aula3.webm', mime: 'audio/webm', storage: 'none' })], {}, [local])
     renderEntry('audio')
-    expect(metaLine('Entrada · Áudio')).toBeTruthy()
+    expect(metaLine('Áudio')).toBeTruthy()
     const original = within(card('Original'))
     expect(original.getByRole('region', { name: 'Player da gravação' })).toBeInTheDocument()
     expect(original.getByText('Só neste navegador')).toBeInTheDocument()
@@ -243,7 +243,7 @@ describe('Original conforme o tipo', () => {
   it('PDF guardado: o arquivo, o tamanho e como abrir, sem player e sem transcrição', () => {
     seed([entrada('pdf', 'Contrato de serviços.pdf', { input: 'file', name: 'contrato.pdf', sizeBytes: 2 * MB, mime: 'application/pdf', storage: 'drive', storedFileId: 'drv-pdf' })])
     renderEntry('pdf')
-    expect(metaLine('Entrada · PDF')).toBeTruthy()
+    expect(metaLine('PDF')).toBeTruthy()
     const original = within(card('Original'))
     expect(original.getByText('contrato.pdf')).toBeInTheDocument()
     expect(original.getByText('2 MB')).toBeInTheDocument()
@@ -255,7 +255,7 @@ describe('Original conforme o tipo', () => {
   it('link em "Só o registro": nome, link e origem, sem player', () => {
     seed([entrada('link', 'Guia de juros compostos', { input: 'url', name: 'Guia de juros', url: 'https://exemplo.org/juros', storage: 'none' }, { kept: 'registro' })])
     renderEntry('link')
-    expect(metaLine('Entrada · Link')).toContain('Só o registro')
+    expect(metaLine('Link')).toContain('Só o registro')
     const original = within(card('Original'))
     expect(original.getByText('Guia de juros')).toBeInTheDocument()
     expect(original.getByRole('link', { name: 'exemplo.org/juros' })).toHaveAttribute('href', 'https://exemplo.org/juros')
@@ -267,7 +267,7 @@ describe('Original conforme o tipo', () => {
   it('texto colado: o próprio texto, que fica no conteúdo da entrada', async () => {
     seed([entrada('texto', 'Texto colado · 06/11', { input: 'text', name: 'texto colado', storage: 'none' }, { kept: 'registro', words: 8 })], { texto: 'A inflação de serviços segue acima da média.' })
     renderEntry('texto')
-    expect(metaLine('Entrada · Texto colado')).toBeTruthy()
+    expect(metaLine('Texto colado')).toBeTruthy()
     expect(await within(card('Original')).findByText('A inflação de serviços segue acima da média.')).toBeInTheDocument()
     expect(within(card('Original')).getByText('8 palavras')).toBeInTheDocument()
     noPlayer()
@@ -276,7 +276,7 @@ describe('Original conforme o tipo', () => {
   it('tema: o tema escrito, sem arquivo', () => {
     seed([entrada('tema', 'Tema: orçamento base zero', { input: 'topic', name: 'Orçamento base zero', storage: 'none' }, { kept: 'registro' })])
     renderEntry('tema')
-    expect(metaLine('Entrada · Tema')).toBeTruthy()
+    expect(metaLine('Tema')).toBeTruthy()
     const original = within(card('Original'))
     expect(original.getByText('Orçamento base zero')).toBeInTheDocument()
     expect(original.getByText(/Não há arquivo/)).toBeInTheDocument()
@@ -351,8 +351,8 @@ describe('entrada que não existe', () => {
   it('diz que não achou e leva de volta para a lista', () => {
     seed([])
     renderEntry('sumiu')
-    expect(screen.getByText('Entrada não encontrada.')).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: 'Ver as entradas' })).toHaveAttribute('href', paths.entries)
+    expect(screen.getByText('Nota não encontrada.')).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Ver a biblioteca' })).toHaveAttribute('href', paths.library)
   })
 })
 
@@ -360,7 +360,7 @@ describe('quando a mídia não está mais lá', () => {
   it('"Só o registro" de mídia: nome e origem, sem player; a transcrição fica', async () => {
     seed([withTranscript(entrada('video', 'Reunião de kickoff.mp4', { ...VIDEO, storage: 'none', storedFileId: undefined }, { kept: 'registro' }))])
     renderEntry('video')
-    expect(metaLine('Entrada · Vídeo')).toContain('Só o registro')
+    expect(metaLine('Vídeo')).toContain('Só o registro')
     const original = within(card('Original'))
     expect(original.getByText('kickoff.mp4')).toBeInTheDocument()
     expect(original.getByText('Veio de')).toBeInTheDocument()
@@ -493,19 +493,19 @@ describe('"O que nasceu daqui"', () => {
   it('sem nada, com o arquivo e sem transcrição: a dica inclui transcrever', async () => {
     seed([entrada('video', 'Reunião de kickoff.mp4', VIDEO)])
     renderEntry('video')
-    expect(await within(card('O que nasceu daqui')).findByText('Gere uma transcrição, uma ata ou uma aula a partir desta gravação.')).toBeInTheDocument()
+    expect(await within(card('O que nasceu daqui')).findByText('Gere uma transcrição, uma ata ou uma aula a partir desta mídia.')).toBeInTheDocument()
   })
 
   it('sem nada e já transcrita: a dica não sugere outra transcrição', async () => {
     seed([withTranscript(entrada('video', 'Reunião de kickoff.mp4', VIDEO))])
     renderEntry('video')
-    expect(await within(card('O que nasceu daqui')).findByText('Gere uma ata, uma aula ou uma explicação a partir desta entrada.')).toBeInTheDocument()
+    expect(await within(card('O que nasceu daqui')).findByText('Gere uma ata, uma aula ou uma explicação a partir desta nota.')).toBeInTheDocument()
   })
 
   it('sem nada e sem o arquivo: a dica não sugere transcrever', async () => {
     seed([entrada('video', 'Reunião de kickoff.mp4', { ...VIDEO, storedFileId: undefined, removedAt: GONE })])
     renderEntry('video')
-    expect(await within(card('O que nasceu daqui')).findByText('Gere uma ata, uma aula ou uma explicação a partir desta entrada.')).toBeInTheDocument()
+    expect(await within(card('O que nasceu daqui')).findByText('Gere uma ata, uma aula ou uma explicação a partir desta nota.')).toBeInTheDocument()
   })
 
   it('sem nada: diz que não há notas e oferece gerar', () => {
@@ -514,7 +514,7 @@ describe('"O que nasceu daqui"', () => {
     const tree = within(card('O que nasceu daqui'))
     expect(tree.getByText('Nenhuma nota ainda')).toBeInTheDocument()
     expect(tree.getByText('Nada nasceu daqui ainda')).toBeInTheDocument()
-    fireEvent.click(tree.getByRole('button', { name: 'Gerar desta entrada' }))
+    fireEvent.click(tree.getByRole('button', { name: 'Gerar desta nota' }))
     expect(useUiStore.getState().overlay).toEqual({ kind: 'generate-entry', fileId: 'video' })
   })
 })
@@ -545,7 +545,7 @@ describe('"O que nasceu daqui": gerando, pronta e falhou', () => {
     expect(tree().queryByText('falhou')).not.toBeInTheDocument()
   })
 
-  it('falhou: diz o motivo, sem link, e "Tentar de novo" refaz aquela nota', () => {
+  it('falhou: diz o motivo, sem link, e "Tentar de novo" abre a escolha do modelo daquela nota antes de refazer', () => {
     const generatePending = vi.fn(async () => undefined)
     useJobsStore.setState({ generatePending })
     seed([entrada('video', 'Reunião', VIDEO), note({ status: 'pending', pendingExcerpt: 'material' })])
@@ -555,7 +555,8 @@ describe('"O que nasceu daqui": gerando, pronta e falhou', () => {
     expect(tree().getByRole('alert')).toHaveTextContent('A IA recusou o pedido.')
     expect(tree().queryByRole('link', { name: 'Aula: Reunião' })).not.toBeInTheDocument()
     fireEvent.click(tree().getByRole('button', { name: 'Tentar de novo' }))
-    expect(generatePending).toHaveBeenCalledWith('aula')
+    expect(useUiStore.getState().overlay).toEqual({ kind: 'pending', fileId: 'aula' })
+    expect(generatePending).not.toHaveBeenCalled()
   })
 
   it('parou sem terminar (a página foi fechada): falhou, dizendo que o material ficou guardado', () => {
@@ -616,7 +617,7 @@ describe('"O que nasceu daqui": gerando, pronta e falhou', () => {
   })
 })
 
-describe('"Gerar desta entrada": o que a janela oferece', () => {
+describe('"Gerar desta nota": o que a janela oferece', () => {
   const MINE = { id: 'mine', type: 'custom' as const, name: 'Minha IA', key: 'k', base: 'https://api.exemplo.dev/v1' }
   const A = { uid: 'mine::a', pid: 'mine', mid: 'a', name: 'Modelo A' }
 
@@ -631,7 +632,7 @@ describe('"Gerar desta entrada": o que a janela oferece', () => {
         <GenerateEntryDialog fileId={id} />
       </MemoryRouter>,
     )
-    return screen.findByRole('dialog', { name: 'Gerar desta entrada' })
+    return screen.findByRole('dialog', { name: 'Gerar desta nota' })
   }
 
   const goals = () =>
@@ -818,7 +819,7 @@ describe('"Gerar desta entrada": o que a janela oferece', () => {
     expect(generateFromNote).toHaveBeenCalledWith('e', 'meeting', A.uid, { folderId: 'aurora' }, '', undefined)
   })
 
-  it('Transcrever e Refazer a transcrição não pedem pasta nem instrução: é a transcrição da entrada, com o modelo escolhido', async () => {
+  it('Transcrever e Refazer a transcrição não pedem pasta: é a transcrição da entrada, com o modelo escolhido e o que corrigir na revisão', async () => {
     const transcribeNote = vi.fn(async () => undefined)
     useJobsStore.setState({ transcribeNote })
     seed([withTranscript(entrada('e', 'v.mp4', VIDEO))])
@@ -826,9 +827,11 @@ describe('"Gerar desta entrada": o que a janela oferece', () => {
     await screen.findByRole('radiogroup', { name: 'O que gerar' })
     pick('Refazer a transcrição')
     expect(screen.queryByRole('group', { name: 'Salvar em' })).not.toBeInTheDocument()
-    expect(screen.queryByText('Mais opções')).not.toBeInTheDocument()
+    const instruction = screen.getByLabelText('Instrução extra para a IA (opcional)')
+    expect(instruction).toBeVisible()
+    fireEvent.change(instruction, { target: { value: 'É PIX, não pics.' } })
     go()
-    expect(transcribeNote).toHaveBeenCalledWith('e', undefined, A.uid)
+    expect(transcribeNote).toHaveBeenCalledWith('e', undefined, A.uid, 'É PIX, não pics.')
   })
 
   const transcribing = { id: 'j', kind: 'transcription' as const, title: 'v', fileId: 'e', status: 'running' as const, message: '', fraction: null, error: null, startedAt: 0 }
@@ -856,7 +859,7 @@ describe('"Gerar desta entrada": o que a janela oferece', () => {
 })
 
 // FR-072: the Ata of a video goes step by step with a model for each step; "Tudo numa chamada" only with a writer that sees video.
-describe('"Gerar desta entrada": a Ata de vídeo, passo a passo', () => {
+describe('"Gerar desta nota": a Ata de vídeo, passo a passo', () => {
   const OR = { id: 'or', type: 'openrouter' as const, name: 'OpenRouter', key: 'k', base: '' }
   const DI = { id: 'di', type: 'deepinfra' as const, name: 'DeepInfra', key: 'k', base: '' }
   const GEMINI = { uid: 'or::google/gemini-3.8-flash', pid: 'or', mid: 'google/gemini-3.8-flash', name: 'Gemini 3.8 Flash' }
@@ -1326,7 +1329,7 @@ describe('rotas', () => {
   beforeEach(() => seed([entrada('video', 'Reunião de kickoff.mp4', VIDEO), ...family('video')]))
 
   it('os caminhos combinados', () => {
-    expect(paths.entries).toBe('/entradas')
+    expect(paths.entries).toBe('/gravacoes')
     expect(paths.entry('abc')).toBe('/entrada/abc')
   })
 
@@ -1335,12 +1338,15 @@ describe('rotas', () => {
     ['colunas', Columns],
     ['comandos', Commands],
     ['foco', Focus],
-  ])('no layout %s, /entrada/<id> abre a página e /entradas abre a lista', (_name, Layout) => {
+  ])('no layout %s, /entrada/<id> abre a página, e /gravacoes e o antigo /entradas abrem Gravações', (_name, Layout) => {
     const first = renderAt('/entrada/video', Layout)
     expect(screen.getByRole('region', { name: 'O que nasceu daqui' })).toBeInTheDocument()
     first.unmount()
-    renderAt('/entradas', Layout)
-    expect(screen.getByRole('table', { name: 'Entradas' })).toBeInTheDocument()
+    for (const path of ['/gravacoes', '/entradas']) {
+      const list = renderAt(path, Layout)
+      expect(screen.queryByRole('table', { name: 'Gravações' }) ?? screen.getByText('Nenhuma gravação ainda')).toBeInTheDocument()
+      list.unmount()
+    }
   })
 
   it('/arquivo/<id de uma entrada> também abre a página da entrada, porque todos os links usam paths.file', () => {
@@ -1352,5 +1358,143 @@ describe('rotas', () => {
     renderAt('/arquivo/ata')
     await waitFor(() => expect(screen.getByRole('heading', { level: 1, name: 'Ata do kickoff' })).toBeInTheDocument())
     expect(screen.queryByRole('region', { name: 'O que nasceu daqui' })).not.toBeInTheDocument()
+  })
+})
+
+// FR-076 / T137: "Baixar" no card Original, para a mídia que ainda existe: neste navegador, no Drive ou num endereço.
+describe('Baixar a mídia', () => {
+  const SOUND = new File(['som da aula'], 'aula3.webm', { type: 'audio/webm' })
+  const FROM_DRIVE = new Blob(['video do drive'], { type: 'video/mp4' })
+  const savedLocal: LocalMedia = { ...IN_BROWSER, fileIds: ['e'] }
+  const createUrl = URL.createObjectURL
+  const revokeUrl = URL.revokeObjectURL
+
+  /** The browser folder of the media library is only a spy here: jsdom has none. */
+  async function spies() {
+    const library = await import('@/lib/recording/media-library')
+    const download = await import('@/utils/download')
+    const read = vi.spyOn(library, 'readLocalMedia').mockResolvedValue(SOUND)
+    const save = vi.spyOn(download, 'downloadBlob').mockImplementation(() => undefined)
+    return { read, save }
+  }
+  const baixar = () => within(card('Original')).getByRole('button', { name: 'Baixar' })
+
+  beforeEach(() => {
+    URL.createObjectURL = vi.fn(() => 'blob:midia')
+    URL.revokeObjectURL = vi.fn()
+  })
+
+  afterEach(async () => {
+    // the player gives its address back when it leaves: that happens before the stubs go
+    ;(await import('@testing-library/react')).cleanup()
+    URL.createObjectURL = createUrl
+    URL.revokeObjectURL = revokeUrl
+    vi.restoreAllMocks()
+  })
+
+  it('áudio só neste navegador: entrega o arquivo guardado com o nome do original', async () => {
+    const { read, save } = await spies()
+    seed([entrada('e', 'Gravação da aula 3', AUDIO)], {}, [savedLocal])
+    renderEntry('e')
+    fireEvent.click(baixar())
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(1))
+    expect(read).toHaveBeenCalledWith(savedLocal)
+    expect(save).toHaveBeenCalledWith(SOUND, 'aula3.webm')
+  })
+
+  it('o botão fica "Baixando…" na mesma hora e volta quando termina', async () => {
+    const { read, save } = await spies()
+    let done: (file: File) => void = () => undefined
+    seed([entrada('e', 'Gravação da aula 3', AUDIO)], {}, [savedLocal])
+    renderEntry('e')
+    // the player has already read the same file to play it
+    await waitFor(() => expect(read).toHaveBeenCalledTimes(1))
+    read.mockReturnValueOnce(new Promise(resolve => (done = resolve)))
+    fireEvent.click(baixar())
+    const busy = within(card('Original')).getByRole('button', { name: 'Baixando…' })
+    expect(busy).toBeDisabled()
+    done(SOUND)
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(1))
+    expect(baixar()).toBeEnabled()
+  })
+
+  it('mídia que está só no Drive: baixa de lá, com o nome do original', async () => {
+    const { save } = await spies()
+    seed([entrada('e', 'Reunião de kickoff.mp4', VIDEO)], {}, [], { 'drv-video': FROM_DRIVE })
+    renderEntry('e')
+    fireEvent.click(baixar())
+    await waitFor(() => expect(save).toHaveBeenCalledWith(FROM_DRIVE, 'kickoff.mp4'))
+  })
+
+  it('no navegador e no Drive: usa a cópia daqui, sem pedir nada ao Drive', async () => {
+    const { save } = await spies()
+    seed([entrada('e', 'Reunião de kickoff.mp4', VIDEO)], {}, [{ ...savedLocal, name: 'kickoff.mp4', mime: 'video/mp4' }], { 'drv-video': FROM_DRIVE })
+    const getSource = vi.spyOn(useLibraryStore.getState().repo!, 'getSource')
+    renderEntry('e')
+    fireEvent.click(baixar())
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(1))
+    expect(save.mock.calls[0][0]).toBe(SOUND)
+    expect(getSource).not.toHaveBeenCalled()
+  })
+
+  it('se a cópia sumiu do navegador mas está no Drive, baixa do Drive', async () => {
+    const { read, save } = await spies()
+    read.mockRejectedValue(new DOMException('A requested file or directory could not be found', 'NotFoundError'))
+    seed([entrada('e', 'Reunião de kickoff.mp4', VIDEO)], {}, [{ ...savedLocal, name: 'kickoff.mp4', mime: 'video/mp4' }], { 'drv-video': FROM_DRIVE })
+    renderEntry('e')
+    fireEvent.click(baixar())
+    await waitFor(() => expect(save).toHaveBeenCalledWith(FROM_DRIVE, 'kickoff.mp4'))
+  })
+
+  it('se a cópia sumiu do navegador e não há outra, diz isso e o botão volta', async () => {
+    const { read, save } = await spies()
+    read.mockRejectedValue(new DOMException('A requested file or directory could not be found', 'NotFoundError'))
+    seed([entrada('e', 'Gravação da aula 3', AUDIO)], {}, [savedLocal])
+    renderEntry('e')
+    useUiStore.setState({ toasts: [] })
+    fireEvent.click(baixar())
+    await waitFor(() => expect(useUiStore.getState().toasts.map(toast => toast.text)).toContain('O arquivo não está mais neste navegador.'))
+    expect(save).not.toHaveBeenCalled()
+    expect(baixar()).toBeEnabled()
+  })
+
+  it('se o Drive falhar, diz o motivo e o botão volta', async () => {
+    const { save } = await spies()
+    seed([entrada('e', 'Reunião de kickoff.mp4', VIDEO)])
+    vi.spyOn(useLibraryStore.getState().repo!, 'getSource').mockRejectedValue(new Error('O Drive não respondeu.'))
+    renderEntry('e')
+    useUiStore.setState({ toasts: [] })
+    fireEvent.click(baixar())
+    await waitFor(() => expect(useUiStore.getState().toasts.map(toast => toast.text)).toContain('O Drive não respondeu.'))
+    expect(save).not.toHaveBeenCalled()
+    expect(baixar()).toBeEnabled()
+  })
+
+  it('mídia num serviço temporário: abre o endereço dela', async () => {
+    await spies()
+    const open = vi.spyOn(window, 'open').mockReturnValue(null)
+    seed([entrada('e', 'Reunião de kickoff.mp4', { ...VIDEO, storage: 'litterbox', storedFileId: undefined, storedUrl: 'https://l.example/x', expiresAt: '2099-01-01T00:00:00.000Z' })])
+    renderEntry('e')
+    fireEvent.click(baixar())
+    await waitFor(() => expect(open).toHaveBeenCalledWith('https://l.example/x', '_blank', 'noopener'))
+  })
+
+  it.each<[string, () => void]>([
+    ['só como registro', () => seed([entrada('e', 'v.mp4', noFile(VIDEO), { kept: 'registro' })])],
+    ['apagada', () => seed([entrada('e', 'v.mp4', { ...noFile(VIDEO), removedAt: GONE })])],
+    ['temporária vencida', () => seed([entrada('e', 'v.mp4', { ...VIDEO, storage: 'litterbox', storedFileId: undefined, storedUrl: 'https://l.example/x', expiresAt: LONG_AGO })])],
+    ['sem arquivo neste aparelho', () => seed([entrada('e', 'a.webm', AUDIO)])],
+  ])('mídia %s: não tem "Baixar"', async (_name, arrange) => {
+    await spies()
+    arrange()
+    renderEntry('e')
+    expect(within(card('Original')).queryByRole('button', { name: /^Baixar/ })).not.toBeInTheDocument()
+  })
+
+  it('o PDF continua com "Baixar o arquivo", e só ele', async () => {
+    await spies()
+    seed([entrada('e', 'Contrato.pdf', PDF)])
+    renderEntry('e')
+    expect(within(card('Original')).getAllByRole('button', { name: /^Baixar/ }).map(button => button.textContent)).toEqual(['Baixar o arquivo'])
   })
 })

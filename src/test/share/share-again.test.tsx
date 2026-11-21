@@ -71,23 +71,23 @@ describe('compartilhar de novo o que já está compartilhado', () => {
     expect(posts).toBe(0)
   })
 
-  it('diz quando foi compartilhado e até quando vale; "Copiar link" é a ação principal e "Renovar" fica ao lado de "Fechar"', async () => {
+  it('diz quando foi compartilhado e até quando vale; "Copiar link" é a ação principal, e "Atualizar o link" fica ao lado de "Fechar"', async () => {
     const id = await noteShared(new Date(Date.now() + 2 * DAY).toISOString())
     const [record] = useLibraryStore.getState().index.shares
     const timeZone = useLibraryStore.getState().index.settings.timezone
     open(id)
     const state = (await screen.findByText('Já compartilhado')).closest('p')
     expect(state).toHaveTextContent(`Já compartilhado em ${dateTime(record.createdAt, timeZone)}. Vale até ${dateTime(record.expiresAt, timeZone)} e mostra a versão daquele dia.`)
-    expect(screen.getByText(/^“Renovar” cria outro link/)).toHaveTextContent('“Renovar” cria outro link, com a versão de agora, por mais 3 dias. Este continua valendo até vencer.')
+    expect(screen.getByText(/^“Atualizar o link” põe a versão de agora/)).toHaveTextContent('“Atualizar o link” põe a versão de agora neste mesmo link, por mais 3 dias. A mídia que já está lá não sobe de novo.')
     expect(screen.getByRole('button', { name: 'Copiar link' })).toHaveClass('primary')
-    expect(screen.getByRole('button', { name: 'Renovar' })).not.toHaveClass('primary')
+    expect(screen.getByRole('button', { name: 'Atualizar o link' })).not.toHaveClass('primary')
   })
 
-  it('"Renovar" compartilha a versão de agora num link novo, de mais 3 dias, e o antigo continua até vencer', async () => {
+  it('"Criar outro link" compartilha a versão de agora num link novo, de mais 3 dias, e o antigo continua até vencer', async () => {
     const id = await noteShared(new Date(Date.now() + 2 * DAY).toISOString())
     open(id)
-    fireEvent.click(await screen.findByRole('button', { name: 'Renovar' }))
-    const share = await screen.findByRole('button', { name: /^Compartilhar$/ })
+    fireEvent.click(await screen.findByRole('button', { name: 'Atualizar o link' }))
+    const share = await screen.findByRole('button', { name: 'Criar outro link' })
     await waitFor(() => expect(share).toBeEnabled())
     fireEvent.click(share)
     expect(await screen.findByDisplayValue('https://share.test/s/LinkNovoLinkNovoLink10')).toBeInTheDocument()

@@ -2,6 +2,7 @@ import { useState } from 'react'
 
 import { Icon } from '@/components/ui/Icon'
 import { TypeDot } from '@/components/library/Badges'
+import { working } from '@/lib/working'
 import { TRASH_DAYS, useLibraryStore } from '@/stores/library'
 import { useUiStore } from '@/stores/ui'
 
@@ -50,8 +51,9 @@ export function TrashList({ compact = false }: { compact?: boolean }) {
               ok: 'Esvaziar',
               danger: true,
               onConfirm: async () => {
-                await library.emptyTrash()
-                ui.toast('Lixeira vazia')
+                // one Drive write per item: the line is there from the click
+                const ok = await working('Esvaziando a lixeira…', () => library.emptyTrash(), { message: `Apagando ${items.length} ${items.length === 1 ? 'item' : 'itens'} de vez` })
+                if (ok) ui.toast('Lixeira vazia')
               },
             })
           }
@@ -87,9 +89,9 @@ export function TrashList({ compact = false }: { compact?: boolean }) {
                     className="btn danger"
                     onClick={async () => {
                       setConfirming(null)
-                      if (item.kind === 'folder') await library.deleteFolderForever(item.id)
-                      else await library.deleteFileForever(item.id)
-                      ui.toast('Apagado de vez')
+                      // a file leaves the list at once; a folder takes one write per item inside it
+                      const ok = await working('Apagando de vez…', () => (item.kind === 'folder' ? library.deleteFolderForever(item.id) : library.deleteFileForever(item.id)), { message: item.name })
+                      if (ok) ui.toast('Apagado de vez')
                     }}
                   >
                     Apagar de vez
@@ -104,9 +106,14 @@ export function TrashList({ compact = false }: { compact?: boolean }) {
               <button
                 className="btn"
                 onClick={async () => {
-                  if (item.kind === 'folder') await library.restoreFolder(item.id)
-                  else await library.restoreFile(item.id)
-                  ui.toast(others ? `${others + 1} itens restaurados` : 'Restaurado')
+                  try {
+                    // the item leaves the Lixeira at once; if the write fails it comes back
+                    if (item.kind === 'folder') await library.restoreFolder(item.id)
+                    else await library.restoreFile(item.id)
+                    ui.toast(others ? `${others + 1} itens restaurados` : 'Restaurado')
+                  } catch (error) {
+                    ui.toast(`Não deu para restaurar: ${error instanceof Error ? error.message : 'tente de novo.'}`)
+                  }
                 }}
               >
                 <Icon name="undo" />

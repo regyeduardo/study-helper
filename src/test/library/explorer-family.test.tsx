@@ -132,14 +132,10 @@ describe('contagem nas mães e nas entradas (FR-024)', () => {
     expect(rowOf('derivadas')).not.toHaveTextContent(/\d+ notas?\b/)
   })
 
-  it('a entrada não é linha da pasta; em Entradas, aparece com a sua contagem (FR-073)', () => {
+  it('o que era entrada é linha da pasta, como nota do seu tipo, com a sua contagem (003)', () => {
     renderAt('/biblioteca/fis')
-    expect(listing()).not.toContain('pdf')
-  })
-
-  it('em Entradas, a entrada mostra a sua contagem', () => {
-    renderAt('/entradas')
-    const row = within(screen.getByRole('table', { name: 'Entradas' })).getAllByRole('row').find(item => item.dataset.fileId === 'pdf')!
+    expect(listing()).toContain('pdf')
+    const row = fileRows().find(item => item.dataset.fileId === 'pdf')!
     expect(within(row).getByText('1 nota')).toBeInTheDocument()
   })
 })

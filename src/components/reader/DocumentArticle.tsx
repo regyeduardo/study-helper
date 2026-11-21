@@ -1,7 +1,8 @@
 import { type ReactNode, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 
-import type { FileMeta, FileSidecar, FileType, HighlightColor, RecordingMark } from '@/types/domain'
+import type { FileMeta, FileType, HighlightColor, RecordingMark } from '@/types/domain'
+import { redoOf } from '@/components/dialogs/FromNoteFields'
 import { SaveToDrive } from '@/components/library/SaveToDrive'
 import { SharedBadge } from '@/components/library/SharedBadge'
 import { Icon } from '@/components/ui/Icon'
@@ -10,24 +11,29 @@ import { MasteryMeter, MotherBadge, TypeDot } from '@/components/library/Badges'
 import { DocumentNav } from '@/components/reader/DocumentNav'
 import GithubMarkdownView, { type PaintedQuote, type ReaderSelection } from '@/components/reader/GithubMarkdownView'
 import { MediaPlayer, type MeetingMedia, playAt, useMeetingMedia } from '@/components/reader/MediaPlayer'
+import { MarkList } from '@/components/reader/Markers'
 import { MeetingTabs } from '@/components/reader/MeetingTabs'
 import { MinutesTab } from '@/components/reader/MinutesTab'
+import { NoteSourceRow } from '@/components/reader/NoteSourceRow'
 import { TagSuggestion } from '@/components/reader/TagSuggestion'
+import { saveMarks, useMarks } from '@/components/reader/use-marks'
 import { useDocument } from '@/hooks/use-document'
 import { withImages } from '@/lib/generation/ata'
 import { forReading } from '@/lib/generation/ata-reading'
 import { courseOf } from '@/lib/generation/course-lesson'
 import { usePathName } from '@/hooks/use-library-view'
-import { MEDIA_LABEL, mediaOf } from '@/lib/file-types'
+import { MEDIA_LABEL, mediaOf, readsAsTranscript } from '@/lib/file-types'
 import { newId, nowIso } from '@/lib/ids'
 import { paths } from '@/lib/paths'
-import { transcriptText } from '@/lib/transcription/export'
-import { renameInText, renameSpeaker, withRecorder } from '@/lib/transcription/turns'
+import { renameSpeakerEverywhere } from '@/lib/transcription/rename-everywhere'
+import { SyncLocalBanner } from '@/components/library/SyncLocal'
+import { withRecorder } from '@/lib/transcription/turns'
 import { recorderName, useAccountStore } from '@/stores/account'
 import { type Heading, useDocumentStore } from '@/stores/document'
 import { useJobsStore } from '@/stores/jobs'
-import { useLibraryStore } from '@/stores/library'
+import { liveFiles, useLibraryStore } from '@/stores/library'
 import { useUiStore } from '@/stores/ui'
+import '@/styles/feedback.css'
 import '@/styles/reader.css'
 
 const ORIGIN_LABEL: Record<string, string> = {
@@ -42,8 +48,25 @@ const ORIGIN_LABEL: Record<string, string> = {
 
 const SECOND_TAB: Partial<Record<FileType, string>> = { meeting: 'Ata', class: 'Aula' }
 
-function MediaOnly({ media, onTranscribe }: { media: MeetingMedia; onTranscribe?(): void }) {
+/** A note that comes from the Drive takes a moment to open: a line with the spinner of the tasks, and the shape of a page. */
+function Opening() {
+  return (
+    <div className="note-opening" role="status" aria-label="Abrindo a nota…">
+      <div className="reader-live">
+        <Icon name="sync" className="spinning" />
+        <span>Abrindo a nota…</span>
+      </div>
+      <i className="sk w90" />
+      <i className="sk w75" />
+      <i className="sk w85" />
+      <i className="sk w50" />
+    </div>
+  )
+}
+
+function MediaOnly({ media, marks = [], onMarks, onTranscribe }: { media: MeetingMedia; marks?: RecordingMark[]; onMarks?(marks: RecordingMark[]): void; onTranscribe?(): void }) {
   const player = useRef<HTMLMediaElement | null>(null)
+  const marking = useMarks(marks, onMarks)
   const play = (seconds: number) => {
     const element = player.current
     if (!media.url || !element) return void media.request()
@@ -51,7 +74,8 @@ function MediaOnly({ media, onTranscribe }: { media: MeetingMedia; onTranscribe?
   }
   return (
     <div className="media-only">
-      {media.available ? <MediaPlayer player={player} media={media} onTime={() => undefined} onPlayFrom={play} /> : <div className="banner">{media.notice ?? 'A mídia desta nota não está mais guardada.'}</div>}
+      {media.available ? <MediaPlayer player={player} media={media} onTime={() => undefined} onPlayFrom={play} onMark={marking.add} /> : <div className="banner">{media.notice ?? 'A mídia desta nota não está mais guardada.'}</div>}
+      <MarkList marks={marks} actions={marking.actions} onPlay={media.available ? play : undefined} />
       {onTranscribe && media.available && (
         <div className="media-only-act">
           <button className="btn primary" onClick={onTranscribe}>
@@ -115,9 +139,15 @@ export function DocumentHead({ meta, onInfo, transcribed = false }: { meta: File
   const shared = useLibraryStore(state => Boolean(state.sharedView))
   const timeZone = useLibraryStore(state => state.index.settings.timezone)
   const source = useLibraryStore(state => (meta.parentFileId ? state.files.find(file => file.id === meta.parentFileId && !file.deletedAt) : undefined))
+  const files = useLibraryStore(state => state.files)
+  const folders = useLibraryStore(state => state.folders)
+  const openOverlay = useUiStore(state => state.open)
+  const writing = useJobsStore(state => state.jobs.some(job => job.fileId === meta.id && job.status === 'running'))
   const [details, setDetails] = useState(false)
   const detailsId = useId()
   const folder = !(shared && meta.folderId === null)
+  // a note the AI wrote is written again from here, with what it was made with
+  const redo = shared || writing || meta.status !== 'ready' ? null : redoOf(meta, files, folders)
   return (
     <div className="doc-head">
       <h1>{meta.name}</h1>
@@ -142,10 +172,16 @@ export function DocumentHead({ meta, onInfo, transcribed = false }: { meta: File
           <span aria-hidden="true">·</span>
           <MasteryMeter value={meta.mastery} />
         </span>
-        {(folder || meta.origin || meta.tags.length > 0) && (
+        {(folder || meta.origin || meta.source || meta.tags.length > 0) && (
           <button className="doc-more" aria-expanded={details} aria-controls={detailsId} onClick={() => setDetails(open => !open)}>
             {details ? 'Ocultar' : 'Detalhes'}
             <Icon name="chev" />
+          </button>
+        )}
+        {redo && (
+          <button className="doc-redo" title="Gerar esta nota de novo, escolhendo o modelo e a instrução" onClick={() => openOverlay(redo)}>
+            <Icon name="sync" />
+            Refazer…
           </button>
         )}
       </div>
@@ -161,7 +197,10 @@ export function DocumentHead({ meta, onInfo, transcribed = false }: { meta: File
               </dd>
             </div>
           )}
-          {meta.origin && (
+          {/* a link, a text or a topic kept in the note: where it came from, and "Virar entrada" */}
+          {meta.source ? (
+            <NoteSourceRow meta={{ ...meta, source: meta.source }} />
+          ) : meta.origin && (
             <div>
               <dt>Origem</dt>
               <dd>
@@ -206,10 +245,12 @@ function SelectionPopover({ fileId, selection, onDone }: SelectionPopoverProps) 
   const ui = useUiStore()
   const highlight = async (color: HighlightColor, kind: 'highlight' | 'note') => {
     const at = nowIso()
-    await saveHighlight(fileId, { id: newId(), kind, quote: selection.text, text: '', color, startOffset: null, endOffset: null, createdAt: at, updatedAt: at })
+    // the highlight is on the text at once; the bar goes away and the toast comes while the Drive writes (if it refuses, the mark goes back)
+    const saving = saveHighlight(fileId, { id: newId(), kind, quote: selection.text, text: '', color, startOffset: null, endOffset: null, createdAt: at, updatedAt: at })
     onDone()
     if (kind === 'note') ui.set({ inspectorTab: 'notes', rightOpen: true, columnsSheet: true, focusPop: 'notes' })
     else ui.toast('Destacado')
+    await saving.catch(error => ui.toast(`Não deu para salvar: ${error instanceof Error ? error.message : 'tente de novo.'}`))
   }
   // On touch the browser's own menu sits above the selection, so the bar goes below it, past the handles.
   const touch = window.matchMedia?.('(pointer: coarse)').matches
@@ -235,6 +276,16 @@ function SelectionPopover({ fileId, selection, onDone }: SelectionPopoverProps) 
       >
         <Icon name="bulb" />
         Explicar isto
+      </button>
+      {/* a link or a passage becomes a note of its own, the child of this one */}
+      <button
+        onClick={() => {
+          ui.open({ kind: 'from-selection', fileId, excerpt: selection.text })
+          onDone()
+        }}
+      >
+        <Icon name="plus" />
+        Gerar a partir disto
       </button>
     </div>
   )
@@ -285,7 +336,10 @@ function HeadingExplain({ fileId, heading, onDone, onHover }: { fileId: string; 
 function ExplanationMenu({ ids, rect, onDone }: { ids: string[]; rect: DOMRect; onDone(): void }) {
   const navigate = useNavigate()
   const files = useLibraryStore(state => state.files)
-  const items = ids.map(id => files.find(file => file.id === id && !file.deletedAt)).filter((file): file is FileMeta => Boolean(file))
+  const folders = useLibraryStore(state => state.folders)
+  // only what is out of the Lixeira: not the item itself, nor the folder it is in (nor that folder's parents)
+  const live = liveFiles(files, folders)
+  const items = ids.map(id => live.find(file => file.id === id)).filter((file): file is FileMeta => Boolean(file))
   return (
     <Popover x={rect.left} y={rect.bottom + 6} onClose={onDone} label="Escolha a explicação">
       <div className="mh">{items.length} explicações neste trecho</div>
@@ -313,15 +367,12 @@ export function DocumentBody({ fileId, compact = false }: { fileId: string; comp
   const live = useJobsStore(state => state.live[fileId])
   const job = useJobsStore(state => state.jobs.find(item => item.fileId === fileId && item.status === 'running'))
   const cancel = useJobsStore(state => state.cancel)
-  const generatePending = useJobsStore(state => state.generatePending)
   const search = new URLSearchParams(useLocation().search)
   const asked = Number(search.get('t'))
   // the words of the search that opened the note (FR-074)
   const found = search.get('busca')
   const startAt = Number.isFinite(asked) && asked > 0 ? asked : undefined
   const redoTranscript = useJobsStore(state => state.redoTranscript)
-  const updateSidecar = useLibraryStore(state => state.updateSidecar)
-  const saveContent = useLibraryStore(state => state.saveContent)
   const media = useMeetingMedia(meta)
   const source = useLibraryStore(state => (meta?.parentFileId ? state.files.find(file => file.id === meta.parentFileId && !file.deletedAt) : undefined))
   const sourceMedia = useMeetingMedia(source && mediaOf(source) !== 'text' ? source : null)
@@ -337,9 +388,9 @@ export function DocumentBody({ fileId, compact = false }: { fileId: string; comp
 
   const quotes = useMemo<PaintedQuote[]>(() => {
     const painted: PaintedQuote[] = (opened?.sidecar.highlights ?? []).map(item => ({ quote: item.quote, color: item.color ?? 'yellow' }))
-    for (const child of files.filter(file => file.parentFileId === fileId && file.sourceExcerpt && !file.deletedAt)) painted.push({ quote: child.sourceExcerpt!, color: 'explained', targetId: child.id, title: child.name, generating: child.status === 'generating' })
+    for (const child of liveFiles(files, folders).filter(file => file.parentFileId === fileId && file.sourceExcerpt)) painted.push({ quote: child.sourceExcerpt!, color: 'explained', targetId: child.id, title: child.name, generating: child.status === 'generating' })
     return painted
-  }, [opened?.sidecar.highlights, files, fileId])
+  }, [opened?.sidecar.highlights, files, folders, fileId])
 
   const handoff = ui.handoffFileId === fileId
   const showing = Boolean(job || opened)
@@ -350,7 +401,17 @@ export function DocumentBody({ fileId, compact = false }: { fileId: string; comp
   }, [handoff, showing])
 
   const onHeadings = useCallback((headings: { id: string; level: number; text: string }[]) => setHeadings(fileId, headings), [fileId, setHeadings])
-  const onQuoteClick = useCallback((targetIds: string[], rect: DOMRect) => (targetIds.length > 1 ? setChoosing({ ids: targetIds, rect }) : navigate(paths.file(targetIds[0]))), [navigate])
+  // The mark on screen can be a moment behind the library: what went to the Lixeira since is not opened.
+  const onQuoteClick = useCallback(
+    (targetIds: string[], rect: DOMRect) => {
+      const state = useLibraryStore.getState()
+      const alive = new Set(liveFiles(state.files, state.folders).map(file => file.id))
+      const ids = targetIds.filter(id => alive.has(id))
+      if (ids.length > 1) setChoosing({ ids, rect })
+      else if (ids.length) navigate(paths.file(ids[0]))
+    },
+    [navigate],
+  )
   const closeChoice = useCallback(() => setChoosing(null), [])
   // The lamp of a heading: shown while the mouse is on the heading or on the lamp, with a moment to go from one to the other.
   const onHeading = useCallback((next: ReaderSelection | null) => {
@@ -369,39 +430,36 @@ export function DocumentBody({ fileId, compact = false }: { fileId: string; comp
   const recording = opened?.sidecar.recording && withRecorder(opened.sidecar.recording, readOnly ? '' : recorderName(useAccountStore.getState().active()))
   const transcribed = Boolean(recording?.blocks.length)
   const mediaNote = mediaOf(meta) !== 'text'
-  const secondLabel = meta.type === 'reading' || !(live || meta.status === 'ready') ? undefined : SECOND_TAB[meta.type]
+  // the file comes from the Drive and is not here yet: the page says so, and offers nothing that needs the file open
+  const opening = !opened && !live && !job && !error && meta.status === 'ready'
+  const secondLabel = readsAsTranscript(meta) || !(live || meta.status === 'ready') ? undefined : SECOND_TAB[meta.type]
   const ataDocument = opened?.sidecar.documents?.filter(item => item.kind === 'ata').at(-1)
   const viewer = live ? (
     <GithubMarkdownView markdown={live} live />
-  ) : opened && opened.content && !(recording && meta.type === 'reading') ? (
+  ) : opened && opened.content && !(recording && readsAsTranscript(meta)) ? (
     <GithubMarkdownView markdown={ataDocument && !recording ? withImages(forReading(opened.content), ataDocument.images) : opened.content} quotes={quotes} onSelection={setSelection} onQuoteClick={onQuoteClick} onHeadings={onHeadings} onHeading={onHeading} found={found} />
   ) : null
   const ataView = ataDocument ? <AtaTab markdown={withImages(forReading(ataDocument.markdown), ataDocument.images)} onHeadings={onHeadings} /> : undefined
+  // every speech of that voice, the transcript, the note's text and the notes born of it (FR-060)
   const rename = async (speakerId: string, name: string) => {
     if (!recording || !opened) return
-    const renamed = renameSpeaker(recording, speakerId, name)
-    const before = recording.speakers.find(speaker => speaker.id === speakerId)?.name
-    await updateSidecar(fileId, sidecar => ({ ...sidecar, recording: renamed }))
-    const content = meta.type === 'reading' ? transcriptText(renamed).trim() : before ? renameInText(opened.content, before, name) : opened.content
-    if (content !== opened.content) await saveContent(fileId, content)
+    await renameSpeakerEverywhere(fileId, speakerId, name)
   }
 
-  const saveMarks = (marks: RecordingMark[]) => {
-    const withMarks = (sidecar: FileSidecar): FileSidecar => (sidecar.recording ? { ...sidecar, recording: { ...sidecar.recording, marks } } : sidecar)
-    useLibraryStore.setState(state => (state.opened[fileId] ? { opened: { ...state.opened, [fileId]: { ...state.opened[fileId], sidecar: withMarks(state.opened[fileId].sidecar) } } } : {}))
-    void updateSidecar(fileId, withMarks)
-  }
+  const keepMarks = (marks: RecordingMark[]) => saveMarks(fileId, marks)
 
   return (
     <article className="article" style={compact ? { padding: 0 } : undefined}>
       {!readOnly && <TagSuggestion meta={meta} />}
+      {!readOnly && <SyncLocalBanner fileId={fileId} />}
       <DocumentHead meta={meta} onInfo={showInfo} transcribed={transcribed} />
       {error && <div className="banner">{error}</div>}
       {meta.status !== 'ready' && !job && (
         <div className="empty" style={{ margin: '24px auto' }}>
           <Icon name="file" />
           <div>{courseOf(folders, meta.folderId) ? 'Esta aula ainda não foi escrita. O recorte do material já está guardado.' : 'A geração não terminou. O material ficou guardado para tentar de novo.'}</div>
-          <button className="btn primary" hidden={readOnly} onClick={() => void generatePending(meta.id)}>
+          {/* who writes it (and what to focus on) is chosen before it starts */}
+          <button className="btn primary" hidden={readOnly} onClick={() => ui.open({ kind: 'pending', fileId: meta.id })}>
             {courseOf(folders, meta.folderId) ? 'Gerar agora' : 'Tentar de novo'}
           </button>
         </div>
@@ -415,8 +473,10 @@ export function DocumentBody({ fileId, compact = false }: { fileId: string; comp
           </button>
         </div>
       )}
-      {mediaNote && !transcribed && !live && !opened?.content ? (
-        <MediaOnly media={media} onTranscribe={readOnly || job ? undefined : () => ui.open({ kind: 'transcribe', fileId: meta.id })} />
+      {opening ? (
+        <Opening />
+      ) : mediaNote && !transcribed && !live && !opened?.content ? (
+        <MediaOnly media={media} marks={opened?.sidecar.recording?.marks} onMarks={readOnly ? undefined : keepMarks} onTranscribe={readOnly || job ? undefined : () => ui.open({ kind: 'transcribe', fileId: meta.id })} />
       ) : recording && transcribed ? (
         <MeetingTabs
           key={fileId}
@@ -427,10 +487,10 @@ export function DocumentBody({ fileId, compact = false }: { fileId: string; comp
           ata={ataView}
           onChooseParts={readOnly || job ? undefined : () => ui.open({ kind: 'ata-parts', fileId: meta.id })}
           onRename={readOnly ? undefined : (speakerId, name) => void rename(speakerId, name)}
-          onMarks={readOnly ? undefined : saveMarks}
+          onMarks={readOnly ? undefined : keepMarks}
           startAt={startAt}
-          onGenerate={readOnly || job || meta.status !== 'ready' || meta.type !== 'reading' ? undefined : agent => ui.open({ kind: 'generate', fileId: meta.id, agent })}
-          onRedoTranscript={readOnly || job ? undefined : instruction => void redoTranscript(meta.id, instruction)}
+          onGenerate={readOnly || job || meta.status !== 'ready' || !readsAsTranscript(meta) ? undefined : agent => ui.open({ kind: 'generate', fileId: meta.id, agent })}
+          onRedoTranscript={readOnly || job ? undefined : (instruction, model) => void redoTranscript(meta.id, instruction, model)}
           onRedo={readOnly || job || meta.status !== 'ready' || (meta.type !== 'meeting' && meta.type !== 'class') ? undefined : () => ui.open({ kind: 'generate', fileId: meta.id, agent: meta.type === 'meeting' ? 'meeting' : 'lesson', redo: true })}
         />
       ) : meta.parentFileId && SECOND_TAB[meta.type] && viewer && sourceMedia.available ? (
@@ -438,7 +498,7 @@ export function DocumentBody({ fileId, compact = false }: { fileId: string; comp
       ) : meta.parentFileId && SECOND_TAB[meta.type] && viewer ? (
         <MinutesTab onMoment={seconds => navigate(`${paths.file(meta.parentFileId!)}?t=${seconds}`)}>{viewer}</MinutesTab>
       ) : (
-        (viewer ?? (!job && meta.status === 'ready' && !opened && <div className="muted">Abrindo…</div>))
+        viewer
       )}
       {selection && !readOnly && <SelectionPopover fileId={fileId} selection={selection} onDone={() => setSelection(null)} />}
       {heading && !selection && !readOnly && <HeadingExplain fileId={fileId} heading={heading} onDone={closeLamp} onHover={onLampHover} />}

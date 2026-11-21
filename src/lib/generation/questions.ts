@@ -2,6 +2,7 @@ import { LONG_REPLY_MAX_TOKENS } from '@/controllers/ai.controller'
 import { finishQuestions, type RawQuestion, reviewQuestions, validateQuestions } from '@/lib/generation/exam-questions'
 import { diagramSchema } from '@/lib/generation/diagram-prompt'
 import { extractQuestions } from '@/lib/generation/pipeline'
+import { withInstruction } from '@/lib/generation/instruction'
 import { PROMPTS } from '@/lib/generation/prompts.data'
 import type { GenerationSession } from '@/lib/generation/session'
 import { EXAM_SIZE, searchWebQuestions, type WebOutcome } from '@/lib/generation/web-questions'
@@ -71,7 +72,7 @@ function withoutSource(question: RawQuestion): RawQuestion {
   return copy
 }
 
-/** `web`: the Questões da web model; its real questions come first and the AI writes the rest. Without it (or when the search fails) the AI writes them all. */
+/** `web`: the Questões da web model; its real questions come first and the AI writes the rest. Without it (or when the search fails) the AI writes them all. `instruction`: what the person asked of this exam. */
 export async function generateQuestions(
   markdown: string,
   title: string,
@@ -79,6 +80,7 @@ export async function generateQuestions(
   session: GenerationSession,
   wrongQuestions?: WrongQuestion[],
   web: AiSettings | null = null,
+  instruction = '',
 ): Promise<{ questions: RawQuestion[]; raw: string; web: WebOutcome }> {
   const trimmed = truncateForQuestions(markdown)
   const prep = (await session.chat(`# ${title}\n\n${trimmed}`, prepPrompt(trimmed.length))).trim() || trimmed
@@ -92,7 +94,7 @@ export async function generateQuestions(
     content += `\n\n## Questões da web que já estão na prova\n\n${JSON.stringify(found.questions.map(question => question.enunciado))}`
     prompt += webRoom(found.questions.length)
   }
-  const { questions, raw } = await askForQuestions(content, prompt, session)
+  const { questions, raw } = await askForQuestions(withInstruction(content, instruction), prompt, session)
   const reviewed = validateQuestions(await reviewQuestions(questions, session)).map(withoutSource)
   return { questions: finishQuestions([...found.questions, ...reviewed]), raw, web: found.outcome }
 }

@@ -6,11 +6,13 @@ import { Dialog } from '@/components/ui/Dialog'
 import { Icon } from '@/components/ui/Icon'
 import { ModelPick, useModelChoice } from '@/components/dialogs/ModelPick'
 import { FolderField } from '@/components/dialogs/FolderChooser'
+import { useGoToNew } from '@/components/dialogs/go-to-new'
+import { useBusy } from '@/hooks/use-busy'
 import { DEFAULT_STORAGE_LIMIT_BYTES } from '@/lib/defaults'
 import { storedFromRaw } from '@/lib/exam'
 import { importDocument } from '@/lib/imports'
 import { paths } from '@/lib/paths'
-import { transferLocalToCurrent } from '@/lib/storage/transfer'
+import { bringLocalToAccount, transferLocalToCurrent } from '@/lib/storage/transfer'
 import { useAccountStore } from '@/stores/account'
 import { useJobsStore } from '@/stores/jobs'
 import { useLibraryStore } from '@/stores/library'
@@ -44,9 +46,21 @@ export function ExplainDialog({ fileId, excerpt }: { fileId: string; excerpt: st
   const [mode, setMode] = useState<'context' | 'concept'>('context')
   const [prompt, setPrompt] = useState('')
   const choice = useModelChoice('explicacao')
+  const [busy, run] = useBusy()
+  const [error, setError] = useState<string | null>(null)
   // The person stays where she is reading: the passage shows it is being explained, and a toast opens the explanation when it is ready.
   const go = async () => {
-    const id = await explainSelection(fileId, excerpt, prompt, mode, choice.model || null)
+    setError(null)
+    // reading the note and making the file can take seconds in the Drive: the button answers at once and does not run twice
+    const id = await run(async () => {
+      try {
+        return await explainSelection(fileId, excerpt, prompt, mode, choice.model || null)
+      } catch (failure) {
+        setError(failure instanceof Error ? failure.message : 'Não deu para gerar a explicação.')
+        return undefined
+      }
+    })
+    if (!id) return
     ui.close()
     ui.toast('Gerando a explicação. Você pode continuar lendo.')
     const result = await written(id)
@@ -62,9 +76,9 @@ export function ExplainDialog({ fileId, excerpt }: { fileId: string; excerpt: st
           <button className="btn quiet" onClick={ui.close}>
             Cancelar
           </button>
-          <button className="btn primary" disabled={!choice.ready} onClick={() => void go()}>
-            <Icon name="bulb" />
-            Gerar explicação
+          <button className="btn primary" disabled={!choice.ready || busy} onClick={() => void go()}>
+            {busy ? <Icon name="sync" className="spinning" /> : <Icon name="bulb" />}
+            {busy ? 'Gerando…' : 'Gerar explicação'}
           </button>
         </>
       }
@@ -94,6 +108,12 @@ export function ExplainDialog({ fileId, excerpt }: { fileId: string; excerpt: st
           <textarea className="input" id="ex-prompt" value={prompt} onChange={event => setPrompt(event.target.value)} placeholder="Ex.: por que isso vale só para índice composto?" />
         </div>
         <ModelPick choice={choice} />
+        {error && (
+          <div className="banner" role="alert">
+            <Icon name="warn" />
+            <span>{error}</span>
+          </div>
+        )}
       </div>
     </Dialog>
   )
@@ -296,9 +316,12 @@ export function ImportDialog() {
 export function CourseProposalDialog() {
   const proposal = useJobsStore(state => state.proposals[0])
   const { acceptCourse, declineCourse } = useJobsStore()
-  const navigate = useNavigate()
+  // with a note or an entrada open, she stays there and a notice offers what was made
+  const goToNew = useGoToNew()
   const [folderId, setFolderId] = useState<string | null>(proposal?.request.folderId ?? null)
-  const [busy, setBusy] = useState(false)
+  // which button was clicked, while the folders and notes are being made (many writes): it says what it is doing
+  const [busy, setBusy] = useState<'one' | 'course' | null>(null)
+  const [error, setError] = useState<string | null>(null)
   if (!proposal) return null
   const analysis: CourseAnalysis = proposal.analysis
   return (
@@ -308,27 +331,41 @@ export function CourseProposalDialog() {
         <>
           <button
             className="btn"
-            disabled={busy}
+            disabled={Boolean(busy)}
             onClick={async () => {
-              setBusy(true)
-              const id = await declineCourse(proposal)
-              setBusy(false)
-              navigate(paths.file(id))
+              setBusy('one')
+              setError(null)
+              try {
+                const id = await declineCourse(proposal)
+                setBusy(null)
+                goToNew(paths.file(id), 'Gerando a Aula')
+              } catch (failure) {
+                setBusy(null)
+                setError(failure instanceof Error ? failure.message : 'Não deu para criar a aula.')
+              }
             }}
           >
-            Não, uma aula só
+            {busy === 'one' && <Icon name="sync" className="spinning" />}
+            {busy === 'one' ? 'Criando a aula…' : 'Não, uma aula só'}
           </button>
           <button
             className="btn primary"
-            disabled={busy}
+            disabled={Boolean(busy)}
             onClick={async () => {
-              setBusy(true)
-              const id = await acceptCourse(proposal, folderId)
-              setBusy(false)
-              navigate(paths.folder(id))
+              setBusy('course')
+              setError(null)
+              try {
+                const id = await acceptCourse(proposal, folderId)
+                setBusy(null)
+                goToNew(paths.folder(id), 'A pasta com as aulas foi criada')
+              } catch (failure) {
+                setBusy(null)
+                setError(failure instanceof Error ? failure.message : 'Não deu para criar as aulas.')
+              }
             }}
           >
-            Criar a pasta com as aulas
+            {busy === 'course' && <Icon name="sync" className="spinning" />}
+            {busy === 'course' ? 'Criando as aulas…' : 'Criar a pasta com as aulas'}
           </button>
         </>
       }
@@ -344,6 +381,12 @@ export function CourseProposalDialog() {
           <span className="lab">Onde criar a pasta</span>
           <FolderField value={folderId} onChange={setFolderId} title="Onde criar a pasta" />
         </div>
+        {error && (
+          <div className="banner" role="alert">
+            <Icon name="warn" />
+            <span>{error}</span>
+          </div>
+        )}
       </div>
     </Dialog>
   )
@@ -390,6 +433,18 @@ export function SendLocalDialog() {
       setBusy(false)
     }
   }
+  // T029: the profile becomes this account's Local, only in this browser, without sending anything
+  const bring = async () => {
+    setBusy(true)
+    try {
+      const count = await bringLocalToAccount()
+      setDone(`${count} item(ns) agora estão no Local desta conta, só neste navegador. Nada foi enviado. Use “Sincronizar” quando quiser levar para o Drive.`)
+    } catch (error) {
+      setDone(error instanceof Error ? error.message : 'Não deu para trazer.')
+    } finally {
+      setBusy(false)
+    }
+  }
   return (
     <Dialog
       title="Enviar o que está neste navegador para o seu Drive?"
@@ -402,17 +457,20 @@ export function SendLocalDialog() {
         ) : (
           <>
             <button className="btn" onClick={ui.close} disabled={busy}>
-              Manter só aqui
+              Manter no perfil sem login
+            </button>
+            <button className="btn" onClick={() => void bring()} disabled={busy || !ready}>
+              Trazer para esta conta, só neste navegador
             </button>
             <button className="btn primary" onClick={() => void send()} disabled={busy || !ready}>
-              {busy ? 'Enviando…' : 'Enviar'}
+              {busy ? 'Enviando…' : 'Enviar para o Drive'}
             </button>
           </>
         )
       }
     >
       <div className="db">
-        <span className="muted">{done ?? 'O perfil Local tem arquivos. Enviar copia tudo para a pasta .sync-study-helper; o que tiver o mesmo nome dos dois lados cai na janela de conflito. Não enviar mantém tudo no perfil Local, que continua no menu da conta.'}</span>
+        <span className="muted">{done ?? 'O perfil sem login tem arquivos. “Enviar para o Drive” copia tudo para o seu Google Drive; o que tiver o mesmo nome dos dois lados cai na janela de conflito. “Trazer para esta conta” copia tudo para o Local desta conta, sem enviar nada: fica só neste navegador. Em todos os casos o perfil sem login continua como está, no menu da conta.'}</span>
       </div>
     </Dialog>
   )

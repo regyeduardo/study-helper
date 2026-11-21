@@ -2,6 +2,7 @@ import { diffWords } from 'diff'
 import { type MouseEvent, type ReactNode, useEffect, useRef, useState } from 'react'
 
 import type { RecordingData, RecordingMark, RecordingSpeaker, TranscriptBlock } from '@/types/domain'
+import { ModelPick, useModelChoice } from '@/components/dialogs/ModelPick'
 import { type MarkActions, MarkGlyph, Markers } from '@/components/reader/Markers'
 import { Icon } from '@/components/ui/Icon'
 import { newId } from '@/lib/ids'
@@ -17,7 +18,11 @@ interface TranscriptTabProps {
   onPlay?(seconds: number): void
   onRename?(speakerId: string, name: string): void
   onMarks?(marks: RecordingMark[]): void
-  onRedo?(instruction: string): void
+  /** The mark being edited, when the page keeps it: a mark made at the player opens for editing here. */
+  editing?: string | null
+  onEditing?(id: string | null): void
+  /** "Refazer a transcrição" with what is wrong, by the model chosen there (null: the default). */
+  onRedo?(instruction: string, model: string | null): void
   /** Redo from scratch: the same window as transcribing for the first time (entry page). */
   onRetranscribe?(): void
   /** The second of the speech a search found (FR-074): marked, and scrolled to. */
@@ -109,8 +114,10 @@ function Who({ speaker, onRename }: { speaker: RecordingSpeaker; onRename?(speak
   )
 }
 
-function RedoBox({ onRedo, onClose }: { onRedo(instruction: string): void; onClose(): void }) {
+function RedoBox({ onRedo, onClose }: { onRedo(instruction: string, model: string | null): void; onClose(): void }) {
   const [instruction, setInstruction] = useState('')
+  // who redoes it is chosen here, with the default preselected
+  const choice = useModelChoice('estudo')
   return (
     <div className="tr-redo" style={{ marginTop: 10 }}>
       <textarea
@@ -122,12 +129,13 @@ function RedoBox({ onRedo, onClose }: { onRedo(instruction: string): void; onClo
         value={instruction}
         onChange={event => setInstruction(event.target.value)}
       />
+      <ModelPick choice={choice} />
       <div className="tr-tools">
         <button
           className="btn primary"
-          disabled={!instruction.trim()}
+          disabled={!instruction.trim() || !choice.ready}
           onClick={() => {
-            onRedo(instruction.trim())
+            onRedo(instruction.trim(), choice.model || null)
             onClose()
           }}
         >
@@ -141,8 +149,10 @@ function RedoBox({ onRedo, onClose }: { onRedo(instruction: string): void; onClo
   )
 }
 
-export function TranscriptTab({ recording, name = 'reunião', time = null, onPlay, onRename, onMarks, onRedo, onRetranscribe, found = null }: TranscriptTabProps) {
-  const [editing, setEditing] = useState<string | null>(null)
+export function TranscriptTab({ recording, name = 'reunião', time = null, onPlay, onRename, onMarks, editing: keptEditing, onEditing, onRedo, onRetranscribe, found = null }: TranscriptTabProps) {
+  const [ownEditing, setOwnEditing] = useState<string | null>(null)
+  const editing = onEditing ? (keptEditing ?? null) : ownEditing
+  const setEditing = onEditing ?? setOwnEditing
   const [redoing, setRedoing] = useState(false)
   const ids = recording.speakers.map(speaker => speaker.id)
   const playing = time === null ? -1 : recording.blocks.findLastIndex(block => block.start <= time)

@@ -1,7 +1,7 @@
 import { useState } from 'react'
 
 import type { FileMeta } from '@/types/domain'
-import { mediaOf } from '@/lib/file-types'
+import { mediaOf, readsAsTranscript } from '@/lib/file-types'
 import { listLocalMedia, removeLocalMedia } from '@/lib/recording/media-library'
 import { removeStoredSource } from '@/lib/storage/source-storage'
 import { transcriptText } from '@/lib/transcription/export'
@@ -51,7 +51,7 @@ export function NoteParts({ meta }: { meta: FileMeta }) {
     }
     if (part === 'transcript') {
       await library.updateSidecar(meta.id, sidecar => ({ ...sidecar, recording: undefined, transcript: undefined }))
-      if (meta.type === 'reading') await library.saveContent(meta.id, '')
+      if (readsAsTranscript(meta)) await library.saveContent(meta.id, '')
     }
     if (part === 'generated') {
       await library.saveContent(meta.id, transcript.trim())

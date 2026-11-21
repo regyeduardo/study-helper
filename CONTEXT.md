@@ -6,20 +6,24 @@ App de estudo e reuniões: o que a pessoa traz vira notas, e das notas saem outr
 
 ### O que existe na biblioteca
 
-**Entrada**:
-O material de onde uma nota nasce: arquivo, link, mídia (áudio, vídeo, gravação de reunião), texto colado ou tema. É um item próprio da biblioteca, com o nível do que foi guardado (**Só o registro** ou **Registro e arquivo**); continua existindo depois que a mídia é apagada.
-_Avoid_: input, fonte, origem
+**Nota**:
+Tudo o que fica dentro das pastas, com o seu tipo (Aula, Ata, Explicação, Leitura, Vídeo, Áudio, PDF, Link, Texto e os demais) e os seus **Metadados**. Nasce de outra **Nota**, é trazida pela pessoa (um vídeo, um PDF, um link) ou é escrita direto. As que guardam um arquivo têm o nível do que foi guardado (**Só o registro** ou **Registro e arquivo**).
+_Avoid_: arquivo, documento, item, entrada
+
+**Nota de mídia**:
+Uma **Nota** do tipo Vídeo ou Áudio. Tem a página especial onde se toca a mídia, se transcreve e se veem as **Notas filhas**; continua existindo, marcada como mídia apagada, se a mídia for apagada.
+_Avoid_: entrada de mídia, mídia (como item da biblioteca)
+
+**Gravação**:
+Uma **Nota de mídia** que o próprio app gravou (reunião, tela ou microfone). Aparece na tela Gravações; um áudio ou vídeo trazido pela pessoa é **Nota de mídia**, mas não é **Gravação**.
+_Avoid_: entrada gravada, captura
 
 **Transcrição**:
-O texto falado de uma mídia, com quem falou e quando. Faz parte da **Entrada** de mídia, não é **Nota**, e continua lá se a mídia for apagada.
+O texto falado de uma mídia, com quem falou e quando. Faz parte da **Nota de mídia**, não é **Nota** própria, e continua lá se a mídia for apagada.
 _Avoid_: nota de transcrição
 
-**Nota**:
-O texto que a pessoa lê, com seus **Metadados**; nasce de uma **Entrada**, de outra **Nota** ou é escrita direto.
-_Avoid_: arquivo, documento, item
-
 **Nota filha**:
-Uma **Nota** feita a partir de outra **Nota** (ex.: uma Explicação, uma Aula ou uma Ata gerada de uma nota); uma nota tem zero ou várias notas filhas.
+Uma **Nota** feita a partir de outra **Nota**, de qualquer tipo (ex.: uma Ata gerada de uma **Nota de mídia**, uma Explicação gerada de uma Aula); uma nota tem zero ou várias notas filhas.
 _Avoid_: nota derivada, sub-nota
 
 **Artefato**:
@@ -40,8 +44,8 @@ _Avoid_: simulado, quiz, banco de questões
 
 ## Relationships
 
-- Uma **Entrada** gera uma ou mais **Notas** e é a raiz delas: as notas feitas dela ficam embaixo dela, e as **Notas filhas** embaixo das notas.
-- Uma **Nota** tem zero ou várias **Notas filhas**, e cada nota filha tem uma única nota mãe.
+- Uma **Nota** tem zero ou várias **Notas filhas** (as notas feitas dela), e cada nota filha tem uma única nota mãe; a família pode ter vários níveis (filhas, netas).
+- Toda **Gravação** é uma **Nota de mídia**; nem toda **Nota de mídia** é **Gravação**.
 - Uma **Nota** tem zero ou vários **Artefatos**; um artefato pertence a uma única nota.
 - Um **Artefato** tem zero ou vários **Subartefatos** (um mapa mental tem a sua conversa); a conversa do Tutor é artefato da nota, não de um mapa.
 
@@ -52,4 +56,5 @@ _Avoid_: simulado, quiz, banco de questões
 
 ## Flagged ambiguities
 
-- "Input" foi usado para **Entrada**. Uma nota escrita direto não é **Entrada**: as notas feitas dela são **Notas filhas**.
+- "Entrada" é termo aposentado (desde 20/11/2026): o que era Entrada (vídeo, áudio, PDF, link, texto colado, tema) agora é **Nota** do seu tipo, e as notas feitas dela são **Notas filhas**. A tela "Entradas" virou "Gravações". "Input" também era usado para Entrada.
+- "Gravação" era usada para qualquer áudio ou vídeo (ex.: "Gravações sem transcrição"); agora **Gravação** é só o que o app gravou, e o geral é **Nota de mídia**.

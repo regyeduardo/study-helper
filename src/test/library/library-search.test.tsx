@@ -163,7 +163,7 @@ describe('o clique leva ao trecho (FR-074)', () => {
     expect(Element.prototype.scrollIntoView).toHaveBeenCalled()
     // leaving the page runs the clean-ups of its effects
     fireEvent.click(screen.getByRole('button', { name: /^Início/ }))
-    expect(await screen.findByRole('region', { name: 'Últimas notas' })).toBeInTheDocument()
+    expect(await screen.findByRole('region', { name: 'Últimas coisas feitas' })).toBeInTheDocument()
   })
 
   it('numa nota, abre a nota com o termo da busca', async () => {

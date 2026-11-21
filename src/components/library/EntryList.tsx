@@ -1,4 +1,4 @@
-// Navegação de entradas (FR-026): every live entrada, whatever its folder, with its type, folder, date and what was born of it.
+// Gravações (003, FR-050): o que o app gravou, de qualquer pasta, com o mesmo desenho da antiga tela de Entradas: tipo, pasta, data e o que nasceu.
 import { useEffect, useMemo, useState } from 'react'
 
 import { plural, SearchBox, sortFiles, type SortColumn, type SortState } from '@/components/library/Explorer'
@@ -11,8 +11,8 @@ import { entryKind } from '@/components/library/entry-kind'
 import { Icon } from '@/components/ui/Icon'
 import { useIsNarrow } from '@/hooks/use-is-narrow'
 import { useFilterSource, useLiveLibrary, useSearchHits, useSearchPending } from '@/hooks/use-library-view'
-import { isNote } from '@/lib/family'
-import { filterLibrary, NO_FILTERS, withoutFilter } from '@/lib/library-filters'
+import { isRecording } from '@/lib/file-types'
+import { filterLibrary, type ItemKind, NO_FILTERS, withoutFilter } from '@/lib/library-filters'
 import { searchWords } from '@/lib/library-search'
 import { paths } from '@/lib/paths'
 import { useUiStore } from '@/stores/ui'
@@ -22,7 +22,9 @@ import '@/styles/entry-list.css'
 // the name lives in entry-kind.ts (the folder view uses it too); it is still imported from here by the entry page and the share dialog
 export { entryKind }
 
-/** The list of entradas (FR-026, FR-044): the explorer's filter panel and table, over every live entrada of the library, whatever its folder. */
+const RECORDED_KINDS = new Set<ItemKind>(['video', 'audio'])
+
+/** The list of recordings (FR-050): the explorer's filter panel and table, over every live media note the app recorded, whatever its folder. */
 export function EntryList() {
   const ui = useUiStore()
   const { filters, selection, query } = ui
@@ -33,16 +35,18 @@ export function EntryList() {
   const draggable = !isTouchScreen()
   const [sort, setSort] = useState<SortState>({ column: 'created', ascending: false })
   const [drawerOpen, setDrawerOpen] = useState(false)
-  const every = useMemo(() => files.filter(file => !isNote(file)), [files])
-  // the same search as the folders (FR-074), only among the entradas
+  const every = useMemo(() => files.filter(isRecording), [files])
+  // the same search as the folders (FR-074), only among the recordings
   const hits = useSearchHits(query)
   const pending = useSearchPending()
   const searching = searchWords(query).length > 0
   const found = useMemo(() => (searching ? every.filter(file => hits.has(file.id)) : every), [searching, every, hits])
   const folderName = useMemo(() => new Map(folders.map(folder => [folder.id, folder.name])), [folders])
-  // the scope belongs to the explorer: here it is always the entradas, and what the panel changes keeps the explorer's own
+  // the scope belongs to the explorer: here it is always the notes that keep a source, and what the panel changes keeps the explorer's own
   const result = useMemo(() => filterLibrary({ ...source, only: new Set(found.map(file => file.id)) }, { ...filters, scope: 'entradas' }), [source, found, filters])
   const rows = useMemo(() => sortFiles(result.items, sort), [result.items, sort])
+  // a recording is only ever a Vídeo or an Áudio: the other kinds would be options that never apply
+  const facets = useMemo(() => ({ ...result.facets, kinds: result.facets.kinds.filter(option => RECORDED_KINDS.has(option.id)) }), [result.facets])
   const visible = useMemo(() => new Set(rows.map(file => file.id)), [rows])
 
   // What leaves the table leaves the selection: "Apagar" never acts on what is out of sight.
@@ -55,14 +59,14 @@ export function EntryList() {
   if (!every.length) {
     return (
       <div className="empty entry-empty">
-        <Icon name="upload" />
+        <Icon name="rec" />
         <div>
-          <b>Nenhuma entrada ainda</b>
-          <div className="muted">O vídeo, o PDF, o link, o texto colado ou o tema de onde nascem as suas notas aparecem aqui, em qualquer pasta.</div>
+          <b>Nenhuma gravação ainda</b>
+          <div className="muted">O que você grava no app (reunião, tela ou microfone) aparece aqui. Um vídeo ou áudio que você envia fica como nota na pasta dele.</div>
         </div>
-        <button className="btn primary" onClick={() => ui.open({ kind: 'new' })}>
-          <Icon name="plus" />
-          Novo
+        <button className="btn primary" onClick={() => ui.open({ kind: 'record' })}>
+          <Icon name="rec" />
+          Gravar
         </button>
       </div>
     )
@@ -79,7 +83,7 @@ export function EntryList() {
     <section className="explorer ex-browser entry-list">
       <FilterPanel
         filters={filters}
-        facets={result.facets}
+        facets={facets}
         onChange={next => ui.setFilters({ ...next, scope: filters.scope })}
         collapsed={ui.filtersCollapsed}
         onCollapsedChange={filtersCollapsed => ui.set({ filtersCollapsed })}
@@ -97,26 +101,26 @@ export function EntryList() {
             </button>
           )}
           <span className="spacer" />
-          <SearchBox placeholder="Buscar em nomes, transcrições e conteúdo" />
+          <SearchBox placeholder="Buscar em nomes e transcrições" />
         </div>
         {result.active.length > 0 && <ActiveFilters active={result.active} summary={`${result.shown} de ${every.length}`} onRemove={group => ui.setFilters(withoutFilter(filters, group))} onClear={() => ui.setFilters({ ...NO_FILTERS, scope: filters.scope, dateField: filters.dateField })} />}
         {searching && (
           <p className="ex-found" role="status">
             {result.shown ? (
               <>
-                <b>{plural(result.shown, 'resultado', 'resultados')}</b> {`para “${term}” nas entradas`}
+                <b>{plural(result.shown, 'resultado', 'resultados')}</b> {`para “${term}” nas gravações`}
               </>
             ) : reading ? (
-              `Procurando “${term}” nas entradas…`
+              `Procurando “${term}” nas gravações…`
             ) : (
-              `Nada com “${term}” ${result.active.length ? 'com esses filtros' : 'nas entradas'}.`
+              `Nada com “${term}” ${result.active.length ? 'com esses filtros' : 'nas gravações'}.`
             )}
             {reading && <span className="ex-reading" aria-hidden="true">{` Lendo ${plural(pending, 'item', 'itens')}…`}</span>}
           </p>
         )}
         {/* a search with nothing found keeps only its sentence, like the folders: no heading of an empty table */}
         {(!searching || rows.length > 0) && (
-          <table className="ex-table" aria-label="Entradas">
+          <table className="ex-table" aria-label="Gravações">
             <thead>
               <tr>
                 <th className="ex-check">

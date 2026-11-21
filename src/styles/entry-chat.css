@@ -1,0 +1,41 @@
+/* Chat da entrada: the list of conversations, the video beside the conversation (FR: chat com player ao lado) */
+.tutor-chat{display:grid;gap:14px;min-width:0}
+.tutor-chat>*{min-width:0}
+/* a wide block in a reply (code, a table) scrolls inside the message, it does not widen the whole conversation */
+.tutor-talk{grid-template-columns:minmax(0,1fr)}
+.chat-lists{gap:6px}
+.chat-count{min-width:18px;padding:0 5px;border-radius:9px;background:var(--bg-muted);color:var(--fg-muted);font-size:11.5px;line-height:18px;text-align:center;font-variant-numeric:tabular-nums}
+.chat-now{flex:1;min-width:0;max-width:16em;font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.chat-empty{margin:0;padding:10px 4px;font-size:13.5px}
+.chat-list{max-height:min(50vh,420px);max-height:min(50dvh,420px);overflow:auto;align-content:start}
+.chat-list .art{grid-template-columns:minmax(0,1fr) auto auto}
+.chat-list .art.is-current{background:var(--accent-soft)}
+.chat-list .art .ibtn{width:30px;height:30px}
+.chat-list .art-open:disabled{opacity:.55;cursor:default}
+.chat-list .chat-confirm{grid-template-columns:minmax(0,1fr);background:var(--warn-soft)}
+.chat-confirm>div{display:grid;gap:6px;padding:8px 10px;font-size:13px}
+.chat-confirm-act{display:flex;justify-content:flex-end;gap:6px}
+.tutor-talk a.moment{color:var(--accent);font-weight:600;text-decoration:none;white-space:nowrap}
+.tutor-talk a.moment:hover{text-decoration:underline}
+
+/* the video of the Chat: big in its own column, with the bar under it */
+.mplayer-box[data-docked]:not([data-big]){flex-direction:column;align-items:stretch;gap:0;padding:0}
+.mplayer-box[data-docked]:not([data-big]) .mplayer-stage{width:100%;height:auto;aspect-ratio:16/9;border-radius:11px 11px 0 0}
+.mplayer-box[data-docked]:not([data-big]) .mplayer-controls{flex:none;padding:6px 10px 8px}
+.mplayer-box[data-docked]:not([data-big]) .mplayer-state{top:10px;left:10px;right:auto;bottom:auto;border-color:transparent;background:rgba(0,0,0,.7);box-shadow:none;color:#fff}
+.mplayer-box[data-docked] .mplayer-shot .ic{top:8px;right:8px;width:24px;height:24px;padding:5px}
+
+/* a video: the video on the left and the conversation on the right, both inside the window (only the conversation scrolls) */
+.db.tutor-split{grid-template-columns:minmax(0,1.3fr) minmax(300px,1fr);gap:16px;align-items:start;overflow:hidden;height:min(660px,calc(100vh - 140px));height:min(660px,calc(100dvh - 140px))}
+.tutor-split .tutor-media{position:sticky;top:0;min-width:0}
+.tutor-split .tutor-chat{display:flex;flex-direction:column;gap:10px;height:100%;min-height:0}
+.tutor-split .tutor-talk,.tutor-split .chat-list{flex:1 1 0;min-height:0;max-height:none;overflow:auto;align-content:start}
+.tutor-split .tutor-ask{flex:none}
+
+/* a phone: the video stays on top, small, and only the conversation scrolls under it */
+@media (max-width:760px){
+  .db.tutor-split{display:flex;flex-direction:column;align-items:stretch;gap:8px;height:calc(100vh - 92px);height:calc(100dvh - 92px)}
+  .tutor-split .tutor-media{flex:none;position:static}
+  .tutor-split .tutor-chat{flex:1 1 0;height:auto}
+  .mplayer-box[data-docked]:not([data-big]) .mplayer-stage{aspect-ratio:auto;height:clamp(110px,24dvh,190px)}
+}

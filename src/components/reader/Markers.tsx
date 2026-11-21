@@ -54,12 +54,30 @@ function MarkEditor({ mark, actions }: { mark: RecordingMark; actions: MarkActio
   )
 }
 
-export function Markers({ marks, actions }: { marks: RecordingMark[]; actions?: MarkActions }) {
+/** The marks, in a row. With `onPlay` each time plays the media from there (a list with no speech around it to click). */
+export function Markers({ marks, actions, onPlay }: { marks: RecordingMark[]; actions?: MarkActions; onPlay?(seconds: number): void }) {
   if (!marks.length) return null
   return (
     <div className="tr-marks">
       {marks.map(mark => {
         if (actions?.editing === mark.id) return <MarkEditor key={mark.id} mark={mark} actions={actions} />
+        if (onPlay) {
+          return (
+            <span key={mark.id} className={`tr-mark ${mark.kind}`} role="note" aria-label={titleOf(mark)}>
+              <button className="tr-mark-play" aria-label={`Tocar a partir de ${clockTime(mark.at)}`} title="Tocar a partir daqui" onClick={() => onPlay(mark.at)}>
+                <MarkGlyph kind={mark.kind} />
+                <time>{clockTime(mark.at)}</time>
+              </button>
+              {actions ? (
+                <button className="tr-mark-open" aria-label={`Editar ${nameOf(mark)}`} title="Editar ou apagar" onClick={() => actions.onEditing(mark.id)}>
+                  {mark.text ? <span>{mark.text}</span> : <Icon name="pen" />}
+                </button>
+              ) : (
+                mark.text && <span>{mark.text}</span>
+              )}
+            </span>
+          )
+        }
         const body = (
           <>
             <MarkGlyph kind={mark.kind} />
@@ -88,5 +106,16 @@ export function Markers({ marks, actions }: { marks: RecordingMark[]; actions?: 
         )
       })}
     </div>
+  )
+}
+
+/** The marks of a media that has no transcription to hold them: a list of their own, each one playable. */
+export function MarkList({ marks, actions, onPlay }: { marks: RecordingMark[]; actions?: MarkActions; onPlay?(seconds: number): void }) {
+  if (!marks.length) return null
+  return (
+    <section className="mark-list" aria-label="Momentos marcados">
+      <h3>Momentos marcados</h3>
+      <Markers marks={[...marks].sort((a, b) => a.at - b.at)} actions={actions} onPlay={onPlay} />
+    </section>
   )
 }

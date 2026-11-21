@@ -2,8 +2,11 @@ import { useEffect, useRef, useState } from 'react'
 
 import { type MeetingMedia, playAt } from '@/components/reader/MediaPlayer'
 
-/** Plays from a second; a media not opened yet (kept in Drive) is asked for first, and plays as soon as it arrives. */
-export function usePlayback(media: MeetingMedia) {
+/**
+ * Plays from a second; a media not opened yet (kept in Drive) is asked for first, and plays as soon as it arrives.
+ * `onMark` is what the player's "Marcar este momento" does, when the page has marks to keep: it travels with the playback to the player.
+ */
+export function usePlayback(media: MeetingMedia, onMark?: (seconds: number) => void) {
   const player = useRef<HTMLMediaElement | null>(null)
   const [time, setTime] = useState<number | null>(null)
   const [waiting, setWaiting] = useState<number | null>(null)
@@ -21,5 +24,5 @@ export function usePlayback(media: MeetingMedia) {
     setTime(waiting)
     playAt(player.current, waiting)
   }, [waiting, media.url])
-  return { player, time, setTime, playFrom }
+  return { player, time, setTime, playFrom, onMark }
 }

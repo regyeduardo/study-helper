@@ -1,15 +1,60 @@
 import { create } from 'zustand'
 
-import type { Attempt, FileType, ShareKind, StoredQuestion } from '@/types/domain'
+import type { AtaModelId, AtaPart, AtaStepModels, Attempt, FileType, MediaAnalysis, ShareKind, SourceStorage, StoredQuestion } from '@/types/domain'
+import type { LitterboxTime } from '@/controllers/hosting.controller'
 import { isNarrowScreen } from '@/hooks/use-is-narrow'
 import { clearFilters as withFiltersCleared, type LibraryFilters, NO_FILTERS } from '@/lib/library-filters'
+import type { Agent, KeepLevel, NoteAgent } from '@/stores/jobs'
+
+/** What a generation window was filled with: "Tentar de novo" after a failure brings it back as it was. */
+export interface GenerationPrefill {
+  /** The model picked (absent: the default comes preselected). */
+  model?: string
+  videoWrites?: boolean
+  instruction?: string
+  analyze?: MediaAnalysis
+  /** "Salvar em": the folder picked (absent: the one the window offers). */
+  folderId?: string | null
+  /** Gerar de novo: over the note made before, or a new note. */
+  replace?: boolean
+  /** "Gerar desta entrada": what to make. */
+  goal?: NoteAgent | 'transcribe'
+  parts?: AtaPart[]
+  ataModel?: AtaModelId | null
+  steps?: AtaStepModels
+}
+
+/** Everything "Novo conteúdo" was filled with, the file included. */
+export interface NewContentForm {
+  tab: 'link' | 'file' | 'text' | 'topic'
+  agent: Agent
+  url: string
+  text: string
+  topic: string
+  file: File | null
+  isMedia: boolean
+  keep: KeepLevel | null
+  storage: SourceStorage | null
+  litterboxTime: LitterboxTime
+  name: string
+  description: string
+  prompt: string
+  folderId: string | null
+  ataParts: AtaPart[]
+  ataModel: AtaModelId | null
+  /** The models picked, by use (absent: the default). */
+  models: { aula?: string; explicacao?: string; ata?: string; transcricao?: string; videoWrites?: boolean }
+  analyze?: MediaAnalysis
+  steps?: AtaStepModels
+}
 
 export type Overlay =
   | { kind: 'palette' }
-  | { kind: 'new'; folderId?: string | null }
+  | { kind: 'new'; folderId?: string | null; prefill?: NewContentForm }
   | { kind: 'record' }
   | { kind: 'media' }
-  | { kind: 'settings'; tab?: SettingsTab }
+  /** `focusId`: in Armazenamento, "Locais" opens with that folder or note in view. */
+  | { kind: 'settings'; tab?: SettingsTab; focusId?: string }
   | { kind: 'exam'; fileId: string }
   | { kind: 'cards'; fileId: string; deckId?: string }
   | { kind: 'mindmap'; fileId: string; artifactId?: string }
@@ -19,11 +64,13 @@ export type Overlay =
   | { kind: 'chat'; fileId: string }
   /** "+ Novo" of a map or a deck; `again`: the one made before ("Gerar de novo"). */
   | { kind: 'generate-artifact'; fileId: string; artifact: 'mapa' | 'cartoes'; again?: string }
-  | { kind: 'ata-parts'; fileId: string; again?: string }
-  | { kind: 'generate'; fileId: string; agent: 'meeting' | 'lesson'; redo?: boolean; again?: string }
+  | { kind: 'ata-parts'; fileId: string; again?: string; prefill?: GenerationPrefill }
+  | { kind: 'generate'; fileId: string; agent: NoteAgent; redo?: boolean; again?: string; prefill?: GenerationPrefill }
   /** "Gerar desta entrada": what makes sense for its kind and for what it keeps. */
-  | { kind: 'generate-entry'; fileId: string }
-  | { kind: 'transcribe'; fileId: string }
+  | { kind: 'generate-entry'; fileId: string; prefill?: GenerationPrefill }
+  | { kind: 'transcribe'; fileId: string; prefill?: GenerationPrefill }
+  /** "Gerar agora", "Tentar de novo" and "Refazer" of a note kept to write (`fileId`), or every lesson still to write in a course folder (`folderId`); `go`: open the note once it starts. */
+  | { kind: 'pending'; fileId?: string; folderId?: string; go?: boolean; prefill?: GenerationPrefill }
   | { kind: 'folder-exam'; folderId: string | null; fileIds?: string[] }
   | { kind: 'account'; x?: number; y?: number }
   | { kind: 'new-folder'; parentId: string | null }
@@ -33,10 +80,13 @@ export type Overlay =
   /** "Apagar" with the family tree when the item has descendants; `fileIds`: a whole selection, by the same choice. */
   | { kind: 'delete-family'; fileId: string; fileIds?: string[] }
   | { kind: 'explain'; fileId: string; excerpt: string }
+  /** "Gerar a partir disto": a link or a passage selected in a note; `prefill`: the window as it was when that generation failed. */
+  | { kind: 'from-selection'; fileId: string; excerpt: string; prefill?: GenerationPrefill }
   | { kind: 'order'; folderId: string }
   | { kind: 'activity' }
   | { kind: 'import' }
   | { kind: 'send-local' }
+  | { kind: 'sync-local'; ids?: string[] }
   | { kind: 'storage-limit' }
   | { kind: 'share'; target: ShareKind; id: string }
   | { kind: 'shared-exam'; title: string; questions: StoredQuestion[]; onRecord: (fields: Omit<Attempt, 'id' | 'createdAt' | 'deviceId'>) => void }

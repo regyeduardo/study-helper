@@ -220,6 +220,61 @@ async function openAiChat(settings: AiSettings, content: ChatContent, systemProm
   }
 }
 
+/** A YouTube link as video: an OpenAI-format `video_url` part (OpenRouter takes it as it is). */
+const watchesLink = (content: ChatContent): content is Record<string, unknown>[] => Array.isArray(content) && content.some(part => part.type === 'video_url')
+
+/** A part of the OpenAI format in Gemini's own format. */
+function geminiPart(part: Record<string, unknown>): Record<string, unknown> {
+  if (part.type === 'video_url') return { file_data: { file_uri: (part.video_url as { url: string }).url } }
+  if (part.type === 'input_audio') {
+    const audio = part.input_audio as { data: string; format: string }
+    return { inline_data: { mime_type: audio.format === 'mp3' ? 'audio/mpeg' : `audio/${audio.format}`, data: audio.data } }
+  }
+  if (part.type === 'image_url') {
+    const [head, data = ''] = (part.image_url as { url: string }).url.split(',')
+    return { inline_data: { mime_type: /data:([^;]+)/.exec(head)?.[1] ?? 'image/jpeg', data } }
+  }
+  return { text: String(part.text ?? '') }
+}
+
+/** Google's OpenAI-compatible door takes no video: a YouTube link goes by Gemini's own API (file_data.file_uri, public videos only). */
+async function geminiVideoChat(settings: AiSettings, content: Record<string, unknown>[], systemPrompt: string, maxTokens: number, signal?: AbortSignal, temperature = TEMPERATURE): Promise<ChatReply> {
+  const base = baseUrlOf(settings).replace(/\/openai\/?$/, '')
+  const response = await send(
+    settings,
+    `${base}/models/${modelOf(settings).replace(/^models\//, '')}:streamGenerateContent?alt=sse`,
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-goog-api-key': settings.apiKey },
+      body: JSON.stringify({
+        system_instruction: { parts: [{ text: systemPrompt }] },
+        contents: [{ role: 'user', parts: content.map(geminiPart) }],
+        generationConfig: { maxOutputTokens: maxTokens, temperature, ...(systemPrompt.toLowerCase().includes('json') ? { responseMimeType: 'application/json' } : {}) },
+      }),
+    },
+    signal,
+  )
+  if (!response.ok) throw new AiError(`A IA (Google Gemini) recusou o vídeo do YouTube (${response.status}); só vídeo público funciona. ${await errorText(response)}`)
+  let text = ''
+  let usage: ChatUsage | null = null
+  let finish: string | undefined
+  for await (const data of serverEvents(response, signal)) {
+    if (!data) continue
+    const chunk = JSON.parse(data) as {
+      candidates?: { content?: { parts?: { text?: string; thought?: boolean }[] }; finishReason?: string }[]
+      usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number }
+      error?: { message?: string }
+    }
+    if (chunk.error) throw new AiError(`A IA parou no meio: ${chunk.error.message ?? 'erro'}`)
+    for (const candidate of chunk.candidates ?? []) {
+      for (const part of candidate.content?.parts ?? []) if (!part.thought) text += part.text ?? ''
+      if (candidate.finishReason) finish = candidate.finishReason === 'MAX_TOKENS' ? 'length' : candidate.finishReason.toLowerCase()
+    }
+    if (chunk.usageMetadata) usage = { inputTokens: chunk.usageMetadata.promptTokenCount ?? 0, outputTokens: chunk.usageMetadata.candidatesTokenCount ?? 0, estimated: false }
+  }
+  return { text, usage: usage ?? estimate(content, systemPrompt, text), ...(finish ? { finish } : {}) }
+}
+
 export async function chatController(
   settings: AiSettings,
   content: ChatContent,
@@ -232,6 +287,7 @@ export async function chatController(
 ): Promise<ChatReply> {
   const problem = missingSetup(settings)
   if (problem) throw new AiError(problem)
+  if (settings.provider === 'gemini' && watchesLink(content)) return geminiVideoChat(settings, content, systemPrompt, maxTokens, signal, temperature)
   return providerOf(settings.provider).format === 'anthropic'
     ? anthropicChat(settings, content, systemPrompt, maxTokens, signal, temperature, extra)
     : openAiChat(settings, content, systemPrompt, maxTokens, signal, temperature, extra)

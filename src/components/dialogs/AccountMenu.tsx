@@ -1,8 +1,8 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 
 import { Icon } from '@/components/ui/Icon'
 import { Popover } from '@/components/ui/Popover'
-import { isGoogleLoginConfigured } from '@/controllers/google-auth.controller'
+import { GooglePopupError, isGoogleLoginConfigured, preloadGoogleAccounts } from '@/controllers/google-auth.controller'
 import { LocalRepository } from '@/lib/storage/local-repository'
 import { applyTheme, savedTheme, type ThemeChoice } from '@/lib/theme'
 import { type Account, initialsOf, useAccountStore } from '@/stores/account'
@@ -33,17 +33,25 @@ export function AccountMenu() {
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [theme, setTheme] = useState<ThemeChoice>(savedTheme)
+  const [popupClosed, setPopupClosed] = useState(false)
   const configured = isGoogleLoginConfigured()
-  const add = async () => {
+  // The Google window has to open inside the tap: the script is brought in before it.
+  useEffect(() => {
+    preloadGoogleAccounts()
+  }, [])
+  const add = async (redirect = false) => {
     setBusy(true)
     setError(null)
+    setPopupClosed(false)
     try {
-      const hadLocal = active.kind === 'local' && (await localHasContent())
-      await addGoogleAccount()
+      // Started now and read after the sign-in: nothing may be awaited before the Google window opens.
+      const hadLocal = active.kind === 'local' ? localHasContent().catch(() => false) : Promise.resolve(false)
+      await addGoogleAccount({ redirect, sendLocal: hadLocal })
       ui.close()
-      if (hadLocal) ui.open({ kind: 'send-local' })
+      if (await hadLocal) ui.open({ kind: 'send-local' })
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : 'O login falhou.')
+      setPopupClosed(failure instanceof GooglePopupError && failure.reason === 'closed')
     } finally {
       setBusy(false)
     }
@@ -101,6 +109,12 @@ export function AccountMenu() {
         <span style={{ color: 'var(--bad)', fontSize: 12, padding: '0 9px 6px' }} role="alert">
           {error}
         </span>
+      )}
+      {popupClosed && (
+        <button className="mi" onClick={() => void add(true)} disabled={busy}>
+          <Icon name="plus" />
+          Entrar nesta aba
+        </button>
       )}
       <div className="hr" />
       <label className="mi mi-theme">

@@ -1,0 +1,253 @@
+/*
+ * Phone and tablet, in one place: what a finger and iOS Safari need.
+ * Loaded after app.css so these win on equal weight. Sizes follow the pointer (coarse = a finger), not only the width:
+ * an iPad is as wide as a desktop window and still has a finger.
+ */
+
+:root {
+  --safe-y: calc(env(safe-area-inset-top) + env(safe-area-inset-bottom));
+}
+
+/* Safari makes the text bigger when the phone lies down; a double tap on a button zooms the page. */
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+:where(button, [role='button'], [role='tab'], [role='menuitem'], a, summary, label, select, input, textarea) {
+  touch-action: manipulation;
+}
+:where(button, [role='button'], a, summary, label, select) {
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* The page goes edge to edge (viewport-fit=cover in index.html): the app keeps out of the notch and the home bar. */
+.app-root {
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+}
+.scrim {
+  padding-left: max(16px, env(safe-area-inset-left));
+  padding-right: max(16px, env(safe-area-inset-right));
+  padding-bottom: max(16px, env(safe-area-inset-bottom));
+}
+.toasts {
+  bottom: max(18px, env(safe-area-inset-bottom));
+}
+.jobs,
+.mini-rec {
+  right: max(18px, env(safe-area-inset-right));
+  bottom: max(18px, env(safe-area-inset-bottom));
+}
+.mplayer-box[data-big] {
+  inset: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+}
+
+@media (max-width: 760px) {
+  .scrim {
+    padding: max(16px, env(safe-area-inset-top)) max(8px, env(safe-area-inset-right)) max(8px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left));
+  }
+  .mini-rec,
+  .mini-rec.done {
+    left: max(12px, env(safe-area-inset-left));
+    right: max(12px, env(safe-area-inset-right));
+    width: auto;
+  }
+  /* The windows end where the visible area ends: --vvh is the height above the keyboard (see lib/viewport.ts). */
+  .dialog {
+    max-height: calc(var(--vvh, 100dvh) - 24px - var(--safe-y));
+  }
+  .dialog.settings {
+    height: calc(var(--vvh, 100dvh) - 20px - var(--safe-y));
+  }
+  .dialog:has(> .fc-dialog) {
+    height: calc(var(--vvh, 100dvh) - 24px - var(--safe-y));
+  }
+  .ias-add .dialog.add-dialog {
+    height: var(--vvh, 100dvh);
+  }
+  .dialog.map-dialog {
+    height: var(--vvh, 100dvh);
+  }
+  .pal {
+    max-height: calc(var(--vvh, 100dvh) - 32px - var(--safe-y));
+  }
+  /* The search result: name on top, where it is below. With the hint beside the name, the name was left with no room and broke one letter per line. */
+  .pal .it {
+    flex-wrap: wrap;
+    row-gap: 0;
+    min-height: 44px;
+  }
+  .pal .it .t {
+    flex: 1 1 calc(100% - 28px);
+  }
+  .pal .it small {
+    flex: 1 1 100%;
+    padding-left: 26px;
+    overflow-wrap: anywhere;
+  }
+  /* The tabs scroll sideways; the fade at the edge says there is more, and the padding at the end keeps the last tab out of it. */
+  .tabs {
+    padding: 0 32px 0 8px;
+    -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
+    mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
+  }
+  .tabs button {
+    padding: 9px 7px;
+    gap: 4px;
+  }
+  /* The Ata page: the column was as wide as its widest row (tabs and buttons in one line) and pushed the text past the margin. */
+  .meeting {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .meeting-tabs {
+    flex-wrap: wrap;
+    align-items: flex-end;
+  }
+  .meeting-tabs button {
+    white-space: nowrap;
+  }
+}
+
+/* The floating player: the picture gives up a little width so the six controls stay in one row on the narrowest phones. */
+@media (max-width: 400px) {
+  .mplayer-stage {
+    width: 56px;
+  }
+}
+
+@media (pointer: coarse) {
+  /* Under 16px Safari zooms into the field when it gets the focus, and does not zoom back. */
+  input:not([type='checkbox'], [type='radio'], [type='range'], [type='file'], [type='color'], [type='button'], [type='submit']),
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
+
+  /* Targets of at least 36px (44px for the buttons that answer a window). */
+  .btn {
+    min-height: 36px;
+  }
+  .ibtn {
+    min-width: 36px;
+    min-height: 36px;
+  }
+  .df .btn,
+  .acts .btn {
+    min-height: 44px;
+  }
+  .chip {
+    min-height: 36px;
+  }
+  .nv,
+  .menu .mi,
+  .doc-nav a,
+  .doc-nav button {
+    min-height: 40px;
+  }
+  .tr-mark-play,
+  .tr-mark-open,
+  .ex-browser th button,
+  button.sync,
+  .set-nav button {
+    min-height: 36px;
+  }
+  .set-nav button {
+    min-height: 44px;
+  }
+  summary {
+    padding-block: 9px;
+  }
+  /* The search box is the target, not only the text inside it. */
+  .ex-search {
+    height: 40px;
+  }
+  .ex-search input {
+    align-self: stretch;
+  }
+  .tabs button,
+  .meeting-tabs button {
+    min-height: 40px;
+  }
+  .mplayer-speed,
+  .mplayer-retry {
+    min-height: 36px;
+  }
+  label:has(> input[type='checkbox']),
+  label:has(> input[type='radio']) {
+    min-height: 36px;
+  }
+  input[type='checkbox']:not([class]),
+  input[type='radio']:not([class]) {
+    width: 20px;
+    height: 20px;
+    flex: none;
+  }
+
+  /* Small controls inside a line of text keep their look and grow their hit area around it. */
+  .tr-add,
+  .tr-who,
+  .tr-time,
+  .doc-more,
+  .doc-redo,
+  .doc-meta button,
+  .doc-meta a,
+  .doc-media button,
+  .dialog a:not([class]),
+  .tree-tw,
+  a.fam-selo,
+  .ex-fold {
+    position: relative;
+  }
+  .tr-add::after,
+  .tr-who::after,
+  .tr-time::after,
+  .doc-more::after,
+  .doc-redo::after,
+  .doc-meta button::after,
+  .doc-meta a::after,
+  .doc-media button::after,
+  .dialog a:not([class])::after,
+  .tree-tw::after,
+  a.fam-selo::after,
+  .ex-fold::after {
+    content: '';
+    position: absolute;
+    inset: -10px -6px;
+  }
+  .tr-add::after {
+    inset: -8px;
+  }
+  .tree-tw::after {
+    inset: -9px -9px;
+  }
+
+  /* The row checkbox: the box stays 20px, the area around it counts too. */
+  .ex-box,
+  th .ex-box {
+    width: 36px;
+    height: 36px;
+    margin: -8px;
+    border: 8px solid transparent;
+    border-radius: 13px;
+    background-clip: padding-box;
+    box-shadow: inset 0 0 0 1.2px var(--border);
+  }
+  .ex-box:checked,
+  .ex-box:indeterminate {
+    border-color: transparent;
+    box-shadow: inset 0 0 0 1.2px var(--accent);
+  }
+
+  /* The player's bar is a slider: a thick hit area and a thumb a finger can find. */
+  .mplayer-bar {
+    height: 36px;
+  }
+  .mplayer-bar::-webkit-slider-thumb {
+    width: 20px;
+    height: 20px;
+    margin-top: -8px;
+  }
+  .mplayer-bar::-moz-range-thumb {
+    width: 20px;
+    height: 20px;
+  }
+}

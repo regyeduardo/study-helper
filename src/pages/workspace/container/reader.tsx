@@ -1,7 +1,5 @@
 import { useEffect } from 'react'
-import { useNavigate } from 'react-router-dom'
 
-import type { FileMeta } from '@/types/domain'
 import { Icon } from '@/components/ui/Icon'
 import { ReaderShell } from '@/components/layout/ReaderShell'
 import { EmptyList } from '@/components/library/EmptyList'
@@ -10,6 +8,7 @@ import { Explorer } from '@/components/library/Explorer'
 import { ReaderRow } from '@/components/library/FileRows'
 import { FilterChips, SortSelect } from '@/components/library/Filters'
 import { FolderTiles } from '@/components/library/FolderTiles'
+import { HomeRecent } from '@/components/library/HomeRecent'
 import { SelectionBar } from '@/components/library/SelectionBar'
 import { SHARING_TITLES, SharingView } from '@/components/library/SharingLists'
 import { SharedBadge } from '@/components/library/SharedBadge'
@@ -22,94 +21,11 @@ import { hasGenerated, Inspector } from '@/components/reader/Inspector'
 import { useLibraryView } from '@/hooks/use-library-view'
 import type { ViewRoute } from '@/hooks/use-view-route'
 import { isNarrowScreen } from '@/hooks/use-is-narrow'
-import { MEDIA_LABEL, mediaLength, mediaOf, REVIEW_BELOW } from '@/lib/file-types'
-import { paths } from '@/lib/paths'
 import { useLibraryStore } from '@/stores/library'
 import { useUiStore } from '@/stores/ui'
-import { ContinueCard, greeting, QuickActions, reviewSentence, todayText, useHomeData, useScrollerRef, WelcomeEmpty } from '@/pages/workspace/container/shared'
+import { useScrollerRef } from '@/pages/workspace/container/shared'
 
-const TITLES = { folder: 'Biblioteca', review: 'Para revisar', favorites: 'Favoritos', trash: 'Lixeira', home: 'Início', doc: '', entries: 'Entradas', entry: 'Entrada', ...SHARING_TITLES }
-
-function HomeBlock({ title, hint, children }: { title: string; hint?: string; children: React.ReactNode }) {
-  return (
-    <section className="home-block" aria-label={title}>
-      <h3>
-        {title}
-        {hint && <span className="faint">{hint}</span>}
-      </h3>
-      <div className="home-items">{children}</div>
-    </section>
-  )
-}
-
-function HomeItem({ file, side, onOpen }: { file: FileMeta; side: string; onOpen(): void }) {
-  return (
-    <button className="home-item" onClick={onOpen}>
-      <span>{file.name}</span>
-      <span className="faint">{side}</span>
-    </button>
-  )
-}
-
-function Home() {
-  const data = useHomeData()
-  const timeZone = useLibraryStore(state => state.index.settings.timezone)
-  const navigate = useNavigate()
-  const open = useUiStore(state => state.open)
-  if (data.empty) return <WelcomeEmpty />
-  const go = (file: FileMeta) => () => navigate(paths.file(file.id))
-  const totalCards = data.cards.reduce((sum, item) => sum + item.due, 0)
-  const mediaSide = (file: FileMeta) => [MEDIA_LABEL[mediaOf(file)], mediaLength(file.origin?.durationSeconds)].filter(Boolean).join(' · ')
-  return (
-    <div className="homegrid">
-      <div>
-        <div className="muted" style={{ fontSize: 13 }}>
-          {todayText(timeZone)}
-        </div>
-        <h2 style={{ margin: '4px 0 0', fontSize: 24, fontWeight: 600, letterSpacing: '-.01em' }}>
-          {greeting()}. {reviewSentence(data.review.length + totalCards)}
-        </h2>
-      </div>
-      <QuickActions fileForExam={data.continueReading} />
-      {data.continueReading && (
-        <div>
-          <div className="nh" style={{ paddingLeft: 0 }}>
-            Continuar lendo
-          </div>
-          <ContinueCard file={data.continueReading} />
-        </div>
-      )}
-      <div className="home-blocks">
-        {data.cards.length > 0 && (
-          <HomeBlock title="Cartões para hoje" hint={`${totalCards} ${totalCards === 1 ? 'cartão' : 'cartões'} em ${data.cards.length} ${data.cards.length === 1 ? 'nota' : 'notas'}`}>
-            {data.cards.map(item => (
-              <HomeItem key={item.file.id} file={item.file} side={String(item.due)} onOpen={() => open({ kind: 'cards', fileId: item.file.id })} />
-            ))}
-          </HomeBlock>
-        )}
-        {data.review.length > 0 && (
-          <HomeBlock title="Para revisar" hint={`domínio abaixo de ${REVIEW_BELOW}%`}>
-            {data.review.map(file => (
-              <HomeItem key={file.id} file={file} side={`${file.mastery}%`} onOpen={go(file)} />
-            ))}
-          </HomeBlock>
-        )}
-        {data.untranscribed.length > 0 && (
-          <HomeBlock title="Gravações sem transcrição">
-            {data.untranscribed.map(file => (
-              <HomeItem key={file.id} file={file} side={mediaSide(file)} onOpen={go(file)} />
-            ))}
-          </HomeBlock>
-        )}
-        <HomeBlock title="Últimas notas">
-          {data.latest.map(file => (
-            <HomeItem key={file.id} file={file} side={mediaSide(file)} onOpen={go(file)} />
-          ))}
-        </HomeBlock>
-      </div>
-    </div>
-  )
-}
+const TITLES = { folder: 'Biblioteca', review: 'Para revisar', favorites: 'Favoritos', trash: 'Lixeira', home: 'Início', doc: '', entries: 'Gravações', entry: 'Nota', ...SHARING_TITLES }
 
 export function Library({ route }: { route: ViewRoute }) {
   const ui = useUiStore()
@@ -252,7 +168,7 @@ export function ReaderWorkspace({ route }: { route: ViewRoute }) {
   return (
     <ReaderShell>
       <div className="libwrap">
-        {route.view === 'home' ? <Home /> : route.view === 'shared' ? <SharedStatus unavailable={Boolean(route.unavailable)} /> : route.view === 'shares' || route.view === 'sharedWithMe' ? <SharingView view={route.view} /> : <Library route={route} />}
+        {route.view === 'home' ? <HomeRecent /> : route.view === 'shared' ? <SharedStatus unavailable={Boolean(route.unavailable)} /> : route.view === 'shares' || route.view === 'sharedWithMe' ? <SharingView view={route.view} /> : <Library route={route} />}
       </div>
     </ReaderShell>
   )

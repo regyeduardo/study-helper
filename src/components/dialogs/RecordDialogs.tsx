@@ -1,10 +1,14 @@
 import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 
-import type { SourceStorage } from '@/types/domain'
+import type { AtaModelId, AtaPart, SourceStorage } from '@/types/domain'
+import { AtaPartsFields, toggledPart } from '@/components/dialogs/AtaPartsDialog'
 import { Dialog } from '@/components/ui/Dialog'
 import { Icon } from '@/components/ui/Icon'
 import { IntegrationStatus } from '@/components/dialogs/IntegrationStatus'
+import { MoreOptions } from '@/components/dialogs/FromNoteFields'
+import { goToNew } from '@/components/dialogs/go-to-new'
+import { MediaAnalysisField, useMediaAnalysis } from '@/components/dialogs/MediaAnalysisField'
 import { ModelPick, useModelChoice } from '@/components/dialogs/ModelPick'
 import { FolderField } from '@/components/dialogs/FolderChooser'
 import { SourceStoragePicker } from '@/components/dialogs/SourceStoragePicker'
@@ -19,14 +23,16 @@ import {
   useIntegrationStore,
 } from '@/lib/recording/integration'
 import { MEDIA_LABEL } from '@/lib/file-types'
+import { PART_ORDER } from '@/lib/generation/ata'
 import { paths } from '@/lib/paths'
 import { removeLocalMedia } from '@/lib/recording/media-library'
 import { mountMiniplayer } from '@/lib/recording/miniplayer'
 import { type AudioInput, CaptureCheck, type CaptureMode, type CheckStatus, COMPUTER_AUDIO_AUTO, COMPUTER_AUDIO_NONE, hears, listAudioInputs, type LiveCapture, playTestSound, SOUND_LEVEL, systemAudioNotice, type VideoFps, VOICE_LEVEL } from '@/lib/recording/recorder'
 import { defaultStorage, storageOptions } from '@/lib/storage/source-storage'
+import { working } from '@/lib/working'
 import { useAccountStore } from '@/stores/account'
 import { useLibraryStore } from '@/stores/library'
-import { useJobsStore } from '@/stores/jobs'
+import { type NoteAgent, type RecordingWrite, useJobsStore } from '@/stores/jobs'
 import { useRecorderStore } from '@/stores/recorder'
 import { useSyncStore } from '@/stores/sync'
 import { useUiStore } from '@/stores/ui'
@@ -806,9 +812,21 @@ function RecordingControls() {
   )
 }
 
+/** The saved recording opens, unless a note or an entrada is open: then she stays, and a notice offers it. */
 function openNote(fileId: string) {
-  void import('@/routes').then(({ router }) => router.navigate(paths.file(fileId)))
+  void import('@/routes').then(({ router }) => goToNew(paths.file(fileId), 'A gravação foi salva', router.state?.location.pathname ?? '/', to => void router.navigate(to)))
 }
+
+/** What to do with the recording when it ends: only keep it, only transcribe it (as before), or also start a note from it. */
+type Goal = 'keep' | 'transcribe' | NoteAgent
+
+const GOALS: { id: Goal; label: string; hint: string }[] = [
+  { id: 'keep', label: 'Só guardar', hint: 'Guarda a gravação como está. Dá para transcrever depois, na própria nota.' },
+  { id: 'transcribe', label: 'Só transcrever', hint: 'A busca acha o que foi falado e dá para gerar Ata, Aula, Mapa mental, Cartões, Tutor e Prova.' },
+  { id: 'meeting', label: 'Ata', hint: 'Pontos relevantes e tarefas' },
+  { id: 'lesson', label: 'Aula', hint: 'Para aprender o conteúdo' },
+  { id: 'explanation', label: 'Explicação', hint: 'Direto ao ponto' },
+]
 
 function RecordingDoneOptions({ place }: { place: 'dialog' | 'window' }) {
   const { result, clearResult } = useRecorderStore()
@@ -817,8 +835,16 @@ function RecordingDoneOptions({ place }: { place: 'dialog' | 'window' }) {
   const usage = useSyncStore(state => state.usage)
   const saveRecording = useJobsStore(state => state.saveRecording)
   const toast = useUiStore(state => state.toast)
-  const [transcribing, setTranscribing] = useState(true)
+  const [goal, setGoal] = useState<Goal>('transcribe')
   const heardBy = useModelChoice('transcricao')
+  // the note the recording starts: who writes, as in "Gerar desta entrada"
+  const writers = { meeting: useModelChoice('ata'), lesson: useModelChoice('aula', true), explanation: useModelChoice('explicacao', true) }
+  const [ata, setAta] = useState<{ model: AtaModelId | null; parts: AtaPart[] }>({ model: null, parts: ['resumo'] })
+  const [instruction, setInstruction] = useState('')
+  const isVideo = Boolean(result?.file.type.startsWith('video/'))
+  const writer = goal === 'keep' || goal === 'transcribe' ? null : writers[goal]
+  // the Ata of a video goes step by step or all in one call; the other notes choose what the AI analyzes
+  const analysis = useMediaAnalysis(writer, Boolean(writer) && isVideo, null, { ata: goal === 'meeting' && isVideo })
   const [discarding, setDiscarding] = useState(false)
   const [folderId, setFolderId] = useState<string | null>(null)
   const [storage, setStorage] = useState<SourceStorage | null>(null)
@@ -843,8 +869,25 @@ function RecordingDoneOptions({ place }: { place: 'dialog' | 'window' }) {
     const { file, storedName, marks, durationSeconds } = result
     clearResult()
     setStorage(null)
-    void saveRecording({ file, storedName, durationSeconds, folderId, storage: chosen, litterboxTime, marks: marks ?? [], transcribe: transcribing, ...(transcribing && heardBy.model ? { transcriptionModel: heardBy.model } : {}) }).then(fileId => openNote(fileId))
+    const transcribing = goal === 'transcribe'
+    // the note transcribes the recording first when it needs the text, so the recording is saved without transcribing by itself
+    const write: RecordingWrite | undefined = writer
+      ? {
+          agent: goal as NoteAgent,
+          model: writer.model || null,
+          ...(instruction.trim() ? { instruction } : {}),
+          ...(isVideo && analysis.sent ? { analyze: analysis.sent } : {}),
+          ...(goal === 'meeting' ? (ata.model ? { ataModel: ata.model, parts: [] } : { parts: PART_ORDER.filter(part => ata.parts.includes(part)) }) : {}),
+        }
+      : undefined
+    // the window closes at once and saving takes several writes: a line in the tasks says it is saving until the note opens
+    void working('Salvando a gravação…', async () => openNote(await saveRecording({ file, storedName, durationSeconds, folderId, storage: chosen, litterboxTime, marks: marks ?? [], transcribe: transcribing, ...(transcribing && heardBy.model ? { transcriptionModel: heardBy.model } : {}), ...(write ? { write } : {}) })), {
+      message: 'Guardando a gravação',
+    })
   }
+  // the Ata needs a model or at least one part; a writer needs a model to write with
+  const ataEmpty = goal === 'meeting' && !ata.model && !ata.parts.length
+  const cannotSave = goal === 'transcribe' ? !heardBy.ready : writer ? !writer.ready || ataEmpty : false
   const actions = discarding ? (
     <div className="inline-confirm">
       Descartar a gravação?
@@ -860,7 +903,7 @@ function RecordingDoneOptions({ place }: { place: 'dialog' | 'window' }) {
       <button className="btn quiet" onClick={() => setDiscarding(true)}>
         Descartar
       </button>
-      <button className="btn primary" disabled={transcribing && !heardBy.ready} onClick={save}>
+      <button className="btn primary" disabled={cannotSave} onClick={save}>
         Salvar
       </button>
     </>
@@ -871,25 +914,24 @@ function RecordingDoneOptions({ place }: { place: 'dialog' | 'window' }) {
         {MEDIA_LABEL[result.file.type.startsWith('video/') ? 'video' : 'audio']} · {duration(result.durationSeconds)} · {formatBytes(result.file.size)}
       </span>
       <div className="field">
-        <span className="lab">Quer a transcrição?</span>
-        <div className="opts" role="radiogroup" aria-label="Quer a transcrição?">
-          {(
-            [
-              [true, 'Sim, transcrever', 'A busca acha o que foi falado e dá para gerar Ata, Aula, Mapa mental, Cartões, Tutor e Prova.'],
-              [false, 'Não, só a mídia', 'Guarda a gravação como está. Dá para transcrever depois, na própria nota.'],
-            ] as [boolean, string, string][]
-          ).map(([value, label, hint]) => (
-            <button key={label} className="opt" role="radio" aria-checked={transcribing === value} onClick={() => setTranscribing(value)}>
+        <span className="lab">O que fazer com a gravação</span>
+        <div className="opts" role="radiogroup" aria-label="O que fazer com a gravação">
+          {GOALS.map(item => (
+            <button key={item.id} className="opt" role="radio" aria-checked={goal === item.id} onClick={() => setGoal(item.id)}>
               <span className="radio" />
               <span>
-                <b>{label}</b>
-                <span>{hint}</span>
+                <b>{item.label}</b>
+                <span>{item.hint}</span>
               </span>
             </button>
           ))}
         </div>
       </div>
-      {transcribing && <ModelPick choice={heardBy} label="Transcrição" />}
+      {goal === 'transcribe' && <ModelPick choice={heardBy} label="Transcrição" />}
+      {goal === 'meeting' && <AtaPartsFields parts={ata.parts} onToggle={part => setAta(current => ({ ...current, parts: toggledPart(current.parts, part) }))} model={ata.model} onModel={model => setAta(current => ({ ...current, model }))} />}
+      {writer && <ModelPick choice={writer} />}
+      {writer && isVideo && <MediaAnalysisField analysis={analysis} />}
+      {writer && <MoreOptions instruction={instruction} onInstruction={setInstruction} placeholder={goal === 'meeting' ? 'Ex.: foque nas decisões e nas tarefas' : 'Ex.: foque na parte prática'} />}
       <SourceStoragePicker
         label="Guardar também na nuvem?"
         sizeBytes={result.file.size}

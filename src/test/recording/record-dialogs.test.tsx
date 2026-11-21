@@ -6,7 +6,7 @@ const { startNewContent } = vi.hoisted(() => ({ startNewContent: vi.fn(async (..
 
 vi.mock('@/stores/jobs', async () => {
   const { create } = await import('zustand')
-  return { useJobsStore: create(() => ({ jobs: [], saveRecording: startNewContent })) }
+  return { useJobsStore: create(() => ({ jobs: [], saveRecording: startNewContent, trackTask: () => ({ update: () => undefined, done: () => undefined, fail: () => undefined, drop: () => undefined }) })) }
 })
 
 vi.mock('@/routes', () => ({ router: { navigate: vi.fn() } }))
@@ -231,7 +231,7 @@ describe('RecordingWindow', () => {
     await waitFor(() => expect(floating.document.body.textContent).toContain('Terminar'))
     expect(floating.document.body.textContent).toContain('00:07')
     act(() => useRecorderStore.setState({ active: false, result: recordingOf(5 * MB), resultPlace: 'window' }))
-    await waitFor(() => expect(floating.document.body.textContent).toContain('Quer a transcrição?'))
+    await waitFor(() => expect(floating.document.body.textContent).toContain('O que fazer com a gravação'))
     expect(screen.queryByRole('button', { name: 'Salvar' })).not.toBeInTheDocument()
   })
 

@@ -6,6 +6,7 @@ import * as P from '@/lib/generation/ata-prompts'
 import { withInstruction } from '@/lib/generation/instruction'
 import { linkMoments } from '@/lib/generation/meeting-material'
 import { PART_PROMPTS } from '@/lib/generation/summary'
+import { ASSISTIR, ASSISTIR_E_LER } from '@/lib/generation/youtube-video'
 import { base64Of, decodeChannels16k, mixedDown, SAMPLE_RATE } from '@/lib/transcription/audio'
 import { opusOgg } from '@/lib/transcription/opus'
 
@@ -50,9 +51,11 @@ export async function mediaParts(source: Blob, provider: string, limit = MAX_AUD
   return [{ type: 'input_audio', input_audio: { data: await base64Of(audio), format: mp3 ? 'mp3' : 'ogg' } }, { type: 'text', text: OUVIR }]
 }
 
-/** "Transcrição + vídeo" (FR-046): the light audio and the transcription in the same call. */
+/** "Transcrição + vídeo" (FR-046): the light audio (or the YouTube link) and the transcription in the same call. */
 export function withTranscript(media: MediaParts, transcript: string): MediaParts {
-  return [...media.map(part => (part.text === OUVIR ? { type: 'text', text: OUVIR_E_LER } : part)), { type: 'text', text: `# Transcrição da gravação\n\n${transcript}` }]
+  const watched = media.some(part => part.text === ASSISTIR)
+  const both = (part: MediaParts[number]) => (part.text === OUVIR ? { type: 'text', text: OUVIR_E_LER } : part.text === ASSISTIR ? { type: 'text', text: ASSISTIR_E_LER } : part)
+  return [...media.map(both), { type: 'text', text: `# Transcrição ${watched ? 'do vídeo' : 'da gravação'}\n\n${transcript}` }]
 }
 
 /** The Ata from the audio: the chosen model's skeleton, or the checked parts in order, each under its "## " title; the instruction of who asked at the end. */

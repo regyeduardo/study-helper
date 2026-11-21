@@ -136,6 +136,51 @@ export function withRecorder(recording: RecordingData, recorder: string): Record
   return { ...recording, speakers: recording.speakers.map(speaker => (old(speaker) ? { ...speaker, name: recorder.trim() || RECORDER } : speaker)) }
 }
 
+const nameKey = (name: string) => name.trim().toLocaleLowerCase('pt-BR').normalize('NFD').replace(/\p{M}/gu, '')
+
+/** The same name, whatever the capitals and accents ("Mônica" and "MONICA"). */
+export const sameName = (a: string, b: string) => nameKey(a) === nameKey(b)
+
+/**
+ * No two voices end with the same name (spec 003, FR-059). A name a voice already had before this step stays with it; a voice that just got
+ * a name another voice holds, or that came now for two voices, goes back to the name it had. Who recorded keeps the account's name. A voice
+ * whose old name also repeats becomes a free "Falante N": when unsure, the person names it.
+ */
+export function distinctNames(before: RecordingSpeaker[], after: RecordingSpeaker[]): RecordingSpeaker[] {
+  const holders = (speakers: RecordingSpeaker[]) => {
+    const map = new Map<string, string[]>()
+    for (const speaker of speakers) map.set(nameKey(speaker.name), [...(map.get(nameKey(speaker.name)) ?? []), speaker.id])
+    return map
+  }
+  const previous = new Map(before.map(speaker => [speaker.id, speaker]))
+  const settled = (speaker: RecordingSpeaker) => speaker.id === MICROPHONE && speaker.name !== RECORDER && previous.get(speaker.id)?.name === speaker.name
+  const first = holders(after)
+  const kept = after.map(speaker => {
+    const same = first.get(nameKey(speaker.name))!
+    if (same.length < 2) return speaker
+    const owner = same.find(id => settled(after.find(other => other.id === id)!)) ?? (() => {
+      const had = same.filter(id => previous.has(id) && nameKey(previous.get(id)!.name) === nameKey(speaker.name))
+      return had.length === 1 ? had[0] : undefined
+    })()
+    return owner === speaker.id ? speaker : (previous.get(speaker.id) ?? speaker)
+  })
+  const second = holders(kept)
+  if ([...second.values()].every(ids => ids.length < 2)) return kept.every((speaker, index) => speaker === after[index]) ? after : kept
+  const used = new Set(kept.map(speaker => nameKey(speaker.name)))
+  const free = () => {
+    let number = 1
+    while (used.has(nameKey(`Falante ${number}`))) number++
+    used.add(nameKey(`Falante ${number}`))
+    return `Falante ${number}`
+  }
+  return kept.map(speaker => {
+    const same = second.get(nameKey(speaker.name))!
+    if (same.length < 2 || settled(speaker)) return speaker
+    // the settled voice, or else the first one, keeps nothing either: all repeated voices take a free label, except who recorded
+    return { ...speaker, name: free(), suggested: false }
+  })
+}
+
 export function renameSpeaker(recording: RecordingData, id: string, name: string): RecordingData {
   return { ...recording, speakers: recording.speakers.map(speaker => (speaker.id === id ? { ...speaker, name, suggested: false } : speaker)) }
 }

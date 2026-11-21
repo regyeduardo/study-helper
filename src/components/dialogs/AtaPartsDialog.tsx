@@ -10,30 +10,34 @@ import { mediaOf } from '@/lib/file-types'
 import { ATA_MODELS, PART_LABEL, PART_ORDER } from '@/lib/generation/ata'
 import { useJobsStore } from '@/stores/jobs'
 import { useLibraryStore } from '@/stores/library'
-import { useUiStore } from '@/stores/ui'
+import { asking } from '@/stores/retry'
+import { type GenerationPrefill, useUiStore } from '@/stores/ui'
 
 export const toggledPart = (parts: AtaPart[], part: AtaPart): AtaPart[] => (parts.includes(part) ? parts.filter(item => item !== part) : [...parts, part])
 
 /**
  * "Modelo da ata" (Padrão = the parts) and the checkboxes of the parts that go into the ONE Ata document (Resumo checked by default).
  * The Ata is a note of its own; `again`: the Ata note made before, whose choices and instruction come back (Gerar de novo).
+ * `prefill`: the window as it was when that Ata failed.
  */
-export function AtaPartsDialog({ fileId, again }: { fileId: string; again?: string }) {
+export function AtaPartsDialog({ fileId, again, prefill }: { fileId: string; again?: string; prefill?: GenerationPrefill }) {
   const close = useUiStore(state => state.close)
   const generateAta = useJobsStore(state => state.generateAta)
   const file = useLibraryStore(state => state.files.find(item => item.id === fileId))
   const before = useLibraryStore(state => state.files.find(item => item.id === again))
   const settings = useLibraryStore(state => state.index.settings)
-  const [parts, setParts] = useState<AtaPart[]>(before?.made?.parts ?? ['resumo'])
-  const [model, setModel] = useState<AtaModelId | null>(before?.made?.ataModel ?? null)
-  const choice = useModelChoice('ata', false, lastModel(before, settings))
+  const [parts, setParts] = useState<AtaPart[]>(prefill?.parts ?? before?.made?.parts ?? ['resumo'])
+  const [model, setModel] = useState<AtaModelId | null>(prefill ? (prefill.ataModel ?? null) : (before?.made?.ataModel ?? null))
+  const choice = useModelChoice('ata', false, prefill ? (prefill.model ? { pick: prefill.model } : {}) : lastModel(before, settings))
   // the Ata of a video goes step by step, each step with its model, or all in one call (FR-072)
   const isVideo = Boolean(file) && mediaOf(file!) === 'video'
-  const analysis = useMediaAnalysis(choice, isVideo, null, { ata: true, initial: before?.made?.analyze })
-  const steps = useAtaSteps(choice, isVideo, lastSteps(before, settings), model ? ATA_MODELS[model].name : undefined)
-  const folder = useNoteFolder(fileId)
-  const [replace, setReplace] = useState(Boolean(before))
-  const [instruction, setInstruction] = useState(before?.made?.instruction ?? '')
+  const analysis = useMediaAnalysis(choice, isVideo, null, { ata: true, initial: prefill?.analyze ?? before?.made?.analyze })
+  const steps = useAtaSteps(choice, isVideo, prefill?.steps ?? lastSteps(before, settings), model ? ATA_MODELS[model].name : undefined)
+  const folder = useNoteFolder(fileId, prefill?.folderId)
+  const [replace, setReplace] = useState(prefill?.replace ?? Boolean(before))
+  const [instruction, setInstruction] = useState(prefill?.instruction ?? before?.made?.instruction ?? '')
+  // redoing, the instruction is what changes: it comes in sight
+  const [inSight] = useState(Boolean(before) || Boolean(instruction))
   const toggle = (part: AtaPart) => setParts(current => toggledPart(current, part))
   const ready = (Boolean(model) || parts.length > 0) && choice.ready
   const start = () => {
@@ -43,8 +47,16 @@ export function AtaPartsDialog({ fileId, again }: { fileId: string; again?: stri
     const place = replace && before ? { replace: before.id } : folder.place
     // the instruction goes only when there is one; a video always says what the AI analyzes
     const said = isVideo ? ([instruction.trim(), undefined, analysis.sent] as const) : instruction.trim() ? ([instruction] as const) : []
-    if (model) void generateAta(fileId, [], model, ai, place, ...said)
-    else void generateAta(fileId, PART_ORDER.filter(part => parts.includes(part)), undefined, ai, place, ...said)
+    // a failure brings this window back as it is now
+    const retry = {
+      kind: 'ata-parts' as const,
+      fileId,
+      ...(again ? { again } : {}),
+      prefill: { ...(choice.touched && choice.pick ? { model: choice.pick } : {}), instruction, parts, ataModel: model, ...(analysis.sent ? { analyze: analysis.sent } : {}), ...(isVideo ? { steps: steps.sent } : {}), ...(before ? { replace } : {}), ...(typeof folder.place === 'object' ? { folderId: folder.place.folderId } : {}) },
+    }
+    const ids = replace && before ? [fileId, before.id] : [fileId]
+    if (model) void asking(ids, retry, () => generateAta(fileId, [], model, ai, place, ...said))
+    else void asking(ids, retry, () => generateAta(fileId, PART_ORDER.filter(part => parts.includes(part)), undefined, ai, place, ...said))
   }
   return (
     <>
@@ -78,7 +90,7 @@ export function AtaPartsDialog({ fileId, again }: { fileId: string; again?: stri
           {isVideo && analysis.value === 'transcricao' && <AtaStepsField steps={steps} />}
           {before && <ReplaceOrNew replace={replace} onReplace={choice => (setReplace(choice), choice || folder.setOpen(true))} />}
           {!replace && <SaveIn folder={folder} />}
-          <MoreOptions instruction={instruction} onInstruction={setInstruction} placeholder="Ex.: foque nas decisões e nas tarefas" open={Boolean(before?.made?.instruction)} />
+          <MoreOptions instruction={instruction} onInstruction={setInstruction} placeholder="Ex.: foque nas decisões e nas tarefas" open={inSight} />
         </div>
       </Dialog>
       {folder.open && <FolderWindow folder={folder} noteName={`Ata: ${file?.name ?? ''}`} />}

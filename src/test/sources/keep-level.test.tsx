@@ -10,6 +10,7 @@ import { transcribe } from '@/lib/transcription'
 import { defaultKeep, type NewContentRequest, useJobsStore } from '@/stores/jobs'
 import { useLibraryStore } from '@/stores/library'
 import { type CapturedRequest, installFetch, openAiStream, systemPromptOf } from '@/test/ai/fake-provider'
+import { isSourceNote } from '@/lib/file-types'
 
 // The level of what stays of the source (T044/T051): "Sem rastro", "Só o registro", "Registro e arquivo". The choice in the window is a screen of its own.
 
@@ -86,7 +87,7 @@ const recording = () => new NodeFile([new Uint8Array(4)], 'Reunião 14-10-2026.w
 
 const files = () => useLibraryStore.getState().files
 const fileOf = (id: string) => files().find(file => file.id === id)!
-const entradas = () => files().filter(file => file.role === 'entrada')
+const entradas = () => files().filter(file => isSourceNote(file))
 
 async function ready(id: string): Promise<FileMeta> {
   await waitFor(() => expect(fileOf(id)?.status).toBe('ready'))
@@ -117,40 +118,37 @@ describe('o nível com que cada tipo começa', () => {
 })
 
 describe('"Só o registro"', () => {
-  it('um link vira entrada com nome, link e origem, e a nota gerada é filha dela', async () => {
+  // a link, a text and a topic no longer become an entrada: the note keeps them (source-meta/ tests the rest)
+  it('um link não vira entrada: a nota guarda nome, link e origem', async () => {
     const id = await useJobsStore.getState().startNewContent(request({}))
     const note = await ready(id!)
-    const [entry] = entradas()
-    expect(entry).toMatchObject({ role: 'entrada', kept: 'registro', name: 'Fotossíntese explicada', folderId: 'biologia', parentFileId: null, origin: { input: 'url', url: 'https://exemplo.com/fotossintese', storage: 'none' } })
-    expect(note).toMatchObject({ type: 'class', parentFileId: entry.id, folderId: 'biologia', origin: { input: 'url', url: 'https://exemplo.com/fotossintese' } })
+    expect(entradas()).toHaveLength(0)
+    expect(note).toMatchObject({ type: 'class', parentFileId: null, folderId: 'biologia', origin: { input: 'url', url: 'https://exemplo.com/fotossintese', name: 'Fotossíntese explicada', storage: 'none' }, source: { kind: 'link', url: 'https://exemplo.com/fotossintese' } })
     expect(note.role).toBeUndefined()
     expect(memory.putSource).not.toHaveBeenCalled()
   })
 
-  it('gerar de novo do mesmo link reaproveita a entrada', async () => {
+  it('gerar de novo do mesmo link também não faz entrada: cada nota guarda o link', async () => {
     const first = await useJobsStore.getState().startNewContent(request({}))
     await ready(first!)
     const second = await useJobsStore.getState().startNewContent(request({ agent: 'explanation' }))
     await ready(second!)
-    expect(entradas()).toHaveLength(1)
-    expect(fileOf(second!).parentFileId).toBe(entradas()[0].id)
+    expect(entradas()).toHaveLength(0)
+    expect(fileOf(second!)).toMatchObject({ parentFileId: null, source: { kind: 'link' } })
   })
 
-  it('o texto colado vira entrada, com o texto dentro dela', async () => {
+  it('o texto colado fica na nota, sem entrada', async () => {
     const id = await useJobsStore.getState().startNewContent(request({ input: { kind: 'text', text: 'Fotossíntese\n\nA planta usa luz.' } }))
     await ready(id!)
-    const [entry] = entradas()
-    expect(entry).toMatchObject({ kept: 'registro', name: 'Fotossíntese', origin: { input: 'text' } })
-    expect(memory.contents.get(entry.id)).toBe('Fotossíntese\n\nA planta usa luz.')
-    expect(fileOf(id!).parentFileId).toBe(entry.id)
+    expect(entradas()).toHaveLength(0)
+    expect(fileOf(id!)).toMatchObject({ parentFileId: null, source: { kind: 'text', text: 'Fotossíntese\n\nA planta usa luz.' } })
   })
 
-  it('o tema vira entrada, e a explicação é filha dela', async () => {
+  it('o tema fica na explicação, sem entrada', async () => {
     const id = await useJobsStore.getState().startNewContent(request({ input: { kind: 'topic', topic: 'Fotossíntese' } }))
     await ready(id!)
-    const [entry] = entradas()
-    expect(entry).toMatchObject({ kept: 'registro', name: 'Fotossíntese', origin: { input: 'topic' } })
-    expect(fileOf(id!)).toMatchObject({ type: 'explanation', parentFileId: entry.id })
+    expect(entradas()).toHaveLength(0)
+    expect(fileOf(id!)).toMatchObject({ type: 'explanation', parentFileId: null, source: { kind: 'topic', text: 'Fotossíntese' } })
   })
 
   it('um arquivo em "Só o registro" não é guardado, mesmo com o Drive escolhido', async () => {
@@ -182,11 +180,11 @@ describe('"Sem rastro"', () => {
     expect(memory.putSource).not.toHaveBeenCalled()
   })
 
-  it('de um link também', async () => {
+  it('um link não tem nível: fica só a nota, que guarda o link', async () => {
     const id = await useJobsStore.getState().startNewContent(request({ keep: 'sem-rastro' }))
     await ready(id!)
     expect(files()).toHaveLength(1)
-    expect(fileOf(id!)).toMatchObject({ parentFileId: null, origin: null })
+    expect(fileOf(id!)).toMatchObject({ parentFileId: null, source: { kind: 'link', url: 'https://exemplo.com/fotossintese' } })
   })
 
   it('uma gravação só transcrita vira uma nota com a transcrição, sem origem', async () => {
@@ -205,7 +203,7 @@ describe('mídia: a transcrição faz parte da entrada', () => {
     const id = await useJobsStore.getState().startNewContent(request({ agent: 'reading', input: { kind: 'recording', file: recording() }, storage: 'drive' }))
     await waitFor(() => expect(memory.contents.get(id!)).toContain('Vamos lançar em maio?'))
     expect(files()).toHaveLength(1)
-    expect(fileOf(id!)).toMatchObject({ role: 'entrada', kept: 'arquivo', parentFileId: null, origin: { input: 'recording', storedFileId: `drive-${id}` } })
+    expect(fileOf(id!)).toMatchObject({ kept: 'arquivo', parentFileId: null, origin: { input: 'recording', storedFileId: `drive-${id}` } })
     expect(memory.sidecars.get(id!)?.recording?.blocks).toHaveLength(2)
   })
 
@@ -214,14 +212,14 @@ describe('mídia: a transcrição faz parte da entrada', () => {
     useJobsStore.setState({ generateAta })
     const id = await useJobsStore.getState().startNewContent(request({ agent: 'meeting', input: { kind: 'recording', file: recording() }, ataParts: ['resumo'], storage: 'drive' }))
     await waitFor(() => expect(generateAta).toHaveBeenCalledWith(id, ['resumo']))
-    expect(fileOf(id!)).toMatchObject({ role: 'entrada', kept: 'arquivo' })
+    expect(fileOf(id!)).toMatchObject({ kept: 'arquivo' })
   })
 
   it('a Ata em duas passadas (sem partes) vai para uma nota filha; a entrada fica com a transcrição', async () => {
     const id = await useJobsStore.getState().startNewContent(request({ agent: 'meeting', input: { kind: 'recording', file: recording() }, storage: 'drive' }))
     await waitFor(() => expect(files().find(file => file.parentFileId === id)?.status).toBe('ready'))
     const ata = files().find(file => file.parentFileId === id)!
-    expect(fileOf(id!)).toMatchObject({ role: 'entrada', kept: 'arquivo', status: 'ready' })
+    expect(fileOf(id!)).toMatchObject({ kept: 'arquivo', status: 'ready' })
     expect(memory.contents.get(id!)).toContain('Vamos lançar em maio?')
     expect(ata).toMatchObject({ type: 'meeting', folderId: 'biologia', origin: { input: 'text', name: fileOf(id!).name, storage: 'none' } })
     expect(memory.contents.get(ata.id)).toContain('Lançar em maio')
@@ -244,13 +242,13 @@ describe('mídia: a transcrição faz parte da entrada', () => {
 describe('"Gravar reunião"', () => {
   it('a gravação salva é uma entrada, como as que já existiam, com o arquivo guardado onde a pessoa escolheu', async () => {
     const id = await useJobsStore.getState().saveRecording({ file: recording(), storedName: null, durationSeconds: 8, folderId: 'biologia', storage: 'drive', litterboxTime: '72h' as NewContentRequest['litterboxTime'], marks: [], transcribe: false })
-    expect(fileOf(id)).toMatchObject({ role: 'entrada', parentFileId: null, folderId: 'biologia', origin: { input: 'recording' } })
+    expect(fileOf(id)).toMatchObject({ parentFileId: null, folderId: 'biologia', origin: { input: 'recording' } })
     await waitFor(() => expect(fileOf(id)).toMatchObject({ kept: 'arquivo', origin: { storedFileId: `drive-${id}` } }))
   })
 
   it('sem guardar em lugar nenhum, fica só o registro', async () => {
     const id = await useJobsStore.getState().saveRecording({ file: recording(), storedName: null, durationSeconds: 8, folderId: null, storage: 'none', litterboxTime: '72h' as NewContentRequest['litterboxTime'], marks: [], transcribe: false })
-    expect(fileOf(id)).toMatchObject({ role: 'entrada', kept: 'registro' })
+    expect(fileOf(id)).toMatchObject({ kept: 'registro' })
   })
 })
 
@@ -266,15 +264,15 @@ describe('a Ata sempre tem entrada (FR-055)', () => {
     useJobsStore.setState({ generateAta })
     const id = await useJobsStore.getState().startNewContent(request({ agent: 'meeting', input: { kind: 'recording', file: recording() }, ataParts: ['resumo'], keep: 'sem-rastro', storage: 'drive' }))
     await waitFor(() => expect(generateAta).toHaveBeenCalledWith(id, ['resumo']))
-    expect(fileOf(id!)).toMatchObject({ role: 'entrada', kept: 'registro', origin: { input: 'recording', name: 'Reunião 14-10-2026.webm', storage: 'none' } })
+    expect(fileOf(id!)).toMatchObject({ kept: 'registro', origin: { input: 'recording', name: 'Reunião 14-10-2026.webm', storage: 'none' } })
     expect(memory.putSource).not.toHaveBeenCalled()
   })
 
   it('a Ata em duas passadas, pedida "Sem rastro", também é filha de uma entrada; a transcrição não vira nota', async () => {
     const id = await useJobsStore.getState().startNewContent(request({ agent: 'meeting', input: { kind: 'recording', file: recording() }, keep: 'sem-rastro', storage: 'drive' }))
     await waitFor(() => expect(files().find(file => file.parentFileId === id)?.status).toBe('ready'))
-    expect(fileOf(id!)).toMatchObject({ role: 'entrada', kept: 'registro' })
-    expect(files().filter(file => file.role !== 'entrada')).toEqual([expect.objectContaining({ type: 'meeting', parentFileId: id })])
+    expect(fileOf(id!)).toMatchObject({ kept: 'registro' })
+    expect(files().filter(file => !isSourceNote(file))).toEqual([expect.objectContaining({ type: 'meeting', parentFileId: id })])
     expect(memory.putSource).not.toHaveBeenCalled()
   })
 
@@ -283,6 +281,6 @@ describe('a Ata sempre tem entrada (FR-055)', () => {
     useJobsStore.setState({ generateAta })
     const id = await useJobsStore.getState().startNewContent(request({ agent: 'meeting', input: { kind: 'recording', file: recording() }, ataParts: ['resumo'], storage: 'none' }))
     await waitFor(() => expect(generateAta).toHaveBeenCalled())
-    expect(fileOf(id!)).toMatchObject({ role: 'entrada', kept: 'registro' })
+    expect(fileOf(id!)).toMatchObject({ kept: 'registro' })
   })
 })

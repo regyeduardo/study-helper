@@ -4,6 +4,7 @@ import type { Settings } from '@/types/domain'
 import { AiSettings } from '@/components/dialogs/AiSettings'
 import { IntegrationStatus } from '@/components/dialogs/IntegrationStatus'
 import { Icon } from '@/components/ui/Icon'
+import { PlacesPanel } from '@/components/dialogs/PlacesPanel'
 import { isNarrowScreen } from '@/hooks/use-is-narrow'
 import { fromLegacy, legacyAiOf } from '@/lib/ai/config'
 import { DEFAULT_STORAGE_LIMIT_BYTES, defaultSettings } from '@/lib/defaults'
@@ -70,7 +71,7 @@ function LinksTab() {
   )
 }
 
-function StorageTab() {
+function StorageTab({ focusId }: { focusId?: string }) {
   const account = useAccountStore(state => state.active())
   const usage = useSyncStore(state => state.usage)
   const refreshUsage = useSyncStore(state => state.refreshUsage)
@@ -113,6 +114,11 @@ function StorageTab() {
           <span>No perfil Local, tudo fica neste navegador (espaço livre estimado: {formatBytes(usage?.cloudTotalBytes)}). O app pediu ao navegador para não apagar esses dados.</span>
         </div>
       )}
+      {/* "Locais": where each folder and note is kept (spec 003, história 9) */}
+      <div className="field">
+        <span className="lab">Locais</span>
+        <PlacesPanel focusId={focusId} />
+      </div>
     </>
   )
 }
@@ -315,7 +321,7 @@ const TABS: [SettingsTab, string][] = [
   ['others', 'Outros'],
 ]
 
-export function SettingsDialog({ initial }: { initial?: SettingsTab }) {
+export function SettingsDialog({ initial, focusId }: { initial?: SettingsTab; focusId?: string }) {
   const close = useUiStore(state => state.close)
   const adding = useModelsStore(state => state.adding)
   // Idioma falado and the terms moved to Geral; the old "Transcrição" link opens it.
@@ -363,7 +369,7 @@ export function SettingsDialog({ initial }: { initial?: SettingsTab }) {
           <div className={`set-body${tab === 'ai' ? ' ias' : ''}`}>
             {tab === 'ai' && <AiSettings />}
             {tab === 'links' && <LinksTab />}
-            {tab === 'storage' && <StorageTab />}
+            {tab === 'storage' && <StorageTab focusId={focusId} />}
             {tab === 'devices' && <DevicesTab />}
             {tab === 'general' && <GeneralTab />}
             {tab === 'others' && <OthersTab />}

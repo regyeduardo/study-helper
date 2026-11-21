@@ -3,14 +3,81 @@ import { useNavigate } from 'react-router-dom'
 
 import type { FolderMeta } from '@/types/domain'
 import { FolderChooserDialog, type FolderSource } from '@/components/dialogs/FolderChooser'
+import { Dialog } from '@/components/ui/Dialog'
 import { Icon } from '@/components/ui/Icon'
 import { useNow } from '@/hooks/use-now'
 import { paths } from '@/lib/paths'
-import { daysLeftText, hasSharedMedia, importSharedEntry, importSharedItem, prefetchEntryMedia, type MediaPlace, readSharedAttempts } from '@/lib/share'
+import { daysLeftText, importSharedEntry, importSharedItem, linkMediaState, prefetchEntryMedia, type MediaPlace, readSharedAttempts, sharedMediaFailure } from '@/lib/share'
 import { useAccountStore } from '@/stores/account'
 import { useJobsStore } from '@/stores/jobs'
 import { useLibraryStore } from '@/stores/library'
 import { useUiStore } from '@/stores/ui'
+import { formatBytes } from '@/utils/format'
+
+/** What the recipient is asked about the media: where to keep it (it is in the link), or whether to import without it (it is still going up). */
+type MediaChoice = { kind: 'place'; folderId: string | null; size: number } | { kind: 'pending'; folderId: string | null }
+
+function MediaChoiceDialog({ choice, drive, onPick, onClose }: { choice: MediaChoice; drive: boolean; onPick(place: MediaPlace | null): void; onClose(): void }) {
+  if (choice.kind === 'pending') {
+    return (
+      <Dialog
+        title="A mídia ainda está subindo"
+        size="narrow"
+        role="alertdialog"
+        onClose={onClose}
+        footer={
+          <>
+            <button className="btn quiet" onClick={onClose}>
+              Cancelar
+            </button>
+            <button className="btn primary" onClick={() => onPick(null)}>
+              Importar só o texto
+            </button>
+          </>
+        }
+      >
+        <div className="db">
+          <span className="muted">Quem compartilhou ainda está enviando a mídia (ou o envio não terminou). Dá para importar só o texto agora. Para ter a mídia, espere ela terminar de subir e importe de novo.</span>
+        </div>
+      </Dialog>
+    )
+  }
+  const size = choice.size ? ` (${formatBytes(choice.size)})` : ''
+  return (
+    <Dialog
+      title={drive ? 'Onde guardar a mídia?' : 'Baixar a mídia?'}
+      size="narrow"
+      role="alertdialog"
+      onClose={onClose}
+      footer={
+        <>
+          <button className="btn quiet" onClick={onClose}>
+            Cancelar
+          </button>
+          <button className="btn" onClick={() => onPick(null)}>
+            Só o texto
+          </button>
+          <button className={`btn ${drive ? '' : 'primary'}`} onClick={() => onPick('browser')}>
+            Neste navegador
+          </button>
+          {drive && (
+            <button className="btn primary" onClick={() => onPick('drive')}>
+              No Google Drive
+            </button>
+          )}
+        </>
+      }
+    >
+      <div className="db">
+        <span className="muted">
+          {drive
+            ? `A gravação${size} vem junto com a nota. No Google Drive ela abre em qualquer aparelho seu; neste navegador, só aqui. Dá para importar só o texto.`
+            : `A gravação${size} vem junto com a nota e fica guardada só neste navegador. Dá para importar só o texto.`}
+        </span>
+      </div>
+    </Dialog>
+  )
+}
 
 export function SharedBadge({ label = false, button = false }: { label?: boolean; button?: boolean }) {
   const shared = useLibraryStore(state => state.sharedView)
@@ -24,11 +91,13 @@ export function SharedBadge({ label = false, button = false }: { label?: boolean
   const [downloading, setDownloading] = useState<number | null>(null)
   // the link of an entrada asks first for the folder, among the folders of who imports (FR-068)
   const [ownFolders, setOwnFolders] = useState<FolderMeta[] | null>(null)
+  const [choice, setChoice] = useState<MediaChoice | null>(null)
   const now = useNow()
   if (!shared) return null
   const { item } = shared
 
-  const importItem = async (place: MediaPlace | null, folderId: string | null) => {
+  /** `skipped`: why the media was not even tried (it is past its days), told after the import. */
+  const importItem = async (place: MediaPlace | null, folderId: string | null, skipped?: string) => {
     setImporting(true)
     try {
       const fetched = place && item.kind === 'entrada' ? await prefetchEntryMedia(item, setDownloading) : {}
@@ -40,12 +109,14 @@ export function SharedBadge({ label = false, button = false }: { label?: boolean
       const actions = { createFolder: library.createFolder, createFile: library.createFile, updateSidecar: library.updateSidecar }
       if (item.kind === 'entrada') {
         const result = await importSharedEntry(item, readSharedAttempts(item.id), actions, { folderId, existing: library.files, media })
-        toast(result.mediaFailed ? `Importado, mas a mídia não veio: ${result.mediaFailed}` : 'Importado para a sua biblioteca')
+        const why = result.mediaFailed ?? skipped
+        toast(why ? `Importado, mas a mídia não veio: ${why}` : 'Importado para a sua biblioteca')
         navigate(paths.file(result.fileId))
         return
       }
       const result = await importSharedItem(item, readSharedAttempts(item.id), actions, media)
-      toast('Importado para a sua biblioteca')
+      const why = result.mediaFailed ?? skipped
+      toast(why ? `Importado, mas a mídia não veio: ${why}` : 'Importado para a sua biblioteca')
       navigate(result.fileId ? paths.file(result.fileId) : paths.folder(result.folderId))
     } catch (error) {
       toast(error instanceof Error ? error.message : 'Não consegui importar.')
@@ -55,16 +126,17 @@ export function SharedBadge({ label = false, button = false }: { label?: boolean
   }
 
   const askMedia = (folderId: string | null) => {
-    if (!hasSharedMedia(item)) return void importItem(null, folderId)
-    if (!driveAvailable) return void importItem('browser', folderId)
-    open({
-      kind: 'confirm',
-      title: 'Onde guardar a mídia?',
-      text: 'A gravação vem junto com a nota. No Google Drive ela abre em qualquer aparelho seu; neste navegador, só aqui.',
-      ok: 'No Google Drive',
-      onConfirm: () => importItem('drive', folderId),
-      alt: { label: 'Neste navegador', onConfirm: () => importItem('browser', folderId) },
-    })
+    const state = linkMediaState(item)
+    if (state.kind === 'expired') return void importItem(null, folderId, sharedMediaFailure(410))
+    if (state.kind === 'pending') return setChoice({ kind: 'pending', folderId })
+    if (state.kind === 'ready') return setChoice({ kind: 'place', folderId, size: state.media.size })
+    void importItem(null, folderId)
+  }
+
+  const pick = (place: MediaPlace | null) => {
+    const folderId = choice?.folderId ?? null
+    setChoice(null)
+    void importItem(place, folderId)
   }
 
   const startImport = () => {
@@ -95,6 +167,7 @@ export function SharedBadge({ label = false, button = false }: { label?: boolean
     />
   )
 
+  const choose = choice && <MediaChoiceDialog choice={choice} drive={driveAvailable} onPick={pick} onClose={() => setChoice(null)} />
   const both = label === button
   const tag = (
     <span className="crs" aria-label="Compartilhado">
@@ -114,6 +187,7 @@ export function SharedBadge({ label = false, button = false }: { label?: boolean
       <>
         {action}
         {chooser}
+        {choose}
       </>
     )
   return (
@@ -121,6 +195,7 @@ export function SharedBadge({ label = false, button = false }: { label?: boolean
       {tag}
       {action}
       {chooser}
+      {choose}
     </span>
   )
 }

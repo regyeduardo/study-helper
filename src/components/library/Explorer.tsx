@@ -1,21 +1,19 @@
-// O explorador (FR-036 a FR-045): a pasta como antes desta feature, só notas, uma por linha (FR-073); a busca, na biblioteca toda (FR-074, FR-075).
-import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+// O explorador (FR-036 a FR-045): a pasta com as notas de todos os tipos, uma por linha (003, história 10); a busca, na biblioteca toda (FR-074, FR-075).
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 
 import type { FileMeta, FolderMeta } from '@/types/domain'
-import { entryKind } from '@/components/library/entry-kind'
 import { FileTableRow, FolderTableRow, SortHead, TableCheck } from '@/components/library/FileRows'
 import { FilterPanel } from '@/components/library/FilterPanel'
 import { ActiveFilters, LowMasteryChip } from '@/components/library/Filters'
-import { EntryGroupRow, FolderEntriesSelect, NO_ENTRY } from '@/components/library/FolderEntries'
 import { SelectionBar } from '@/components/library/SelectionBar'
+import { SyncLocalBanner } from '@/components/library/SyncLocal'
 import { isTouchScreen, useFileActions } from '@/components/library/use-file-actions'
 import { Icon } from '@/components/ui/Icon'
 import { useIsNarrow } from '@/hooks/use-is-narrow'
 import { readForSearch, useFilterSource, useLiveLibrary, usePathName, useSearchHits, useSearchPending } from '@/hooks/use-library-view'
 import { isNote } from '@/lib/family'
 import { LOW_MASTERY_BELOW, REVIEW_BELOW } from '@/lib/file-types'
-import { folderEntriesOf, groupNotesByEntry } from '@/lib/folder-entries'
 import { filterLibrary, type LibraryFilters, placeOf, withoutFilter } from '@/lib/library-filters'
 import { type SearchHit, searchWords } from '@/lib/library-search'
 import { paths, type View } from '@/lib/paths'
@@ -35,16 +33,13 @@ export function sortFiles(files: FileMeta[], { column, ascending }: SortState): 
   return [...files].sort((a, b) => (ascending ? order(a, b) : order(b, a)) || byName(a, b))
 }
 
-/** What this screen lists before the filters: notes only (FR-073). The tag of the side bar and the Pasta filter look beyond the folder being browsed. */
+/** What this screen lists before the filters: the notes of every type (003, história 10); "Para revisar" only the written ones with a Prova. The tag of the side bar and the Pasta filter look beyond the folder being browsed. */
 function inView(view: View, folderId: string | null, tag: string | null, filters: LibraryFilters): (file: FileMeta) => boolean {
-  if (tag) return isNote
+  if (tag) return () => true
   if (view === 'review') return file => isNote(file) && file.mastery !== null && file.mastery < REVIEW_BELOW
-  if (view === 'favorites') return file => isNote(file) && file.favorite
-  return filters.folders.length ? isNote : file => isNote(file) && file.folderId === folderId
+  if (view === 'favorites') return file => file.favorite
+  return filters.folders.length ? () => true : file => file.folderId === folderId
 }
-
-/** "Como item": the entradas of this folder, or of the folders chosen in the Pasta filter, which the filters then narrow like the notes. */
-const entryInView = (folderId: string | null, filters: LibraryFilters) => (file: FileMeta) => !isNote(file) && (filters.folders.length > 0 || file.folderId === folderId)
 
 const byPosition = (a: FolderMeta, b: FolderMeta) => a.position - b.position || a.name.localeCompare(b.name, 'pt-BR')
 
@@ -104,7 +99,7 @@ export function SearchBox({ placeholder = 'Buscar em nomes, transcrições e not
   )
 }
 
-/** Where a result opens: a note at the words, an entrada at the speech found (FR-074). */
+/** Where a result opens: a written note at the words, a note that keeps a source at the speech found (FR-074). */
 function useOpenResult() {
   const navigate = useNavigate()
   const { openFile } = useFileActions()
@@ -130,14 +125,9 @@ export function Explorer({ view, folderId }: { view: View; folderId: string | nu
   const [sort, setSort] = useState<SortState>({ column: 'name', ascending: true })
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [shownResults, setShownResults] = useState(RESULTS_AT_ONCE)
-  const [folded, setFolded] = useState<ReadonlySet<string>>(() => new Set())
   const hits = useSearchHits(query)
   const pending = useSearchPending()
   const searching = searchWords(query).length > 0
-  // "Entradas:" is the folder navigation's only: not a search, not the tag of the side bar, not Revisar or Favoritos, not a shared link
-  const folderNav = view === 'folder' && !tag && !searching && !shared
-  const chosenEntries = useLibraryStore(state => folderEntriesOf(state.index.settings))
-  const entriesMode = folderNav ? chosenEntries : 'hide'
   // the folder is a list of notes: its "Tipo" is the type of the note (FR-073)
   const notesFilters = useMemo<LibraryFilters>(() => ({ ...filters, scope: 'notas' }), [filters])
 
@@ -145,30 +135,22 @@ export function Explorer({ view, folderId }: { view: View; folderId: string | nu
 
   const result = useMemo(() => {
     const low = (file: FileMeta) => !lowMastery || (file.mastery !== null && file.mastery < LOW_MASTERY_BELOW)
-    // a search looks in the whole library, entradas included, and shows only what it found
-    if (searching) return filterLibrary({ ...source, only: new Set(files.filter(file => hits.has(file.id) && low(file)).map(file => file.id)), foundEntries: true }, notesFilters)
+    // a search looks in the whole library and shows only what it found
+    if (searching) return filterLibrary({ ...source, only: new Set(files.filter(file => hits.has(file.id) && low(file)).map(file => file.id)) }, notesFilters)
     const here = inView(view, folderId, tag, filters)
-    const entries = entriesMode === 'item' ? entryInView(folderId, filters) : () => false
-    // an entrada passes the filters that are not of a note's type, as the notes do
-    return filterLibrary({ ...source, only: new Set(files.filter(file => (here(file) || entries(file)) && low(file)).map(file => file.id)), foundEntries: entriesMode === 'item' }, notesFilters)
-  }, [source, files, view, folderId, tag, filters, notesFilters, lowMastery, searching, hits, entriesMode])
+    return filterLibrary({ ...source, only: new Set(files.filter(file => here(file) && low(file)).map(file => file.id)) }, notesFilters)
+  }, [source, files, view, folderId, tag, filters, notesFilters, lowMastery, searching, hits])
 
   const hasFilters = result.active.length > 0 || lowMastery
   const sorted = useMemo(() => sortFiles(result.items, sort), [result.items, sort])
   const rows = searching ? sorted.slice(0, shownResults) : sorted
-  // "Agrupar as notas": the groups by the entrada in the chosen order, each with its notes in the same order; a folded group's notes are out of sight
-  const groups = useMemo(() => (entriesMode === 'group' ? groupNotesByEntry(source.files, sorted, entries => sortFiles(entries, sort)) : null), [entriesMode, source, sorted, sort])
-  const groupKey = (entry: FileMeta | null) => entry?.id ?? NO_ENTRY
-  const listed = useMemo(() => (groups ? groups.filter(item => !folded.has(groupKey(item.entry))).flatMap(item => item.notes) : rows), [groups, folded, rows])
   const subfolders = useMemo(() => (view === 'folder' && !hasFilters && !searching ? folders.filter(folder => folder.parentId === folderId).sort(byPosition) : []), [view, hasFilters, searching, folders, folderId])
   const childCounts = useMemo(() => {
     const counts = new Map<string, number>()
-    for (const parent of [...files.filter(isNote).map(file => file.folderId), ...folders.map(folder => folder.parentId)]) if (parent) counts.set(parent, (counts.get(parent) ?? 0) + 1)
+    for (const parent of [...files.map(file => file.folderId), ...folders.map(folder => folder.parentId)]) if (parent) counts.set(parent, (counts.get(parent) ?? 0) + 1)
     return counts
   }, [files, folders])
-  const visible = useMemo(() => new Set([...subfolders.map(folder => folder.id), ...listed.map(file => file.id)]), [subfolders, listed])
-  // the entradas of this folder are in "Entradas" (FR-073): an empty folder of notes says where they went
-  const entriesHere = useMemo(() => (view === 'folder' && !tag ? files.filter(file => !isNote(file) && file.folderId === folderId).length : 0), [view, tag, files, folderId])
+  const visible = useMemo(() => new Set([...subfolders.map(folder => folder.id), ...rows.map(file => file.id)]), [subfolders, rows])
 
   // What leaves the table leaves the selection: "Apagar" never acts on what is out of sight.
   useEffect(() => {
@@ -187,8 +169,7 @@ export function Explorer({ view, folderId }: { view: View; folderId: string | nu
 
   const tested = result.items.filter(file => file.mastery !== null)
   const average = tested.length ? Math.round(tested.reduce((sum, file) => sum + (file.mastery ?? 0), 0) / tested.length) : null
-  // "Como item" adds the entradas to what is counted, as they are rows of the folder
-  const summary = entriesMode === 'item' ? `${result.shown} de ${result.total + files.filter(file => !isNote(file)).length}` : result.summary
+  const summary = result.summary
   const marked = [...visible].filter(id => selection.has(id)).length
   const allChecked = marked === 0 ? false : marked === visible.size ? true : 'some'
   const sortBy = (column: SortColumn) => setSort(current => ({ column, ascending: current.column === column ? !current.ascending : column === 'name' }))
@@ -214,7 +195,6 @@ export function Explorer({ view, folderId }: { view: View; folderId: string | nu
           )}
           <LowMasteryChip />
           <span className="spacer" />
-          {folderNav && <FolderEntriesSelect mode={chosenEntries} narrow={narrow} />}
           {view === 'folder' && !shared && (
             <button className="btn" onClick={() => ui.open({ kind: 'new-folder', parentId: folderId })}>
               <Icon name="folder" />
@@ -228,6 +208,7 @@ export function Explorer({ view, folderId }: { view: View; folderId: string | nu
           )}
           <SearchBox />
         </div>
+        {!shared && !searching && <SyncLocalBanner />}
         {hasFilters && <ActiveFilters active={result.active} summary={summary} onRemove={group => ui.setFilters(withoutFilter(filters, group))} onClear={ui.clearFilters} />}
         {searching && (
           <p className="ex-found" role="status">
@@ -267,23 +248,10 @@ export function Explorer({ view, folderId }: { view: View; folderId: string | nu
               {subfolders.map(folder => (
                 <FolderTableRow key={folder.id} folder={folder} items={childCounts.get(folder.id) ?? 0} {...rowProps} />
               ))}
-              {groups
-                ? groups.map(item => {
-                    const key = groupKey(item.entry)
-                    const open = !folded.has(key)
-                    return (
-                      <Fragment key={key}>
-                        <EntryGroupRow entry={item.entry} notes={item.notes} open={open} onToggle={() => setFolded(current => new Set(current.has(key) ? [...current].filter(id => id !== key) : [...current, key]))} folderId={folderId} {...rowProps} />
-                        {open && item.notes.map(file => <FileTableRow key={file.id} file={file} grouped={{ under: item.entry?.id ?? null }} place={placeNote(file)} {...rowProps} />)}
-                      </Fragment>
-                    )
-                  })
-                : rows.map(file => {
-                    const hit = searching ? hits.get(file.id) : undefined
-                    // "Como item": an entrada among the notes opens its own page, and says what it is
-                    const entry = entriesMode === 'item' && !isNote(file)
-                    return <FileTableRow key={file.id} file={file} hit={hit} onOpen={hit && openResult(file, hit)} folderName={hit && pathName(file.folderId)} place={placeNote(file)} to={entry ? paths.entry(file.id) : undefined} kindText={entry ? `Entrada · ${entryKind(file).label}` : undefined} {...rowProps} />
-                  })}
+              {rows.map(file => {
+                const hit = searching ? hits.get(file.id) : undefined
+                return <FileTableRow key={file.id} file={file} hit={hit} onOpen={hit && openResult(file, hit)} folderName={hit && pathName(file.folderId)} place={placeNote(file)} {...rowProps} />
+              })}
             </tbody>
           </table>
         )}
@@ -292,18 +260,7 @@ export function Explorer({ view, folderId }: { view: View; folderId: string | nu
             {`Mostrar mais ${Math.min(RESULTS_AT_ONCE, sorted.length - rows.length)} de ${(sorted.length - rows.length).toLocaleString('pt-BR')}`}
           </button>
         )}
-        {!searching && !rows.length && entriesHere > 0 && !hasFilters ? (
-          <div className="empty ex-no-notes">
-            <span>{`Nenhuma nota nesta pasta, só ${plural(entriesHere, 'entrada', 'entradas')}.`}</span>
-            {!shared && (
-              <Link className="btn" to={paths.entries}>
-                Ver em Entradas
-              </Link>
-            )}
-          </div>
-        ) : (
-          !searching && !subfolders.length && !rows.length && <div className="empty">{hasFilters ? 'Nada com esse filtro aqui.' : 'Pasta vazia. Use Novo ou Gravar para começar.'}</div>
-        )}
+        {!searching && !subfolders.length && !rows.length && <div className="empty">{hasFilters ? 'Nada com esse filtro aqui.' : 'Pasta vazia. Use Novo ou Gravar para começar.'}</div>}
         {selectable && (
           <div className="selwrap ex-selwrap">
             <SelectionBar />

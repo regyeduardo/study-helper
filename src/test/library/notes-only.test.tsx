@@ -41,15 +41,8 @@ beforeEach(() => {
 const rows = () => within(screen.getByRole('table', { name: 'Notas e pastas' })).getAllByRole('row').slice(1)
 const entryRow = () => rows().find(row => row.textContent?.includes(ENTRY_NAME))
 
-describe('revisão, painel inicial, busca por conteúdo e prova consideram só notas', () => {
-  // "Gravações sem transcrição" lists it (FR-053): explorer-search.test.tsx
-  it('o painel inicial não mostra a entrada em nenhum bloco de notas', () => {
-    renderAt('/')
-    const blocks = ['Para revisar', 'Cartões para hoje', 'Últimas notas'].map(name => screen.queryByRole('region', { name })?.textContent ?? '')
-    expect(blocks.join(' ')).not.toContain(ENTRY_NAME)
-    expect(blocks[2]).toContain('Limites laterais e continuidade')
-  })
-
+// o Início mostra as entradas de propósito, entre as últimas coisas feitas: home-recent.test.tsx
+describe('revisão, busca por conteúdo e prova consideram só notas', () => {
   it('"Para revisar" não lista nem conta a entrada', () => {
     renderAt('/revisar')
     expect(entryRow()).toBeUndefined()

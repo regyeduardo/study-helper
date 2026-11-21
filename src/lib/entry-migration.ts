@@ -85,7 +85,8 @@ function planOf(files: FileMeta[], inBrowser: Set<string>, { holders, spoken }: 
   const create = new Map<string, Plan['create'][number]>()
   const patches: Plan['patches'] = []
   const candidates = files
-    .filter(file => isNote(file) && !file.deletedAt && !file.parentFileId && realSource(file.origin))
+    // a note that keeps its link, text or topic in itself (`source`) has no entrada unless the person asks ("Virar entrada")
+    .filter(file => isNote(file) && !file.deletedAt && !file.parentFileId && !file.source && realSource(file.origin))
     .sort((a, b) => a.created.at.localeCompare(b.created.at) || a.id.localeCompare(b.id))
   // the recordings first: a note written from the same media goes under the recording that became the entrada
   const live = [...files.filter(file => file.role === 'entrada' && !file.deletedAt), ...candidates.filter(file => holders.has(file.id))]

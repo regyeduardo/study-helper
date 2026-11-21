@@ -204,8 +204,8 @@ describe('apagar um item sem descendentes segue a confirmação de hoje', () => 
     useUiStore.getState().open({ kind: 'delete-family', fileId: 'podcast' })
     renderApp()
     const dialog = await screen.findByRole('alertdialog', { name: 'Apagar "Podcast.m4a"?' })
-    expect(dialog).toHaveTextContent('A entrada vai para a lixeira e dá para restaurar. O áudio pode ir junto, mas aí não volta.')
-    expect(within(dialog).getAllByRole('button').map(button => button.textContent)).toEqual(['', 'Cancelar', 'Apagar só a entrada', 'Apagar a entrada e a mídia'])
+    expect(dialog).toHaveTextContent('A nota vai para a lixeira e dá para restaurar. O áudio pode ir junto, mas aí não volta.')
+    expect(within(dialog).getAllByRole('button').map(button => button.textContent)).toEqual(['', 'Cancelar', 'Apagar só a nota', 'Apagar a nota e a mídia'])
   })
 
   it('a janela aberta pelo id, sem mídia, pede só a confirmação', async () => {

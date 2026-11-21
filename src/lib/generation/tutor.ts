@@ -1,4 +1,4 @@
-import type { Artifact, FileMeta, FileSidecar, TutorArtifact } from '@/types/domain'
+import type { Artifact, FileMeta, FileSidecar, TutorArtifact, TutorScope } from '@/types/domain'
 import { latestOf, newTutorArtifact, questionName } from '@/lib/artifacts'
 import { motherOf } from '@/lib/family'
 import { notePart } from '@/lib/generation/map-chat'
@@ -59,14 +59,31 @@ export async function transcriptAbove(files: FileMeta[], fileId: string, open: (
   return found && found.id !== fileId ? found.transcript : ''
 }
 
-/** The conversation used last: opening the Tutor continues it. */
-export function lastConversation(list: Artifact[]): TutorArtifact | null {
-  return latestOf(list, 'tutor')
+/**
+ * Whose conversation it is. The one made after the Chat existed carries its mark; the old ones do not: on an entrada they were
+ * the Chat's (the Chat was what saved there), on a note they are the Tutor's.
+ */
+export function scopeOf(conversation: { scope?: TutorScope }, onEntry: boolean): TutorScope {
+  return conversation.scope ?? (onEntry ? 'chat' : 'tutor')
 }
 
-/** The conversation with these turns; a new one (null) is named by its first question. */
-export function withTurns(conversation: TutorArtifact | null, turns: TutorTurn[]): TutorArtifact {
-  if (!conversation) return newTutorArtifact({ turns })
+/** The conversations of one side, the one changed last first (on a tie, the later in the list). */
+export function conversationsOf(list: Artifact[], scope: TutorScope, onEntry: boolean): TutorArtifact[] {
+  return list
+    .map((item, index) => ({ item, index }))
+    .filter((entry): entry is { item: TutorArtifact; index: number } => entry.item.kind === 'tutor' && scopeOf(entry.item, onEntry) === scope)
+    .sort((a, b) => b.item.updatedAt.localeCompare(a.item.updatedAt) || b.index - a.index)
+    .map(({ item }) => item)
+}
+
+/** The conversation used last: opening the Tutor (or the Chat) continues it. Without a side, the last of any. */
+export function lastConversation(list: Artifact[], scope?: TutorScope, onEntry = false): TutorArtifact | null {
+  return scope ? (conversationsOf(list, scope, onEntry)[0] ?? null) : latestOf(list, 'tutor')
+}
+
+/** The conversation with these turns; a new one (null) is named by its first question and marked as the `scope`'s. */
+export function withTurns(conversation: TutorArtifact | null, turns: TutorTurn[], scope?: TutorScope): TutorArtifact {
+  if (!conversation) return newTutorArtifact({ turns, scope })
   const named = conversation.provisionalName && turns.length ? { name: questionName(turns[0].text), provisionalName: false } : {}
   return { ...conversation, ...named, turns }
 }

@@ -7,6 +7,7 @@ import { DriveRepository } from '@/lib/storage/drive-repository'
 import { useLibraryStore } from '@/stores/library'
 import { useSyncStore } from '@/stores/sync'
 import { FakeDrive, installMemoryStorage, uniqueAccount } from '@/test/storage/fake-drive'
+import { isSourceNote } from '@/lib/file-types'
 
 const token = vi.fn(async () => 'tok')
 const VIDEO: SourceMeta = { input: 'file', name: 'kickoff.mp4', sizeBytes: 1234, mime: 'video/mp4', durationSeconds: 60, storage: 'none', expiresAt: null }
@@ -75,7 +76,7 @@ describe('probe', () => {
     const index = await (repo as DriveRepository).indexFromDrive()
     await repo.saveIndex({ ...index!, entriesMigratedAt: undefined })
     await library().connect(account, token)
-    const entry = library().files.find(f => f.role === 'entrada')
+    const entry = library().files.find(f => isSourceNote(f))
     expect(entry).toBeDefined()
     await library().moveFiles([entry!.id], b.id)
     expect(library().files.find(f => f.id === entry!.id)!.folderId).toBe(b.id)

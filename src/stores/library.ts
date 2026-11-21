@@ -26,15 +26,17 @@ import { currentDevice, stamp } from '@/lib/device'
 import { migrateEntries } from '@/lib/entry-migration'
 import { descendantsOf } from '@/lib/family'
 import { masteryOf } from '@/lib/exam'
-import { mediaOf } from '@/lib/file-types'
+import { isSourceNote, mediaOf } from '@/lib/file-types'
 import { nameArtifact, nameSource } from '@/lib/generation/artifact-name'
 import { GenerationSession } from '@/lib/generation/session'
 import { activeLinks, saveSharedAttempt, type SharedAttempts, sharedLibrary } from '@/lib/share'
 import { setSharedRoot } from '@/lib/paths'
 import { newId, nowIso } from '@/lib/ids'
 import { type LocalMedia, listLocalMedia, removeLocalMedia, watchLocalMedia } from '@/lib/recording/media-library'
+import { CombinedRepository } from '@/lib/storage/combined-repository'
 import { openDriveLibrary } from '@/lib/storage/hidden-migration'
 import { LocalRepository } from '@/lib/storage/local-repository'
+import { MoveJournal, showingOf } from '@/lib/storage/moves'
 import type { Repository, StoredSize } from '@/lib/storage/repository'
 import { removeStoredSource } from '@/lib/storage/source-storage'
 import type { TrackedTask } from '@/stores/jobs'
@@ -80,6 +82,8 @@ interface LibraryState {
   createFile(fields: Partial<FileMeta> & { name: string; type: FileType }, content: string): Promise<FileMeta>
   saveContent(id: string, content: string, patch?: Partial<FileMeta>): Promise<void>
   updateFile(id: string, patch: Partial<FileMeta>): Promise<void>
+  /** The same change for many files: the list shows it for all at once; the writes follow one by one. */
+  updateFiles(ids: string[], patch: Partial<FileMeta>): Promise<void>
   updateSidecar(id: string, change: (sidecar: FileSidecar) => FileSidecar): Promise<FileSidecar>
   moveFiles(ids: string[], folderId: string | null): Promise<void>
   hasMedia(id: string): boolean
@@ -162,6 +166,44 @@ export const useLibraryStore = create<LibraryState>((set, get) => {
   const replaceFolder = (folder: FolderMeta) =>
     set(state => ({ folders: state.folders.some(item => item.id === folder.id) ? state.folders.map(item => (item.id === folder.id ? folder : item)) : [...state.folders, folder] }))
 
+  /** What a click changes shows at once; the write follows. Returns the way back, for when the write fails (only what is still as shown is put back). */
+  const showNow = <T extends FileMeta | FolderMeta>(kind: 'files' | 'folders', ids: string[], patch: Partial<T>): (() => void) => {
+    const keys = Object.keys(patch) as (keyof T)[]
+    const before = new Map<string, Partial<T>>()
+    set(state => ({
+      [kind]: (state[kind] as T[]).map(item => {
+        if (!ids.includes(item.id)) return item
+        before.set(item.id, Object.fromEntries(keys.map(key => [key, item[key]])) as Partial<T>)
+        return { ...item, ...patch }
+      }),
+    }))
+    return () =>
+      set(state => ({
+        [kind]: (state[kind] as T[]).map(item => {
+          const old = before.get(item.id)
+          if (!old) return item
+          const still = keys.filter(key => item[key] === patch[key])
+          return still.length ? { ...item, ...Object.fromEntries(still.map(key => [key, old[key]])) } : item
+        }),
+      }))
+  }
+
+  /** Many changes: all of them show now, the writes follow one by one, and the ones not written go back if a write fails. */
+  const changeMany = async (changes: [string, Partial<FileMeta>][], write: (id: string, patch: Partial<FileMeta>) => Promise<void>) => {
+    // a library that is closed or read only refuses before anything is shown
+    repository()
+    const undo = new Map(changes.map(([id, patch]) => [id, showNow<FileMeta>('files', [id], patch)]))
+    try {
+      for (const [id, patch] of changes) {
+        await write(id, patch)
+        undo.delete(id)
+      }
+    } catch (error) {
+      for (const back of undo.values()) back()
+      throw error
+    }
+  }
+
   const sidecarOf = async (id: string): Promise<FileSidecar> => get().opened[id]?.sidecar ?? (await repository().readSidecar(id))
 
   const measure = (repo: Repository, fileIds?: string[]) =>
@@ -195,11 +237,33 @@ export const useLibraryStore = create<LibraryState>((set, get) => {
     return saved
   }
 
+  /** A change to the sidecar of an opened file (a highlight, a note) shows at once; the write follows, and if it fails the sidecar goes back. */
+  const changeSidecarNow = async (id: string, change: (sidecar: FileSidecar) => FileSidecar): Promise<void> => {
+    const before = get().opened[id]
+    // not in memory yet: nothing to show ahead of the write
+    if (!before) return void (await get().updateSidecar(id, change))
+    const next = change(before.sidecar)
+    set(state => ({ opened: { ...state.opened, [id]: { ...state.opened[id], sidecar: next } } }))
+    try {
+      await saveSidecarOnly({ ...next, meta: { ...next.meta, updated: stamp() } })
+    } catch (error) {
+      set(state => (state.opened[id]?.sidecar === next ? { opened: { ...state.opened, [id]: { ...state.opened[id], sidecar: before.sidecar } } } : {}))
+      throw error
+    }
+  }
+
+  // an index that is being written is newer than the one a sync read from the Drive before the write ended: that sync must not put the old one back
+  let indexWrites = 0
   const saveIndex = async (index: LibraryIndex) => {
     set({ index })
     const repo = get().repo
     if (!repo) throw new Error('A biblioteca ainda não abriu.')
-    await repo.saveIndex(index)
+    indexWrites++
+    try {
+      await repo.saveIndex(index)
+    } finally {
+      indexWrites--
+    }
   }
 
   // Artifact writes of a note run one after the other: each reads what the one before saved.
@@ -299,7 +363,10 @@ export const useLibraryStore = create<LibraryState>((set, get) => {
           if (library.warning) (task as TrackedTask | null)?.fail(library.warning)
           else (task as TrackedTask | null)?.done('Tudo na pasta oculta do Drive')
           if (get().accountId !== accountId) return
-          repo = library.repo
+          // The account's Drive and this browser's Local in one tree (spec 003, história 9); a move left open shows its origin until checked.
+          const combined = new CombinedRepository(library.repo, new LocalRepository(`study-helper-local-${accountId}`, accountId))
+          combined.setShowing(showingOf(await new MoveJournal(accountId).all().catch(() => [])))
+          repo = combined
           set({ hiddenPending: library.hiddenPending, hiddenWarning: library.warning })
         }
       } catch (error) {
@@ -314,6 +381,8 @@ export const useLibraryStore = create<LibraryState>((set, get) => {
         set({ ready: true })
         await migrateOnLoad(repo, snapshot)
         await get().purgeExpiredTrash()
+        // a change of place stopped in the middle (a closed tab) continues from where it stopped (FR-054)
+        if (repo instanceof CombinedRepository) void import('@/stores/places').then(({ usePlacesStore }) => usePlacesStore.getState().resume()).catch(() => undefined)
       } catch (error) {
         if (get().repo === repo) set({ loadError: error instanceof Error ? error.message : 'Não consegui abrir a biblioteca.', ready: true })
       }
@@ -336,13 +405,13 @@ export const useLibraryStore = create<LibraryState>((set, get) => {
     applySnapshot: (snapshot, changedFileIds = []) => {
       if (get().sharedView && own) {
         own = { ...own, folders: snapshot.folders, files: snapshot.files, opened: {} }
-        set({ index: { ...defaultIndex(), ...snapshot.index, settings: normalizeSettings({ ...defaultIndex().settings, ...snapshot.index.settings }) } })
+        if (!indexWrites) set({ index: { ...defaultIndex(), ...snapshot.index, settings: normalizeSettings({ ...defaultIndex().settings, ...snapshot.index.settings }) } })
         return
       }
       set(state => {
         const opened = { ...state.opened }
         for (const id of changedFileIds) delete opened[id]
-        return { folders: snapshot.folders, files: snapshot.files, index: { ...defaultIndex(), ...snapshot.index, settings: normalizeSettings({ ...defaultIndex().settings, ...snapshot.index.settings }) }, opened }
+        return { folders: snapshot.folders, files: snapshot.files, ...(indexWrites ? {} : { index: { ...defaultIndex(), ...snapshot.index, settings: normalizeSettings({ ...defaultIndex().settings, ...snapshot.index.settings }) } }), opened }
       })
       const repo = get().repo
       if (repo) measure(repo)
@@ -380,9 +449,24 @@ export const useLibraryStore = create<LibraryState>((set, get) => {
     },
 
     updateFile: async (id, patch) => {
-      const sidecar = await sidecarOf(id)
-      await saveSidecarOnly({ ...sidecar, meta: { ...sidecar.meta, ...patch, updated: stamp() } })
+      // a library that is closed or read only refuses before anything is shown
+      repository()
+      // the list shows the change now; if the write fails it goes back
+      const undo = showNow<FileMeta>('files', [id], patch)
+      try {
+        const sidecar = await sidecarOf(id)
+        await saveSidecarOnly({ ...sidecar, meta: { ...sidecar.meta, ...patch, updated: stamp() } })
+      } catch (error) {
+        undo()
+        throw error
+      }
     },
+
+    updateFiles: (ids, patch) =>
+      changeMany(
+        ids.map(id => [id, patch]),
+        (id, change) => get().updateFile(id, change),
+      ),
 
     updateSidecar: async (id, change) => {
       const sidecar = await sidecarOf(id)
@@ -390,9 +474,7 @@ export const useLibraryStore = create<LibraryState>((set, get) => {
       return saveSidecarOnly({ ...next, meta: { ...next.meta, updated: stamp() } })
     },
 
-    moveFiles: async (ids, folderId) => {
-      for (const id of ids) await get().updateFile(id, { folderId })
-    },
+    moveFiles: (ids, folderId) => get().updateFiles(ids, { folderId }),
 
     hasMedia: id => {
       const meta = get().files.find(file => file.id === id)
@@ -401,24 +483,29 @@ export const useLibraryStore = create<LibraryState>((set, get) => {
     },
 
     trashFiles: async (ids, options) => {
-      for (const id of ids) {
-        const origin = options?.media && get().hasMedia(id) ? await removeMediaOf(id) : undefined
-        await get().updateFile(id, { deletedAt: nowIso(), ...(origin && { origin }) })
-      }
+      const at = nowIso()
+      await changeMany(
+        ids.map(id => [id, { deletedAt: at }]),
+        async id => {
+          const origin = options?.media && get().hasMedia(id) ? await removeMediaOf(id) : undefined
+          await get().updateFile(id, { deletedAt: at, ...(origin && { origin }) })
+        },
+      )
     },
 
     trashFamily: async id => {
       const root = get().files.find(file => file.id === id)
       if (!root) return
       const at = nowIso()
-      for (const file of [root, ...descendantsOf(get().files, id)]) await get().updateFile(file.id, { deletedAt: at, trashedWith: id })
+      const family = [root, ...descendantsOf(get().files, id)].map(file => file.id)
+      await get().updateFiles(family, { deletedAt: at, trashedWith: id })
     },
 
     trashOnly: async (id, options) => {
       const meta = get().files.find(file => file.id === id)
       if (!meta) return
-      // an Ata never loses its entrada (FR-055): at most, its mother is in the Lixeira
-      const keeps = (child: FileMeta) => meta.role === 'entrada' && child.type === 'meeting'
+      // an Ata never loses the media note it came from (FR-055): at most, its mother is in the Lixeira
+      const keeps = (child: FileMeta) => isSourceNote(meta) && child.type === 'meeting'
       for (const child of get().files.filter(file => file.parentFileId === id && !keeps(file))) await get().updateFile(child.id, { parentFileId: meta.parentFileId ?? null })
       await get().trashFiles([id], options)
     },
@@ -434,18 +521,28 @@ export const useLibraryStore = create<LibraryState>((set, get) => {
       if (!meta) return
       const mark = meta.trashedWith
       const family = mark ? get().files.filter(file => file.trashedWith === mark && file.deletedAt) : [meta]
-      for (const file of family) {
+      const back = family.map((file): [string, Partial<FileMeta>] => {
         const folder = get().folders.find(item => item.id === file.folderId)
-        await get().updateFile(file.id, { deletedAt: null, folderId: folder && !folder.deletedAt ? file.folderId : null, ...(mark ? { trashedWith: undefined } : {}) })
-      }
+        return [file.id, { deletedAt: null, folderId: folder && !folder.deletedAt ? file.folderId : null, ...(mark ? { trashedWith: undefined } : {}) }]
+      })
+      await changeMany(back, (id, patch) => get().updateFile(id, patch))
     },
 
     deleteFileForever: async id => {
       const meta = get().files.find(file => file.id === id)
       const ref = meta?.origin?.storage === 'drive' ? meta.origin.storedFileId : undefined
-      // an entrada and the notes that existed before it share the stored file: it goes with the last one
-      if (ref && !get().files.some(file => file.id !== id && file.origin?.storedFileId === ref)) await repository().removeSource(ref).catch(() => undefined)
-      await repository().removeFile(id)
+      // a library that is closed or read only refuses before anything is shown
+      repository()
+      // it leaves the list now; if the Drive refuses, it comes back
+      if (meta) set(state => ({ files: state.files.filter(file => file.id !== id) }))
+      try {
+        // an entrada and the notes that existed before it share the stored file: it goes with the last one
+        if (ref && !get().files.some(file => file.id !== id && file.origin?.storedFileId === ref)) await repository().removeSource(ref).catch(() => undefined)
+        await repository().removeFile(id)
+      } catch (error) {
+        if (meta) replaceFile(meta)
+        throw error
+      }
       set(state => {
         const opened = { ...state.opened }
         delete opened[id]
@@ -477,9 +574,16 @@ export const useLibraryStore = create<LibraryState>((set, get) => {
     updateFolder: async (id, patch) => {
       const folder = get().folders.find(item => item.id === id)
       if (!folder) return
-      const next = { ...folder, ...patch, updated: stamp() }
-      await repository().saveFolder(next)
-      replaceFolder(next)
+      repository()
+      const undo = showNow<FolderMeta>('folders', [id], patch)
+      try {
+        const next = { ...folder, ...patch, updated: stamp() }
+        await repository().saveFolder(next)
+        replaceFolder(next)
+      } catch (error) {
+        undo()
+        throw error
+      }
     },
 
     trashFolder: async id => {
@@ -566,7 +670,7 @@ export const useLibraryStore = create<LibraryState>((set, get) => {
     },
 
     saveHighlight: async (id, highlight) => {
-      await get().updateSidecar(id, sidecar => ({
+      await changeSidecarNow(id, sidecar => ({
         ...sidecar,
         highlights: sidecar.highlights.some(item => item.id === highlight.id)
           ? sidecar.highlights.map(item => (item.id === highlight.id ? highlight : item))
@@ -575,7 +679,7 @@ export const useLibraryStore = create<LibraryState>((set, get) => {
     },
 
     removeHighlight: async (id, highlightId) => {
-      await get().updateSidecar(id, sidecar => ({ ...sidecar, highlights: sidecar.highlights.filter(item => item.id !== highlightId) }))
+      await changeSidecarNow(id, sidecar => ({ ...sidecar, highlights: sidecar.highlights.filter(item => item.id !== highlightId) }))
     },
 
     saveArtifact: async (fileId, artifact, replaceId) => {

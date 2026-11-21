@@ -1,4 +1,4 @@
-// A lista de Entradas tem a mesma busca das pastas: só as entradas com o termo, o termo destacado, e o clique leva à fala achada.
+// Gravações (antes Entradas) tem a mesma busca das pastas: só as gravações com o termo, o termo destacado, e o clique leva à fala achada.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
@@ -48,7 +48,7 @@ function Workspace() {
 
 function renderEntries() {
   return render(
-    <MemoryRouter initialEntries={['/entradas']}>
+    <MemoryRouter initialEntries={['/gravacoes']}>
       <Routes>
         <Route path="/entrada/:fileId" element={<Workspace />} />
         <Route path="*" element={<Workspace />} />
@@ -70,22 +70,24 @@ afterEach(() => {
 })
 
 const search = (value: string) => fireEvent.change(screen.getByRole('searchbox', { name: 'Buscar' }), { target: { value } })
-const table = () => screen.getByRole('table', { name: 'Entradas' })
+const table = () => screen.getByRole('table', { name: 'Gravações' })
 const names = () => within(table()).getAllByRole('row').slice(1).map(row => row.getAttribute('aria-label'))
 const found = () => document.querySelector('.ex-found')
 const marks = (element: HTMLElement) => [...element.querySelectorAll('mark')].map(mark => mark.textContent)
 
-describe('busca na lista de Entradas', () => {
-  it('tem a caixa "Buscar"; sem termo, mostra todas as entradas', async () => {
+describe('busca em Gravações', () => {
+  it('tem a caixa "Buscar"; sem termo, mostra todas as gravações (o PDF não é gravação)', async () => {
     renderEntries()
     expect(screen.getByRole('searchbox', { name: 'Buscar' })).toBeInTheDocument()
-    expect(names().sort()).toEqual(['Aula de terça', 'Contrato do fornecedor'])
+    expect(names()).toEqual(['Aula de terça'])
   })
 
-  it('pelo que foi dito: só a entrada com o termo, a fala com o termo marcado, e o clique leva à fala', async () => {
+  it('pelo que foi dito: só a gravação com o termo, a fala com o termo marcado, e o clique leva à fala', async () => {
     renderEntries()
     search('assintota vertical')
-    await waitFor(() => expect(names()).toEqual(['Aula de terça']))
+    // a single recording is listed before and after: wait for the search's own sentence
+    await waitFor(() => expect(found()).toHaveTextContent('1 resultado'))
+    expect(names()).toEqual(['Aula de terça'])
     const row = within(table()).getByRole('row', { name: 'Aula de terça' })
     expect(row).toHaveTextContent('na transcrição · 01:35')
     expect(marks(row)).toEqual(['assíntota', 'vertical'])
@@ -94,28 +96,32 @@ describe('busca na lista de Entradas', () => {
     await waitFor(() => expect(screen.getByLabelText('rota')).toHaveTextContent('/entrada/aula-terca?t=95'))
   })
 
-  it('pelo nome e pelo conteúdo, só entre as entradas: uma nota com o termo não entra', async () => {
+  it('pelo nome, só entre as gravações: um PDF ou uma nota com o termo não entra', async () => {
     renderEntries()
+    search('terça')
+    await waitFor(() => expect(names()).toEqual(['Aula de terça']))
     search('fornecedor')
-    await waitFor(() => expect(names()).toEqual(['Contrato do fornecedor']))
+    await waitFor(() => expect(found()).toHaveTextContent('Nada com “fornecedor” nas gravações.'))
     search('limite')
-    await waitFor(() => expect(found()).toHaveTextContent('Nada com “limite” nas entradas.'))
+    await waitFor(() => expect(found()).toHaveTextContent('Nada com “limite” nas gravações.'))
   })
 
   it('sem resultado: fica só a frase, sem o cabeçalho de uma tabela vazia; apagar a busca traz a tabela de volta', async () => {
     renderEntries()
     search('limite')
-    await waitFor(() => expect(found()).toHaveTextContent('Nada com “limite” nas entradas.'))
+    await waitFor(() => expect(found()).toHaveTextContent('Nada com “limite” nas gravações.'))
     expect(screen.queryByRole('table')).not.toBeInTheDocument()
     search('')
-    await waitFor(() => expect(names().sort()).toEqual(['Aula de terça', 'Contrato do fornecedor']))
+    await waitFor(() => expect(names()).toEqual(['Aula de terça']))
   })
 
   it('apagar a busca volta à lista inteira', async () => {
     renderEntries()
-    search('fornecedor')
-    await waitFor(() => expect(names()).toEqual(['Contrato do fornecedor']))
+    search('assintota')
+    await waitFor(() => expect(found()).toHaveTextContent('1 resultado'))
+    expect(names()).toEqual(['Aula de terça'])
     search('')
-    await waitFor(() => expect(names().sort()).toEqual(['Aula de terça', 'Contrato do fornecedor']))
+    await waitFor(() => expect(found()).toBeNull())
+    expect(names()).toEqual(['Aula de terça'])
   })
 })

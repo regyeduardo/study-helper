@@ -1,5 +1,6 @@
 import type { RecordingData } from '@/types/domain'
 import { Cancelled } from '@/controllers/ai.controller'
+import { INSTRUCTION_HEAD } from '@/lib/generation/instruction'
 import { extractJson } from '@/lib/generation/mermaid'
 import { PROMPTS } from '@/lib/generation/prompts.data'
 import { batches, type Correction, correctionsIn, withCorrections } from '@/lib/generation/reviewer'
@@ -34,10 +35,13 @@ function pieces(lines: string[]): string[][] {
   return out
 }
 
-export async function polishTranscript(recording: RecordingData, session: GenerationSession, terms = ''): Promise<Polished> {
+/** `instruction`: what the person asked of the revision ("o nome certo é João Vitor"), first of all. */
+export async function polishTranscript(recording: RecordingData, session: GenerationSession, terms = '', instruction = ''): Promise<Polished> {
   if (!recording.blocks.length) return { recording, title: null }
   const hint = termsHint(terms)
+  const asked = instruction.trim()
   const context =
+    (asked ? `${INSTRUCTION_HEAD}\n\n${asked}\n\n` : '') +
     (hint ? `${hint}\n\n` : '') +
     (recording.speakers.length ? `Participantes: ${recording.speakers.map(speaker => speaker.name).join(', ')}\n\n` : '') +
     screenWriting(recording)

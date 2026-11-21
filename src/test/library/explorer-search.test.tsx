@@ -117,16 +117,4 @@ describe('the transcription of a media entrada is searched (FR-053)', () => {
     const { result } = renderHook(() => useLibraryView('folder', 'calc'))
     expect(result.current.files.map(file => file.id)).toEqual(['seminario'])
   })
-
-  it('"Gravações sem transcrição" lists the audio and video entradas still without transcription', () => {
-    addEntries(
-      TERCA,
-      { meta: entrada('quinta', 'Gravação de quinta', audio(2), 0), sidecar: {} },
-      { meta: entrada('video-cru', 'Vídeo do seminário', video(45), 0), sidecar: {} },
-      { meta: entrada('link', 'Artigo sobre limites', { input: 'url', name: 'https://exemplo.com/limites', storage: 'none' }, 0), sidecar: {} },
-    )
-    renderAt('/')
-    const region = screen.getByRole('region', { name: 'Gravações sem transcrição' })
-    expect(within(region).getAllByRole('button').map(button => button.textContent)).toEqual(['Gravação de quintaÁudio · 2 min', 'Vídeo do seminárioVídeo · 45 min'])
-  })
 })

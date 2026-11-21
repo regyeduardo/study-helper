@@ -1,0 +1,35 @@
+/* A prova em andamento: "Entregar prova" e "Mais" no cabeçalho; embaixo, a barra que não rola (T151). */
+.exam-head{display:inline-flex;align-items:center;gap:8px;flex:none}
+.exam-head .btn{height:32px}
+.exam-head .exam-more{padding:0 10px}
+.exam-head .exam-more .ic{width:18px;height:18px}
+/* "Entregar prova" also lives in the menu, for the phone, where the header has no room for it */
+@media (min-width:761px){.menu .mi.exam-menu-submit{display:none}}
+.menu .mi .mi-text{display:grid;min-width:0}
+.menu .mi .mi-text b{font-weight:600}
+.menu .mi .mi-text small{font-size:12px;color:var(--fg-muted)}
+.menu .mi:disabled{opacity:.45;cursor:not-allowed}
+.exam-bar{flex:1 1 100%;display:flex;align-items:center;justify-content:space-between;gap:12px;min-width:0;flex-wrap:nowrap}
+.exam-bar .btn{height:40px;padding:0 18px;font-size:14px;flex:none}
+.exam-bar .btn:disabled{opacity:.45;cursor:not-allowed}
+.exam-bar .exam-count{display:grid;justify-items:center;gap:1px;min-width:0;text-align:center;font-variant-numeric:tabular-nums}
+.exam-bar .exam-count b{font-size:14px;font-weight:600}
+.exam-bar .exam-count span{font-size:12.5px;color:var(--fg-muted);white-space:nowrap}
+/* all the questions in one list: the count on the left, "Entregar prova" at the end */
+.exam-bar.list .exam-count{justify-items:start;text-align:left}
+.exam-resume{align-items:center}
+.exam-resume>span{flex:1;min-width:0}
+.banner.exam-resume .ic{color:var(--fg-muted)}
+.exam-resume .btn{flex:none}
+@media (max-width:760px){
+  .exam-head .btn,.exam-head .ibtn{height:36px;min-width:36px}
+  .exam-head .exam-submit,.exam-head .exam-more-label{display:none}
+  .exam-head .exam-more{width:36px;padding:0;justify-content:center}
+  .dh:has(.exam-head) .ibtn{width:36px;height:36px}
+  .dh:has(.exam-head) h2{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .exam-bar{gap:8px}
+  .exam-bar .btn{height:36px;padding:0 12px}
+  .exam-bar .exam-count{flex:1}
+  .exam-resume{align-items:flex-start;flex-wrap:wrap}
+  .exam-resume .btn{height:36px}
+}

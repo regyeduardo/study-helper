@@ -1,0 +1,60 @@
+/* "Onde fica cada coisa" and "Sincronizar" (spec 003, história 9, opções A, S1 e T). App tokens only. */
+.pl,.db.pl{display:flex;flex-direction:column;gap:10px;min-width:0}
+.pl-lead{margin:0;font-size:12.5px}
+.pl-note{margin:0;padding:8px 12px;border-radius:8px;background:var(--bg-subtle);font-size:13px}
+.pl-search{width:100%}
+.pl-head{display:grid;grid-template-columns:minmax(0,1fr) 230px 84px;gap:12px;padding:0 4px 6px;border-bottom:1px solid var(--border);font-size:11.5px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--fg-muted)}
+.pl-head span:last-child{text-align:right}
+.pl-tree{list-style:none;margin:0;padding:0;max-height:min(52vh,520px);max-height:min(52dvh,520px);overflow:auto}
+.pl-row{display:grid;grid-template-columns:minmax(0,1fr) 230px 84px;gap:12px;align-items:center;min-height:34px;padding:2px 4px;border-bottom:1px solid var(--border-muted)}
+.pl-row.pl-focus{background:var(--accent-soft)}
+.pl-name{display:flex;align-items:center;gap:6px;min-width:0;padding-left:calc(var(--depth,0) * 18px)}
+.pl-open{display:inline-flex;align-items:center;gap:6px;min-width:0;min-height:30px;padding:2px 4px 2px 2px;border:0;border-radius:6px;background:none;color:var(--fg);font:inherit;text-align:left;cursor:pointer}
+.pl-open:hover:not(:disabled){background:var(--bg-hover)}
+.pl-open:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.pl-open:disabled{cursor:default;color:var(--fg)}
+.pl-open .ic,.pl-file{width:16px;height:16px;flex:none;color:var(--fg-muted)}
+.pl-caret{flex:none;color:var(--fg-muted)}
+.pl-file{margin-left:14px}
+.pl-caret{width:0;height:0;border-left:5px solid currentColor;border-top:4px solid transparent;border-bottom:4px solid transparent;transition:transform .12s}
+.pl-caret.on{transform:rotate(90deg)}
+.pl-open:disabled .pl-caret{visibility:hidden}
+.pl-title{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pl-place{display:flex;align-items:center;gap:6px;min-width:0}
+.pl-place select.follow{color:var(--fg-muted)}
+.pl-place select{flex:1;min-width:0;height:28px;padding:0 6px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--fg);font:inherit;font-size:13px}
+.pl-mixed{flex:none;margin-left:4px;padding:1px 7px;border-radius:9px;font-size:11.5px;color:var(--warn);background:var(--warn-soft);white-space:nowrap}
+.pl-size{font-size:12.5px;color:var(--fg-muted);text-align:right;white-space:nowrap}
+.pl-empty{padding:12px 4px}
+.pl-ask{display:flex;flex-direction:column;gap:6px;padding:12px 14px;border:1px solid var(--border);border-radius:8px;background:var(--bg-subtle);font-size:13.5px}
+.pl-ask-act{display:flex;justify-content:flex-end;gap:8px;margin-top:4px}
+.pl-warn{color:var(--warn)}
+.pl-progress{margin:0;padding:8px 12px;border-radius:8px;background:var(--accent-soft);font-size:13px}
+.pl-failed{display:flex;flex-direction:column;align-items:flex-start;gap:6px;margin:0;padding:10px 12px;border-radius:8px;background:var(--bad-soft);font-size:13px}
+.pl-failed ul{margin:0;padding-left:18px}
+.pl-summary{flex:1;min-width:0;font-size:12.5px}
+.pl-banner{display:flex;align-items:center;gap:10px;margin:0 0 12px;padding:8px 10px 8px 12px;border:1px solid var(--border);border-radius:8px;background:var(--warn-soft);font-size:13.5px}
+.pl-banner>.ic{width:18px;height:18px;flex:none;color:var(--warn)}
+.pl-banner>span{flex:1;min-width:0}
+.pl-banner>.btn{flex:none}
+.ex-place.pl-local{color:var(--warn);background:var(--warn-soft)}
+.pl-sync fieldset{display:flex;flex-direction:column;gap:6px;margin:0;padding:0;border:0}
+.pl-sync legend{margin-bottom:6px;font-weight:600}
+.pl-choice{display:flex;align-items:flex-start;gap:10px;padding:8px 10px;border:1px solid var(--border-muted);border-radius:8px;cursor:pointer}
+.pl-choice>span{display:flex;flex-direction:column;gap:2px;min-width:0;overflow-wrap:anywhere}
+.pl-choice .muted{font-size:12.5px}
+.pl-choice.off{cursor:default;opacity:.65}
+.pl-choice input{margin-top:3px}
+/* The phone: the place goes under the name, full width, with a target the finger hits. */
+@media (max-width:700px){
+  .pl-head{display:none}
+  .pl-row{grid-template-columns:minmax(0,1fr) auto;grid-template-areas:"name size" "place place";row-gap:4px;padding:6px 4px}
+  .pl-name{grid-area:name}
+  .pl-size{grid-area:size}
+  .pl-place{grid-area:place;padding-left:calc(var(--depth,0) * 18px + 20px)}
+  .pl-place select{height:40px}
+  .pl-open{min-height:40px}
+  .pl-banner{flex-wrap:wrap}
+  .pl-banner>.btn{height:36px}
+}
+.pl-link{padding:0;border:0;background:none;color:var(--accent);font:inherit;text-decoration:underline;text-underline-offset:3px;cursor:pointer}

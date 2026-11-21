@@ -4,7 +4,7 @@ import { MemoryRouter } from 'react-router-dom'
 
 import type { FileMeta, FileSidecar, FolderMeta, SourceMeta } from '@/types/domain'
 import { Overlays } from '@/components/dialogs/Overlays'
-import { EntryList } from '@/components/library/EntryList'
+import { Explorer } from '@/components/library/Explorer'
 import { ItemMenu } from '@/components/library/ItemMenu'
 import { EntryPage } from '@/components/reader/EntryPage'
 import { defaultIndex, newFileMeta, newFolderMeta, newSidecar } from '@/lib/defaults'
@@ -52,7 +52,7 @@ const lastToast = () => useUiStore.getState().toasts.at(-1)?.text
 const tree = (dialog: HTMLElement) => within(dialog).getByRole('tree', { name: 'Todas as pastas' })
 
 /** Marks a folder in the open chooser and confirms with "Mover", as a person would. */
-async function moveTo(name: string, windowTitle = 'Mover 1 item', answer: string | null = 'Só a entrada') {
+async function moveTo(name: string, windowTitle = 'Mover 1 item', answer: string | null = 'Só mover esta') {
   const dialog = await screen.findByRole('dialog', { name: windowTitle })
   fireEvent.click(within(tree(dialog)).getByRole('treeitem', { name }))
   expect(within(tree(dialog)).getByRole('treeitem', { selected: true })).toHaveTextContent(name)
@@ -85,15 +85,15 @@ describe('mover uma entrada pela página da entrada', () => {
         <Overlays />
       </MemoryRouter>,
     )
-    expect(screen.getByText('Entrada · Vídeo').parentElement).toHaveTextContent('Projeto Aurora')
+    expect(screen.getByText('Vídeo').parentElement).toHaveTextContent('Projeto Aurora')
     fireEvent.click(screen.getByRole('button', { name: 'Mais ações' }))
     fireEvent.click(screen.getByRole('menuitem', { name: 'Mover para…' }))
     await moveTo('Atas')
     await waitFor(() => expect(useUiStore.getState().overlay).toBeNull())
     expect(stored('video').folderId).toBe('atas')
     expect(saved.get('video')!.meta.folderId).toBe('atas')
-    expect(screen.getByText('Entrada · Vídeo').parentElement).toHaveTextContent('Atas')
-    expect(screen.getByText('Entrada · Vídeo').parentElement).not.toHaveTextContent('Projeto Aurora')
+    expect(screen.getByText('Vídeo').parentElement).toHaveTextContent('Atas')
+    expect(screen.getByText('Vídeo').parentElement).not.toHaveTextContent('Projeto Aurora')
     expect(lastToast()).toBe('Movido para Atas')
     // only the entrada moves: the note born of it stays
     expect(stored('ata').folderId).toBe('aurora')
@@ -112,7 +112,7 @@ describe('mover uma entrada pela página da entrada', () => {
     fireEvent.click(screen.getByRole('menuitem', { name: 'Mover para…' }))
     await moveTo('Atas')
     await waitFor(() => expect(saved.get('video')!.meta.folderId).toBe('atas'))
-    expect(screen.getByText('Entrada · Vídeo').parentElement).toHaveTextContent('Atas')
+    expect(screen.getByText('Vídeo').parentElement).toHaveTextContent('Atas')
     expect(lastToast()).toBe('Movido para Atas')
   })
 
@@ -129,7 +129,7 @@ describe('mover uma entrada pela página da entrada', () => {
     fireEvent.click(within(tree(dialog)).getByRole('treeitem', { name: 'Atas' }))
     fireEvent.click(within(tree(dialog)).getByRole('treeitem', { name: 'Biblioteca (raiz)' }))
     fireEvent.click(within(dialog).getByRole('button', { name: 'Mover' }))
-    fireEvent.click(await screen.findByRole('button', { name: 'Só a entrada' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Só mover esta' }))
     await waitFor(() => expect(stored('video').folderId).toBeNull())
     expect(saved.get('video')!.meta.folderId).toBeNull()
     expect(lastToast()).toBe('Movido para Biblioteca')
@@ -142,18 +142,18 @@ describe('a entrada com notas nascidas dela: a pergunta na hora (B)', () => {
     openMove()
     await moveTo('Atas', 'Mover 1 item', null)
     const question = await screen.findByRole('alertdialog', { name: 'Levar as notas também?' })
-    expect(question).toHaveTextContent('1 nota nasceu desta entrada')
+    expect(question).toHaveTextContent('Há 1 nota filha (Ata, Aula, Explicação…). Ela pode ir junto para “Atas” ou ficar onde está.')
     expect(question).toHaveTextContent('Atas')
-    expect(within(question).getByRole('button', { name: 'Só a entrada' })).toBeInTheDocument()
-    expect(within(question).getByRole('button', { name: 'A entrada e as notas' })).toBeInTheDocument()
+    expect(within(question).getByRole('button', { name: 'Só mover esta' })).toBeInTheDocument()
+    expect(within(question).getByRole('button', { name: 'Levar as filhas junto' })).toBeInTheDocument()
     // nothing moved before the answer
     expect(stored('video').folderId).toBe('aurora')
   })
 
-  it('"A entrada e as notas" leva a família inteira para a pasta escolhida', async () => {
+  it('"Levar as filhas junto" leva a família inteira para a pasta escolhida', async () => {
     renderEntryPage()
     openMove()
-    await moveTo('Atas', 'Mover 1 item', 'A entrada e as notas')
+    await moveTo('Atas', 'Mover 1 item', 'Levar as filhas junto')
     await waitFor(() => expect(stored('ata').folderId).toBe('atas'))
     expect(stored('video').folderId).toBe('atas')
     expect(saved.get('ata')!.meta.folderId).toBe('atas')
@@ -189,10 +189,10 @@ describe('mover uma entrada pela lista de Entradas', () => {
     expect(lastToast()).toBe('Movido para Atas')
   })
 
-  it('a lista mostra a pasta nova depois de mover', async () => {
+  it('a pasta nova mostra a nota de vídeo depois de mover (003: ela não é Gravação, então fica nas pastas)', async () => {
     render(
       <MemoryRouter>
-        <EntryList />
+        <Explorer view="folder" folderId="atas" />
         <ItemMenu />
         <Overlays />
       </MemoryRouter>,
@@ -201,6 +201,6 @@ describe('mover uma entrada pela lista de Entradas', () => {
     fireEvent.click(await within(await screen.findByRole('menu')).findByRole('button', { name: 'Mover' }))
     await moveTo('Atas')
     await waitFor(() => expect(stored('video').folderId).toBe('atas'))
-    expect(screen.getByRole('link', { name: /Reunião de kickoff\.mp4/ }).closest('li, tr, article, div')).toHaveTextContent('Atas')
+    expect(await screen.findByRole('row', { name: 'Reunião de kickoff.mp4' })).toBeInTheDocument()
   })
 })

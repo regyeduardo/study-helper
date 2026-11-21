@@ -24,7 +24,7 @@ import { useLibraryStore } from '@/stores/library'
 import { type InspectorTab, useUiStore } from '@/stores/ui'
 import { useScrollerRef } from '@/pages/workspace/container/shared'
 
-const TITLES: Record<View, string> = { folder: 'Biblioteca', review: 'Para revisar', favorites: 'Favoritos', trash: 'Lixeira', home: 'Biblioteca', doc: 'Biblioteca', entries: 'Entradas', entry: 'Entrada', ...SHARING_TITLES }
+const TITLES: Record<View, string> = { folder: 'Biblioteca', review: 'Para revisar', favorites: 'Favoritos', trash: 'Lixeira', home: 'Biblioteca', doc: 'Biblioteca', entries: 'Gravações', entry: 'Nota', ...SHARING_TITLES }
 
 function ListColumn({ view, folderId, currentId }: { view: View; folderId: string | null; currentId: string | null }) {
   const ui = useUiStore()
@@ -202,17 +202,17 @@ function DocColumn({ fileId }: { fileId: string | null }) {
   )
 }
 
-/** Entradas and the entrada's page need the whole width; `col-list` keeps them visible when the narrow screen shows one pane. */
+/** Gravações and the page of a note that keeps a source need the whole width; `col-list` keeps them visible when the narrow screen shows one pane. */
 function EntriesColumn() {
   const ui = useUiStore()
   return (
-    <section className="col-list ep-wide" aria-label="Entradas">
+    <section className="col-list ep-wide" aria-label="Gravações">
       <div className="lh">
         <div className="t">
           <button className="ibtn back-mob" onClick={() => ui.set({ columnsPane: 'nav' })} aria-label="Coleções">
             <Icon name="back" />
           </button>
-          <h2>Entradas</h2>
+          <h2>Gravações</h2>
         </div>
       </div>
       <div className="items">
@@ -225,7 +225,7 @@ function EntriesColumn() {
 function EntryColumn({ fileId }: { fileId: string }) {
   const navigate = useNavigate()
   return (
-    <section className="col-list ep-wide" aria-label="Entrada">
+    <section className="col-list ep-wide" aria-label="Nota">
       <div className="dtop">
         <button className="ibtn" onClick={() => navigate(-1)} aria-label="Voltar">
           <Icon name="back" />

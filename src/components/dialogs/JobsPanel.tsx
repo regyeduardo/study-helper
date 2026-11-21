@@ -1,17 +1,22 @@
-import { useEffect } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useEffect, useRef } from 'react'
+import { useLocation, useNavigate } from 'react-router-dom'
 
 import { Icon } from '@/components/ui/Icon'
 import { paths } from '@/lib/paths'
-import { useJobsStore } from '@/stores/jobs'
-import { useUiStore } from '@/stores/ui'
+import { type Job, useJobsStore } from '@/stores/jobs'
+import { useLibraryStore } from '@/stores/library'
+import { type Overlay, useUiStore } from '@/stores/ui'
 
 const DONE_VISIBLE_MS = 5000
 
 export function JobsPanel() {
   const { jobs, cancel, dismiss } = useJobsStore()
   const toast = useUiStore(state => state.toast)
+  const open = useUiStore(state => state.open)
+  const files = useLibraryStore(state => state.files)
   const navigate = useNavigate()
+  const { pathname } = useLocation()
+  const told = useRef(new Set<string>())
 
   useEffect(() => {
     const finished = jobs.filter(job => job.status === 'done' || job.status === 'cancelled')
@@ -20,9 +25,22 @@ export function JobsPanel() {
     return () => window.clearTimeout(timer)
   }, [jobs, dismiss])
 
+  // each note said once; away from it, the notice opens it
   useEffect(() => {
-    for (const job of jobs) if (job.status === 'done' && job.kind === 'generation' && job.fileId && job.message.startsWith('Pronta')) toast(`“${job.title}” ficou pronta`)
+    for (const job of jobs) {
+      if (job.status !== 'done' || job.kind !== 'generation' || !job.fileId || !job.message.startsWith('Pronta') || told.current.has(job.id)) continue
+      told.current.add(job.id)
+      const to = paths.file(job.fileId)
+      toast(`“${job.title}” ficou pronta`, pathname === to ? undefined : { label: 'Abrir', to })
+    }
   }, [jobs.filter(job => job.status === 'done').length])
+
+  /** What "Tentar de novo" opens: the window that asked, as it was filled in; a note kept to write again, its own choice of model. */
+  const retryOf = (job: Job): Overlay | undefined => {
+    if (job.status !== 'error') return undefined
+    if (job.retry) return job.retry
+    return job.kind === 'generation' && job.fileId && files.find(file => file.id === job.fileId && !file.deletedAt)?.status === 'pending' ? { kind: 'pending', fileId: job.fileId } : undefined
+  }
 
   const visible = jobs.slice(0, 4)
   if (!visible.length) return null
@@ -39,13 +57,30 @@ export function JobsPanel() {
               </button>
             )}
             {job.status === 'running' ? (
-              <button className="btn quiet danger" onClick={() => cancel(job.id)}>
-                Cancelar
-              </button>
+              // a plain task of the app (saving, exporting, deleting) has nothing to cancel
+              job.kind !== 'sync' && (
+                <button className="btn quiet danger" onClick={() => cancel(job.id)}>
+                  Cancelar
+                </button>
+              )
             ) : (
-              <button className="ibtn" onClick={() => dismiss(job.id)} aria-label="Dispensar">
-                <Icon name="x" />
-              </button>
+              <>
+                {retryOf(job) && (
+                  <button
+                    className="btn quiet"
+                    onClick={() => {
+                      const retry = retryOf(job)!
+                      dismiss(job.id)
+                      open(retry)
+                    }}
+                  >
+                    Tentar de novo
+                  </button>
+                )}
+                <button className="ibtn" onClick={() => dismiss(job.id)} aria-label="Dispensar">
+                  <Icon name="x" />
+                </button>
+              </>
             )}
           </div>
           <div className="jm">{job.message}</div>

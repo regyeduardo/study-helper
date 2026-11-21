@@ -1,4 +1,5 @@
-export type FileType = 'class' | 'explanation' | 'reading' | 'meeting'
+/** Notas escritas (Aula, Explicação, Leitura, Ata) e notas de fonte (Vídeo, Áudio, PDF, Link, Texto, Tema, outro arquivo): não há mais Entrada (003, história 10). */
+export type FileType = 'class' | 'explanation' | 'reading' | 'meeting' | 'video' | 'audio' | 'pdf' | 'link' | 'text' | 'topic' | 'document'
 
 export type FileStatus = 'ready' | 'pending' | 'generating'
 
@@ -94,6 +95,19 @@ export interface SourceMeta {
   removedAt?: string | null
 }
 
+/** A link, a text or a topic a note was made of, kept in the note itself (no entrada is made of it): "Virar entrada" makes one. */
+export interface NoteSource {
+  kind: 'link' | 'text' | 'topic'
+  /** The link. */
+  url?: string
+  /** The page's title, or the first line of the text. */
+  title?: string
+  /** The text as it was pasted or selected; the topic. */
+  text?: string
+  /** When it came. */
+  at: string
+}
+
 export interface StageTime {
   stage: string
   ms: number
@@ -148,15 +162,19 @@ export interface StampedChange {
 export interface FileMeta {
   id: string
   name: string
-  /** Ausente = nota. */
+  /** Só leitura: bibliotecas de antes da 003 marcam assim a nota de fonte; é lida como nota do tipo da origem (`noteTypeOf`). Ninguém grava mais. */
   role?: 'entrada'
-  /** Só em entrada: o que foi guardado da fonte. */
+  /** Só em nota de fonte: o que foi guardado da fonte. */
   kept?: 'registro' | 'arquivo'
   /** Id da raiz de um "Apagar tudo": restaurar traz todos com a mesma marca. */
   trashedWith?: string
   /** Só em entrada importada de um link: o id do compartilhamento, para a próxima importação virar "(cópia N)". */
   sharedFrom?: string
   folderId: string | null
+  /** Onde a nota fica, por escolha própria (história 9). Ausente = segue a pasta. */
+  place?: Place
+  /** Nota no Google Drive dentro de uma pasta em Local: a pasta de verdade, que só existe no navegador onde foi criada. No Drive ela fica na pasta do Drive mais próxima acima. */
+  awayFolderId?: string
   type: FileType
   description: string
   status: FileStatus
@@ -172,6 +190,8 @@ export interface FileMeta {
   sourceExcerpt: string | null
   pendingExcerpt: string | null
   origin: SourceMeta | null
+  /** Só em nota: o link, o texto ou o tema de onde ela veio, guardado nela mesma. */
+  source?: NoteSource
   generation: GenerationMeta | null
   /** Note made from another: the choices of its last generation, for "Gerar de novo". */
   made?: GenerationChoice
@@ -345,8 +365,12 @@ export interface CardsArtifact extends ArtifactBase {
   cards: StudyCard[]
 }
 
+/** Where a conversation was made: the Chat da entrada or the Tutor of a note. Absent (the old ones): see `scopeOf`. */
+export type TutorScope = 'chat' | 'tutor'
+
 export interface TutorArtifact extends ArtifactBase {
   kind: 'tutor'
+  scope?: TutorScope
   turns: { who: 'você' | 'tutor'; text: string }[]
 }
 
@@ -358,15 +382,24 @@ export interface ArtifactSummary {
   kind: ArtifactKind
   name: string
   updatedAt: string
+  /** Only a conversation: the Chat's or the Tutor's. */
+  scope?: TutorScope
 }
 
 /** Ausente = cor padrão. */
 export type FolderColor = 'vermelho' | 'laranja' | 'amarelo' | 'verde' | 'azul' | 'roxo' | 'cinza'
 
+/** Onde um item fica (história 9): Google Drive, Local (só neste navegador) ou App (a conta do Estudo). */
+export type Place = 'drive' | 'local' | 'app'
+
 export interface FolderMeta {
   id: string
   name: string
   parentId: string | null
+  /** Onde a pasta fica, por escolha própria. Ausente = segue a pasta de cima; na raiz, o lugar de hoje. */
+  place?: Place
+  /** Pasta no Google Drive dentro de uma pasta em Local: a pasta de cima de verdade, que só existe no navegador onde foi criada. */
+  awayParentId?: string
   position: number
   description: string
   favorite?: boolean
@@ -518,7 +551,7 @@ export interface Settings {
   layout: LayoutId
   storageLimitBytes: number | null
   examOneAtATime: boolean
-  /** The folder of the library: "hide" shows only the notes (the default), "group" groups them under their entrada, "item" lists the entradas as rows. Absent in old indexes: "hide". */
+  /** Read and ignored since 003 (história 10): the folder lists the notes of every type. Kept so old indexes load as they are. */
   folderEntries?: 'hide' | 'group' | 'item'
 }
 
@@ -538,6 +571,8 @@ export interface ShareRecord {
   bytes: number
   withExams: boolean
   createdAt: string
+  /** When the same link last got the version of that day (the link can be updated in place). */
+  updatedAt?: string
   expiresAt: string
 }
 
@@ -585,6 +620,8 @@ export interface SharedFile {
     | Pick<TutorArtifact, 'id' | 'kind' | 'name' | 'turns'>
   )[]
   media?: SharedMedia
+  /** The media the sharer said it is sending and that is not in the link yet: still going up, or the upload did not finish. */
+  mediaPending?: Omit<SharedMedia, 'url'>
   meta?: Partial<FileMeta>
 }
 

@@ -349,7 +349,7 @@ export function CommandsWorkspace({ route }: { route: ViewRoute }) {
       <nav className="views" aria-label="Visões">
         {tab('folder', 'Biblioteca', paths.library, counts.library)}
         {tab('review', 'Para revisar', paths.review, counts.review)}
-        {tab('entries', 'Entradas', paths.entries, counts.entries)}
+        {tab('entries', 'Gravações', paths.entries, counts.entries)}
         {tab('favorites', 'Favoritos', paths.favorites, counts.favorites)}
         {tab('trash', 'Lixeira', paths.trash, counts.trash)}
         {tab('shares', SHARING_TITLES.shares, paths.shares, counts.shares)}

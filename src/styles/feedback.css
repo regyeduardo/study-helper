@@ -1,0 +1,8 @@
+/* Waiting for the Drive: the page shows the shape of what is coming (it stands still with prefers-reduced-motion, see app.css) */
+.note-opening{display:grid;gap:10px;margin-top:4px}
+.note-opening .reader-live{margin-bottom:6px}
+.note-opening .sk{display:block;height:12px;border-radius:6px;background:linear-gradient(90deg,var(--bg-muted) 25%,var(--border-muted) 50%,var(--bg-muted) 75%);background-size:200% 100%;animation:ias-shimmer 1.2s linear infinite}
+.note-opening .w90{width:90%}
+.note-opening .w85{width:85%}
+.note-opening .w75{width:75%}
+.note-opening .w50{width:50%}

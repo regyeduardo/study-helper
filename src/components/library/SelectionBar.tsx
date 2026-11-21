@@ -1,7 +1,8 @@
 import { Icon } from '@/components/ui/Icon'
-import { exportFilesAsZip } from '@/lib/exports/library-export'
+import { exportManyWithFeedback } from '@/components/library/slow-actions'
 import { filesInside, useLiveLibrary } from '@/hooks/use-library-view'
 import { descendantsOf } from '@/lib/family'
+import { itemsOf, working } from '@/lib/working'
 import { useLibraryStore } from '@/stores/library'
 import { useUiStore } from '@/stores/ui'
 
@@ -35,16 +36,23 @@ export function SelectionBar({ hideSingle = false }: { hideSingle?: boolean }) {
       <button
         className="btn"
         onClick={async () => {
-          for (const id of fileIds) await library.updateFile(id, { favorite: true })
-          for (const id of folderIds) await library.updateFolder(id, { favorite: true })
-          ui.toast(`${count} nos favoritos`)
+          // the stars light up at once; one Drive write per item follows, and a line says so
+          const ok = await working(
+            `Favoritando ${itemsOf(count)}…`,
+            async () => {
+              await library.updateFiles(fileIds, { favorite: true })
+              for (const id of folderIds) await library.updateFolder(id, { favorite: true })
+            },
+            { message: 'Marcando como favorito' },
+          )
+          if (ok) ui.toast(`${count} nos favoritos`)
         }}
       >
         <Icon name="star" />
         Favoritar
       </button>
       {notes.length > 0 && (
-        <button className="btn" onClick={() => void exportFilesAsZip(notes)}>
+        <button className="btn" onClick={() => void exportManyWithFeedback(notes)}>
           <Icon name="download" />
           Exportar
         </button>
@@ -58,9 +66,17 @@ export function SelectionBar({ hideSingle = false }: { hideSingle?: boolean }) {
             for (const id of folderIds) await library.trashFolder(id)
             return ui.open({ kind: 'delete-family', fileId: withFamily, fileIds })
           }
+          // the items leave the list at once; a line says how many are going (one Drive write each)
           const trash = async (media: boolean) => {
-            await library.trashFiles(fileIds, { media })
-            for (const id of folderIds) await library.trashFolder(id)
+            const ok = await working(
+              `Apagando ${itemsOf(count)}…`,
+              async () => {
+                await library.trashFiles(fileIds, { media })
+                for (const id of folderIds) await library.trashFolder(id)
+              },
+              { message: media ? 'Apagando as notas e as mídias' : 'Mandando para a lixeira' },
+            )
+            if (!ok) return
             ui.clearSelection()
             ui.toast(`${count} na lixeira${media ? ', com a mídia' : ''}`)
           }

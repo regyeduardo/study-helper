@@ -11,7 +11,8 @@ import {
   uploadToOnlyfilesController,
   uploadToTmpfilesController,
 } from '@/controllers/hosting.controller'
-import { readLocalMedia } from '@/lib/recording/media-library'
+import { recordingName, sourceTypeOf } from '@/lib/file-types'
+import { keepLocalMedia, linkLocalMedia, type LocalMedia, readLocalMedia } from '@/lib/recording/media-library'
 import type { Repository } from '@/lib/storage/repository'
 import { useLibraryStore } from '@/stores/library'
 
@@ -72,14 +73,16 @@ export async function storeSource(
   return { storage: choice, storedUrl: hosted.url, expiresAt: hosted.expiresAt }
 }
 
+const GONE_FROM_BROWSER = 'O arquivo não está mais neste navegador.'
+
 /** FR-043: uploads what is kept in this browser and gives the item its Drive address. The copy in Mídias stays. */
-export async function saveToDrive(fileId: string): Promise<void> {
+export async function saveToDrive(fileId: string, kept?: LocalMedia): Promise<void> {
   const library = useLibraryStore.getState()
   const { repo } = library
   if (repo?.kind !== 'drive') throw new Error('Entre com o Google para guardar no Drive.')
   const origin = library.files.find(file => file.id === fileId)?.origin
-  const local = library.localMedia.find(item => item.fileIds.includes(fileId))
-  const gone = new Error('O arquivo não está mais neste navegador.')
+  const local = kept ?? library.localMedia.find(item => item.fileIds.includes(fileId))
+  const gone = new Error(GONE_FROM_BROWSER)
   if (!origin || !local) throw gone
   const media = await readLocalMedia(local).catch(() => {
     throw gone
@@ -92,6 +95,52 @@ export async function saveToDrive(fileId: string): Promise<void> {
     await repo.removeSource(stored.storedFileId!).catch(() => undefined)
     throw error
   }
+}
+
+/**
+ * T136: a media in Mídias that never became a note has nowhere to hold a Drive address, so it first gets a media note, the way
+ * "Só guardar para ler" makes one for a media file (Vídeo or Áudio, kept 'arquivo'), and then goes to the Drive. No other note is made.
+ * If the upload fails the media note stays linked to the media, and trying again uploads for it.
+ */
+export async function saveLocalMediaToDrive(item: LocalMedia, onEntry?: (entryId: string) => void): Promise<void> {
+  const library = useLibraryStore.getState()
+  if (library.repo?.kind !== 'drive') throw new Error('Entre com o Google para guardar no Drive.')
+  await readLocalMedia(item).catch(() => {
+    throw new Error(GONE_FROM_BROWSER)
+  })
+  const origin: SourceMeta = { input: item.storedName.startsWith('envio-') ? 'file' : 'recording', name: item.name, mime: item.mime, sizeBytes: item.size, durationSeconds: item.durationSeconds, storage: 'none' }
+  const entry = await library.createFile({ name: recordingName(item.name), kept: 'registro', type: sourceTypeOf(origin), description: '', folderId: null, status: 'ready', pendingExcerpt: null, origin }, '')
+  onEntry?.(entry.id)
+  await linkLocalMedia(item.storedName, entry.id)
+  await library.updateFile(entry.id, { kept: 'arquivo' })
+  await saveToDrive(entry.id, { ...item, fileIds: [...item.fileIds, entry.id] })
+}
+
+/** T136: brings what is only in the Drive to Mídias, linked to the item that has the address. The copy in the Drive stays. */
+export async function keepFromDrive(fileId: string): Promise<void> {
+  const { repo, files } = useLibraryStore.getState()
+  if (repo?.kind !== 'drive') throw new Error('Entre com o Google para pegar do Drive.')
+  const origin = files.find(file => file.id === fileId)?.origin
+  if (!origin?.storedFileId || origin.storage !== 'drive' || origin.removedAt) throw new Error('A mídia não está mais guardada no Drive.')
+  const stored = await repo.getSource(origin.storedFileId)
+  await keepLocalMedia(new File([stored], origin.name, { type: origin.mime || stored.type }), fileId, origin.durationSeconds ?? 0)
+}
+
+/** T137: the media of an item to download: the copy of this browser first, then the Drive or the host; a host's address comes back as text. */
+export async function mediaToDownload(fileId: string): Promise<Blob | string> {
+  const { files, localMedia, repo } = useLibraryStore.getState()
+  const origin = files.find(file => file.id === fileId)?.origin ?? null
+  const local = localMedia.find(item => item.fileIds.includes(fileId))
+  const stored = Boolean(origin && (origin.storedFileId || origin.storedUrl) && !origin.removedAt && !sourceExpired(origin))
+  if (local) {
+    try {
+      return await readLocalMedia(local)
+    } catch {
+      if (!stored) throw new Error(GONE_FROM_BROWSER)
+    }
+  }
+  if (origin && stored && repo) return downloadStoredSource(origin, repo)
+  throw new Error('A mídia não está mais guardada.')
 }
 
 export function sourceExpired(origin: SourceMeta | null): boolean {

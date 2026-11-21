@@ -13,6 +13,7 @@ import { useJobsStore, type NewContentRequest } from '@/stores/jobs'
 import { useLibraryStore } from '@/stores/library'
 import { type CapturedRequest, installFetch, openAiStream, systemPromptOf, userContentOf } from '@/test/ai/fake-provider'
 import type { FileMeta, FileSidecar, FolderMeta } from '@/types/domain'
+import { isSourceNote } from '@/lib/file-types'
 
 vi.mock('@/lib/transcription', () => ({
   ENGINES: [
@@ -174,7 +175,7 @@ describe('generation fills metadata', () => {
     const note = await readyFile(id!)
     // the transcription is part of the media: the Ata is the entrada's child and keeps only its own text
     const entry = useLibraryStore.getState().files.find(item => item.id === note.parentFileId)!
-    expect(entry.role).toBe('entrada')
+    expect(isSourceNote(entry)).toBe(true)
     expect(memory.sidecars.get(entry.id)?.transcript).toBe('Ana: vamos lançar em maio. Bruno: eu mando a proposta.')
     expect(memory.sidecars.get(id!)?.transcript).toBeUndefined()
     render(
@@ -193,7 +194,7 @@ describe('generation fills metadata', () => {
     const file = new NodeFile([new Uint8Array(2048)], 'reuniao.webm', { type: 'audio/webm' }) as unknown as File
     expect(await useJobsStore.getState().startNewContent(request({ agent: 'meeting', input: { kind: 'recording', file }, storage: 'drive' }))).toBeNull()
 
-    const meta = useLibraryStore.getState().files.find(file => file.role !== 'entrada')!
+    const meta = useLibraryStore.getState().files.find(file => !isSourceNote(file))!
     expect(meta).toMatchObject({ status: 'pending', origin: { storage: 'none' } })
     expect(meta.pendingExcerpt).toContain('vamos lançar em maio')
     expect(useJobsStore.getState().jobs[0]).toMatchObject({ status: 'error' })

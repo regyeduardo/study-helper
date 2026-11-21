@@ -351,13 +351,14 @@ describe('os filtros ativos acima da tabela (FR-044, FR-045)', () => {
     // the folder's "Tipo" is the type of the note: "Regra da cadeia" is an Aula
     fireEvent.click(option(NOTA))
     expect(active()).toHaveTextContent(/Tipo\s*nota/)
-    expect(screen.getByText('2 de 3')).toBeInTheDocument()
+    // the folder lists the notes of every type now (003): the video and the PDF count in the total
+    expect(screen.getByText('2 de 5')).toBeInTheDocument()
     expect(onTable()).toEqual(inOrder([NOTA_DERIVADAS, NOTA_LIMITES]))
 
     fireEvent.click(option(TAG))
     expect(active()).toHaveTextContent(/Tipo\s*nota/)
     expect(active()).toHaveTextContent(/Etiqueta\s*derivadas/)
-    expect(screen.getByText('1 de 3')).toBeInTheDocument()
+    expect(screen.getByText('1 de 5')).toBeInTheDocument()
     expect(onTable()).toEqual([NOTA_DERIVADAS])
 
     fireEvent.click(within(active()).getByRole('button', { name: /Tipo/ }))
@@ -365,17 +366,17 @@ describe('os filtros ativos acima da tabela (FR-044, FR-045)', () => {
     expect(active()).toHaveTextContent(/Etiqueta\s*derivadas/)
     expect(option(NOTA)).not.toBeChecked()
     expect(option(TAG)).toBeChecked()
-    expect(screen.getByText('2 de 3')).toBeInTheDocument()
-    expect(onTable()).toEqual(inOrder([NOTA_DERIVADAS, NOTA_CADEIA]))
+    expect(screen.getByText('3 de 5')).toBeInTheDocument()
+    expect(onTable()).toEqual(inOrder([NOTA_DERIVADAS, NOTA_CADEIA, AULA]))
 
     fireEvent.click(option(NOTA))
-    expect(screen.getByText('1 de 3')).toBeInTheDocument()
+    expect(screen.getByText('1 de 5')).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: 'Limpar tudo' }))
     expect(noActive()).toBeNull()
     expect(screen.queryByRole('button', { name: 'Limpar tudo' })).toBeNull()
     expect(option(NOTA)).not.toBeChecked()
     expect(option(TAG)).not.toBeChecked()
-    expect(onTable()).toEqual(inOrder([NOTA_DERIVADAS, NOTA_LIMITES, NOTA_CADEIA]))
+    expect(onTable()).toEqual(inOrder([NOTA_DERIVADAS, NOTA_LIMITES, NOTA_CADEIA, AULA, STEWART]))
   })
 })

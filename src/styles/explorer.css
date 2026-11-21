@@ -54,7 +54,7 @@ th .ex-box{margin:0}
 .ex-time{display:block;margin-top:3px;font-size:12px;color:var(--fg-faint)}
 .ex-born{font-size:12.5px}
 .ex-born .fam-count{display:block;padding:0;border:0;font-size:12.5px;white-space:normal}
-.ex-none{color:var(--fg-faint)}
+.ex-none{color:var(--fg-muted)}
 .fam-selo.ex-mother{display:inline-block;max-width:100%;padding:1px 7px;font-size:12px;border:1px solid var(--border-muted);border-radius:6px}
 .ex-sub .fam-count{padding:0;border:0;font-size:12px}
 .ex-sub .fam-selo.ex-mother{padding:0;border:0}
@@ -78,10 +78,8 @@ th .ex-box{margin:0}
 .ex-snip .ex-at{margin-right:6px;color:var(--fg-muted);font-weight:500}
 .ex-snip-text{overflow-wrap:anywhere}
 .ex-more{justify-self:start}
-.ex-no-notes{display:flex;flex-wrap:wrap;align-items:center;justify-content:center;gap:10px}
-.ex-no-notes .btn{text-decoration:none;color:var(--fg)}
 @media (pointer:coarse){
-  .ex-no-notes .btn,.ex-more{min-height:44px}
+  .ex-more{min-height:44px}
   /* the "de: <mãe>" link of a row: a taller hit area, without moving the lines around it */
   .ex-browser .ex-sub .fam-selo{padding:8px 0;margin:-8px 0}
 }

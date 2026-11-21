@@ -10,11 +10,13 @@ import { TutorDialog } from '@/components/dialogs/TutorDialog'
 import { ConflictDialog } from '@/components/dialogs/ConflictDialog'
 import { DeleteFamilyDialog } from '@/components/dialogs/DeleteFamilyDialog'
 import { ExamDialog, ExamRun, FolderExamDialog } from '@/components/dialogs/ExamDialog'
-import { GenerateDialog, TranscribeDialog } from '@/components/dialogs/GenerateDialog'
+import { GenerateDialog, PendingDialog, TranscribeDialog } from '@/components/dialogs/GenerateDialog'
+import { FromSelectionDialog } from '@/components/dialogs/FromSelectionDialog'
 import { GenerateEntryDialog } from '@/components/dialogs/GenerateEntryDialog'
 import { JobsPanel } from '@/components/dialogs/JobsPanel'
 import { MediaDialog } from '@/components/dialogs/MediaDialog'
 import { ActivityDialog, CourseProposalDialog, ExplainDialog, ImportDialog, OrderDialog, SendLocalDialog, StorageLimitDialog } from '@/components/dialogs/MoreDialogs'
+import { SyncLocalDialog } from '@/components/library/SyncLocal'
 import { NewContentDialog } from '@/components/dialogs/NewContentDialog'
 import { RecordDialog, RecordingDoneDialog, RecordingWindow } from '@/components/dialogs/RecordDialogs'
 import { SettingsDialog } from '@/components/dialogs/SettingsDialog'
@@ -41,20 +43,21 @@ export function Overlays() {
   useFirstConnection()
   let content: React.ReactNode = null
   if (overlay?.kind === 'palette') content = <CommandPalette />
-  else if (overlay?.kind === 'new') content = <NewContentDialog folderId={overlay.folderId} />
+  else if (overlay?.kind === 'new') content = <NewContentDialog folderId={overlay.folderId} prefill={overlay.prefill} />
   else if (overlay?.kind === 'record') content = <RecordDialog />
   else if (overlay?.kind === 'media') content = <MediaDialog />
-  else if (overlay?.kind === 'settings') content = <SettingsDialog initial={overlay.tab} />
+  else if (overlay?.kind === 'settings') content = <SettingsDialog initial={overlay.tab} focusId={overlay.focusId} />
   else if (overlay?.kind === 'exam') content = <ExamDialog fileId={overlay.fileId} />
   else if (overlay?.kind === 'cards') content = <CardsDialog fileId={overlay.fileId} deckId={overlay.deckId} />
   else if (overlay?.kind === 'mindmap') content = <MindMapDialog fileId={overlay.fileId} mapId={overlay.artifactId} />
   else if (overlay?.kind === 'tutor') content = <TutorDialog fileId={overlay.fileId} conversationId={overlay.conversationId} />
   else if (overlay?.kind === 'chat') content = <TutorDialog fileId={overlay.fileId} chat />
   else if (overlay?.kind === 'generate-artifact') content = <ArtifactGenerateDialog fileId={overlay.fileId} artifact={overlay.artifact} again={overlay.again} />
-  else if (overlay?.kind === 'ata-parts') content = <AtaPartsDialog fileId={overlay.fileId} again={overlay.again} />
-  else if (overlay?.kind === 'generate') content = <GenerateDialog fileId={overlay.fileId} agent={overlay.agent} redo={overlay.redo} again={overlay.again} />
-  else if (overlay?.kind === 'generate-entry') content = <GenerateEntryDialog fileId={overlay.fileId} />
-  else if (overlay?.kind === 'transcribe') content = <TranscribeDialog fileId={overlay.fileId} />
+  else if (overlay?.kind === 'ata-parts') content = <AtaPartsDialog fileId={overlay.fileId} again={overlay.again} prefill={overlay.prefill} />
+  else if (overlay?.kind === 'generate') content = <GenerateDialog fileId={overlay.fileId} agent={overlay.agent} redo={overlay.redo} again={overlay.again} prefill={overlay.prefill} />
+  else if (overlay?.kind === 'generate-entry') content = <GenerateEntryDialog fileId={overlay.fileId} prefill={overlay.prefill} />
+  else if (overlay?.kind === 'transcribe') content = <TranscribeDialog fileId={overlay.fileId} prefill={overlay.prefill} />
+  else if (overlay?.kind === 'pending') content = <PendingDialog fileId={overlay.fileId} folderId={overlay.folderId} go={overlay.go} prefill={overlay.prefill} />
   else if (overlay?.kind === 'folder-exam') content = <FolderExamDialog folderId={overlay.folderId} fileIds={overlay.fileIds} />
   else if (overlay?.kind === 'account') content = <AccountMenu />
   else if (overlay?.kind === 'new-folder') content = <NewFolderDialog parentId={overlay.parentId} />
@@ -63,10 +66,12 @@ export function Overlays() {
   else if (overlay?.kind === 'confirm') content = <ConfirmDialog overlay={overlay} />
   else if (overlay?.kind === 'delete-family') content = <DeleteFamilyDialog fileId={overlay.fileId} fileIds={overlay.fileIds} />
   else if (overlay?.kind === 'explain') content = <ExplainDialog fileId={overlay.fileId} excerpt={overlay.excerpt} />
+  else if (overlay?.kind === 'from-selection') content = <FromSelectionDialog fileId={overlay.fileId} excerpt={overlay.excerpt} prefill={overlay.prefill} />
   else if (overlay?.kind === 'order') content = <OrderDialog folderId={overlay.folderId} />
   else if (overlay?.kind === 'activity') content = <ActivityDialog />
   else if (overlay?.kind === 'import') content = <ImportDialog />
   else if (overlay?.kind === 'send-local') content = <SendLocalDialog />
+  else if (overlay?.kind === 'sync-local') content = <SyncLocalDialog ids={overlay.ids} />
   else if (overlay?.kind === 'storage-limit') content = <StorageLimitDialog />
   else if (overlay?.kind === 'share') content = <ShareDialog target={overlay.target} id={overlay.id} />
   else if (overlay?.kind === 'shared-exam') content = <ExamRun title={overlay.title} questions={overlay.questions} sourceOf={() => 'shared'} onRecord={(_, fields) => overlay.onRecord(fields)} />

@@ -82,7 +82,7 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
-describe('"Gerar desta entrada"', () => {
+describe('"Gerar desta nota"', () => {
   async function open(sidecar: FileSidecar, defaultModel?: string) {
     seed([sidecar], defaultModel)
     render(

@@ -1,32 +1,86 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 
+import type { FileMeta } from '@/types/domain'
 import { SaveToDrive, useOnlyHere } from '@/components/library/SaveToDrive'
 import { Dialog } from '@/components/ui/Dialog'
 import { Icon } from '@/components/ui/Icon'
+import { mediaOf } from '@/lib/file-types'
 import { transcriptFileName, transcriptOf } from '@/lib/generation/transcript'
 import { type LocalMedia, listLocalMedia, readLocalMedia, removeLocalMedia } from '@/lib/recording/media-library'
 import { paths } from '@/lib/paths'
+import { keepFromDrive } from '@/lib/storage/source-storage'
 import { useLibraryStore } from '@/stores/library'
 import { useRecorderStore } from '@/stores/recorder'
 import { useUiStore } from '@/stores/ui'
 import { downloadBlob } from '@/utils/download'
 import { duration, formatBytes } from '@/utils/format'
 
+type Place = 'aqui' | 'drive' | 'dois'
+
+// T136: where a media is. "Nos dois" is the Drive and this computer.
+const PLACES: Record<Place, string> = { aqui: 'Só neste computador', drive: 'No Google Drive', dois: 'Nos dois' }
+
+const inDrive = (file: FileMeta) => file.origin?.storage === 'drive' && Boolean(file.origin.storedFileId) && !file.origin.removedAt
+
+function PlaceTag({ place }: { place: Place }) {
+  return (
+    <span className="media-place" data-place={place}>
+      {PLACES[place]}
+    </span>
+  )
+}
+
+/** The item a media turned into: it opens the item's page and closes Mídias. */
+function ItemLink({ file }: { file: FileMeta }) {
+  const ui = useUiStore()
+  const navigate = useNavigate()
+  return (
+    <a
+      href={paths.file(file.id)}
+      onClick={event => {
+        event.preventDefault()
+        ui.close()
+        navigate(paths.file(file.id))
+      }}
+    >
+      {file.name}
+    </a>
+  )
+}
+
 function MediaItem({ item, onRemoved }: { item: LocalMedia; onRemoved(): void }) {
   const files = useLibraryStore(state => state.files)
   const repo = useLibraryStore(state => state.repo)
   const reopen = useRecorderStore(state => state.reopen)
   const ui = useUiStore()
-  const navigate = useNavigate()
   const [url, setUrl] = useState<string | null>(null)
+  const [transcript, setTranscript] = useState<{ text: string; name: string } | null>(null)
   const [missing, setMissing] = useState(false)
   const [confirming, setConfirming] = useState(false)
   useEffect(() => () => void (url && URL.revokeObjectURL(url)), [url])
   const notes = item.fileIds.map(id => files.find(file => file.id === id && !file.deletedAt)).filter(file => file !== undefined)
   const onlyHere = useOnlyHere()
   const toSave = notes.find(onlyHere)
+  // a copy still to save means "only here", even when another item of the same media is already in the Drive
+  const place: Place = !toSave && notes.some(inDrive) ? 'dois' : 'aqui'
   const video = item.mime.startsWith('video')
+  // T138: the button is there only when there is something to download; the text is read from the library when the notes change
+  const seen = notes.map(note => `${note.id}@${note.updated.at}`).join()
+  useEffect(() => {
+    let alive = true
+    setTranscript(null)
+    void (async () => {
+      for (const note of repo ? notes : []) {
+        // a note that cannot be read just has no transcription to offer
+        const text = await transcriptOf(note, repo!).catch(() => null)
+        if (text) return alive && setTranscript({ text, name: note.name })
+      }
+    })()
+    return () => {
+      alive = false
+    }
+  }, [seen, repo])
   const load = async (): Promise<File | null> => {
     try {
       return await readLocalMedia(item)
@@ -48,15 +102,8 @@ function MediaItem({ item, onRemoved }: { item: LocalMedia; onRemoved(): void })
     link.click()
     setTimeout(() => URL.revokeObjectURL(link.href), 10000)
   }
-  const downloadTranscript = async () => {
-    for (const note of notes) {
-      const transcript = repo ? await transcriptOf(note, repo) : null
-      if (transcript) {
-        downloadBlob(new Blob([transcript], { type: 'text/plain;charset=utf-8' }), transcriptFileName(note.name))
-        return
-      }
-    }
-    ui.toast('Essa gravação ainda não tem transcrição guardada.')
+  const downloadTranscript = () => {
+    if (transcript) downloadBlob(new Blob([transcript.text], { type: 'text/plain;charset=utf-8' }), transcriptFileName(transcript.name))
   }
   const generate = async () => {
     const file = await load()
@@ -84,16 +131,7 @@ function MediaItem({ item, onRemoved }: { item: LocalMedia; onRemoved(): void })
             {notes.map((note, index) => (
               <span key={note.id}>
                 {index > 0 && ', '}
-                <a
-                  href={paths.file(note.id)}
-                  onClick={event => {
-                    event.preventDefault()
-                    ui.close()
-                    navigate(paths.file(note.id))
-                  }}
-                >
-                  {note.name}
-                </a>
+                <ItemLink file={note} />
               </span>
             ))}
           </>
@@ -101,7 +139,10 @@ function MediaItem({ item, onRemoved }: { item: LocalMedia; onRemoved(): void })
           'Ainda não virou nota.'
         )}
       </span>
-      {toSave && <SaveToDrive fileId={toSave.id} />}
+      <div className="media-where">
+        <PlaceTag place={place} />
+        {place === 'aqui' && (toSave ? <SaveToDrive fileId={toSave.id} bare /> : !notes.length && <SaveToDrive media={item} bare />)}
+      </div>
       {missing && <span className="lim">O arquivo não está mais neste navegador.</span>}
       {url && (video ? <video src={url} controls playsInline style={{ width: '100%', borderRadius: 8 }} /> : <audio src={url} controls style={{ width: '100%' }} />)}
       <div className="acts">
@@ -115,8 +156,8 @@ function MediaItem({ item, onRemoved }: { item: LocalMedia; onRemoved(): void })
           <Icon name="download" />
           Baixar
         </button>
-        {notes.length > 0 && (
-          <button className="btn" onClick={() => void downloadTranscript()}>
+        {transcript && (
+          <button className="btn" onClick={downloadTranscript}>
             <Icon name="download" />
             Baixar a transcrição
           </button>
@@ -145,11 +186,62 @@ function MediaItem({ item, onRemoved }: { item: LocalMedia; onRemoved(): void })
   )
 }
 
+/** T136: what is only in the Drive. Keeping it here is the way back to "Nos dois". */
+function DriveOnlyItem({ file }: { file: FileMeta }) {
+  const toast = useUiStore(state => state.toast)
+  const [busy, setBusy] = useState(false)
+  const origin = file.origin!
+  const video = mediaOf(file) === 'video'
+  const keep = async () => {
+    setBusy(true)
+    try {
+      await keepFromDrive(file.id)
+      toast('Guardado neste computador.')
+    } catch (error) {
+      toast(error instanceof Error ? error.message : 'Não deu para guardar neste computador.')
+    } finally {
+      // on success the row leaves this list; if the list did not change, the button must not stay stuck
+      setBusy(false)
+    }
+  }
+  return (
+    <li className="media-item">
+      <div className="mh">
+        <Icon name={video ? 'monitor' : 'mic'} />
+        <b>{origin.name}</b>
+      </div>
+      <span className="muted">{[new Date(file.created.at).toLocaleString('pt-BR'), origin.durationSeconds ? duration(origin.durationSeconds) : '', origin.sizeBytes ? formatBytes(origin.sizeBytes) : ''].filter(Boolean).join(' · ')}</span>
+      <span className="faint">
+        Na biblioteca: <ItemLink file={file} />
+      </span>
+      <div className="media-where">
+        <PlaceTag place="drive" />
+        <button className="btn" disabled={busy} onClick={() => void keep()}>
+          <Icon name="download" />
+          {busy ? 'Guardando…' : 'Guardar neste computador'}
+        </button>
+      </div>
+    </li>
+  )
+}
+
 export function MediaDialog() {
   const ui = useUiStore()
   const [items, setItems] = useState<LocalMedia[] | null>(null)
+  const files = useLibraryStore(state => state.files)
+  const localMedia = useLibraryStore(state => state.localMedia)
+  const driveLibrary = useLibraryStore(state => state.repo?.kind === 'drive')
   const refresh = () => void listLocalMedia().then(setItems)
-  useEffect(refresh, [])
+  // what is kept or linked while the window is open changes the list
+  useEffect(refresh, [localMedia])
+  // only in the Drive: media of the library that has an address there and no copy here; the Local profile cannot reach the Drive
+  const onlyInDrive = useMemo(
+    () =>
+      driveLibrary
+        ? files.filter(file => !file.deletedAt && mediaOf(file) !== 'text' && inDrive(file) && !localMedia.some(item => item.fileIds.includes(file.id))).sort((a, b) => b.created.at.localeCompare(a.created.at))
+        : [],
+    [files, localMedia, driveLibrary],
+  )
   return (
     <Dialog title="Mídias neste computador" onClose={ui.close}>
       <div className="db">
@@ -165,7 +257,20 @@ export function MediaDialog() {
             ))}
           </ul>
         ) : (
-          <span className="muted">Nenhuma gravação guardada ainda.</span>
+          !onlyInDrive.length && <span className="muted">Nenhuma gravação guardada ainda.</span>
+        )}
+        {items !== null && onlyInDrive.length > 0 && (
+          <>
+            <b className="media-section">Só no Google Drive</b>
+            <span className="faint" style={{ fontSize: 12 }}>
+              Estas mídias estão no seu Drive e ainda não estão neste computador.
+            </span>
+            <ul className="media-list">
+              {onlyInDrive.map(file => (
+                <DriveOnlyItem key={file.id} file={file} />
+              ))}
+            </ul>
+          </>
         )}
       </div>
     </Dialog>

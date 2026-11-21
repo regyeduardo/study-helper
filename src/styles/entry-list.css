@@ -10,3 +10,7 @@
 @media (max-width:700px){
   .c4 .top nav .n{display:none}
 }
+/* the empty state's only action ("Gravar"): a full touch target on a phone */
+@media (pointer:coarse){
+  .entry-empty .btn{min-height:44px}
+}

@@ -17,7 +17,9 @@ export interface GoogleFake {
   tokenRequests: { prompt?: string; login_hint?: string }[]
   revoked: string[]
   nextCode: { code?: string; scope?: string; error?: string }
-  tokenReplies: ({ access_token?: string; expires_in?: number; scope?: string; error?: string } | 'popup_closed')[]
+  /** When set, the Google window of the code flow does not give an answer: it did not open, or it was closed. */
+  codePopup?: 'popup_closed' | 'popup_failed_to_open'
+  tokenReplies: ({ access_token?: string; expires_in?: number; scope?: string; error?: string } | 'popup_closed' | 'popup_failed_to_open')[]
 }
 
 export function installGoogle(): GoogleFake {
@@ -27,7 +29,7 @@ export function installGoogle(): GoogleFake {
       oauth2: {
         initCodeClient: config => {
           fake.codeConfigs.push(config as unknown as Record<string, unknown>)
-          return { requestCode: () => queueMicrotask(() => config.callback(fake.nextCode)) }
+          return { requestCode: () => queueMicrotask(() => (fake.codePopup ? config.error_callback?.({ type: fake.codePopup }) : config.callback(fake.nextCode))) }
         },
         initTokenClient: config => {
           fake.tokenConfigs.push(config as unknown as Record<string, unknown>)
@@ -35,7 +37,7 @@ export function installGoogle(): GoogleFake {
             requestAccessToken: options => {
               fake.tokenRequests.push(options ?? {})
               const reply = fake.tokenReplies.shift() ?? { access_token: 'popup-token', expires_in: 3600, scope: DRIVE }
-              queueMicrotask(() => (reply === 'popup_closed' ? config.error_callback?.({ type: 'popup_closed' }) : config.callback(reply)))
+              queueMicrotask(() => (typeof reply === 'string' ? config.error_callback?.({ type: reply }) : config.callback(reply)))
             },
           }
         },

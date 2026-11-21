@@ -217,8 +217,9 @@ export default function GithubMarkdownView({ markdown, live = false, quotes = []
 
   useEffect(() => {
     const element = host.current
-    const root = element?.shadowRoot
-    if (!element || !root || !onSelection) return
+    if (!element || !onSelection) return
+    // the listeners come before the content: a heading painted later is already heard (no pointer lost in between)
+    const root = element.shadowRoot ?? element.attachShadow({ mode: 'open' })
     const report = () => {
       const selection = (root as unknown as { getSelection?: () => Selection | null }).getSelection?.() ?? window.getSelection()
       const text = selection?.toString().trim() ?? ''
