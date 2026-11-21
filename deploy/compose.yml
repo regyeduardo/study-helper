@@ -1,0 +1,36 @@
+# Production on the server (/opt/estudo): the API, nginx in front (reverse proxy with HTTPS) and certbot renewing the certificate.
+# deploy.sh brings it up; API_IMAGE comes from the pipeline.
+services:
+  api:
+    image: ${API_IMAGE}
+    env_file: .env
+    volumes: [estudo-data:/data]
+    restart: unless-stopped
+    expose: ["8080"]
+    logging: { driver: json-file, options: { max-size: 10m, max-file: "5" } }
+
+  nginx:
+    image: nginx:1.29-alpine
+    depends_on: [api]
+    ports: ["80:80", "443:443"]
+    volumes:
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - certbot-etc:/etc/letsencrypt:ro
+      - certbot-www:/var/www/certbot:ro
+    restart: unless-stopped
+    # picks up a renewed certificate every 6 hours
+    command: ["/bin/sh", "-c", "while :; do sleep 6h & wait $${!}; nginx -s reload; done & exec nginx -g 'daemon off;'"]
+    logging: { driver: json-file, options: { max-size: 10m, max-file: "5" } }
+
+  certbot:
+    image: certbot/certbot:latest
+    volumes:
+      - certbot-etc:/etc/letsencrypt
+      - certbot-www:/var/www/certbot
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "-c", "trap exit TERM; while :; do certbot renew --webroot -w /var/www/certbot --quiet; sleep 12h & wait $${!}; done"]
+
+volumes:
+  estudo-data:
+  certbot-etc:
+  certbot-www:

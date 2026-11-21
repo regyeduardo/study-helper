@@ -32,3 +32,4 @@ docs/*
 .DS_Store
 .specify/**
 specs/**
+/.env.server

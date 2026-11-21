@@ -1,0 +1,15 @@
+# Local: `npm run api:dev` (docker compose -f api/compose.dev.yml up --build). The app at http://localhost:8081 calls http://localhost:8080.
+services:
+  api:
+    build: { context: ., args: { VERSION: local } }
+    ports: ["8080:8080"]
+    env_file: [{ path: .env, required: false }]
+    environment:
+      APP_ORIGIN: ${APP_ORIGIN:-http://localhost:8081}
+      PUBLIC_URL: http://localhost:8080
+      SECURE_COOKIES: "false"
+      # a fixed key for local runs only; production has its own secret
+      TOKEN_KEY: ${TOKEN_KEY:-ZXN0dWRvLWxvY2FsLWNoYXZlLWRlLTMyLWJ5dGVzISE=}
+    volumes: [estudo-local:/data]
+volumes:
+  estudo-local:

@@ -1,0 +1,106 @@
+name: Backend
+
+# Tests on every push and pull request that touch the backend; on main, also builds the image, publishes it to GHCR and updates
+# the server (spec 003, plan.md "Replanejamento de 20/11").
+on:
+  push:
+    branches: [main]
+    paths: ['api/**', 'deploy/**', '.github/workflows/backend.yml']
+  pull_request:
+    paths: ['api/**', 'deploy/**', '.github/workflows/backend.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: backend-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: api
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: api/go.mod
+          cache-dependency-path: api/go.sum
+      - name: Format
+        run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
+      - name: Vet
+        run: go vet ./...
+      # includes the sign-in with Google against a fake Google, and with e-mail and password
+      - name: Tests
+        run: go test -race -count=1 ./...
+
+  image:
+    needs: test
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: api
+          push: true
+          build-args: VERSION=${{ github.sha }}
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/study-helper-api:${{ github.sha }}
+            ghcr.io/${{ github.repository_owner }}/study-helper-api:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    needs: image
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Bundle
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APP_ORIGIN: ${{ vars.APP_ORIGIN }}
+          PUBLIC_URL: ${{ vars.PUBLIC_URL }}
+          GOOGLE_CLIENT_ID: ${{ vars.GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+          TOKEN_KEY: ${{ secrets.TOKEN_KEY }}
+          ADMIN_EMAILS: ${{ secrets.ADMIN_EMAILS }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          DEEPINFRA_API_KEY: ${{ secrets.DEEPINFRA_API_KEY }}
+        run: |
+          mkdir -p bundle/nginx
+          cp deploy/compose.yml deploy/deploy.sh bundle/
+          cp deploy/nginx/http.conf deploy/nginx/https.conf bundle/nginx/
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          printf 'IMAGE=%s\nTAG=%s\nGHCR_USER=%s\nGHCR_TOKEN=%s\nDOMAIN=%s\n' "ghcr.io/$owner/study-helper-api" "$GITHUB_SHA" "$GITHUB_ACTOR" "$GHCR_TOKEN" "api.study.ryns.me" > bundle/deploy.env
+          printf 'APP_ORIGIN=%s\nPUBLIC_URL=%s\nGOOGLE_CLIENT_ID=%s\nGOOGLE_CLIENT_SECRET=%s\nTOKEN_KEY=%s\nADMIN_EMAILS=%s\nOPENROUTER_API_KEY=%s\nDEEPINFRA_API_KEY=%s\n' \
+            "$APP_ORIGIN" "$PUBLIC_URL" "$GOOGLE_CLIENT_ID" "$GOOGLE_CLIENT_SECRET" "$TOKEN_KEY" "$ADMIN_EMAILS" "$OPENROUTER_API_KEY" "$DEEPINFRA_API_KEY" > bundle/app.env
+          tar -czf bundle.tgz -C bundle .
+      - name: Deploy
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+          DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
+        run: |
+          install -m 600 /dev/null deploy_key
+          printf '%s\n' "$DEPLOY_SSH_KEY" > deploy_key
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > known_hosts
+          ssh -i deploy_key -o UserKnownHostsFile=known_hosts -o StrictHostKeyChecking=yes "deploy@$DEPLOY_HOST" < bundle.tgz
+      - name: Check
+        run: curl -fsS https://api.study.ryns.me/v1/health | grep -q "$GITHUB_SHA"
