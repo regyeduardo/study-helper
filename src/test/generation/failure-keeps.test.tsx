@@ -6,6 +6,7 @@ vi.mock('@/components/reader/GithubMarkdownView', () => ({
   default: ({ markdown }: { markdown: string }) => <div data-testid="markdown">{markdown}</div>,
 }))
 
+import { GenerationList } from '@/components/library/GenerationList'
 import { EntryPage } from '@/components/reader/EntryPage'
 import { useJobsStore } from '@/stores/jobs'
 import { useLibraryStore } from '@/stores/library'
@@ -29,7 +30,8 @@ function linkFails(gate?: Promise<void>) {
 
 const instructionIn = (dialog: HTMLElement) => within(dialog).getByLabelText('Instrução extra para a IA (opcional)')
 const modelIn = (dialog: HTMLElement) => within(dialog).getByLabelText('Modelo da IA')
-const corner = () => document.querySelector<HTMLElement>('.jobs')!
+/** What failed, in the page Gerações (FR-065: the corner cards left). */
+const failures = () => screen.findByRole('table', { name: 'Falharam' })
 
 /** Novo conteúdo filled in: a link, a name, a model and an instruction. */
 function fillNewContent(): HTMLElement {
@@ -62,16 +64,16 @@ describe('Novo conteúdo: a falha não apaga o que foi escolhido', () => {
     expectFilled(screen.getByRole('dialog', { name: 'Novo conteúdo' }))
   })
 
-  it('posta em segundo plano e falhou depois: "Tentar de novo" no canto reabre a janela preenchida', async () => {
+  it('posta em segundo plano e falhou depois: "Tentar de novo" em Gerações reabre a janela preenchida', async () => {
     let release = () => {}
     const gate = new Promise<void>(resolve => (release = resolve))
     flowLibrary(linkFails(gate))
-    renderAt('/')
+    renderAt('/', <GenerationList />)
     fillNewContent()
     fireEvent.click(await screen.findByRole('button', { name: 'Continuar em segundo plano' }))
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     await act(async () => release())
-    const retry = await within(corner()).findByRole('button', { name: 'Tentar de novo' })
+    const retry = within(await failures()).getByRole('button', { name: 'Tentar de novo' })
     fireEvent.click(retry)
     expectFilled(screen.getByRole('dialog', { name: 'Novo conteúdo' }))
     expect(useJobsStore.getState().jobs).toHaveLength(0)
@@ -104,29 +106,29 @@ describe('Gerar de uma nota ou entrada: a falha guarda o pedido', () => {
     expect(instructionIn(dialog)).toBeVisible()
   })
 
-  it('"Gerar a Aula" de uma nota que falhou: "Tentar de novo" no canto reabre a janela com o modelo e a instrução', async () => {
+  it('"Gerar a Aula" de uma nota que falhou: "Tentar de novo" em Gerações reabre a janela com o modelo e a instrução', async () => {
     flowLibrary(linkFails())
     const id = await linkEntry()
-    renderAt(`/entrada/${id}`)
+    renderAt(`/entrada/${id}`, <GenerationList />)
     act(() => useUiStore.getState().open({ kind: 'generate', fileId: id, agent: 'lesson' }))
     let dialog = screen.getByRole('dialog', { name: 'Gerar a Aula' })
     fireEvent.change(modelIn(dialog), { target: { value: FORTE } })
     fireEvent.click(within(dialog).getByText('Mais opções'))
     fireEvent.change(instructionIn(dialog), { target: { value: 'foque nos exemplos' } })
     fireEvent.click(within(dialog).getByRole('button', { name: 'Gerar' }))
-    fireEvent.click(await within(corner()).findByRole('button', { name: 'Tentar de novo' }))
+    fireEvent.click(within(await failures()).getByRole('button', { name: 'Tentar de novo' }))
     dialog = screen.getByRole('dialog', { name: 'Gerar a Aula' })
     expect(modelIn(dialog)).toHaveValue(FORTE)
     expect(instructionIn(dialog)).toHaveValue('foque nos exemplos')
     expect(useJobsStore.getState().jobs).toHaveLength(0)
   })
 
-  it('a nota que falhou ao escrever: "Tentar de novo" no canto abre a escolha de modelo dela', async () => {
+  it('a nota que falhou ao escrever: "Tentar de novo" em Gerações abre a escolha de modelo dela', async () => {
     flowLibrary()
     const note = await useLibraryStore.getState().createFile({ name: 'Aula: Limites', type: 'class', status: 'pending', folderId: null, pendingExcerpt: 'material' }, '')
     useJobsStore.setState({ jobs: [{ id: 'j', kind: 'generation', title: 'Aula: Limites', fileId: note.id, status: 'error', message: 'A geração falhou.', fraction: null, error: 'A IA recusou o pedido.', startedAt: 1 }] })
-    renderAt('/')
-    fireEvent.click(within(corner()).getByRole('button', { name: 'Tentar de novo' }))
+    renderAt('/', <GenerationList />)
+    fireEvent.click(within(await failures()).getByRole('button', { name: 'Tentar de novo' }))
     expect(useUiStore.getState().overlay).toMatchObject({ kind: 'pending', fileId: note.id })
     expect(screen.getByRole('dialog', { name: 'Tentar de novo' })).toBeInTheDocument()
   })

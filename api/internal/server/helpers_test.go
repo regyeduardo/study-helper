@@ -54,7 +54,7 @@ func newHarness(t *testing.T) *harness {
 	h.api = httptest.NewServer(nil)
 	cfg := Config{
 		AppOrigin: appOrigin, PublicURL: h.api.URL, AdminEmails: []string{"dono@exemplo.com"}, TokenKey: key,
-		Google:  GoogleConfig{ClientID: clientID, ClientSecret: "segredo-do-cliente", AuthURL: google.URL + "/auth", TokenURL: google.URL + "/token", JWKSURL: google.URL + "/jwks", Issuers: []string{"https://accounts.google.com"}},
+		Google:  GoogleConfig{ClientID: clientID, ClientSecret: "segredo-do-cliente", AuthURL: google.URL + "/auth", TokenURL: google.URL + "/token", JWKSURL: google.URL + "/jwks", TokenInfoURL: google.URL + "/tokeninfo", DriveAboutURL: google.URL + "/about", Issuers: []string{"https://accounts.google.com"}},
 		Version: "teste", HTTPClient: google.Client(),
 		Blobs: h.blobs, PartSize: 4, Now: func() time.Time { return h.now },
 	}
@@ -150,6 +150,15 @@ type fakeGoogle struct {
 	mu       sync.Mutex
 	codes    map[string]fakeCode
 	failNext bool
+	// tokens are the access tokens Google knows, with what /tokeninfo says about each
+	tokens map[string]map[string]any
+}
+
+// grant makes Google know an access token, answering /tokeninfo with these fields.
+func (g *fakeGoogle) grant(token string, info map[string]any) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.tokens[token] = info
 }
 
 type fakeCode struct {
@@ -165,8 +174,29 @@ func newFakeGoogle(t *testing.T) *fakeGoogle {
 	if err != nil {
 		t.Fatal(err)
 	}
-	g := &fakeGoogle{key: key, codes: map[string]fakeCode{}}
+	g := &fakeGoogle{key: key, codes: map[string]fakeCode{}, tokens: map[string]map[string]any{}}
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /about", func(w http.ResponseWriter, r *http.Request) {
+		g.mu.Lock()
+		info, ok := g.tokens[strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")]
+		g.mu.Unlock()
+		email, _ := info["_drive_email"].(string)
+		if !ok || email == "" {
+			http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"user": map[string]any{"emailAddress": email, "displayName": "Dono", "permissionId": "p-1"}})
+	})
+	mux.HandleFunc("GET /tokeninfo", func(w http.ResponseWriter, r *http.Request) {
+		g.mu.Lock()
+		info, ok := g.tokens[r.URL.Query().Get("access_token")]
+		g.mu.Unlock()
+		if !ok || info["expires_in"] == "0" {
+			http.Error(w, `{"error":"invalid_token"}`, http.StatusBadRequest)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(info)
+	})
 	mux.HandleFunc("GET /jwks", func(w http.ResponseWriter, _ *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"keys": []map[string]any{{"kty": "RSA", "alg": "RS256", "kid": "chave-1", "n": base64.RawURLEncoding.EncodeToString(key.N.Bytes()), "e": base64.RawURLEncoding.EncodeToString(big.NewInt(int64(key.E)).Bytes())}}})
 	})

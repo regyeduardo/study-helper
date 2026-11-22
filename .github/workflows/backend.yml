@@ -33,7 +33,14 @@ jobs:
         run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
       - name: Vet
         run: go vet ./...
-      # includes the sign-in with Google against a fake Google, and with e-mail and password
+      # for the backup test (internal/store/backup_test.go): the same Litestream as the litestream service in deploy/compose.yml
+      - name: Litestream
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/litestream.tgz" https://github.com/benbjohnson/litestream/releases/download/v0.5.18/litestream-0.5.18-linux-x86_64.tar.gz
+          echo "d3687b9fd0f2e9426bbd3da828429ff3f1dfc5c9b74d54fdf028e4ee510e7dea  $RUNNER_TEMP/litestream.tgz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/litestream.tgz" -C "$RUNNER_TEMP" litestream
+          echo "LITESTREAM=$RUNNER_TEMP/litestream" >> "$GITHUB_ENV"
+      # includes the sign-in with Google against a fake Google, and with e-mail and password, and restoring yesterday's backup
       - name: Tests
         run: go test -race -count=1 ./...
 
@@ -89,7 +96,7 @@ jobs:
           R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
         run: |
           mkdir -p bundle/nginx
-          cp deploy/compose.yml deploy/deploy.sh bundle/
+          cp deploy/compose.yml deploy/deploy.sh deploy/litestream.yml deploy/restore.sh bundle/
           cp deploy/nginx/http.conf deploy/nginx/https.conf bundle/nginx/
           owner="${GITHUB_REPOSITORY_OWNER,,}"
           printf 'IMAGE=%s\nTAG=%s\nGHCR_USER=%s\nGHCR_TOKEN=%s\nDOMAIN=%s\n' "ghcr.io/$owner/study-helper-api" "$GITHUB_SHA" "$GITHUB_ACTOR" "$GHCR_TOKEN" "api.study.ryns.me" > bundle/deploy.env

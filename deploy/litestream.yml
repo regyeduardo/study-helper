@@ -1,0 +1,23 @@
+# Continuous copy of the Estudo database to R2 (spec 003, FR-047 and SC-014), read by the litestream service in compose.yml.
+# Every change reaches the bucket within seconds; a full snapshot a day; everything kept 31 days, so any moment of the last
+# 30 days can be restored (restore.sh). Same R2 bucket as the library, under its own prefix backups/.
+# The R2_* values come from the server's .env (the GitHub variables and secrets).
+
+snapshot:
+  interval: 24h
+  # 31 days and not 30: a moment from 30 days ago still has the snapshot that came before it
+  retention: 744h
+
+dbs:
+  - path: /data/estudo.db
+    replica:
+      type: s3
+      endpoint: ${R2_ENDPOINT}
+      bucket: ${R2_BUCKET}
+      path: backups/estudo.db
+      region: auto
+      access-key-id: ${R2_ACCESS_KEY_ID}
+      secret-access-key: ${R2_SECRET_ACCESS_KEY}
+      # at most one upload every 10 s while there are writes (the default 1 s could pass R2's free requests a month);
+      # if the server is lost, at most the last 10 s are missing from the copy
+      sync-interval: 10s

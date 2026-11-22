@@ -62,8 +62,8 @@ export type Overlay =
   | { kind: 'tutor'; fileId: string; conversationId?: string | null }
   /** Chat da mídia: the transcript and the notes born of the entrada. */
   | { kind: 'chat'; fileId: string }
-  /** "+ Novo" of a map or a deck; `again`: the one made before ("Gerar de novo"). */
-  | { kind: 'generate-artifact'; fileId: string; artifact: 'mapa' | 'cartoes'; again?: string }
+  /** "+ Novo" of a map or a deck; `again`: the one made before ("Gerar de novo"); `prefill`: the window as it was when that generation failed. */
+  | { kind: 'generate-artifact'; fileId: string; artifact: 'mapa' | 'cartoes'; again?: string; prefill?: GenerationPrefill }
   | { kind: 'ata-parts'; fileId: string; again?: string; prefill?: GenerationPrefill }
   | { kind: 'generate'; fileId: string; agent: NoteAgent; redo?: boolean; again?: string; prefill?: GenerationPrefill }
   /** "Gerar desta entrada": what makes sense for its kind and for what it keeps. */

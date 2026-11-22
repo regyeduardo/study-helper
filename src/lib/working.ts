@@ -1,23 +1,20 @@
-import { type TrackedTask, useJobsStore } from '@/stores/jobs'
+import { type Blocker, blocking, blockingFailure } from '@/lib/blocking'
+import { useUiStore } from '@/stores/ui'
 
 /**
- * A click that takes seconds (Drive writes, rendering a PDF, the AI reading a note) answers at once:
- * a line with a spinner in the panel of tasks, from the click until the work ends.
+ * A click that takes seconds (Drive writes, rendering a PDF, the AI reading a note) holds the app in the window of the operation
+ * (owner's choice F), from the click until the work ends.
  *
- * `message` is what the line says while it works. `done`: the line stays a few seconds saying the work ended;
- * absent, the line leaves and whoever called says the end another way (a toast).
- * Resolves to false when the work failed: the line then stays, with the reason.
+ * `message` is what the window says while it works. `done`: a toast says the work ended; absent, whoever called says the end another way.
+ * Resolves to false when the work failed: the window then stays with the reason until "Fechar".
  */
-export async function working(title: string, work: (task: TrackedTask) => Promise<unknown>, options: { message?: string; done?: string } = {}): Promise<boolean> {
-  const task = useJobsStore.getState().trackTask(title)
-  if (options.message) task.update(options.message, null)
+export async function working(title: string, work: (blocker: Blocker) => Promise<unknown>, options: { message?: string; done?: string } = {}): Promise<boolean> {
   try {
-    await work(task)
-    if (options.done) task.done(options.done)
-    else task.drop?.()
+    await blocking(title, work, options.message ? { phase: options.message } : {})
+    if (options.done) useUiStore.getState().toast(options.done)
     return true
   } catch (error) {
-    task.fail(error instanceof Error ? error.message : String(error))
+    blockingFailure(title, error)
     return false
   }
 }

@@ -9,6 +9,7 @@ import { Dialog } from '@/components/ui/Dialog'
 import { Icon } from '@/components/ui/Icon'
 import { Popover } from '@/components/ui/Popover'
 import { targetFor } from '@/lib/ai/config'
+import { type Blocker, blocking, blockingFailure } from '@/lib/blocking'
 import { isNote } from '@/lib/family'
 import { CERTAINTY_LABELS, examStats, givenAnswerText, isAnswered, LETTERS, LEVEL_LABELS, questionFromStored, questionType, rightAnswerText, shuffleExam, statementLines, storedAnswer, summarizeExam } from '@/lib/exam'
 import { clearExamDraft, examDraftKey, loadExamDraft, peekExamDraft, saveExamDraft, selectionScope, stoppedAt } from '@/lib/exam-draft'
@@ -684,14 +685,19 @@ export function ExamDialog({ fileId }: { fileId: string }) {
     }
   }
 
+  // only opening the note (not writing questions): the app waits in the window, and a failure says why instead of waiting forever
   useEffect(() => {
-    void openFile(fileId).then(file => {
-      setState(file.sidecar.questions.length ? 'ready' : 'choose')
-    })
+    void blocking('Abrindo a prova…', () => openFile(fileId)).then(
+      file => setState(file.sidecar.questions.length ? 'ready' : 'choose'),
+      failure => {
+        blockingFailure('Abrindo a prova…', failure)
+        ui.close()
+      },
+    )
   }, [fileId])
 
-  if (!meta) return null
-  if (state === 'loading' || state === 'generating') return <Generating title={meta.name} onCancel={ui.close} />
+  if (!meta || state === 'loading') return null
+  if (state === 'generating') return <Generating title={meta.name} onCancel={ui.close} />
   if (state === 'choose')
     return (
       <Dialog
@@ -760,14 +766,30 @@ export function FolderExamDialog({ folderId, fileIds }: { folderId: string | nul
       walk(folderId)
     }
     const files = library.files.filter(file => !file.deletedAt && isNote(file) && (fileIds ? fileIds.includes(file.id) : file.folderId !== null && ids.has(file.folderId)))
-    void Promise.all(files.map(async file => (await library.openFile(file.id)).sidecar.questions.map(question => ({ question, fileId: file.id })))).then(lists => {
-      const all = lists.flat()
-      setPool(all)
-      // an exam left half way comes back as it was, with the same questions, without asking how many again
-      const kept = peekExamDraft(examDraftKey(library.accountId, scope))
-      const byId = new Map(all.map(item => [item.question.storedId, item.question]))
-      if (kept?.length && kept.every(id => byId.has(id))) setChosen(kept.map(id => byId.get(id)!))
-    })
+    // every note is read (from the Drive, when not open yet): the window counts them, and a read that fails says why and closes the exam
+    let read = 0
+    const reading = (blocker: Blocker) =>
+      Promise.all(
+        files.map(async file => {
+          const questions = (await library.openFile(file.id)).sidecar.questions.map(question => ({ question, fileId: file.id }))
+          blocker.progress({ done: ++read })
+          return questions
+        }),
+      )
+    void blocking('Juntando as questões…', reading, { phase: 'Lendo as notas', total: files.length }).then(
+      lists => {
+        const all = lists.flat()
+        setPool(all)
+        // an exam left half way comes back as it was, with the same questions, without asking how many again
+        const kept = peekExamDraft(examDraftKey(library.accountId, scope))
+        const byId = new Map(all.map(item => [item.question.storedId, item.question]))
+        if (kept?.length && kept.every(id => byId.has(id))) setChosen(kept.map(id => byId.get(id)!))
+      },
+      failure => {
+        blockingFailure('Juntando as questões…', failure)
+        ui.close()
+      },
+    )
   }, [folderId, fileIds])
 
   if (chosen && pool) {

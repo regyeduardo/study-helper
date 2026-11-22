@@ -3,9 +3,11 @@ import { Outlet, useNavigate } from 'react-router-dom'
 
 import { ServerAccountGate } from '@/components/account/RevokedScreen'
 import { Overlays } from '@/components/dialogs/Overlays'
+import { BlockingWindow } from '@/components/ui/BlockingWindow'
 import { ItemMenu } from '@/components/library/ItemMenu'
 import { Icon } from '@/components/ui/Icon'
 import { Toasts } from '@/components/ui/Toasts'
+import { blocking } from '@/lib/blocking'
 import { paths } from '@/lib/paths'
 import { useAccountStore } from '@/stores/account'
 import { useLibraryStore } from '@/stores/library'
@@ -72,9 +74,12 @@ export default function App() {
     setReauthError(null)
     setReconnecting(true)
     try {
-      await reauthorize(account.id)
-      if (useLibraryStore.getState().loadError) await connect(account.id, tokenProvider)
-      startSync()
+      // the Google window opens inside the click; the app waits in its window until the library answers again
+      await blocking('Conectando ao Google…', async () => {
+        await reauthorize(account.id)
+        if (useLibraryStore.getState().loadError) await connect(account.id, tokenProvider)
+        startSync()
+      })
     } catch (error) {
       setReauthError(error instanceof Error ? error.message : 'O login falhou.')
     } finally {
@@ -86,10 +91,12 @@ export default function App() {
     setReauthError(null)
     setReconnecting(true)
     try {
-      await reauthorize(account.id)
-      stopSync()
-      await connect(account.id, tokenProvider)
-      startSync()
+      await blocking('Autorizando a pasta oculta…', async () => {
+        await reauthorize(account.id)
+        stopSync()
+        await connect(account.id, tokenProvider)
+        startSync()
+      })
     } catch (error) {
       setReauthError(error instanceof Error ? error.message : 'O login falhou.')
     } finally {
@@ -164,6 +171,7 @@ export default function App() {
       <Overlays />
       <ItemMenu />
       <Toasts />
+      <BlockingWindow />
     </div>
   )
 }

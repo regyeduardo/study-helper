@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 
 import type { MapArtifact } from '@/types/domain'
-import { noteText } from '@/components/dialogs/CardsDialog'
 import { MapChat } from '@/components/dialogs/MapChat'
 import { MoreOptions } from '@/components/dialogs/FromNoteFields'
 import { ModelPick, useModelChoice } from '@/components/dialogs/ModelPick'
@@ -10,13 +9,11 @@ import { Dialog } from '@/components/ui/Dialog'
 import { Icon } from '@/components/ui/Icon'
 import { Popover } from '@/components/ui/Popover'
 import { useIsNarrow } from '@/hooks/use-is-narrow'
-import { targetFor } from '@/lib/ai/config'
 import { artifactsOf, latestOf, newMapArtifact } from '@/lib/artifacts'
+import { blocking } from '@/lib/blocking'
 import { copyMapCode, downloadMap } from '@/lib/exports/map-export'
 import { undo } from '@/lib/generation/map-chat'
-import { generateMap } from '@/lib/generation/mindmap'
-import { GenerationSession } from '@/lib/generation/session'
-import { nowIso } from '@/lib/ids'
+import { useJobsStore } from '@/stores/jobs'
 import { useLibraryStore } from '@/stores/library'
 import { useUiStore } from '@/stores/ui'
 
@@ -70,7 +67,6 @@ export function MindMapDialog({ fileId, mapId }: { fileId: string; mapId?: strin
   const toast = useUiStore(state => state.toast)
   const meta = useLibraryStore(state => state.files.find(file => file.id === fileId))
   const sidecar = useLibraryStore(state => state.opened[fileId]?.sidecar)
-  const settings = useLibraryStore(state => state.index.settings)
   const readOnly = useLibraryStore(state => Boolean(state.sharedView))
   const narrow = useIsNarrow()
   const [currentId, setCurrentId] = useState(mapId)
@@ -119,11 +115,8 @@ export function MindMapDialog({ fileId, mapId }: { fileId: string; mapId?: strin
     setMaking(true)
     setError('')
     try {
-      const said = instruction.trim()
-      const made = await generateMap(await noteText(fileId), new GenerationSession(targetFor(settings, 'mapa', model)), said)
-      if (!made) throw new Error('A IA não devolveu um mapa. Tente de novo.')
-      const artifact = newMapArtifact({ name: made.name, diagram: made.diagram, made: { ...(model ? { model } : {}), ...(said ? { instruction: said } : {}), at: nowIso() } })
-      setCurrentId((await store().saveArtifact(fileId, artifact)).id)
+      // a job of its own, so it shows in Gerações (and fails there with "Tentar de novo")
+      setCurrentId((await useJobsStore.getState().generateArtifact({ fileId, artifact: 'mapa', model, instruction })).id)
     } catch (failure) {
       fail(failure)
     } finally {
@@ -179,7 +172,7 @@ export function MindMapDialog({ fileId, mapId }: { fileId: string; mapId?: strin
   const rename = (name: string | null) => {
     setRenaming(false)
     const said = name?.trim()
-    if (said && said !== map.name) void step(() => store().renameArtifact(fileId, map.id, said))
+    if (said && said !== map.name) void step(() => blocking('Renomeando o mapa…', () => store().renameArtifact(fileId, map.id, said)))
   }
   const exportAs = (format: 'png' | 'svg') => {
     setMenu(null)

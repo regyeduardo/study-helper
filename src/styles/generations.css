@@ -1,0 +1,46 @@
+/* Gerações (FR-065): the tabs over the tables, a line's progress and reason, and the number and red dot of the side bar and of the menu button.
+ * This sheet can load before app.css: the table rules win by weight (.ex-table.gen-table), not by order. */
+.gen{display:grid;grid-template-columns:minmax(0,1fr);gap:14px;align-content:start}
+.gen-tabs{justify-self:start}
+.ex-table.gen-table th{padding:8px 10px}
+.ex-table.gen-table tbody tr{cursor:default}
+.ex-table.gen-table tbody tr:hover td{background:none}
+.gen-table a.ex-name{color:var(--fg);text-decoration:none;border-radius:4px}
+.gen-table a.ex-name:hover .ex-title{text-decoration:underline}
+.ex-table.gen-table .gen-what{white-space:nowrap}
+.ex-table.gen-table .gen-status{width:34%}
+.gen-ic.failed{color:var(--bad)}
+.gen-ic.ready{color:var(--ok)}
+.gen-progress{display:grid;gap:6px;min-width:0}
+.gen-progress b{font-weight:600;color:var(--fg);font-variant-numeric:tabular-nums}
+.gen-reason{overflow-wrap:anywhere}
+.gen-when{font-variant-numeric:tabular-nums;white-space:nowrap}
+/* the buttons sit on the line of the note's name */
+.ex-table.gen-table td.gen-act{width:1%;padding:3px 6px;vertical-align:top}
+.gen-act>div{display:flex;gap:6px;justify-content:flex-end}
+.gen-sub{display:grid;gap:4px;margin:4px 0 0 24px;font-size:12.5px;color:var(--fg-muted)}
+.gen-sub .gen-what{font-weight:500}
+.gen-act-row{display:flex;flex-wrap:wrap;gap:8px;margin-top:6px}
+.gen-act-row:empty{display:none}
+/* a quiet button first in the row: its text lines up with the lines above */
+.gen-act-row>.btn.quiet:first-child{margin-left:-11px}
+.gen-failed{display:grid;gap:8px;margin-top:10px}
+.gen-failed .blk-h .ic{width:14px;height:14px;color:var(--bad)}
+.gen-empty{margin:8px auto}
+
+/* the red dot: something failed and waits for "Tentar de novo" or "Dispensar" */
+.gen-dot{width:7px;height:7px;border-radius:50%;background:var(--bad);flex:none}
+.nv .gen-dot{margin-left:2px}
+.ibtn .gen-mark{position:absolute;top:0;right:-3px;display:flex;align-items:center;gap:2px;pointer-events:none}
+.gen-count{min-width:16px;height:16px;padding:0 4px;border-radius:8px;background:var(--accent);color:var(--on-accent);font-size:10.5px;font-weight:600;line-height:16px;text-align:center;font-variant-numeric:tabular-nums}
+.gen-mark .gen-dot{width:8px;height:8px;box-shadow:0 0 0 2px var(--bg)}
+
+/* on a phone the table is one column: its single heading ("Nota") says nothing the rows do not */
+@media (max-width:760px){.gen-table thead{display:none}}
+
+@media (pointer:coarse){
+  .gen-act .btn,.gen-act-row .btn{min-height:44px}
+  .gen-tabs button{min-height:44px}
+  /* the note's name: a taller hit area, without moving the lines around it */
+  .gen-table a.ex-name{padding:12px 0;margin:-12px 0}
+}

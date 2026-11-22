@@ -166,6 +166,99 @@ const LIST: Record<AiUse, { why: string; rungs: [ModelPair, number | null][] }> 
   },
 }
 
+/* ---------- the language mode (spec 004, FR-034) ---------- */
+
+/**
+ * The language mode runs on the server, with the owner's keys, for whoever uses the app structure (spec 004 plan.md): its uses are not
+ * per-person defaults and the person's diagnosis does not test them, so they stay out of AiUse and USES. Source: the prototype's bench
+ * (specs/004-aprender-idiomas/prototipo/bench/RESULTADOS.md) and the providers' public prices on 21/11/2026.
+ */
+export const LANGUAGE_LIST_DATE = '2026-11-21'
+
+export type LanguageUse = 'idiomas-gerar' | 'idiomas-voz' | 'idiomas-fala' | 'idiomas-ouvinte' | 'idiomas-fonemas'
+
+/** Voices are billed by character; the phoneme model runs on the server and has no cost per use. */
+export type LanguagePrice = Price | { per: 'char'; million: number } | { per: 'free' }
+
+export interface LanguagePick {
+  /** "servidor": an open model running on the owner's server. */
+  where: AiProviderId | 'servidor'
+  model: string
+  name: string
+  price: LanguagePrice
+  /** null: the list has not tested it yet ("não testado"). */
+  score: number | null
+}
+
+export interface LanguageRecommendation {
+  use: LanguageUse
+  label: string
+  /** What the use demands, in one line. */
+  asks: string
+  why: string
+  indicated: LanguagePick
+  /** The other pairs that do it, in order. */
+  ladder: LanguagePick[]
+}
+
+const fromPair = (item: ModelPair): LanguagePick => ({ where: item.provider, model: item.model, name: item.name, price: item.price ?? { per: 'free' }, score: null })
+const voice = (model: string, name: string, million: number): LanguagePick => ({ where: 'deepinfra', model, name, price: { per: 'char', million }, score: null })
+const GEMINI_3_FLASH_OR: ModelPair = openRouter('google/gemini-3-flash-preview', 'Gemini 3 Flash', 0.5, 3, HEARS_AND_SEES, MILLION, 0.014)
+
+export const LANGUAGE_RECOMMENDATIONS: LanguageRecommendation[] = [
+  {
+    use: 'idiomas-gerar',
+    label: 'Gerar itens e cards',
+    asks: 'o texto inteiro em JSON longo, no formato dos cards',
+    why: 'o mais barato da lista com JSON confiável e 1M de contexto; sem nota até a bateria rodar num texto real',
+    indicated: fromPair(DEEPSEEK_DI),
+    ladder: [fromPair(LUNA_OR), fromPair(GEMINI_38_OR)],
+  },
+  {
+    use: 'idiomas-voz',
+    label: 'Voz modelo',
+    asks: 'voz nativa do idioma, com ~400 ms de silêncio no começo',
+    why: 'as vozes nativas da bancada: Kokoro em inglês, Chatterbox nos outros idiomas',
+    indicated: voice('hexgrad/Kokoro-82M', 'Kokoro-82M', 0.99),
+    ladder: [voice('ResembleAI/chatterbox-multilingual', 'Chatterbox multilíngue', 1)],
+  },
+  {
+    use: 'idiomas-fala',
+    label: 'Ouvir a fala',
+    asks: 'transcrever a fala sem saber a frase esperada',
+    why: 'na bancada: 6 de 6 certas, 7 de 10 erros pegos, 0 falso alarme, quase de graça; o Voxtral entra se responder em até 6 s',
+    indicated: fromPair(WHISPER_DI),
+    ladder: [fromPair(VOXTRAL_DI)],
+  },
+  {
+    use: 'idiomas-ouvinte',
+    label: 'Ouvinte da pronúncia',
+    asks: 'ouvir sem a frase-alvo e escrever o que entendeu',
+    why: 'com o Whisper, na bancada: 6 de 6 certas, 8 de 10 erros pegos, 0 falso alarme, ~2 s; juízes que sabem a frase inventam sotaque',
+    indicated: fromPair(GEMINI_3_FLASH_OR),
+    ladder: [],
+  },
+  {
+    use: 'idiomas-fonemas',
+    label: 'Fonemas',
+    asks: 'comparar som por som com a pronúncia esperada, em qualquer idioma',
+    why: 'aberto e multilíngue, roda no servidor; pega o que os outros consertam (lung × long)',
+    indicated: { where: 'servidor', model: 'facebook/wav2vec2-xlsr-53-espeak-cv-ft', name: 'wav2vec2 XLSR-53 (fonemas)', price: { per: 'free' }, score: null },
+    ladder: [],
+  },
+]
+
+const money = (value: number) => `US$ ${value.toFixed(value >= 0.1 ? 2 : 3).replace('.', ',')}`
+
+/** The price of a language pick in words: by character, by hour of audio, by million tokens, or free. */
+export function languageCost(pick: LanguagePick): string {
+  const price = pick.price
+  if (price.per === 'free') return 'sem custo por uso'
+  if (price.per === 'char') return `${money(price.million)} por 1 milhão de caracteres`
+  if (price.per === 'hour') return `${money(price.hour)} por hora de áudio`
+  return `${money(price.input)} / ${money(price.output)} por 1 milhão de tokens`
+}
+
 /** The Ata scores (LIST.ata and ATA_STEPS) are from this day, not from LIST_DATE. */
 export const ATA_LIST_DATE = '2026-11-10'
 

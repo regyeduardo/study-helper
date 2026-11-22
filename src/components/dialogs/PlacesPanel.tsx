@@ -37,9 +37,12 @@ interface Row {
 }
 
 interface Ask {
-  id: string
-  kind: 'folder' | 'file'
+  ids: string[]
+  /** One item: its name; a batch: "3 itens". */
   name: string
+  batch: boolean
+  /** Asked from the bar of checked rows: confirming clears the checks. */
+  fromBar?: boolean
   place: Place
 }
 
@@ -80,6 +83,23 @@ export function PlacesPanel({ focusId }: { focusId?: string }) {
   }, [])
   const [ask, setAsk] = useState<Ask | null>(null)
   const [error, setError] = useState<string | null>(null)
+  // the batch: rows checked to change place all at once (the library's selection pattern)
+  const [marked, setMarked] = useState<Set<string>>(() => new Set())
+  // when the bar goes away (Limpar, or the batch confirmed), the focus comes back to "Marcar tudo" instead of getting lost
+  const allBox = useRef<HTMLInputElement | null>(null)
+  const clearMarks = () => {
+    setMarked(new Set())
+    allBox.current?.focus()
+  }
+  /** The bar is a toolbar: ← → move between its buttons (the disabled ones are skipped), Home and End go to the ends. */
+  const barKeys = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    const buttons = [...event.currentTarget.querySelectorAll<HTMLButtonElement>('button:not(:disabled)')]
+    const at = buttons.indexOf(document.activeElement as HTMLButtonElement)
+    const to = { ArrowRight: at + 1, ArrowLeft: at - 1, Home: 0, End: buttons.length - 1 }[event.key]
+    if (to === undefined || at < 0) return
+    event.preventDefault()
+    buttons[(to + buttons.length) % buttons.length]?.focus()
+  }
 
   const sizeOf = (file: FileMeta) => fileBytes(file, sizes[file.id], localMedia)
   const mixed = useMemo(() => mixedFolderIds(folders, files, root), [folders, files, root])
@@ -117,15 +137,43 @@ export function PlacesPanel({ focusId }: { focusId?: string }) {
     setError(null)
     const place = value === FOLLOW ? row.above : (value as Place)
     if (place === row.place && (value === FOLLOW) === !row.own) return
-    setAsk({ id: row.id, kind: row.kind, name: row.name, place })
+    setAsk({ ids: [row.id], name: row.name, batch: false, place })
+  }
+
+  const allMarked = rows.length > 0 && rows.every(row => marked.has(row.id))
+  const someMarked = !allMarked && rows.some(row => marked.has(row.id))
+  const mark = (id: string) =>
+    setMarked(current => {
+      const next = new Set(current)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  // "Marcar tudo" marks what the list shows now (with a search, only what it found)
+  const markAll = () =>
+    setMarked(current => {
+      const next = new Set(current)
+      for (const row of rows) {
+        if (allMarked) next.delete(row.id)
+        else next.add(row.id)
+      }
+      return next
+    })
+  const moveMarked = (place: Place) => {
+    setError(null)
+    const ids = [...marked]
+    if (!ids.length) return
+    const one = ids.length === 1 ? rows.find(row => row.id === ids[0]) : undefined
+    setAsk({ ids, name: one ? one.name : `${ids.length.toLocaleString('pt-BR')} itens`, batch: !one, fromBar: true, place })
   }
 
   const confirm = async () => {
     if (!ask) return
     const target = ask
     setAsk(null)
+    if (target.fromBar) clearMarks()
     try {
-      await choosePlace([target.id], target.place)
+      await choosePlace(target.ids, target.place)
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : 'Não deu para mudar o lugar.')
     }
@@ -179,7 +227,44 @@ export function PlacesPanel({ focusId }: { focusId?: string }) {
         )}
         {ask && <AskMove ask={ask} signedIn={signedIn} onCancel={() => setAsk(null)} onConfirm={() => void confirm()} onSignIn={() => ui.open({ kind: 'account' })} />}
         <input className="input pl-search" type="search" placeholder="Buscar pasta ou nota" aria-label="Buscar pasta ou nota" value={query} onChange={event => setQuery(event.target.value)} />
+        <div className="pl-select">
+          <label className="pl-check pl-all">
+            <input
+              ref={input => {
+                allBox.current = input
+                if (input) input.indeterminate = someMarked
+              }}
+              type="checkbox"
+              aria-label="Marcar tudo"
+              aria-checked={someMarked ? 'mixed' : undefined}
+              checked={allMarked}
+              onChange={markAll}
+              disabled={running || !rows.length}
+            />
+            <span aria-hidden="true">Marcar tudo</span>
+          </label>
+          {marked.size > 0 && (
+            <div className="selbar pl-bulk" role="toolbar" aria-label="Marcados" onKeyDown={barKeys}>
+              <strong aria-live="polite">{`${marked.size.toLocaleString('pt-BR')} ${marked.size === 1 ? 'marcado' : 'marcados'}`}</strong>
+              <span className="pl-bulk-lead">Levar para:</span>
+              <button className="btn" onClick={() => moveMarked('drive')} disabled={running || Boolean(ask)} aria-label="Levar para o Google Drive">
+                Google Drive
+              </button>
+              <button className="btn" onClick={() => moveMarked('local')} disabled={running || Boolean(ask)} aria-label="Levar para Local">
+                Local
+              </button>
+              <button className="btn" onClick={() => moveMarked('app')} disabled={running || Boolean(ask) || !appOn} aria-label={appOn ? 'Levar para o App' : 'Levar para o App (liberar com um código)'} title={appOn ? undefined : 'App · liberar com um código'}>
+                App
+              </button>
+              <button className="btn pl-bulk-clear" onClick={clearMarks}>
+                <Icon name="x" />
+                Limpar
+              </button>
+            </div>
+          )}
+        </div>
         <div className="pl-head" aria-hidden="true">
+          <span />
           <span>Pasta ou nota</span>
           <span>Fica em</span>
           <span>Tamanho</span>
@@ -187,6 +272,9 @@ export function PlacesPanel({ focusId }: { focusId?: string }) {
         <ul className="pl-tree" role="tree" aria-label="Biblioteca inteira" ref={tree}>
           {rows.map(row => (
             <li key={row.id} role="treeitem" aria-level={row.depth + 1} aria-expanded={row.kind === 'folder' && row.hasChildren ? open.has(row.id) || Boolean(term) : undefined} aria-label={row.name} className={`pl-row ${focusId === row.id ? 'pl-focus' : ''}`} style={{ '--depth': row.depth } as React.CSSProperties}>
+              <label className="pl-check">
+                <input type="checkbox" aria-label={`Marcar ${row.name}`} checked={marked.has(row.id)} onChange={() => mark(row.id)} disabled={running} />
+              </label>
               <span className="pl-name">
                 {row.kind === 'folder' ? (
                   // the whole name opens the folder: a target the finger hits on the phone
@@ -228,7 +316,7 @@ export function PlacesPanel({ focusId }: { focusId?: string }) {
 }
 
 function AskMove({ ask, signedIn, onCancel, onConfirm, onSignIn }: { ask: Ask; signedIn: boolean; onCancel(): void; onConfirm(): void; onSignIn(): void }) {
-  const preview = previewMove([ask.id], ask.place)
+  const preview = previewMove(ask.ids, ask.place)
   if (ask.place === 'drive' && !signedIn)
     return (
       <div className="pl-ask" role="alertdialog" aria-label="Entrar para usar o Google Drive">
@@ -243,13 +331,13 @@ function AskMove({ ask, signedIn, onCancel, onConfirm, onSignIn }: { ask: Ask; s
         </div>
       </div>
     )
-  const where = ask.place === 'local' ? 'Local' : 'o Google Drive'
-  const what = preview.notes ? `Vão ${preview.notes === 1 ? '1 nota' : `${preview.notes.toLocaleString('pt-BR')} notas`} e ${formatBytes(preview.bytes)} para ${where}.` : `Nada precisa mudar de lugar agora: só a escolha de “${ask.name}” muda.`
+  const where = ask.place === 'local' ? 'Local' : ask.place === 'app' ? 'o App' : 'o Google Drive'
+  const what = preview.notes ? `Vão ${preview.notes === 1 ? '1 nota' : `${preview.notes.toLocaleString('pt-BR')} notas`} e ${formatBytes(preview.bytes)} para ${where}.` : ask.batch ? 'Nada precisa mudar de lugar agora: só a escolha dos itens marcados muda.' : `Nada precisa mudar de lugar agora: só a escolha de “${ask.name}” muda.`
   return (
     <div className="pl-ask" role="alertdialog" aria-label={`Levar ${ask.name} para ${where}`}>
-      <b>{`Levar “${ask.name}” para ${where}?`}</b>
+      <b>{ask.batch ? `Levar ${ask.name} para ${where}?` : `Levar “${ask.name}” para ${where}?`}</b>
       <span>{what}</span>
-      {ask.place === 'local' ? <span className="pl-warn">{LOCAL_WARNING}</span> : <span className="muted">Aparece em todos os seus aparelhos com esta conta Google.</span>}
+      {ask.place === 'local' ? <span className="pl-warn">{LOCAL_WARNING}</span> : <span className="muted">{ask.place === 'app' ? 'Fica na sua conta do Estudo e aparece em todos os seus aparelhos.' : 'Aparece em todos os seus aparelhos com esta conta Google.'}</span>}
       {ask.place === 'local' && safariPage() && <span className="pl-warn">{SAFARI_WARNING}</span>}
       <span className="muted">Cada item só sai de onde está depois de chegar inteiro.</span>
       <div className="pl-ask-act">

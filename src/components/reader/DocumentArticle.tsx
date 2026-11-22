@@ -25,7 +25,7 @@ import { usePathName } from '@/hooks/use-library-view'
 import { MEDIA_LABEL, mediaOf, readsAsTranscript } from '@/lib/file-types'
 import { newId, nowIso } from '@/lib/ids'
 import { paths } from '@/lib/paths'
-import { renameSpeakerEverywhere } from '@/lib/transcription/rename-everywhere'
+import { renameSpeakerOnClick } from '@/lib/transcription/rename-everywhere'
 import { SyncLocalBanner } from '@/components/library/SyncLocal'
 import { withRecorder } from '@/lib/transcription/turns'
 import { recorderName, useAccountStore } from '@/stores/account'
@@ -443,7 +443,7 @@ export function DocumentBody({ fileId, compact = false }: { fileId: string; comp
   // every speech of that voice, the transcript, the note's text and the notes born of it (FR-060)
   const rename = async (speakerId: string, name: string) => {
     if (!recording || !opened) return
-    await renameSpeakerEverywhere(fileId, speakerId, name)
+    await renameSpeakerOnClick(fileId, speakerId, name)
   }
 
   const keepMarks = (marks: RecordingMark[]) => saveMarks(fileId, marks)

@@ -12,10 +12,12 @@ import { isNote } from '@/lib/family'
 import { isRecording, REVIEW_BELOW } from '@/lib/file-types'
 import { paths, type View } from '@/lib/paths'
 import { activeLinks } from '@/lib/share'
+import { useGenerationCounts } from '@/stores/generations'
 import { useLibraryStore } from '@/stores/library'
 import { useUiStore } from '@/stores/ui'
+import '@/styles/generations.css'
 
-const VIEW_NAME: Record<View, string> = { home: 'Início', folder: 'Biblioteca', review: 'Para revisar', entries: 'Gravações', entry: 'Nota', favorites: 'Favoritos', trash: 'Lixeira', doc: 'Documento', ...SHARING_TITLES }
+const VIEW_NAME: Record<View, string> = { home: 'Início', folder: 'Biblioteca', review: 'Para revisar', entries: 'Gravações', entry: 'Nota', generations: 'Gerações', favorites: 'Favoritos', trash: 'Lixeira', doc: 'Documento', ...SHARING_TITLES }
 
 export function useCounts() {
   const { files } = useLiveLibrary()
@@ -32,11 +34,22 @@ export function useCounts() {
   }
 }
 
+/** The red dot of Gerações: something failed and waits for "Tentar de novo" or "Dispensar". */
+function FailedDot() {
+  return <span className="gen-dot" title="Uma geração falhou" role="img" aria-label="Uma geração falhou" />
+}
+
+/** The menu button says what its marks show. */
+function menuLabel({ running, failed }: { running: number; failed: number }): string {
+  return ['Menu', running > 0 && `${running} gerando`, failed > 0 && `${failed} ${failed === 1 ? 'falhou' : 'falharam'}`].filter(Boolean).join(', ')
+}
+
 export function ReaderShell({ children, docActions }: { children: ReactNode; docActions?: ReactNode }) {
   const { view, folderId, fileId } = useViewRoute()
   const navigate = useNavigate()
   const ui = useUiStore()
   const counts = useCounts()
+  const generations = useGenerationCounts()
   const doc = useLibraryStore(state => (fileId ? state.files.find(file => file.id === fileId) : undefined))
   const { files, folders } = useLiveLibrary()
   const hits = useSearchHits(ui.query)
@@ -66,6 +79,12 @@ export function ReaderShell({ children, docActions }: { children: ReactNode; doc
           {nav('home', 'home', 'Início', paths.home)}
           {nav('review', 'warn', 'Para revisar', paths.review, counts.review)}
           {nav('entries', 'rec', 'Gravações', paths.entries, counts.entries)}
+          <button className="nv" aria-current={view === 'generations'} onClick={() => (navigate(paths.generations), ui.set({ drawer: false }))}>
+            <Icon name="sync" />
+            Gerações
+            <span className="n">{generations.running || ''}</span>
+            {generations.failed > 0 && <FailedDot />}
+          </button>
           <FavoriteFolders current={view === 'folder' ? folderId : undefined} onGo={() => ui.set({ drawer: false })} />
           <div className="nh">Pastas</div>
           <FolderTree folders={folders} current={view === 'folder' ? folderId : view === 'doc' ? (doc?.folderId ?? null) : undefined} hits={hitCounts} onGo={() => ui.set({ drawer: false })} />
@@ -119,8 +138,15 @@ export function ReaderShell({ children, docActions }: { children: ReactNode; doc
               <Icon name="sidebar" />
             </button>
           )}
-          <button className="ibtn mob-only" onClick={() => ui.set({ drawer: !ui.drawer })} aria-label="Menu">
+          <button className="ibtn mob-only" onClick={() => ui.set({ drawer: !ui.drawer })} aria-label={menuLabel(generations)}>
             <Icon name="menu" />
+            {/* on a phone the side bar hides behind this button: what is generating, and the failure, show here */}
+            {(generations.running > 0 || generations.failed > 0) && (
+              <span className="gen-mark">
+                {generations.running > 0 && <span className="gen-count">{generations.running}</span>}
+                {generations.failed > 0 && <FailedDot />}
+              </span>
+            )}
           </button>
           <button className="ibtn" onClick={() => navigate(-1)} aria-label="Voltar">
             <Icon name="back" />

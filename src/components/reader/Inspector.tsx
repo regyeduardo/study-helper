@@ -8,6 +8,7 @@ import { Icon, type IconName } from '@/components/ui/Icon'
 import { Popover } from '@/components/ui/Popover'
 import { NoteParts } from '@/components/reader/Details'
 import { artifactsOf } from '@/lib/artifacts'
+import { blocking } from '@/lib/blocking'
 import { dueCount } from '@/lib/generation/cards'
 import { scopeOf } from '@/lib/generation/tutor'
 import { scrollToHeading } from '@/components/reader/GithubMarkdownView'
@@ -582,7 +583,7 @@ function ArtifactRow({ fileId, item, readOnly }: { fileId: string; item: Listed;
     const dropped = dropping.current
     dropping.current = false
     setNaming(null)
-    if (!dropped && said && said !== item.name) void useLibraryStore.getState().renameArtifact(fileId, item.id, said).catch(failed)
+    if (!dropped && said && said !== item.name) void blocking(`Renomeando “${item.name}”…`, () => useLibraryStore.getState().renameArtifact(fileId, item.id, said)).catch(failed)
   }
 
   const askToDelete = () =>
@@ -594,7 +595,7 @@ function ArtifactRow({ fileId, item, readOnly }: { fileId: string; item: Listed;
       danger: true,
       onConfirm: async () => {
         try {
-          await useLibraryStore.getState().deleteArtifact(fileId, item.id)
+          await blocking(`Apagando “${item.name}”…`, () => useLibraryStore.getState().deleteArtifact(fileId, item.id))
           toast(`“${item.name}” saiu da nota`)
         } catch (failure) {
           failed(failure)

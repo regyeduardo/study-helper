@@ -19,7 +19,7 @@ func (srv *Server) me(w http.ResponseWriter, _ *http.Request, s *Session) {
 			"status": user.Status, "appEnabled": user.AppEnabled, "admin": srv.adminOf(user), "deleteAt": user.DeleteAt,
 			"hasPassword": user.HasPassword, "hasGoogle": user.HasGoogle,
 		},
-		"requireCode": required == "1",
+		"requireCode": required == "1" && !srv.adminOf(user),
 		"device":      map[string]any{"id": s.DeviceID, "name": s.Device},
 		"space":       map[string]any{"notes": user.NotesBytes, "media": user.MediaBytes, "reserved": user.Reserved, "limit": spaceLimit, "warnAt": spaceWarning},
 	})

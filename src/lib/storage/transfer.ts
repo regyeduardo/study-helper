@@ -16,7 +16,10 @@ function pathKey(folders: FolderMeta[], folderId: string | null): string {
   return names.join('/')
 }
 
-export async function transferLocalToCurrent(): Promise<number> {
+/** How far a copy is, item by item (folders, then notes): `done` of `total`, and the one in hand. */
+export type TransferProgress = (update: { done: number; total: number; current: string }) => void
+
+export async function transferLocalToCurrent(progress?: TransferProgress): Promise<number> {
   const local = new LocalRepository()
   const snapshot = await local.load()
   const library = useLibraryStore.getState()
@@ -34,8 +37,12 @@ export async function transferLocalToCurrent(): Promise<number> {
     }
   }
   visit(null)
+  const notes = snapshot.files.filter(file => !file.deletedAt)
+  const total = ordered.length + notes.length
+  let step = 0
 
   for (const folder of ordered) {
+    progress?.({ done: step++, total, current: folder.name })
     const key = pathKey(snapshot.folders, folder.id)
     const existing = byPath.get(key)
     if (existing) {
@@ -48,7 +55,8 @@ export async function transferLocalToCurrent(): Promise<number> {
     moved++
   }
 
-  for (const meta of snapshot.files.filter(file => !file.deletedAt)) {
+  for (const meta of notes) {
+    progress?.({ done: step++, total, current: meta.name })
     const sidecar = await local.readSidecar(meta.id)
     const content = await local.readContent(meta.id)
     const folderId = meta.folderId ? (folderMap.get(meta.folderId) ?? null) : null
@@ -100,7 +108,7 @@ export async function transferLocalToCurrent(): Promise<number> {
  * Drive. It is a copy: the profile stays as it was. What was at the top of the profile gets "Local" as its own choice, so what is made in
  * it later stays in this browser too. Returns how many folders and notes came.
  */
-export async function bringLocalToAccount(): Promise<number> {
+export async function bringLocalToAccount(progress?: TransferProgress): Promise<number> {
   const repo = useLibraryStore.getState().repo
   if (!(repo instanceof CombinedRepository)) throw new Error('Entre com o Google antes.')
   const profile = new LocalRepository()
@@ -108,11 +116,14 @@ export async function bringLocalToAccount(): Promise<number> {
   const folderIds = new Set(snapshot.folders.map(folder => folder.id))
   const top = (parentId: string | null) => !parentId || !folderIds.has(parentId)
   let count = 0
+  const total = snapshot.folders.length + snapshot.files.length
   for (const folder of snapshot.folders) {
+    progress?.({ done: count, total, current: folder.name })
     await repo.local.saveFolder({ ...folder, ...(top(folder.parentId) ? { place: 'local' as const } : {}) })
     count++
   }
   for (const meta of snapshot.files) {
+    progress?.({ done: count, total, current: meta.name })
     const [sidecar, content] = await Promise.all([profile.readSidecar(meta.id), profile.readContent(meta.id)])
     let next = { ...sidecar, meta: { ...sidecar.meta, ...(top(meta.folderId) ? { place: 'local' as const } : {}) } }
     const origin = sidecar.meta.origin

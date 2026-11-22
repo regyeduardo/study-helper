@@ -1,0 +1,39 @@
+/* The window that holds the app while an operation runs (owner's choice F). Over everything, toasts included. */
+.blk-layer{position:fixed;inset:0;z-index:90;display:grid;place-items:center;padding:max(16px,env(safe-area-inset-top)) max(16px,env(safe-area-inset-right)) max(16px,env(safe-area-inset-bottom)) max(16px,env(safe-area-inset-left));cursor:progress;outline:none}
+.blk-layer.on{background:var(--scrim);animation:blk-fade .16s ease-out}
+/* the same surface as .dialog.narrow; groups apart, the lines of a group close together */
+.blk-window{width:min(440px,100%);max-height:calc(100vh - 32px);max-height:calc(100dvh - 32px);overflow:auto;background:var(--bg);border:1px solid var(--border);border-radius:14px;box-shadow:var(--shadow);padding:20px 20px 16px;display:grid;gap:16px;cursor:default;outline:none;animation:blk-in .16s ease-out}
+/* the window and the layer take the focus only to hold it: no ring, and app.css's :focus-visible does not round them to 6px */
+.blk-layer:focus-visible{outline:none;border-radius:0}
+.blk-window:focus-visible{outline:none;border-radius:14px}
+.blk-window h2{margin:0;font-size:16px;font-weight:600;line-height:1.3;overflow-wrap:anywhere;text-wrap:balance}
+.blk-progress{display:grid;gap:8px;min-width:0}
+.blk-step{display:flex;align-items:baseline;gap:12px;min-width:0}
+.blk-phase{margin:0;flex:1;min-width:0;font-size:13px;color:var(--fg);overflow-wrap:anywhere}
+.blk-pct{margin-left:auto;font-size:13px;font-weight:600;color:var(--fg);font-variant-numeric:tabular-nums}
+.blk-bar{height:8px;border-radius:4px;background:var(--bg-muted);overflow:hidden}
+.blk-bar i{display:block;height:100%;width:100%;background:var(--accent);transform:scaleX(var(--p,0));transform-origin:left;transition:transform .3s ease-out}
+.blk-bar.loose i{width:35%;transform:none;transition:none;animation:blk-run 1.2s ease-in-out infinite}
+.blk-meta{display:grid;gap:2px;min-width:0}
+.blk-count{margin:0;font-size:12.5px;color:var(--fg-muted);font-variant-numeric:tabular-nums}
+.blk-count span{white-space:nowrap}
+.blk-current{margin:0;font-size:12.5px;color:var(--fg-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.blk-note{margin:0;font-size:12.5px;color:var(--fg-muted)}
+.blk-wait{display:grid;gap:8px;justify-items:start}
+/* a failure reads as one: the icon and the tint say it, not the red of the text alone (same shape as the app's .banner) */
+.blk-failure{margin:0;display:grid;grid-template-columns:auto minmax(0,1fr);gap:8px;align-items:start;padding:8px 10px;border-radius:8px;background:var(--bad-soft);color:var(--fg);font-size:13px;line-height:1.45;overflow-wrap:anywhere}
+.blk-failure .ic{margin-top:1px;color:var(--bad)}
+.blk-act{display:flex;justify-content:flex-end;gap:8px}
+.blk-act .btn{justify-content:center}
+@keyframes blk-fade{from{background:transparent}}
+@keyframes blk-in{from{opacity:0;transform:scale(.97)}}
+@keyframes blk-run{from{transform:translateX(-100%)}to{transform:translateX(290%)}}
+/* the button that answers the window: 44px to the finger (as .df .btn in phone.css), the whole width on a phone */
+@media (pointer:coarse){.blk-act .btn,.blk-wait .btn{min-height:44px}}
+@media (max-width:640px){.blk-act .btn{min-height:44px;flex:1}}
+/* without motion the bar with no number does not stand still as if full: stripes say "no number yet" */
+@media (prefers-reduced-motion:reduce){
+  .blk-layer.on,.blk-window{animation:none}
+  .blk-bar i{transition:none}
+  .blk-bar.loose i{animation:none;width:100%;background:repeating-linear-gradient(-45deg,var(--accent) 0 6px,transparent 6px 12px);opacity:.55}
+}

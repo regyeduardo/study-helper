@@ -13,6 +13,7 @@ import {
 } from '@/controllers/hosting.controller'
 import { recordingName, sourceTypeOf } from '@/lib/file-types'
 import { keepLocalMedia, linkLocalMedia, type LocalMedia, readLocalMedia } from '@/lib/recording/media-library'
+import { CombinedRepository } from '@/lib/storage/combined-repository'
 import type { Repository } from '@/lib/storage/repository'
 import { useLibraryStore } from '@/stores/library'
 
@@ -151,6 +152,22 @@ export async function removeStoredSource(origin: SourceMeta, repo: Repository): 
   if (origin.storage === 'drive' && origin.storedFileId) await repo.removeSource(origin.storedFileId)
   if (origin.storage === 'filebin' && origin.storedUrl) await deleteFromFilebinController(origin.storedUrl)
   return { ...origin, storedFileId: undefined, storedUrl: undefined, removedAt: new Date().toISOString() }
+}
+
+/** A repository that can give the player an address to stream a media it keeps (the App's API, the Drive through the app's worker). */
+interface Streams {
+  streamSource(ref: string): Promise<string | null> | string | null
+}
+
+/**
+ * Where the player streams a kept media from, without downloading it first: the browser asks for it in parts. Null where it cannot
+ * (Local, the Drive in a browser without the app's worker): then `downloadStoredSource` brings it whole.
+ */
+export async function storedStream(origin: SourceMeta, repo: Repository): Promise<string | null> {
+  const ref = origin.storage === 'drive' && !origin.removedAt ? origin.storedFileId : undefined
+  if (!ref) return null
+  const side = repo instanceof CombinedRepository ? (ref.startsWith('app:') ? repo.app : repo.drive) : repo
+  return side && 'streamSource' in side ? (side as Repository & Streams).streamSource(ref) : null
 }
 
 export async function downloadStoredSource(origin: SourceMeta, repo: Repository): Promise<Blob | string> {

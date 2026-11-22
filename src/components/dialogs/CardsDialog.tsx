@@ -5,12 +5,10 @@ import { MoreOptions } from '@/components/dialogs/FromNoteFields'
 import { ModelPick, useModelChoice } from '@/components/dialogs/ModelPick'
 import { Dialog } from '@/components/ui/Dialog'
 import { Icon } from '@/components/ui/Icon'
-import { targetFor } from '@/lib/ai/config'
-import { artifactsOf, decksOf, newCardsArtifact } from '@/lib/artifacts'
-import { generateCards, reviewed, today } from '@/lib/generation/cards'
-import { GenerationSession } from '@/lib/generation/session'
-import { nowIso } from '@/lib/ids'
+import { artifactsOf, decksOf } from '@/lib/artifacts'
+import { reviewed, today } from '@/lib/generation/cards'
 import { transcriptText } from '@/lib/transcription/export'
+import { useJobsStore } from '@/stores/jobs'
 import { useLibraryStore } from '@/stores/library'
 import { useUiStore } from '@/stores/ui'
 
@@ -23,7 +21,6 @@ export async function noteText(fileId: string): Promise<string> {
 export function CardsDialog({ fileId, deckId }: { fileId: string; deckId?: string }) {
   const close = useUiStore(state => state.close)
   const meta = useLibraryStore(state => state.files.find(file => file.id === fileId))
-  const settings = useLibraryStore(state => state.index.settings)
   const choice = useModelChoice('cartoes')
   const [decks, setDecks] = useState<CardsArtifact[] | null>(null)
   const [only, setOnly] = useState(deckId)
@@ -57,11 +54,8 @@ export function CardsDialog({ fileId, deckId }: { fileId: string; deckId?: strin
     setBusy('Fazendo os cartões da nota')
     setError('')
     try {
-      const said = instruction.trim()
-      const made = await generateCards(await noteText(fileId), new GenerationSession(targetFor(settings, 'cartoes', choice.model)), said)
-      if (!made.cards.length) throw new Error('A IA não devolveu nenhum cartão. Tente de novo.')
-      const deck = newCardsArtifact({ name: made.name, cards: made.cards, made: { ...(choice.model ? { model: choice.model } : {}), ...(said ? { instruction: said } : {}), at: nowIso() } })
-      await useLibraryStore.getState().saveArtifact(fileId, deck)
+      // a job of its own, so it shows in Gerações (and fails there with "Tentar de novo")
+      const deck = (await useJobsStore.getState().generateArtifact({ fileId, artifact: 'cartoes', model: choice.model, instruction })) as CardsArtifact
       start([...(decks ?? []), deck], deck.id)
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : String(failure))

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { USES } from '@/lib/ai/config'
-import { ATA_LIST_DATE, ATA_STEPS, costPerNote, findPair, LIST_DATE, LIST_DATE_LABEL, LIST_TITLE, listDayOf, listReviewDue, type ModelPair, PAIRS, priceFromCatalog, RECOMMENDATIONS, recommendationOf, situationsOf, type TestedPair } from '@/lib/ai/recommendations'
+import { ATA_LIST_DATE, ATA_STEPS, costPerNote, findPair, LANGUAGE_LIST_DATE, LANGUAGE_RECOMMENDATIONS, languageCost, LIST_DATE, LIST_DATE_LABEL, LIST_TITLE, listDayOf, listReviewDue, type ModelPair, PAIRS, priceFromCatalog, RECOMMENDATIONS, recommendationOf, situationsOf, type TestedPair } from '@/lib/ai/recommendations'
 import { requirementOf } from '@/lib/ai/use-requirements'
 import type { AiConfig, AiUse } from '@/types/domain'
 
@@ -486,5 +486,60 @@ describe('the periodic review of the list (FR-052)', () => {
   it('takes another interval', () => {
     expect(listReviewDue(new Date('2026-11-10T00:00:00Z'), 2)).toBe(true)
     expect(listReviewDue(new Date('2026-11-10T00:00:00Z'), 5)).toBe(false)
+  })
+})
+
+describe('modo de idiomas na lista fixa (spec 004, FR-034)', () => {
+  const pick = (use: string) => LANGUAGE_RECOMMENDATIONS.find(item => item.use === use)!
+
+  it('são 5 usos, na ordem do plano, com a data da bancada', () => {
+    expect(LANGUAGE_RECOMMENDATIONS.map(item => item.use)).toEqual(['idiomas-gerar', 'idiomas-voz', 'idiomas-fala', 'idiomas-ouvinte', 'idiomas-fonemas'])
+    expect(LANGUAGE_LIST_DATE).toBe('2026-11-21')
+    for (const item of LANGUAGE_RECOMMENDATIONS) {
+      expect(item.label.length).toBeGreaterThan(0)
+      expect(item.asks.length).toBeGreaterThan(0)
+      expect(item.why.length).toBeGreaterThan(0)
+    }
+  })
+
+  it('gerar itens e cards: DeepSeek V4 Flash na DeepInfra, escada GPT-6 Luna e Gemini 3.8 Flash; sem nota até a bateria', () => {
+    const item = pick('idiomas-gerar')
+    expect([item.indicated.where, item.indicated.model]).toEqual(['deepinfra', DS_DI])
+    expect(item.ladder.map(rung => [rung.where, rung.model])).toEqual([
+      ['openrouter', LUNA_OR],
+      ['openrouter', GEMINI_OR],
+    ])
+    expect([item.indicated, ...item.ladder].every(rung => rung.score === null)).toBe(true)
+  })
+
+  it('voz: Kokoro-82M em inglês e Chatterbox multilíngue nos outros idiomas, pelo preço por caractere', () => {
+    const item = pick('idiomas-voz')
+    expect([item.indicated.where, item.indicated.model]).toEqual(['deepinfra', 'hexgrad/Kokoro-82M'])
+    expect(item.ladder.map(rung => rung.model)).toEqual(['ResembleAI/chatterbox-multilingual'])
+    expect(languageCost(item.indicated)).toBe('US$ 0,99 por 1 milhão de caracteres')
+  })
+
+  it('ouvir a fala sem referência: whisper-large-v3, com o Voxtral opcional, pela hora de áudio', () => {
+    const item = pick('idiomas-fala')
+    expect([item.indicated.where, item.indicated.model]).toEqual(['deepinfra', 'openai/whisper-large-v3'])
+    expect(item.ladder.map(rung => rung.model)).toEqual(['mistralai/Voxtral-Small-24B-2507'])
+    expect(languageCost(item.indicated)).toBe('US$ 0,027 por hora de áudio')
+  })
+
+  it('ouvinte cego: Gemini 3 Flash na OpenRouter, sem escada; o porquê traz os números da bancada', () => {
+    const item = pick('idiomas-ouvinte')
+    expect([item.indicated.where, item.indicated.model]).toEqual(['openrouter', 'google/gemini-3-flash-preview'])
+    expect(item.ladder).toEqual([])
+    expect(item.why).toMatch(/0 falso alarme/)
+  })
+
+  it('fonemas: o modelo aberto roda no servidor, sem custo por uso', () => {
+    const item = pick('idiomas-fonemas')
+    expect([item.indicated.where, item.indicated.model]).toEqual(['servidor', 'facebook/wav2vec2-xlsr-53-espeak-cv-ft'])
+    expect(languageCost(item.indicated)).toBe('sem custo por uso')
+  })
+
+  it('não entram nos usos da pessoa: rodam no servidor, com a estrutura do app', () => {
+    expect(USE_IDS.some(id => String(id).startsWith('idiomas'))).toBe(false)
   })
 })

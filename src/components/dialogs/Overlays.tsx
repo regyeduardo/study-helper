@@ -52,7 +52,7 @@ export function Overlays() {
   else if (overlay?.kind === 'mindmap') content = <MindMapDialog fileId={overlay.fileId} mapId={overlay.artifactId} />
   else if (overlay?.kind === 'tutor') content = <TutorDialog fileId={overlay.fileId} conversationId={overlay.conversationId} />
   else if (overlay?.kind === 'chat') content = <TutorDialog fileId={overlay.fileId} chat />
-  else if (overlay?.kind === 'generate-artifact') content = <ArtifactGenerateDialog fileId={overlay.fileId} artifact={overlay.artifact} again={overlay.again} />
+  else if (overlay?.kind === 'generate-artifact') content = <ArtifactGenerateDialog fileId={overlay.fileId} artifact={overlay.artifact} again={overlay.again} prefill={overlay.prefill} />
   else if (overlay?.kind === 'ata-parts') content = <AtaPartsDialog fileId={overlay.fileId} again={overlay.again} prefill={overlay.prefill} />
   else if (overlay?.kind === 'generate') content = <GenerateDialog fileId={overlay.fileId} agent={overlay.agent} redo={overlay.redo} again={overlay.again} prefill={overlay.prefill} />
   else if (overlay?.kind === 'generate-entry') content = <GenerateEntryDialog fileId={overlay.fileId} prefill={overlay.prefill} />

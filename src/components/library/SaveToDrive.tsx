@@ -7,6 +7,7 @@ import type { FileMeta } from '@/types/domain'
 import { Dialog } from '@/components/ui/Dialog'
 import { Icon } from '@/components/ui/Icon'
 import { preloadGoogleAccounts } from '@/controllers/google-auth.controller'
+import { blocking } from '@/lib/blocking'
 import { isNote } from '@/lib/family'
 import { placeOf } from '@/lib/library-filters'
 import type { LocalMedia } from '@/lib/recording/media-library'
@@ -135,12 +136,15 @@ export function SaveToDrive({ fileId, media, compact = false, bare = false }: Sa
     const mark = (id: string) => useSaving.setState(state => ({ ids: new Set(state.ids).add(id) }))
     mark(key)
     try {
-      if (media) {
-        await saveLocalMediaToDrive(media, entryId => {
-          marked.push(entryId)
-          mark(entryId)
-        })
-      } else await saveToDrive(fileId!)
+      // the upload holds the app in its window until the media is in the Drive (no percent: the upload does not report it)
+      await blocking(SAVING, async () => {
+        if (media) {
+          await saveLocalMediaToDrive(media, entryId => {
+            marked.push(entryId)
+            mark(entryId)
+          })
+        } else await saveToDrive(fileId!)
+      })
       toast(SAVED)
     } catch (failure) {
       toast(failureOf(failure, 'Não deu para salvar no Drive.'))

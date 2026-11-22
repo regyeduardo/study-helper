@@ -340,6 +340,12 @@ export class AppRepository implements Repository {
     return getMedia(item, media)
   }
 
+  /** The player streams the media from the API: the browser asks for the parts (Range) with the session cookie. */
+  streamSource(ref: string): string {
+    const [item, media] = this.mediaOf(ref)
+    return mediaUrl(item, media)
+  }
+
   async removeSource(ref: string): Promise<void> {
     const [item, media] = this.mediaOf(ref)
     await deleteMedia(item, media)

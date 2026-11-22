@@ -15,9 +15,11 @@ export const paths = {
   /** Gravações (was "Entradas"; the old address still opens it). */
   entries: '/gravacoes',
   entry: (id: string) => `/entrada/${id}`,
+  /** Gerações (FR-065): what the AI is making, what failed and what came out. */
+  generations: '/geracoes',
   shares: '/compartilhados',
   sharedWithMe: '/compartilhados-comigo',
   shared: (id: string) => `/shared/${id}`,
 }
 
-export type View = 'home' | 'folder' | 'review' | 'favorites' | 'trash' | 'doc' | 'entries' | 'entry' | 'shares' | 'sharedWithMe' | 'shared'
+export type View = 'home' | 'folder' | 'review' | 'favorites' | 'trash' | 'doc' | 'entries' | 'entry' | 'generations' | 'shares' | 'sharedWithMe' | 'shared'

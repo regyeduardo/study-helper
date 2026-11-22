@@ -44,20 +44,13 @@ func main() {
 			admins = append(admins, email)
 		}
 	}
-	// the library's content (entrega 4): Cloudflare R2 through its S3 API; without it the App routes answer 503
-	var storage blobs.Store
-	if endpoint, bucket := os.Getenv("R2_ENDPOINT"), os.Getenv("R2_BUCKET"); endpoint != "" && bucket != "" {
-		storage = &blobs.S3{Endpoint: endpoint, Bucket: bucket, AccessKey: os.Getenv("R2_ACCESS_KEY_ID"), SecretKey: os.Getenv("R2_SECRET_ACCESS_KEY"), Region: "auto",
-			Client: &http.Client{Timeout: 5 * time.Minute}}
-	} else {
-		log.Print("R2_ENDPOINT/R2_BUCKET not set: the library in the App is off")
-	}
+	storage := blobStore()
 	api := server.New(db, server.Config{
 		AppOrigin:     env("APP_ORIGIN", "https://study.ryns.me"),
 		PublicURL:     env("PUBLIC_URL", "https://api.study.ryns.me"),
 		AdminEmails:   admins,
 		TokenKey:      key,
-		Google:        server.DefaultGoogle(os.Getenv("GOOGLE_CLIENT_ID"), os.Getenv("GOOGLE_CLIENT_SECRET")),
+		Google:        googleConfig(),
 		SecureCookies: env("SECURE_COOKIES", "true") != "false",
 		Version:       version,
 		Blobs:         storage,
@@ -92,4 +85,31 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	_ = httpServer.Shutdown(ctx)
+}
+
+// blobStore is where the library's content lives (entrega 4): Cloudflare R2 through its S3 API; without it the App routes answer 503.
+// BLOBS=memory keeps it in memory instead (dev and end-to-end tests only: lost when the server stops, never reaches R2).
+func blobStore() blobs.Store {
+	if os.Getenv("BLOBS") == "memory" {
+		log.Print("BLOBS=memory: the library's content stays in memory and is lost when the server stops")
+		return blobs.NewMemory()
+	}
+	if endpoint, bucket := os.Getenv("R2_ENDPOINT"), os.Getenv("R2_BUCKET"); endpoint != "" && bucket != "" {
+		return &blobs.S3{Endpoint: endpoint, Bucket: bucket, AccessKey: os.Getenv("R2_ACCESS_KEY_ID"), SecretKey: os.Getenv("R2_SECRET_ACCESS_KEY"), Region: "auto",
+			Client: &http.Client{Timeout: 5 * time.Minute}}
+	}
+	log.Print("R2_ENDPOINT/R2_BUCKET not set: the library in the App is off")
+	return nil
+}
+
+// googleConfig is Google's sign-in, also accepting tokens of the app's own Google client (GOOGLE_TOKEN_AUDIENCES, comma separated):
+// whoever is signed in with Google in the app turns on the structure without a second sign-in.
+func googleConfig() server.GoogleConfig {
+	google := server.DefaultGoogle(os.Getenv("GOOGLE_CLIENT_ID"), os.Getenv("GOOGLE_CLIENT_SECRET"))
+	for _, client := range strings.Split(os.Getenv("GOOGLE_TOKEN_AUDIENCES"), ",") {
+		if client = strings.TrimSpace(client); client != "" {
+			google.TokenAudiences = append(google.TokenAudiences, client)
+		}
+	}
+	return google
 }

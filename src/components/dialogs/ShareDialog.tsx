@@ -7,6 +7,8 @@ import { entryKind } from '@/components/library/EntryList'
 import { Dialog } from '@/components/ui/Dialog'
 import { Icon } from '@/components/ui/Icon'
 import { type CreatedShare as CreatedResult, createShareController, forgetShareMediaController, isShareConfigured, type PlannedMedia, ShareError, type ShareStatus, shareStatusController, type UpdatedShare, updateShareController, uploadShareMediaController } from '@/controllers/share.controller'
+import { filesInside } from '@/hooks/use-library-view'
+import { blocking } from '@/lib/blocking'
 import { env } from '@/lib/env'
 import { paths } from '@/lib/paths'
 import { mediaLength, mediaOf } from '@/lib/file-types'
@@ -189,8 +191,27 @@ export function ShareDialog({ target, id }: { target: ShareKind; id: string }) {
     let alive = true
     setContent(null)
     const recorder = recorderName(useAccountStore.getState().active())
-    const built = entrada ? buildEntryShareContent(id, files, openFile, choiceOf(tree, chosen), recorder) : buildShareContent({ kind: target, id }, folders, files, openFile, withExams, recorder, kinds)
-    void built.then(made => alive && setContent(made))
+    // the size comes from reading every note that goes in the link (a Drive read each): the window holds the app and counts them
+    const choice = entrada ? choiceOf(tree, chosen) : null
+    const total = choice ? 1 + choice.notes.length : target === 'folder' ? filesInside(files, folders.filter(folder => !folder.deletedAt), [id]).filter(file => !file.deletedAt).length : 1
+    const built = blocking(
+      'Preparando o compartilhamento…',
+      blocker => {
+        let read = 0
+        const reading = async (noteId: string) => {
+          blocker.progress({ done: read, total, current: files.find(file => file.id === noteId)?.name })
+          const opened = await openFile(noteId)
+          read++
+          return opened
+        }
+        return choice ? buildEntryShareContent(id, files, reading, choice, recorder) : buildShareContent({ kind: target, id }, folders, files, reading, withExams, recorder, kinds)
+      },
+      { phase: 'Lendo as notas', total },
+    )
+    built.then(
+      made => alive && setContent(made),
+      failure => alive && setError(failure instanceof Error ? failure.message : 'Não deu para ler as notas.'),
+    )
     return () => {
       alive = false
     }

@@ -8,6 +8,7 @@ import { Explorer } from '@/components/library/Explorer'
 import { ReaderRow } from '@/components/library/FileRows'
 import { FilterChips, SortSelect } from '@/components/library/Filters'
 import { FolderTiles } from '@/components/library/FolderTiles'
+import { GenerationList } from '@/components/library/GenerationList'
 import { HomeRecent } from '@/components/library/HomeRecent'
 import { SelectionBar } from '@/components/library/SelectionBar'
 import { SHARING_TITLES, SharingView } from '@/components/library/SharingLists'
@@ -25,7 +26,7 @@ import { useLibraryStore } from '@/stores/library'
 import { useUiStore } from '@/stores/ui'
 import { useScrollerRef } from '@/pages/workspace/container/shared'
 
-const TITLES = { folder: 'Biblioteca', review: 'Para revisar', favorites: 'Favoritos', trash: 'Lixeira', home: 'Início', doc: '', entries: 'Gravações', entry: 'Nota', ...SHARING_TITLES }
+const TITLES = { folder: 'Biblioteca', review: 'Para revisar', favorites: 'Favoritos', trash: 'Lixeira', home: 'Início', doc: '', entries: 'Gravações', entry: 'Nota', generations: 'Gerações', ...SHARING_TITLES }
 
 export function Library({ route }: { route: ViewRoute }) {
   const ui = useUiStore()
@@ -168,7 +169,7 @@ export function ReaderWorkspace({ route }: { route: ViewRoute }) {
   return (
     <ReaderShell>
       <div className="libwrap">
-        {route.view === 'home' ? <HomeRecent /> : route.view === 'shared' ? <SharedStatus unavailable={Boolean(route.unavailable)} /> : route.view === 'shares' || route.view === 'sharedWithMe' ? <SharingView view={route.view} /> : <Library route={route} />}
+        {route.view === 'home' ? <HomeRecent /> : route.view === 'generations' ? <GenerationList /> : route.view === 'shared' ? <SharedStatus unavailable={Boolean(route.unavailable)} /> : route.view === 'shares' || route.view === 'sharedWithMe' ? <SharingView view={route.view} /> : <Library route={route} />}
       </div>
     </ReaderShell>
   )

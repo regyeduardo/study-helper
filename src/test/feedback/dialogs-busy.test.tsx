@@ -7,18 +7,23 @@ import { ItemMenu } from '@/components/library/ItemMenu'
 import { SelectionBar } from '@/components/library/SelectionBar'
 import { TrashList } from '@/components/library/TrashList'
 import { Toasts } from '@/components/ui/Toasts'
+import { useBlockingStore } from '@/stores/blocking'
 import { useLibraryStore } from '@/stores/library'
 import { useUiStore } from '@/stores/ui'
-import { fileNow, jobsNow, running, settle, slowLibrary, toastsNow } from '@/test/feedback/slow'
+import { fileNow, jobsNow, settle, slowLibrary, toastsNow } from '@/test/feedback/slow'
 
 // Small writes that still wait for the Drive: the window says "Salvando…", the star lights up, the row leaves the Lixeira.
+// What goes on after the click holds the app in the window of the operation (owner's choice F), not in a line of Tarefas.
 
 let slow: ReturnType<typeof slowLibrary>
 let id: string
 
 const store = () => useLibraryStore.getState()
+/** The operations holding the app in the window (not the failures waiting for "Fechar"). */
+const holding = () => useBlockingStore.getState().ops.filter(op => !op.failure)
 
 beforeEach(async () => {
+  useBlockingStore.setState({ ops: [] })
   slow = slowLibrary()
   id = (await store().createFile({ name: 'Limites', type: 'class', status: 'ready', folderId: null }, '# Limites')).id
 })
@@ -103,7 +108,7 @@ describe('Favoritar', () => {
     expect(fileNow(id)?.favorite).toBe(true)
   })
 
-  it('pela barra de seleção: todos os itens ficam favoritos de uma vez e a linha conta quantos', async () => {
+  it('pela barra de seleção: todos os itens ficam favoritos de uma vez e a janela conta quantos', async () => {
     const other = (await store().createFile({ name: 'Derivadas', type: 'class', status: 'ready', folderId: null }, '# D')).id
     useUiStore.setState({ selection: new Set([id, other]) })
     render(
@@ -115,18 +120,19 @@ describe('Favoritar', () => {
     fireEvent.click(within(screen.getByRole('toolbar', { name: 'Seleção' })).getByRole('button', { name: 'Favoritar' }))
     expect(fileNow(id)?.favorite).toBe(true)
     expect(fileNow(other)?.favorite).toBe(true)
-    expect(running()[0]).toMatchObject({ kind: 'sync', title: 'Favoritando 2 itens…' })
+    expect(holding()[0]).toMatchObject({ title: 'Favoritando 2 itens…', phase: 'Marcando como favorito' })
     await act(async () => {
       release()
       await settle()
     })
-    expect(running()).toHaveLength(0)
+    expect(holding()).toHaveLength(0)
+    expect(jobsNow()).toHaveLength(0)
     expect(toastsNow()).toContain('2 nos favoritos')
   })
 })
 
 describe('Mover para…', () => {
-  it('ao escolher a pasta a janela fecha na hora, a nota já está lá e a linha "Movendo" aparece', async () => {
+  it('ao escolher a pasta a janela fecha na hora, a nota já está lá e a janela "Movendo" segura o app', async () => {
     const folder = await store().createFolder({ name: 'Cálculo' })
     useUiStore.setState({ overlay: { kind: 'move', fileIds: [id], folderIds: [] } })
     render(
@@ -141,13 +147,14 @@ describe('Mover para…', () => {
 
     expect(useUiStore.getState().overlay).toBeNull()
     expect(fileNow(id)?.folderId).toBe(folder.id)
-    expect(running()[0]).toMatchObject({ kind: 'sync', title: 'Movendo "Limites"…' })
+    expect(holding()[0]).toMatchObject({ title: 'Movendo "Limites"…', phase: 'Levando para Cálculo', done: 0, total: 1, current: 'Limites' })
 
     await act(async () => {
       release()
       await settle()
     })
-    expect(running()).toHaveLength(0)
+    expect(holding()).toHaveLength(0)
+    expect(jobsNow()).toHaveLength(0)
     expect(toastsNow()).toContain('Movido para Cálculo')
   })
 
@@ -168,7 +175,7 @@ describe('Mover para…', () => {
     expect(fileNow(id)?.folderId).toBeNull()
     expect(folder.id).toBeTruthy()
     expect(toastsNow().join(' ')).toMatch(/Não deu para mover: Drive fora do ar/)
-    expect(jobsNow().filter(job => job.status === 'running')).toHaveLength(0)
+    expect(holding()).toHaveLength(0)
   })
 })
 
@@ -187,23 +194,23 @@ describe('Lixeira', () => {
     expect(toastsNow()).toContain('Restaurado')
   })
 
-  it('"Apagar de vez": o item some na hora e a linha "Apagando de vez" aparece', async () => {
+  it('"Apagar de vez": o item some na hora e a janela "Apagando de vez" segura o app', async () => {
     await store().trashFiles([id])
     render(<TrashList />)
     fireEvent.click(screen.getByRole('button', { name: 'Apagar de vez' }))
     const release = slow.hold()
     fireEvent.click(within(screen.getByText(/Apagar de vez\? Não dá para desfazer/)).getByRole('button', { name: 'Apagar de vez' }))
     expect(fileNow(id)).toBeUndefined()
-    expect(running()[0]).toMatchObject({ kind: 'sync', title: 'Apagando de vez…' })
+    expect(holding()[0]).toMatchObject({ title: 'Apagando de vez…', phase: 'Limites' })
     await act(async () => {
       release()
       await settle()
     })
-    expect(running()).toHaveLength(0)
+    expect(holding()).toHaveLength(0)
     expect(toastsNow()).toContain('Apagado de vez')
   })
 
-  it('"Esvaziar a lixeira": a linha aparece quando a confirmação é aceita', async () => {
+  it('"Esvaziar a lixeira": a janela aparece quando a confirmação é aceita, contando os itens', async () => {
     await store().trashFiles([id])
     render(
       <MemoryRouter>
@@ -215,6 +222,6 @@ describe('Lixeira', () => {
     if (overlay?.kind !== 'confirm') throw new Error('sem confirmação')
     slow.hold()
     void overlay.onConfirm()
-    expect(running()[0]).toMatchObject({ kind: 'sync', title: 'Esvaziando a lixeira…' })
+    expect(holding()[0]).toMatchObject({ title: 'Esvaziando a lixeira…', total: 1, current: 'Limites' })
   })
 })

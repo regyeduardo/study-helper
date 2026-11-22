@@ -45,6 +45,11 @@ export class MoveJournal {
     await this.db.put('files', record.id, record)
   }
 
+  /** A move the person cancelled before it started: it leaves the journal, so the next opening does not take it up again. */
+  async remove(id: string): Promise<void> {
+    await this.db.delete('files', id)
+  }
+
   async clearDone(): Promise<void> {
     for (const record of await this.all()) if (record.state === 'feito') await this.db.delete('files', record.id)
   }
@@ -113,6 +118,11 @@ export interface RunOptions {
   onProgress?: (progress: MoveProgress) => void
   /** Tests stop a move in the middle to prove it picks up where it stopped. */
   stopAfter?: (record: MoveRecord) => boolean
+  /**
+   * "Cancelar": from then on, no move that did not start yet starts. It leaves the journal and comes back still `pendente` (the item
+   * stays whole where it is); one already under way ends first, and a folder already made at the destination ends as always.
+   */
+  cancelled?: () => boolean
 }
 
 export class MoveStopped extends Error {}
@@ -139,10 +149,16 @@ export async function runMoves(repo: CombinedRepository, journal: MoveJournal, t
   }
   const folderOf = (id: string) => tree.folders.find(folder => folder.id === id)
   const folderRecords = open.filter(record => record.kind === 'folder')
+  const dropped = async (record: MoveRecord) => {
+    if (record.state !== 'pendente' || !options.cancelled?.()) return false
+    await journal.remove(record.id)
+    return true
+  }
   try {
     // 1) folders are made at the destination from the top, so the notes have where to go
     for (const record of folderRecords) {
       if (record.state === 'pendente' || record.state === 'copiando') {
+        if (await dropped(record)) continue
         const folder = folderOf(record.id)
         if (!folder) {
           await save(record, 'falhou', 'A pasta não existe mais.')
@@ -157,6 +173,7 @@ export async function runMoves(repo: CombinedRepository, journal: MoveJournal, t
     // 2) notes, one by one
     for (const record of open.filter(item => item.kind === 'file')) {
       try {
+        if (await dropped(record)) continue
         if (record.state === 'pendente' || record.state === 'copiando') {
           await save(record, 'copiando')
           const from = await repo.readFrom(record.from, record.id)

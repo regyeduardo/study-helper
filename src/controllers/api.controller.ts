@@ -102,6 +102,8 @@ export const loginWithPassword = (email: string, password: string) => request<{ 
 export const registerWithPassword = (email: string, password: string, name: string) =>
   request<{ user: { id: string; email: string } }>('POST', '/v1/auth/password/register', { email, password, name })
 export const logout = () => request<{ ok: true }>('POST', '/v1/auth/logout')
+/** Opens the server session with the Google access token the app already holds (no second sign-in screen). */
+export const loginWithGoogleToken = (accessToken: string) => request<{ ok: true }>('POST', '/v1/auth/google/token', { accessToken })
 
 export const redeemCode = (code: string) => request<{ status: 'enabled'; alreadyEnabled?: boolean }>('POST', '/v1/code/use', { code })
 export const setStructure = (on: boolean) => request<{ appEnabled: boolean }>('POST', '/v1/structure', { on })

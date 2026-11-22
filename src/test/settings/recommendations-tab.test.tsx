@@ -382,3 +382,18 @@ describe('o que não muda', () => {
     expect(screen.queryByRole('button', { name: 'Rodar meu diagnóstico' })).toBeNull()
   })
 })
+
+describe('modo de idiomas na visão Geral (spec 004, FR-034)', () => {
+  it('uma tabela "Idiomas · no servidor" com os 5 usos, o indicado e a escada, sem botão de escolher', async () => {
+    setup()
+    await open()
+    const table = screen.getByRole('table', { name: 'Idiomas · no servidor' })
+    const rows = within(table).getAllByRole('row').slice(1)
+    expect(rows.map(row => row.getAttribute('aria-label'))).toEqual(['Gerar itens e cards', 'Voz modelo', 'Ouvir a fala', 'Ouvinte da pronúncia', 'Fonemas'])
+    expect(within(rows[0]).getByText('★ DeepSeek V4 Flash 0731')).toBeInTheDocument()
+    expect(within(rows[0]).getByText(/GPT-6 Luna/)).toBeInTheDocument()
+    expect(within(rows[4]).getByText('sem custo por uso')).toBeInTheDocument()
+    expect(within(table).queryByRole('button')).toBeNull()
+    expect(screen.getByText(/rodam no servidor, com a estrutura do app/)).toBeInTheDocument()
+  })
+})

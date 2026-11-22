@@ -62,8 +62,20 @@ export function SelectionBar({ hideSingle = false }: { hideSingle?: boolean }) {
         onClick={async () => {
           const withFamily = fileIds.find(id => descendantsOf(library.files, id).length)
           if (withFamily) {
-            // that window only knows files: the checked folders go first
-            for (const id of folderIds) await library.trashFolder(id)
+            // that window only knows files: the checked folders go first, in the window that holds the app (one Drive write each)
+            if (folderIds.length) {
+              const ok = await working(
+                `Apagando ${folderIds.length === 1 ? '1 pasta' : `${folderIds.length} pastas`}…`,
+                async blocker => {
+                  for (const [done, id] of folderIds.entries()) {
+                    blocker.progress({ done, total: folderIds.length, current: library.folders.find(folder => folder.id === id)?.name })
+                    await library.trashFolder(id)
+                  }
+                },
+                { message: 'Mandando para a lixeira' },
+              )
+              if (!ok) return
+            }
             return ui.open({ kind: 'delete-family', fileId: withFamily, fileIds })
           }
           // the items leave the list at once; a line says how many are going (one Drive write each)

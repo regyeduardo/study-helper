@@ -398,6 +398,8 @@ func (srv *Server) getMedia(w http.ResponseWriter, r *http.Request, s *Session) 
 	h := w.Header()
 	h.Set("Content-Type", row.Media.Mime)
 	h.Set("Accept-Ranges", "bytes")
+	// the player streams it from the app's page (crossorigin="use-credentials"): the parts' headers are readable there too
+	h.Set("Access-Control-Expose-Headers", "Content-Range, Accept-Ranges, Content-Length, ETag")
 	h.Set("Cache-Control", "private, max-age=3600")
 	if info.ETag != "" {
 		h.Set("ETag", info.ETag)

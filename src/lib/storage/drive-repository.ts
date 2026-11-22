@@ -17,6 +17,7 @@ import {
 } from '@/controllers/drive.controller'
 import { defaultIndex, newAccountIndex, newFileMeta, newSidecar } from '@/lib/defaults'
 import { deleteDatabase, KeyValueStore } from '@/lib/storage/idb'
+import { driveStreamUrl } from '@/lib/storage/media-stream'
 import {
   bytesOf,
   type Conflict,
@@ -286,6 +287,11 @@ export class DriveRepository implements Repository {
 
   getSource(ref: string): Promise<Blob> {
     return downloadDriveBlobController(this.token, ref)
+  }
+
+  /** The player streams a media kept here through the app's service worker; null where this browser cannot (it is downloaded whole). */
+  async streamSource(ref: string): Promise<string | null> {
+    return this.sources.has(ref) ? driveStreamUrl(ref, this.token) : null
   }
 
   async removeSource(ref: string): Promise<void> {

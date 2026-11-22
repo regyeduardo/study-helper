@@ -19,7 +19,13 @@ type GoogleConfig struct {
 	AuthURL      string
 	TokenURL     string
 	JWKSURL      string
-	Issuers      []string
+	// TokenInfoURL checks an access token the app already holds (sign-in without a second Google screen)
+	TokenInfoURL string
+	// DriveAboutURL says whose account a Drive-only token is (the app's Drive token carries no e-mail)
+	DriveAboutURL string
+	// TokenAudiences are other Google clients of the same project whose tokens also open a session (the app's own client)
+	TokenAudiences []string
+	Issuers        []string
 }
 
 // Config is what the service needs from its environment.
@@ -48,12 +54,14 @@ type Config struct {
 // DefaultGoogle is Google's real sign-in.
 func DefaultGoogle(clientID, clientSecret string) GoogleConfig {
 	return GoogleConfig{
-		ClientID:     clientID,
-		ClientSecret: clientSecret,
-		AuthURL:      "https://accounts.google.com/o/oauth2/v2/auth",
-		TokenURL:     "https://oauth2.googleapis.com/token",
-		JWKSURL:      "https://www.googleapis.com/oauth2/v3/certs",
-		Issuers:      []string{"accounts.google.com", "https://accounts.google.com"},
+		ClientID:      clientID,
+		ClientSecret:  clientSecret,
+		AuthURL:       "https://accounts.google.com/o/oauth2/v2/auth",
+		TokenURL:      "https://oauth2.googleapis.com/token",
+		JWKSURL:       "https://www.googleapis.com/oauth2/v3/certs",
+		TokenInfoURL:  "https://oauth2.googleapis.com/tokeninfo",
+		DriveAboutURL: "https://www.googleapis.com/drive/v3/about?fields=user(emailAddress,displayName,photoLink,permissionId)",
+		Issuers:       []string{"accounts.google.com", "https://accounts.google.com"},
 	}
 }
 
@@ -103,6 +111,7 @@ func (srv *Server) Handler() http.Handler {
 	route("POST /v1/auth/logout", signedIn, true, srv.logout)
 	route("GET /v1/auth/google/start", public, false, srv.googleStart)
 	route("GET /v1/auth/google/callback", public, false, srv.googleCallback)
+	route("POST /v1/auth/google/token", public, false, srv.googleToken)
 	route("POST /v1/code/use", signedIn, false, srv.useCode)
 	route("POST /v1/structure", signedIn, false, srv.setStructure)
 	route("GET /v1/devices", signedIn, false, srv.devices)

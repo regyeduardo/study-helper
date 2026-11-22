@@ -14,6 +14,7 @@ import {
   apiMessage,
   type PromoCode,
 } from '@/controllers/api.controller'
+import { blocking } from '@/lib/blocking'
 import { useServerAccount } from '@/stores/server-account'
 import { useUiStore } from '@/stores/ui'
 import { agoText, formatBytes } from '@/utils/format'
@@ -124,8 +125,11 @@ function CodesTab() {
       danger: true,
       onConfirm: async () => {
         try {
-          await adminCancelCode(code.id)
-          await load()
+          // the app waits in its window until the list comes back with the code canceled
+          await blocking('Cancelando o código…', async () => {
+            await adminCancelCode(code.id)
+            await load()
+          })
         } catch (failure) {
           setError(failure)
         }
@@ -261,7 +265,7 @@ function AccountsTab({ selfId }: { selfId: string }) {
       danger: true,
       onConfirm: async () => {
         try {
-          const { deleteAt } = await adminRevoke(account.id)
+          const { deleteAt } = await blocking('Retirando o acesso…', () => adminRevoke(account.id))
           setAccounts(list => (list ?? []).map(item => (item.id === account.id ? { ...item, status: 'revoked', appEnabled: false, deleteAt } : item)))
         } catch (failure) {
           setError(failure)
@@ -339,7 +343,7 @@ function SettingsTab() {
     if (requireCode === null) return
     setBusy(true)
     try {
-      setRequireCode((await adminSetSettings(!requireCode)).requireCode)
+      setRequireCode((await blocking('Salvando a configuração…', () => adminSetSettings(!requireCode))).requireCode)
       setError(null)
     } catch (failure) {
       setError(failure)

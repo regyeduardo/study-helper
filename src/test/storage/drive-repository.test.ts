@@ -10,6 +10,10 @@ import { useLibraryStore } from '@/stores/library'
 
 import { FakeDrive, FOLDER, installMemoryStorage, readBlob, uniqueAccount } from './fake-drive'
 
+// the app's service worker is the browser's: here it is the address it would give
+const { streams } = vi.hoisted(() => ({ streams: vi.fn(async (ref: string) => `/media-stream/${ref}`) }))
+vi.mock('@/lib/storage/media-stream', () => ({ driveStreamUrl: streams }))
+
 let drive: FakeDrive
 const token = vi.fn(async (_options?: { force?: boolean }) => 'tok')
 
@@ -178,6 +182,19 @@ describe('DriveRepository: estrutura no Google Drive', () => {
     expect(await readBlob(await repo.getSource(stored.ref))).toBe('bytes do audio')
     await repo.removeSource(stored.ref)
     expect(drive.files.has(stored.ref)).toBe(false)
+  })
+
+  it('a fonte guardada no Drive toca aos pedaços pelo service worker do app, também depois de abrir de novo; outra referência não', async () => {
+    const accountId = uniqueAccount()
+    const repo = await openRepo(accountId)
+    const stored = await repo.putSource('file-1', new Blob(['bytes do audio'], { type: 'audio/mpeg' }), 'aula.mp3')
+    expect(await repo.streamSource(stored.ref)).toBe(`/media-stream/${stored.ref}`)
+    expect(streams).toHaveBeenCalledWith(stored.ref, token)
+    expect(await (await openRepo(accountId)).streamSource(stored.ref)).toBe(`/media-stream/${stored.ref}`)
+    // a source of this browser (Local) is not in the Drive: it is read whole from here
+    streams.mockClear()
+    expect(await repo.streamSource('ref-do-local')).toBeNull()
+    expect(streams).not.toHaveBeenCalled()
   })
 
   it('dispositivos ficam em devices/<id>.json e a lista usa modifiedTime como visto por último', async () => {

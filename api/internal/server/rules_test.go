@@ -121,7 +121,8 @@ func TestMeSaysTheAccountTheCodeRuleTheDeviceAndTheSpace(t *testing.T) {
 	if user["id"] != id || user["status"] != "no-code" || user["appEnabled"] != false || user["admin"] != true {
 		t.Fatalf("user = %v", user)
 	}
-	if body["requireCode"] != true || body["device"].(map[string]any)["name"] != "Chrome no Linux" || body["space"].(map[string]any)["limit"] != float64(10<<30) {
+	// the owner (admin) never needs an invite code (decided 21/11/2026)
+	if body["requireCode"] != false || body["device"].(map[string]any)["name"] != "Chrome no Linux" || body["space"].(map[string]any)["limit"] != float64(10<<30) {
 		t.Fatalf("me = %v", body)
 	}
 }

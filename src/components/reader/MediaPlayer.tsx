@@ -1,9 +1,10 @@
-import { type ComponentProps, type CSSProperties, type ReactNode, type RefObject, type SyntheticEvent, useCallback, useEffect, useRef, useState } from 'react'
+import { type ComponentProps, type CSSProperties, type ReactNode, type RefObject, type SyntheticEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import type { FileMeta } from '@/types/domain'
+import { blocking } from '@/lib/blocking'
 import { readLocalMedia } from '@/lib/recording/media-library'
 import { sharedMediaState } from '@/lib/share'
-import { downloadStoredSource, sourceExpired } from '@/lib/storage/source-storage'
+import { downloadStoredSource, sourceExpired, storedStream } from '@/lib/storage/source-storage'
 import { clockTime } from '@/lib/transcription/export'
 import { useLibraryStore } from '@/stores/library'
 import { useUiStore } from '@/stores/ui'
@@ -13,6 +14,8 @@ export interface MeetingMedia {
   available: boolean
   video: boolean
   remote?: boolean
+  /** Plays from the address of the account's media (the App's API, the Drive through the app's worker): the browser asks for it in parts, with the session. */
+  streamed?: boolean
   size?: number
   notice?: string
   request(): Promise<void>
@@ -50,10 +53,16 @@ export function useMeetingMedia(meta: FileMeta | null): MeetingMedia {
   const repo = useLibraryStore(state => state.repo)
   const toast = useUiStore(state => state.toast)
   const [url, setUrl] = useState<string | null>(null)
+  const [streamed, setStreamed] = useState(false)
   const made = useRef<string | null>(null)
   const origin = meta?.origin ?? null
   const kept = Boolean(origin && (origin.storedFileId || origin.storedUrl) && !origin.removedAt && !sourceExpired(origin))
   const storedName = local?.storedName ?? null
+  const storedRef = kept ? (origin?.storedFileId ?? null) : null
+  // the address to stream the kept media from (null: none, it is downloaded whole), asked while rendering: a screen that asks for the
+  // media in its first effect (the transcription's tabs) runs before this hook's effects, and must wait for it too
+  const sharing = Boolean(sharedItem)
+  const stream = useMemo(() => (!sharing && !local && storedRef && origin && repo ? storedStream(origin, repo).catch(() => null) : null), [fileId, storedName, storedRef, repo, sharing])
 
   const show = useCallback((source: Blob | string) => {
     if (made.current) URL.revokeObjectURL(made.current)
@@ -64,15 +73,23 @@ export function useMeetingMedia(meta: FileMeta | null): MeetingMedia {
   useEffect(() => {
     let alive = true
     setUrl(null)
+    setStreamed(false)
     if (local)
       void readLocalMedia(local)
         .then(file => alive && show(file))
         // a media that does not open (or a page without object URLs) just does not play
         .catch(() => undefined)
+    // the kept media plays from its address at once, in parts: only the start is read until it plays
+    else
+      void stream?.then(address => {
+        if (!alive || !address) return
+        setStreamed(true)
+        show(address)
+      })
     return () => {
       alive = false
     }
-  }, [fileId, storedName])
+  }, [fileId, storedName, stream])
 
   useEffect(
     () => () => {
@@ -83,12 +100,16 @@ export function useMeetingMedia(meta: FileMeta | null): MeetingMedia {
 
   const request = useCallback(async () => {
     if (url || local || !kept || !origin || !repo) return
+    // a play pressed before the address came waits for it: what streams is never downloaded whole
+    if (await stream) return
     try {
-      show(await downloadStoredSource(origin, repo))
+      // only what cannot stream comes whole before it plays (the Drive in a browser without the app's worker, a third-party host's
+      // address): the app waits in the window (no byte count from the repository)
+      show(await blocking('Baixando a mídia…', () => downloadStoredSource(origin, repo)))
     } catch (error) {
       toast(error instanceof Error ? error.message : 'Não deu para abrir a gravação.')
     }
-  }, [url, local, kept, origin, repo, show, toast])
+  }, [url, local, kept, origin, repo, stream, show, toast])
 
   if (sharedItem) {
     const state = sharedMediaState(sharedItem, sharedFile)
@@ -98,7 +119,9 @@ export function useMeetingMedia(meta: FileMeta | null): MeetingMedia {
     const notice = state.kind === 'pending' ? SHARED_MEDIA_PENDING : state.kind === 'expired' ? SHARED_MEDIA_EXPIRED : meta?.kept === 'arquivo' ? SHARED_MEDIA_MISSING : undefined
     return { url: null, available: false, video, ...(notice ? { notice } : {}), request: nothing }
   }
-  return { url, available: Boolean(local) || kept, video: (local?.mime || origin?.mime || '').startsWith('video/'), request }
+  const video = (local?.mime || origin?.mime || '').startsWith('video/')
+  if (streamed && url) return { url, available: true, video, streamed: true, ...(origin?.sizeBytes ? { size: origin.sizeBytes } : {}), request }
+  return { url, available: Boolean(local) || kept, video, request }
 }
 
 interface MediaPlayerProps {
@@ -115,7 +138,8 @@ interface MediaPlayerProps {
 const wired = new WeakSet<HTMLMediaElement>()
 
 function bothEars(element: HTMLMediaElement): void {
-  if (wired.has(element) || !(element.src.startsWith('blob:') || element.crossOrigin === 'anonymous') || typeof AudioContext === 'undefined') return
+  // Web Audio only hears a media it may read: a blob, or one loaded with CORS (shared, or streamed from the account)
+  if (wired.has(element) || !(element.src.startsWith('blob:') || element.crossOrigin === 'anonymous' || element.crossOrigin === 'use-credentials') || typeof AudioContext === 'undefined') return
   wired.add(element)
   const context = new AudioContext()
   const sides = context.createChannelSplitter(2)
@@ -126,14 +150,18 @@ function bothEars(element: HTMLMediaElement): void {
   void context.resume()
 }
 
-/** Why the media did not play: the share worker answers 404 while the upload did not finish and 410 once it expired. */
+/**
+ * Why the media did not play: the share worker answers 404 while the upload did not finish and 410 once it expired; a streamed media
+ * (App or Drive) answers 401 or 403 without the session, 404 while it did not finish uploading and 410 once deleted.
+ */
 async function failureOf(media: MeetingMedia, code: number): Promise<string> {
   const fallback = MEDIA_FAILURES[code] ?? 'Não deu para tocar a mídia.'
-  if (!media.remote || !media.url) return fallback
-  const response = await fetch(media.url, { headers: { Range: 'bytes=0-0' } }).catch(() => null)
+  if (!(media.remote || media.streamed) || !media.url) return fallback
+  const response = await fetch(media.url, { headers: { Range: 'bytes=0-0' }, ...(media.streamed ? { credentials: 'include' as const } : {}) }).catch(() => null)
   if (!response) return MEDIA_FAILURES[2]
+  if (media.streamed && (response.status === 401 || response.status === 403)) return 'Não deu para abrir a mídia: entre de novo na conta.'
   if (response.status === 404) return 'A mídia não terminou de subir ou não existe.'
-  if (response.status === 410) return SHARED_MEDIA_EXPIRED
+  if (response.status === 410) return media.streamed ? 'A mídia foi apagada.' : SHARED_MEDIA_EXPIRED
   return fallback
 }
 
@@ -465,7 +493,8 @@ export function MediaPlayer({ player, media, onTime, onPlayFrom, onMark, docked 
   // crossOrigin before src: React sets them in this order, and with src first Chrome starts the load without
   // CORS and then refuses every seek of the remote media ("FFmpegDemuxer: demuxer seek failed")
   const events = {
-    crossOrigin: media.remote ? ('anonymous' as const) : undefined,
+    // a streamed media goes with the session (the App's cookie; the Drive's worker is the app's own address)
+    crossOrigin: media.remote ? ('anonymous' as const) : media.streamed ? ('use-credentials' as const) : undefined,
     // a shared media comes from the internet: downloading ahead keeps the play and the jumps from waiting
     preload: media.remote ? 'auto' : 'metadata',
     src: media.url ?? undefined,
@@ -585,7 +614,7 @@ export function MediaPlayer({ player, media, onTime, onPlayFrom, onMark, docked 
                   type="range"
                   aria-label="Posição na gravação"
                   aria-valuetext={`${clockTime(time)} de ${clockTime(duration)}`}
-                  title={media.remote && duration ? loadedTitle(loaded, media.size) : undefined}
+                  title={(media.remote || media.streamed) && duration ? loadedTitle(loaded, media.size) : undefined}
                   style={{ '--played': percent(duration ? Math.min(time, duration) / duration : 0), '--loaded': loadedLayer(loaded) } as CSSProperties}
                   min={0}
                   max={duration}

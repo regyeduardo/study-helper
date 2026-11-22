@@ -221,3 +221,38 @@ describe('Configurações with the structure on (FR-032)', () => {
     expect(screen.getByRole('button', { name: 'Inteligência artificial' })).toBeInTheDocument()
   })
 })
+
+describe('Usar a estrutura do app com o Google já conectado no app', () => {
+  it('uses the Google sign-in the app already has: no second sign-in window, then goes on to the code', async () => {
+    const { useAccountStore } = await import('@/stores/account')
+    vi.spyOn(useAccountStore.getState(), 'active').mockReturnValue({ id: 'g1', kind: 'google', name: 'Ana', email: 'ana@exemplo.com' } as never)
+    const tokenFor = vi.spyOn(useAccountStore.getState(), 'tokenFor').mockResolvedValue('token-do-drive')
+    let signedIn = false
+    serve(call => {
+      if (call.path === '/v1/auth/google/token') {
+        signedIn = (call.body as { accessToken: string }).accessToken === 'token-do-drive'
+        return { status: signedIn ? 200 : 401, body: signedIn ? { ok: true } : { error: 'google_refused' } }
+      }
+      if (call.path === '/v1/me') return signedIn ? { status: 200, body: me({ hasGoogle: true }) } : { status: 401, body: { error: 'no_session' } }
+      return { status: 404, body: { error: 'not_found' } }
+    })
+    useServerAccount.setState({ me: null, status: 'signed-out' })
+    render(<AppStructureSection />)
+    await userEvent.click(switchOf())
+    await waitFor(() => expect(screen.getByRole('dialog', { name: /estrutura do app/i })).toBeInTheDocument())
+    expect(tokenFor).toHaveBeenCalledWith('g1')
+    expect(calls.some(c => c.path === '/v1/auth/google/token')).toBe(true)
+    expect(screen.queryByRole('dialog', { name: /entrar no estudo/i })).toBeNull()
+  })
+
+  it('falls back to the sign-in window when the Google token is refused', async () => {
+    const { useAccountStore } = await import('@/stores/account')
+    vi.spyOn(useAccountStore.getState(), 'active').mockReturnValue({ id: 'g1', kind: 'google', name: 'Ana', email: 'ana@exemplo.com' } as never)
+    vi.spyOn(useAccountStore.getState(), 'tokenFor').mockResolvedValue('token-velho')
+    serve(call => (call.path === '/v1/auth/google/token' ? { status: 401, body: { error: 'google_refused' } } : { status: 401, body: { error: 'no_session' } }))
+    useServerAccount.setState({ me: null, status: 'signed-out' })
+    render(<AppStructureSection />)
+    await userEvent.click(switchOf())
+    await waitFor(() => expect(screen.getByRole('dialog', { name: /entrar no estudo/i })).toBeInTheDocument())
+  })
+})

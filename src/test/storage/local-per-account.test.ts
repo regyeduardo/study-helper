@@ -52,7 +52,14 @@ describe('trazer o perfil sem login como Local da conta', () => {
     await profile.saveFile(newSidecar(loose), 'comprar caderno')
     await library().connect(account, token)
     const sentBefore = drive.files.size
-    expect(await bringLocalToAccount()).toBe(3)
+    const seen: { done: number; total: number; current: string }[] = []
+    expect(await bringLocalToAccount(update => seen.push(update))).toBe(3)
+    // the window counts the copy item by item, with the one in hand
+    expect(seen).toEqual([
+      { done: 0, total: 3, current: 'Física II' },
+      { done: 1, total: 3, current: expect.any(String) },
+      { done: 2, total: 3, current: expect.any(String) },
+    ])
     expect(drive.files.size).toBe(sentBefore)
     const repo = library().repo as CombinedRepository
     expect(repo.sideOf(folder.id)).toBe('local')

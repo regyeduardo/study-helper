@@ -4,7 +4,7 @@ import type { AiConfig, AiProviderId, AiUse, DiagnosisRecord } from '@/types/dom
 import { Icon } from '@/components/ui/Icon'
 import { USE_GROUPS, USES } from '@/lib/ai/config'
 import type { DiagnosisEstimate } from '@/lib/ai/diagnosis'
-import { ATA_STEPS, priceFromCatalog, LIST_TITLE, listDayOf, type CurrentPair, type Difference, type Rung, recommendationOf, RECOMMENDATIONS, situationsOf, type UseSituation } from '@/lib/ai/recommendations'
+import { ATA_STEPS, priceFromCatalog, LANGUAGE_LIST_DATE, LANGUAGE_RECOMMENDATIONS, languageCost, type LanguagePick, LIST_TITLE, listDayOf, type CurrentPair, type Difference, type Rung, recommendationOf, RECOMMENDATIONS, situationsOf, type UseSituation } from '@/lib/ai/recommendations'
 import { providerOf } from '@/lib/ai/providers'
 import { USE_REQUIREMENTS } from '@/lib/ai/use-requirements'
 import { useLibraryStore } from '@/stores/library'
@@ -219,7 +219,65 @@ function General({ config, situations, timeZone, tested, onOpen, onChoose }: Gen
           })}
         </tbody>
       </table>
+      <LanguageTable />
     </section>
+  )
+}
+
+/* ---------- the language mode (spec 004): it runs on the server, so there is no default of the person to compare ---------- */
+
+const whereName = (pick: LanguagePick) => (pick.where === 'servidor' ? 'no servidor' : providerName(pick.where))
+
+function LanguageTable() {
+  const day = LANGUAGE_LIST_DATE.split('-').reverse().slice(0, 2).join('/')
+  return (
+    <>
+      <h4 className="rec-sub-h">Idiomas · no servidor</h4>
+      <p className="rec-hint">{`Estes usos rodam no servidor, com a estrutura do app e as chaves do app: não há padrão seu para escolher. Lista de ${day}, da bancada do protótipo.`}</p>
+      <table className="rec-table" aria-label="Idiomas · no servidor">
+        <thead>
+          <tr>
+            <th>Uso</th>
+            <th>Indicado</th>
+            <th>Também serve</th>
+            <th>Por quê</th>
+          </tr>
+        </thead>
+        <tbody>
+          {LANGUAGE_RECOMMENDATIONS.map(item => (
+            <tr key={item.use} aria-label={item.label}>
+              <td data-cell="Uso">
+                {item.label}
+                <span className="rec-sub">
+                  <span>{item.asks}</span>
+                </span>
+              </td>
+              <td data-cell="Indicado">
+                <b>{`★ ${item.indicated.name}`}</b>
+                <span className="rec-sub">
+                  <span>{whereName(item.indicated)}</span>
+                  <span>{item.indicated.score === null ? 'não testado' : `nota ${item.indicated.score}`}</span>
+                  <span>{languageCost(item.indicated)}</span>
+                </span>
+              </td>
+              <td data-cell="Também serve">
+                {item.ladder.length ? (
+                  item.ladder.map(rung => (
+                    <span key={`${rung.where}::${rung.model}`} className="rec-sub">
+                      <span className="rec-pick">{rung.name}</span>
+                      <span>{whereName(rung)}</span>
+                    </span>
+                  ))
+                ) : (
+                  <span className="rec-none">só o indicado</span>
+                )}
+              </td>
+              <td data-cell="Por quê">{item.why}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </>
   )
 }
 

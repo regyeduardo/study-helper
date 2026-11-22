@@ -7,6 +7,7 @@ import { useGoToNew } from '@/components/dialogs/go-to-new'
 import { type ModelChoice, ModelPick, useModelChoice } from '@/components/dialogs/ModelPick'
 import { Dialog } from '@/components/ui/Dialog'
 import { useDocument } from '@/hooks/use-document'
+import { blocking } from '@/lib/blocking'
 import { mediaOf } from '@/lib/file-types'
 import { courseOf } from '@/lib/generation/course-lesson'
 import { paths } from '@/lib/paths'
@@ -64,8 +65,10 @@ export function GenerateDialog({ fileId, agent, redo = false, again, prefill }: 
     const ids = over ? [fileId, over.id] : [fileId]
     const open = (id: string | null | undefined) => id && goToNew(paths.file(id), `Gerando a ${label}`)
     if (redo && agent !== 'explanation') return void asking(ids, retry, () => generateSecondTab(fileId, agent, model, instruction))
-    // the same passage, asked again; a new note goes where it was put (absent: where it went the first time)
-    if (excerpt && before) return void asking(ids, retry, () => explainSelection(fileId, excerpt, instruction, before.folderId === null ? 'concept' : 'context', model, place)).then(open)
+    // the same passage, asked again; a new note goes where it was put (absent: where it went the first time).
+    // Until its job opens (the note read, the explanation made in the Drive) the app is held in the window.
+    if (excerpt && before)
+      return void asking(ids, retry, () => blocking(`${label}: ${file?.name ?? ''}`, () => explainSelection(fileId, excerpt, instruction, before.folderId === null ? 'concept' : 'context', model, place), { phase: 'Preparando' })).then(open)
     void asking(ids, retry, () => generateFromNote(fileId, agent, model, place, instruction, analyze)).then(open)
   }
   return (

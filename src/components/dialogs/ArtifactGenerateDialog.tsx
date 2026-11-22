@@ -1,24 +1,20 @@
 import { useEffect, useRef, useState } from 'react'
 
-import type { Artifact, GenerationChoice, Settings } from '@/types/domain'
-import { noteText } from '@/components/dialogs/CardsDialog'
+import type { Artifact, Settings } from '@/types/domain'
 import { MoreOptions } from '@/components/dialogs/FromNoteFields'
 import { ModelPick, useModelChoice } from '@/components/dialogs/ModelPick'
 import { Dialog } from '@/components/ui/Dialog'
 import { Icon } from '@/components/ui/Icon'
-import { aiConfigOf, modelByUid, targetFor } from '@/lib/ai/config'
-import { artifactsOf, newCardsArtifact, newMapArtifact } from '@/lib/artifacts'
-import { generateCards } from '@/lib/generation/cards'
-import { generateMap } from '@/lib/generation/mindmap'
-import { GenerationSession } from '@/lib/generation/session'
-import { nowIso } from '@/lib/ids'
+import { aiConfigOf, modelByUid } from '@/lib/ai/config'
+import { artifactsOf } from '@/lib/artifacts'
+import { useJobsStore } from '@/stores/jobs'
 import { useLibraryStore } from '@/stores/library'
-import { useUiStore } from '@/stores/ui'
+import { type GenerationPrefill, useUiStore } from '@/stores/ui'
 import { shortDate } from '@/utils/format'
 
 export type GeneratedKind = 'mapa' | 'cartoes'
 
-const WORDS: Record<GeneratedKind, { title: string; again: string; other: string; replaced: string; busy: string; placeholder: string; empty: string }> = {
+const WORDS: Record<GeneratedKind, { title: string; again: string; other: string; replaced: string; busy: string; placeholder: string }> = {
   mapa: {
     title: 'Novo mapa mental',
     again: 'Gerar de novo o mapa',
@@ -26,7 +22,6 @@ const WORDS: Record<GeneratedKind, { title: string; again: string; other: string
     replaced: 'mesmo nome, mapa novo',
     busy: 'Desenhando o mapa da nota',
     placeholder: 'Ex.: só as decisões de preço e prazo',
-    empty: 'A IA não devolveu um mapa. Tente de novo.',
   },
   cartoes: {
     title: 'Novo baralho de cartões',
@@ -35,7 +30,6 @@ const WORDS: Record<GeneratedKind, { title: string; again: string; other: string
     replaced: 'mesmo nome, cartões novos',
     busy: 'Fazendo os cartões da nota',
     placeholder: 'Ex.: foque nas datas e nos nomes',
-    empty: 'A IA não devolveu nenhum cartão. Tente de novo.',
   },
 }
 
@@ -50,8 +44,8 @@ function lastTimeLine(before: Artifact, settings: Settings): string {
   return [made?.model ? madeModelName(made.model, settings) : '', `em ${shortDate(made?.at ?? before.createdAt, settings.timezone)}`, made?.instruction ? 'com instrução' : ''].filter(Boolean).join(' · ')
 }
 
-/** "+ Novo" and "Gerar de novo" of a map or a deck: the model and the instruction; `again`: the one made before, whose choices come back. */
-export function ArtifactGenerateDialog({ fileId, artifact, again }: { fileId: string; artifact: GeneratedKind; again?: string }) {
+/** "+ Novo" and "Gerar de novo" of a map or a deck: the model and the instruction; `again`: the one made before, whose choices come back; `prefill`: as it was when it failed ("Tentar de novo"). */
+export function ArtifactGenerateDialog({ fileId, artifact, again, prefill }: { fileId: string; artifact: GeneratedKind; again?: string; prefill?: GenerationPrefill }) {
   const close = useUiStore(state => state.close)
   const sidecar = useLibraryStore(state => state.opened[fileId]?.sidecar)
   const [failed, setFailed] = useState('')
@@ -68,19 +62,19 @@ export function ArtifactGenerateDialog({ fileId, artifact, again }: { fileId: st
     )
   // the choices of the last time fill the fields when the window opens
   const before = again ? artifactsOf(sidecar).find(item => item.id === again && item.kind === artifact) : undefined
-  return <GenerateForm fileId={fileId} artifact={artifact} before={before} />
+  return <GenerateForm fileId={fileId} artifact={artifact} before={before} prefill={prefill} />
 }
 
-function GenerateForm({ fileId, artifact, before }: { fileId: string; artifact: GeneratedKind; before?: Artifact }) {
+function GenerateForm({ fileId, artifact, before, prefill }: { fileId: string; artifact: GeneratedKind; before?: Artifact; prefill?: GenerationPrefill }) {
   const close = useUiStore(state => state.close)
   const open = useUiStore(state => state.open)
   const toast = useUiStore(state => state.toast)
   const note = useLibraryStore(state => state.files.find(file => file.id === fileId))
   const settings = useLibraryStore(state => state.index.settings)
-  const lastModel = before?.made?.model
+  const lastModel = prefill?.model ?? before?.made?.model
   const choice = useModelChoice(artifact, false, lastModel && modelByUid(aiConfigOf(settings), lastModel) ? { pick: lastModel } : {})
-  const [instruction, setInstruction] = useState(before?.made?.instruction ?? '')
-  const [replace, setReplace] = useState(false)
+  const [instruction, setInstruction] = useState(prefill?.instruction ?? before?.made?.instruction ?? '')
+  const [replace, setReplace] = useState(Boolean(before && prefill?.replace))
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const alive = useRef(true)
@@ -98,23 +92,8 @@ function GenerateForm({ fileId, artifact, before }: { fileId: string; artifact: 
     setBusy(true)
     setError('')
     try {
-      const said = instruction.trim()
-      const made: GenerationChoice = { ...(choice.model ? { model: choice.model } : {}), ...(said ? { instruction: said } : {}), at: nowIso() }
-      const session = new GenerationSession(targetFor(settings, artifact, choice.model))
-      const content = await noteText(fileId)
-      // "Substituir este": same name, unless it still has the placeholder
-      const kept = replace && before && !before.provisionalName ? before.name : null
-      let next: Artifact
-      if (artifact === 'mapa') {
-        const map = await generateMap(content, session, said)
-        if (!map) throw new Error(words.empty)
-        next = newMapArtifact({ name: kept ?? map.name, diagram: map.diagram, made })
-      } else {
-        const deck = await generateCards(content, session, said)
-        if (!deck.cards.length) throw new Error(words.empty)
-        next = newCardsArtifact({ name: kept ?? deck.name, cards: deck.cards, made })
-      }
-      const saved = await useLibraryStore.getState().saveArtifact(fileId, next, replace && before ? before.id : undefined)
+      // a job of its own, so it shows in Gerações (and fails there with "Tentar de novo")
+      const saved = await useJobsStore.getState().generateArtifact({ fileId, artifact, model: choice.model, instruction, again: before?.id, replace })
       if (!alive.current) return toast(`“${saved.name}” ficou pronto`)
       open(artifact === 'mapa' ? { kind: 'mindmap', fileId, artifactId: saved.id } : { kind: 'cards', fileId, deckId: saved.id })
     } catch (failure) {

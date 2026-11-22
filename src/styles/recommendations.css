@@ -28,6 +28,9 @@
 .rec-steps{margin:0;padding:0;list-style:none;display:grid;gap:3px;font-size:12px;color:var(--fg-muted)}
 .rec-pick{color:var(--fg);white-space:nowrap}
 .rec-none{color:var(--fg-muted)}
+/* Idiomas · no servidor (spec 004): a second table under the Geral, with its own heading */
+.rec-sub-h{margin:14px 0 2px;font-size:14px;font-weight:600}
+.rec-table td .rec-sub+.rec-sub{margin-top:2px}
 .rec-same{color:var(--ok);white-space:nowrap}
 .rec-diff b{color:var(--warn)}
 .rec-link{font:inherit;font-weight:600;color:var(--fg);text-align:left;border-radius:4px;padding:0}

@@ -18,6 +18,7 @@ import type {
   StoredQuestion,
 } from '@/types/domain'
 import type { TokenProvider } from '@/controllers/drive.controller'
+import { blocking } from '@/lib/blocking'
 import { legacyAiOf, normalizeSettings, targetFor } from '@/lib/ai/config'
 import { missingSetup } from '@/lib/ai/providers'
 import { artifactsOf, hasOldFields, migrated, removeArtifact, renameArtifact, withArtifact, withoutOldFields } from '@/lib/artifacts'
@@ -364,12 +365,15 @@ export const useLibraryStore = create<LibraryState>((set, get) => {
       repo.setApp(on ? new AppRepository(accountId) : null)
       set({ appOn: on })
       followLive(repo)
-      try {
-        const snapshot = await repo.load()
-        if (get().repo === repo) get().applySnapshot(snapshot)
-      } catch (error) {
-        if (get().repo === repo) set({ loadError: error instanceof Error ? error.message : 'Não consegui abrir o App.' })
-      }
+      // the library is read again with the App in or out: the window holds the app until it is (owner's choice F)
+      await blocking(on ? 'Abrindo a biblioteca do App' : 'Tirando o App desta biblioteca', async () => {
+        try {
+          const snapshot = await repo.load()
+          if (get().repo === repo) get().applySnapshot(snapshot)
+        } catch (error) {
+          if (get().repo === repo) set({ loadError: error instanceof Error ? error.message : 'Não consegui abrir o App.' })
+        }
+      })
     },
 
     connect: async (accountId, tokenProvider) => {

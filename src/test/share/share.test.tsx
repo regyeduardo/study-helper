@@ -317,7 +317,8 @@ describe('abrir como a própria biblioteca, só leitura', () => {
     serve(item)
     const { routes, unmount } = renderLink(`/shared/${item.id}`)
     await waitFor(() => expect(useLibraryStore.getState().sharedView?.item.id).toBe(item.id))
-    expect(routes.at(-1)).toMatchObject({ view: 'folder', folderId: 'root' })
+    // the folder view comes on the render after the link opens: on a loaded machine that is a moment later
+    await waitFor(() => expect(routes.at(-1)).toMatchObject({ view: 'folder', folderId: 'root' }))
     expect(useLibraryStore.getState().files.map(file => file.name).sort()).toEqual(['Aula 1', 'Aula 2'])
     expect(useLibraryStore.getState().folders.map(folder => folder.name).sort()).toEqual(['Curso de frações', 'Módulo 1'])
     expect(document.documentElement.dataset.shared).toBe('true')

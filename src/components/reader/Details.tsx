@@ -5,8 +5,8 @@ import { mediaOf, readsAsTranscript } from '@/lib/file-types'
 import { listLocalMedia, removeLocalMedia } from '@/lib/recording/media-library'
 import { removeStoredSource } from '@/lib/storage/source-storage'
 import { transcriptText } from '@/lib/transcription/export'
+import { working } from '@/lib/working'
 import { useLibraryStore } from '@/stores/library'
-import { useUiStore } from '@/stores/ui'
 import { formatBytes } from '@/utils/format'
 
 type PartId = 'media' | 'transcript' | 'generated'
@@ -18,6 +18,8 @@ interface Part {
   where: string
 }
 
+const PART_NAME: Record<PartId, string> = { media: 'a mídia', transcript: 'a transcrição', generated: 'o texto gerado' }
+
 const CONFIRM: Record<PartId, string> = {
   media: 'Apagar só a mídia? A transcrição e o resto da nota continuam, mas não dá mais para ouvir nem refazer a transcrição.',
   transcript: 'Apagar só a transcrição? A mídia continua e dá para transcrever de novo.',
@@ -26,7 +28,6 @@ const CONFIRM: Record<PartId, string> = {
 
 export function NoteParts({ meta }: { meta: FileMeta }) {
   const library = useLibraryStore()
-  const toast = useUiStore(state => state.toast)
   const [confirming, setConfirming] = useState<PartId | null>(null)
   const opened = library.opened[meta.id]
   const local = library.localMedia.find(item => item.fileIds.includes(meta.id))
@@ -40,7 +41,7 @@ export function NoteParts({ meta }: { meta: FileMeta }) {
   if (transcript && (meta.type === 'meeting' || meta.type === 'class') && opened?.content) parts.push({ id: 'generated', label: meta.type === 'meeting' ? 'Ata' : 'Aula', bytes: new Blob([opened.content]).size, where: 'na nota' })
   if (!parts.length) return null
 
-  const remove = async (part: PartId) => {
+  const erase = async (part: PartId) => {
     if (part === 'media') {
       if (local) {
         await removeLocalMedia(local.storedName)
@@ -57,8 +58,10 @@ export function NoteParts({ meta }: { meta: FileMeta }) {
       await library.saveContent(meta.id, transcript.trim())
       await library.updateFile(meta.id, { type: 'reading' })
     }
-    setConfirming(null)
-    toast('Parte apagada; a nota continua')
+  }
+  // the app waits in the window until the part is gone; a failure stays there with its reason
+  const remove = async (part: PartId) => {
+    if (await working(`Apagando ${PART_NAME[part]}…`, () => erase(part), { done: 'Parte apagada; a nota continua' })) setConfirming(null)
   }
 
   return (

@@ -5,6 +5,7 @@ import {
   apiMessage,
   getMe,
   googleSignInUrl,
+  loginWithGoogleToken,
   loginWithPassword,
   logout,
   registerWithPassword,
@@ -26,6 +27,8 @@ interface ServerAccountState {
   refresh(): Promise<void>
   /** Leaves for Google in this same tab; the server brings the person back to this page. */
   signInWithGoogle(): void
+  /** Signs in with the Google token the app already has (the Drive account); false when Google or the server refuse it. */
+  signInWithGoogleToken(accessToken: string): Promise<boolean>
   signInWithPassword(email: string, password: string): Promise<void>
   register(email: string, password: string, name: string): Promise<void>
   signOut(): Promise<void>
@@ -75,6 +78,16 @@ export const useServerAccount = create<ServerAccountState>((set, get) => ({
 
   signInWithGoogle: () => {
     page.go(googleSignInUrl(`${window.location.pathname}${window.location.search}${window.location.hash}`))
+  },
+
+  signInWithGoogleToken: async accessToken => {
+    try {
+      await loginWithGoogleToken(accessToken)
+      await get().refresh()
+      return get().status === 'signed-in'
+    } catch {
+      return false
+    }
   },
 
   signInWithPassword: async (email, password) => {

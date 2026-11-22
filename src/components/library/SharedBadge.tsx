@@ -6,6 +6,7 @@ import { FolderChooserDialog, type FolderSource } from '@/components/dialogs/Fol
 import { Dialog } from '@/components/ui/Dialog'
 import { Icon } from '@/components/ui/Icon'
 import { useNow } from '@/hooks/use-now'
+import { blocking } from '@/lib/blocking'
 import { paths } from '@/lib/paths'
 import { daysLeftText, importSharedEntry, importSharedItem, linkMediaState, prefetchEntryMedia, type MediaPlace, readSharedAttempts, sharedMediaFailure } from '@/lib/share'
 import { useAccountStore } from '@/stores/account'
@@ -99,25 +100,48 @@ export function SharedBadge({ label = false, button = false }: { label?: boolean
   /** `skipped`: why the media was not even tried (it is past its days), told after the import. */
   const importItem = async (place: MediaPlace | null, folderId: string | null, skipped?: string) => {
     setImporting(true)
+    // from the click until the last note is copied (several writes each) the app is held in the window, with the note in hand
     try {
-      const fetched = place && item.kind === 'entrada' ? await prefetchEntryMedia(item, setDownloading) : {}
-      setDownloading(null)
-      leaveShared()
-      delete document.documentElement.dataset.shared
-      const library = useLibraryStore.getState()
-      const media = place ? { place, repo: library.repo, track: useJobsStore.getState().trackTask, ...fetched } : undefined
-      const actions = { createFolder: library.createFolder, createFile: library.createFile, updateSidecar: library.updateSidecar }
-      if (item.kind === 'entrada') {
-        const result = await importSharedEntry(item, readSharedAttempts(item.id), actions, { folderId, existing: library.files, media })
+      await blocking('Importando para a sua biblioteca…', async blocker => {
+        const state = linkMediaState(item)
+        const size = state.kind === 'ready' ? state.media.size : 0
+        const downloading = (fraction: number) => {
+          setDownloading(fraction)
+          blocker.progress(size ? { phase: 'Baixando a mídia', doneBytes: Math.round(fraction * size), totalBytes: size } : { phase: `Baixando a mídia: ${Math.round(fraction * 100)}%` })
+        }
+        if (place && item.kind === 'entrada') blocker.progress({ phase: 'Baixando a mídia' })
+        const fetched = place && item.kind === 'entrada' ? await prefetchEntryMedia(item, downloading) : {}
+        setDownloading(null)
+        leaveShared()
+        delete document.documentElement.dataset.shared
+        const library = useLibraryStore.getState()
+        // the line of each media stays in Tarefas; the window says its step too
+        const track = (title: string) => {
+          const task = useJobsStore.getState().trackTask(title)
+          blocker.progress({ phase: 'Guardando a mídia' })
+          return { ...task, update: (message: string, fraction: number | null) => (task.update(message, fraction), blocker.progress({ phase: message })) }
+        }
+        const media = place ? { place, repo: library.repo, track, ...fetched } : undefined
+        let copied = 0
+        const createFile: typeof library.createFile = async (fields, content) => {
+          blocker.progress({ phase: 'Copiando as notas', done: copied, total: item.files.length, current: fields.name, doneBytes: undefined, totalBytes: undefined })
+          const meta = await library.createFile(fields, content)
+          blocker.progress({ done: ++copied })
+          return meta
+        }
+        const actions = { createFolder: library.createFolder, createFile, updateSidecar: library.updateSidecar }
+        if (item.kind === 'entrada') {
+          const result = await importSharedEntry(item, readSharedAttempts(item.id), actions, { folderId, existing: library.files, media })
+          const why = result.mediaFailed ?? skipped
+          toast(why ? `Importado, mas a mídia não veio: ${why}` : 'Importado para a sua biblioteca')
+          navigate(paths.file(result.fileId))
+          return
+        }
+        const result = await importSharedItem(item, readSharedAttempts(item.id), actions, media)
         const why = result.mediaFailed ?? skipped
         toast(why ? `Importado, mas a mídia não veio: ${why}` : 'Importado para a sua biblioteca')
-        navigate(paths.file(result.fileId))
-        return
-      }
-      const result = await importSharedItem(item, readSharedAttempts(item.id), actions, media)
-      const why = result.mediaFailed ?? skipped
-      toast(why ? `Importado, mas a mídia não veio: ${why}` : 'Importado para a sua biblioteca')
-      navigate(result.fileId ? paths.file(result.fileId) : paths.folder(result.folderId))
+        navigate(result.fileId ? paths.file(result.fileId) : paths.folder(result.folderId))
+      })
     } catch (error) {
       toast(error instanceof Error ? error.message : 'Não consegui importar.')
       setDownloading(null)

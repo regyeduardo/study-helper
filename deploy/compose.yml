@@ -1,4 +1,5 @@
-# Production on the server (/opt/estudo): the API, nginx in front (reverse proxy with HTTPS) and certbot renewing the certificate.
+# Production on the server (/opt/estudo): the API, Litestream copying its database to R2, nginx in front (reverse proxy with HTTPS)
+# and certbot renewing the certificate.
 # deploy.sh brings it up; API_IMAGE comes from the pipeline.
 services:
   api:
@@ -7,6 +8,30 @@ services:
     volumes: [estudo-data:/data]
     restart: unless-stopped
     expose: ["8080"]
+    logging: { driver: json-file, options: { max-size: 10m, max-file: "5" } }
+
+  # Backups of the database (FR-047): Litestream copies every change to R2 (litestream.yml) and does the WAL checkpoints; the
+  # api only needs its busy_timeout of 5 s (store.Open). Same version as the backup test in the pipeline (backend.yml).
+  # In the "backup" profile, which the new deploy.sh turns on: the deploy that brings this file still runs the deploy.sh already
+  # on the server, which neither copies the database first nor installs litestream.yml, so Litestream only starts on the next one.
+  litestream:
+    image: litestream/litestream:0.5.18
+    profiles: [backup]
+    depends_on: [api]
+    command: ["replicate"]
+    # the api's user: the files Litestream creates next to the database (-shm, -wal) stay writable by the api
+    user: "10001:10001"
+    environment:
+      R2_ENDPOINT: ${R2_ENDPOINT:-}
+      R2_BUCKET: ${R2_BUCKET:-}
+      R2_ACCESS_KEY_ID: ${R2_ACCESS_KEY_ID:-}
+      R2_SECRET_ACCESS_KEY: ${R2_SECRET_ACCESS_KEY:-}
+    volumes:
+      - estudo-data:/data
+      - ./litestream.yml:/etc/litestream.yml:ro
+    restart: unless-stopped
+    # on stop it sends what is left to R2 (up to 30 s)
+    stop_grace_period: 40s
     logging: { driver: json-file, options: { max-size: 10m, max-file: "5" } }
 
   nginx:

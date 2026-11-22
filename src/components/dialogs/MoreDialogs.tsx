@@ -8,11 +8,13 @@ import { ModelPick, useModelChoice } from '@/components/dialogs/ModelPick'
 import { FolderField } from '@/components/dialogs/FolderChooser'
 import { useGoToNew } from '@/components/dialogs/go-to-new'
 import { useBusy } from '@/hooks/use-busy'
+import { blocking, blockingFailure } from '@/lib/blocking'
 import { DEFAULT_STORAGE_LIMIT_BYTES } from '@/lib/defaults'
 import { storedFromRaw } from '@/lib/exam'
 import { importDocument } from '@/lib/imports'
 import { paths } from '@/lib/paths'
 import { bringLocalToAccount, transferLocalToCurrent } from '@/lib/storage/transfer'
+import { working } from '@/lib/working'
 import { useAccountStore } from '@/stores/account'
 import { useJobsStore } from '@/stores/jobs'
 import { useLibraryStore } from '@/stores/library'
@@ -194,7 +196,7 @@ export function OrderDialog({ folderId }: { folderId: string }) {
                 <button className="ibtn" onClick={() => void swapModules(index, 1)} disabled={index === modules.length - 1} aria-label="Descer o módulo">
                   <Icon name="down" />
                 </button>
-                <button className="ibtn" disabled={!empty} title={empty ? 'Apagar o módulo' : 'Tire as aulas de dentro antes de apagar'} onClick={() => void library.deleteFolderForever(module.id)} aria-label="Apagar o módulo">
+                <button className="ibtn" disabled={!empty} title={empty ? 'Apagar o módulo' : 'Tire as aulas de dentro antes de apagar'} onClick={() => void working('Apagando o módulo…', () => library.deleteFolderForever(module.id))} aria-label="Apagar o módulo">
                   <Icon name="trash" />
                 </button>
               </div>
@@ -211,8 +213,8 @@ export function OrderDialog({ folderId }: { folderId: string }) {
             className="btn"
             disabled={!newModule.trim()}
             onClick={async () => {
-              await library.createFolder({ name: newModule.trim(), parentId: folderId, position: modules.length })
-              setNewModule('')
+              // the window holds the app until the folder exists: a second click does not make a second module
+              if (await working('Criando o módulo…', () => library.createFolder({ name: newModule.trim(), parentId: folderId, position: modules.length }))) setNewModule('')
             }}
           >
             <Icon name="plus" />
@@ -336,12 +338,14 @@ export function CourseProposalDialog() {
               setBusy('one')
               setError(null)
               try {
-                const id = await declineCourse(proposal)
+                // the proposal leaves the list (and this window the screen) at once: the window that holds the app stays until the end
+                const id = await blocking('Criando a aula…', () => declineCourse(proposal))
                 setBusy(null)
                 goToNew(paths.file(id), 'Gerando a Aula')
               } catch (failure) {
                 setBusy(null)
                 setError(failure instanceof Error ? failure.message : 'Não deu para criar a aula.')
+                if (!useJobsStore.getState().proposals.includes(proposal)) blockingFailure('Criando a aula…', failure)
               }
             }}
           >
@@ -355,12 +359,14 @@ export function CourseProposalDialog() {
               setBusy('course')
               setError(null)
               try {
-                const id = await acceptCourse(proposal, folderId)
+                // the proposal leaves the list (and this window the screen) at once: the window that holds the app stays until the end
+                const id = await blocking('Criando as aulas…', () => acceptCourse(proposal, folderId))
                 setBusy(null)
                 goToNew(paths.folder(id), 'A pasta com as aulas foi criada')
               } catch (failure) {
                 setBusy(null)
                 setError(failure instanceof Error ? failure.message : 'Não deu para criar as aulas.')
+                if (!useJobsStore.getState().proposals.includes(proposal)) blockingFailure('Criando as aulas…', failure)
               }
             }}
           >
@@ -397,8 +403,8 @@ export function StorageLimitDialog() {
   const updateSettings = useLibraryStore(state => state.updateSettings)
   const [limit, setLimit] = useState(DEFAULT_STORAGE_LIMIT_BYTES)
   const save = async () => {
-    await updateSettings({ storageLimitBytes: limit })
-    ui.close()
+    // the window holds the app until the limit is written; a failure stays in it with the reason, and this question stays open
+    if (await working('Salvando o limite…', () => updateSettings({ storageLimitBytes: limit }))) ui.close()
   }
   return (
     <Dialog title="Quanto o app pode usar do seu Drive?" size="narrow" footer={<button className="btn primary" onClick={() => void save()}>Salvar</button>}>
@@ -417,32 +423,36 @@ export function SendLocalDialog() {
   const ui = useUiStore()
   const account = useAccountStore(state => state.active())
   const ready = useLibraryStore(state => state.ready)
-  const [busy, setBusy] = useState(false)
+  // which button is working; the sending one counts on itself
+  const [busy, setBusy] = useState<'send' | 'bring' | null>(null)
+  const [sent, setSent] = useState<{ done: number; total: number } | null>(null)
   const [done, setDone] = useState<string | null>(null)
   useEffect(() => {
     if (account.kind === 'local') ui.close()
   }, [account.kind])
+  // not in the window that holds the app: a note on both sides can open the conflict window, which needs the person
   const send = async () => {
-    setBusy(true)
+    setBusy('send')
     try {
-      const count = await transferLocalToCurrent()
+      const count = await transferLocalToCurrent(({ done, total }) => setSent({ done, total }))
       setDone(`${count} item(ns) enviados para o seu Drive. O perfil Local continua com a cópia dele.`)
     } catch (error) {
       setDone(error instanceof Error ? error.message : 'O envio falhou.')
     } finally {
-      setBusy(false)
+      setBusy(null)
+      setSent(null)
     }
   }
   // T029: the profile becomes this account's Local, only in this browser, without sending anything
   const bring = async () => {
-    setBusy(true)
+    setBusy('bring')
     try {
-      const count = await bringLocalToAccount()
+      const count = await blocking('Trazendo para esta conta…', blocker => bringLocalToAccount(blocker.progress))
       setDone(`${count} item(ns) agora estão no Local desta conta, só neste navegador. Nada foi enviado. Use “Sincronizar” quando quiser levar para o Drive.`)
     } catch (error) {
       setDone(error instanceof Error ? error.message : 'Não deu para trazer.')
     } finally {
-      setBusy(false)
+      setBusy(null)
     }
   }
   return (
@@ -456,14 +466,14 @@ export function SendLocalDialog() {
           </button>
         ) : (
           <>
-            <button className="btn" onClick={ui.close} disabled={busy}>
+            <button className="btn" onClick={ui.close} disabled={Boolean(busy)}>
               Manter no perfil sem login
             </button>
-            <button className="btn" onClick={() => void bring()} disabled={busy || !ready}>
-              Trazer para esta conta, só neste navegador
+            <button className="btn" onClick={() => void bring()} disabled={Boolean(busy) || !ready}>
+              {busy === 'bring' ? 'Trazendo…' : 'Trazer para esta conta, só neste navegador'}
             </button>
-            <button className="btn primary" onClick={() => void send()} disabled={busy || !ready}>
-              {busy ? 'Enviando…' : 'Enviar para o Drive'}
+            <button className="btn primary" onClick={() => void send()} disabled={Boolean(busy) || !ready}>
+              {busy === 'send' ? (sent ? `Enviando ${sent.done.toLocaleString('pt-BR')} de ${sent.total.toLocaleString('pt-BR')}…` : 'Enviando…') : 'Enviar para o Drive'}
             </button>
           </>
         )

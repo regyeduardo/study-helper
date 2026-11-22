@@ -2,6 +2,7 @@ import { useState } from 'react'
 
 import { Icon } from '@/components/ui/Icon'
 import { TypeDot } from '@/components/library/Badges'
+import { blocking, blockingFailure } from '@/lib/blocking'
 import { working } from '@/lib/working'
 import { TRASH_DAYS, useLibraryStore } from '@/stores/library'
 import { useUiStore } from '@/stores/ui'
@@ -51,9 +52,36 @@ export function TrashList({ compact = false }: { compact?: boolean }) {
               ok: 'Esvaziar',
               danger: true,
               onConfirm: async () => {
-                // one Drive write per item: the line is there from the click
-                const ok = await working('Esvaziando a lixeira…', () => library.emptyTrash(), { message: `Apagando ${items.length} ${items.length === 1 ? 'item' : 'itens'} de vez` })
-                if (ok) ui.toast('Lixeira vazia')
+                // one Drive write per item, in the window that holds the app, counting them; "Cancelar" stops between one item and the next
+                const total = items.length
+                try {
+                  const done = await blocking(
+                    'Esvaziando a lixeira…',
+                    async blocker => {
+                      let done = 0
+                      for (const folder of folders) {
+                        if (blocker.cancelled) return done
+                        blocker.progress({ done, total, current: folder.name })
+                        await library.deleteFolderForever(folder.id)
+                        done++
+                      }
+                      // the notes of those folders went with them
+                      const left = useLibraryStore.getState().files.filter(file => file.deletedAt)
+                      done = total - left.length
+                      for (const file of left) {
+                        if (blocker.cancelled) return done
+                        blocker.progress({ done, total, current: file.name })
+                        await library.deleteFileForever(file.id)
+                        done++
+                      }
+                      return done
+                    },
+                    { phase: `Apagando ${total} ${total === 1 ? 'item' : 'itens'} de vez`, total, cancellable: true },
+                  )
+                  ui.toast(done < total ? `${done} de ${total} apagados de vez` : 'Lixeira vazia')
+                } catch (error) {
+                  blockingFailure('Esvaziando a lixeira…', error)
+                }
               },
             })
           }

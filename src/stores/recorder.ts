@@ -25,8 +25,10 @@ interface RecorderState {
   switchScreen(): Promise<void>
   start(mode: CaptureMode, computerAudio?: string, options?: StartOptions): Promise<void>
   startIntegration(capture: IntegrationCapture, options?: StartOptions): Promise<void>
-  finish(): void
-  cancel(): void
+  /** Resolves once the file is closed (the result, or the error, is in the store). */
+  finish(): Promise<void>
+  /** Resolves once the file is gone. */
+  cancel(): Promise<void>
   pause(): void
   resume(): void
   setEnabled(kind: 'microphone' | 'source', on: boolean): void
@@ -108,8 +110,8 @@ export const useRecorderStore = create<RecorderState>((set, get) => ({
       throw error
     }
   },
-  finish: () => recorder?.finish(),
-  cancel: () => recorder?.cancel(),
+  finish: async () => recorder?.finish(),
+  cancel: async () => recorder?.cancel(),
   pause: () => recorder?.pause(),
   resume: () => recorder?.resume(),
   setEnabled: (kind, on) => recorder?.setEnabled(kind, on),

@@ -21,7 +21,8 @@ import { isSourceNote, mediaLength, mediaOf } from '@/lib/file-types'
 import { courseOf } from '@/lib/generation/course-lesson'
 import { paths } from '@/lib/paths'
 import { downloadStoredSource, sourceExpired } from '@/lib/storage/source-storage'
-import { renameSpeakerEverywhere } from '@/lib/transcription/rename-everywhere'
+import { renameSpeakerOnClick } from '@/lib/transcription/rename-everywhere'
+import { working } from '@/lib/working'
 import { SyncLocalBanner } from '@/components/library/SyncLocal'
 import { withRecorder } from '@/lib/transcription/turns'
 import { recorderName, useAccountStore } from '@/stores/account'
@@ -274,7 +275,7 @@ function Transcript({ entry, opened, canTranscribe, canPlay, playback, marking }
   const redo = canTranscribe && !running ? () => openOverlay({ kind: 'transcribe', fileId: entry.id }) : undefined
   if (recording?.blocks.length) {
     // The same rename as in the note: every speech of that voice, the transcript, the note's text and the notes born of it (FR-060)
-    const rename = (speakerId: string, name: string) => renameSpeakerEverywhere(entry.id, speakerId, name)
+    const rename = (speakerId: string, name: string) => renameSpeakerOnClick(entry.id, speakerId, name)
     return (
       <>
         {status}
@@ -475,7 +476,9 @@ function EntryView({ fileId }: { fileId: string }) {
       text: 'O arquivo sai e o espaço é liberado. A nota fica marcada como mídia apagada, com a transcrição e as notas filhas.',
       ok: 'Apagar só a mídia',
       danger: true,
-      onConfirm: () => useLibraryStore.getState().removeMedia(entry.id),
+      onConfirm: async () => {
+        await working('Apagando a mídia…', () => useLibraryStore.getState().removeMedia(entry.id), { done: 'Mídia apagada; a nota continua' })
+      },
     })
   const action = (icon: IconName, label: string, run: () => void, danger = false) => (
     <button

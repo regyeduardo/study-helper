@@ -104,6 +104,44 @@ describe('agoText ("Atualizado há N min")', () => {
   })
 })
 
+describe('syncNow pedida enquanto outra roda (o canal ao vivo do App avisa a cada mudança)', () => {
+  /** A library whose first pull waits until `release`, like a slow pull while the other device keeps writing. */
+  async function slowFirstPull() {
+    const repo = new LocalRepository(`study-helper-local-test-${crypto.randomUUID()}`)
+    const pulled = await repo.pullChanges()
+    let release!: () => void
+    const held = new Promise<void>(resolve => (release = resolve))
+    const pull = vi
+      .spyOn(repo, 'pullChanges')
+      .mockImplementationOnce(async () => {
+        await held
+        return pulled
+      })
+      .mockImplementation(async () => pulled)
+    useLibraryStore.setState({ repo })
+    return { pull, release }
+  }
+
+  it('o aviso que chega no meio não se perde: puxa de novo quando a primeira termina', async () => {
+    const { pull, release } = await slowFirstPull()
+    const running = useSyncStore.getState().syncNow()
+    await useSyncStore.getState().syncNow()
+    release()
+    await running
+    expect(pull).toHaveBeenCalledTimes(2)
+    expect(useSyncStore.getState().busy).toBe(false)
+  })
+
+  it('vários avisos no meio viram uma só puxada a mais', async () => {
+    const { pull, release } = await slowFirstPull()
+    const running = useSyncStore.getState().syncNow()
+    await Promise.all([useSyncStore.getState().syncNow(), useSyncStore.getState().syncNow(), useSyncStore.getState().syncNow()])
+    release()
+    await running
+    expect(pull).toHaveBeenCalledTimes(2)
+  })
+})
+
 describe('syncNow com o Drive', () => {
   it('marca presença deste navegador em devices/, lista os aparelhos e guarda o uso', async () => {
     const account = uniqueAccount()

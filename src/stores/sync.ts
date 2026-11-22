@@ -37,6 +37,7 @@ interface SyncState {
 
 let timer = 0
 let conflictSeq = 0
+let pullAgain = false
 
 export function isOnline(device: DeviceRecord, now = Date.now()): boolean {
   return now - Date.parse(device.lastSeen) <= ONLINE_WINDOW_MS
@@ -72,7 +73,12 @@ export const useSyncStore = create<SyncState>((set, get) => ({
 
   syncNow: async () => {
     const repo = useLibraryStore.getState().repo
-    if (!repo || get().busy) return
+    if (!repo) return
+    if (get().busy) {
+      // a change announced while a sync runs (the App's live channel) may be after what it pulled: it pulls once more at the end
+      pullAgain = true
+      return
+    }
     set({ busy: true, error: null })
     try {
       const { snapshot, changedFileIds } = await repo.pullChanges()
@@ -89,6 +95,10 @@ export const useSyncStore = create<SyncState>((set, get) => ({
       set({ error: error instanceof Error ? error.message : 'A sincronização falhou.' })
     } finally {
       set({ busy: false })
+    }
+    if (pullAgain) {
+      pullAgain = false
+      await get().syncNow()
     }
   },
 

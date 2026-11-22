@@ -5,6 +5,7 @@ import type { ShareRecord } from '@/types/domain'
 import { Icon } from '@/components/ui/Icon'
 import { deleteShareController, ShareError } from '@/controllers/share.controller'
 import { useNow } from '@/hooks/use-now'
+import { blocking } from '@/lib/blocking'
 import { paths } from '@/lib/paths'
 import { activeLinks, daysLeftText, isExpired, shareUrl } from '@/lib/share'
 import { useAccountStore } from '@/stores/account'
@@ -22,27 +23,29 @@ function ShareRow({ share }: { share: ShareRecord }) {
   const url = shareUrl(share.id)
   const expired = isExpired(share.expiresAt)
 
-  const remove = async () => {
-    if (!expired) {
-      if (account.kind !== 'google') {
-        ui.toast('Entre com o Google para apagar o compartilhamento')
-        return
-      }
-      try {
-        await deleteShareController(options => tokenFor(account.id, options), share.id)
-        await dropShare(share.id)
-        ui.toast('Compartilhamento apagado')
-        return
-      } catch (error) {
-        if (!(error instanceof ShareError && error.status === 404)) {
-          ui.toast(error instanceof Error ? error.message : 'Não consegui apagar.')
+  // the Worker, then the index: the app is held in the window until both answer
+  const remove = () =>
+    blocking('Apagando o compartilhamento…', async () => {
+      if (!expired) {
+        if (account.kind !== 'google') {
+          ui.toast('Entre com o Google para apagar o compartilhamento')
           return
         }
+        try {
+          await deleteShareController(options => tokenFor(account.id, options), share.id)
+          await dropShare(share.id)
+          ui.toast('Compartilhamento apagado')
+          return
+        } catch (error) {
+          if (!(error instanceof ShareError && error.status === 404)) {
+            ui.toast(error instanceof Error ? error.message : 'Não consegui apagar.')
+            return
+          }
+        }
       }
-    }
-    await dropShare(share.id)
-    ui.toast('Compartilhamento apagado')
-  }
+      await dropShare(share.id)
+      ui.toast('Compartilhamento apagado')
+    }).catch(error => ui.toast(error instanceof Error ? error.message : 'Não consegui apagar.'))
 
   const copy = async () => {
     await navigator.clipboard?.writeText(url).catch(() => undefined)

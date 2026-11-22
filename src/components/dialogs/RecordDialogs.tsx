@@ -29,6 +29,7 @@ import { removeLocalMedia } from '@/lib/recording/media-library'
 import { mountMiniplayer } from '@/lib/recording/miniplayer'
 import { type AudioInput, CaptureCheck, type CaptureMode, type CheckStatus, COMPUTER_AUDIO_AUTO, COMPUTER_AUDIO_NONE, hears, listAudioInputs, type LiveCapture, playTestSound, SOUND_LEVEL, systemAudioNotice, type VideoFps, VOICE_LEVEL } from '@/lib/recording/recorder'
 import { defaultStorage, storageOptions } from '@/lib/storage/source-storage'
+import { blocking } from '@/lib/blocking'
 import { working } from '@/lib/working'
 import { useAccountStore } from '@/stores/account'
 import { useLibraryStore } from '@/stores/library'
@@ -331,14 +332,17 @@ function IntegrationRecord() {
   const nothing = !microphoneOn && choice === 'none'
   const start = async () => {
     if (!capture || nothing) return
-    handed.current = true
-    try {
-      await startIntegration(capture, { microphoneOn, microphoneId: microphoneId || null, video: fps ? { fps } : null, destination })
-      ui.close()
-    } catch (failure) {
-      handed.current = false
-      setError(failure instanceof Error ? failure.message : 'Não deu para começar a gravar.')
-    }
+    // from the click until the recording runs the app is held in the window
+    await blocking('Começando a gravar…', async () => {
+      handed.current = true
+      try {
+        await startIntegration(capture, { microphoneOn, microphoneId: microphoneId || null, video: fps ? { fps } : null, destination })
+        ui.close()
+      } catch (failure) {
+        handed.current = false
+        setError(failure instanceof Error ? failure.message : 'Não deu para começar a gravar.')
+      }
+    })
   }
   return (
     <Dialog
@@ -476,18 +480,20 @@ export function RecordDialog() {
   }
   if (integration === 'connected') return <IntegrationRecord />
   const nothing = !microphoneOn && mode === 'microphone' && computerAudio === COMPUTER_AUDIO_NONE
-  const start = async () => {
-    setError(null)
-    const display = check.current?.handDisplay() ?? null
-    await check.current?.stop()
-    try {
-      await recorder.start(mode, computerAudio, { microphoneOn, microphoneId: microphoneId || null, video: fps ? { fps } : null, destination, ...(display ? { display } : {}) })
-      ui.close()
-    } catch (failure) {
-      setError(failure instanceof Error && failure.name === 'NotAllowedError' ? 'Você não deu permissão para gravar.' : failure instanceof Error ? failure.message : 'Não deu para começar a gravar.')
-      void check.current?.listen(listening)
-    }
-  }
+  // from the click until the recording runs the app is held in the window; the browser's own request (microphone, screen) still goes out from the click
+  const start = () =>
+    blocking('Começando a gravar…', async () => {
+      setError(null)
+      const display = check.current?.handDisplay() ?? null
+      await check.current?.stop()
+      try {
+        await recorder.start(mode, computerAudio, { microphoneOn, microphoneId: microphoneId || null, video: fps ? { fps } : null, destination, ...(display ? { display } : {}) })
+        ui.close()
+      } catch (failure) {
+        setError(failure instanceof Error && failure.name === 'NotAllowedError' ? 'Você não deu permissão para gravar.' : failure instanceof Error ? failure.message : 'Não deu para começar a gravar.')
+        void check.current?.listen(listening)
+      }
+    })
   const pick = () => void check.current?.pickDisplay(mode, fps).catch(() => undefined)
   return (
     <Dialog
@@ -792,14 +798,15 @@ function RecordingControls() {
           <button className="btn danger" onClick={() => setConfirming(true)}>
             Cancelar
           </button>
-          <button className="btn primary" onClick={finish}>
+          {/* closing the file and making it seekable takes seconds: the app is held until the recording is ready */}
+          <button className="btn primary" onClick={() => void blocking('Finalizando a gravação…', () => finish())}>
             Terminar
           </button>
         </div>
         {confirming && (
           <div className="inline-confirm">
             Descartar a gravação?
-            <button className="btn danger" onClick={() => (setConfirming(false), cancel())}>
+            <button className="btn danger" onClick={() => (setConfirming(false), void blocking('Descartando a gravação…', () => cancel()))}>
               Descartar
             </button>
             <button className="btn quiet" onClick={() => setConfirming(false)}>

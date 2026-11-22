@@ -1,8 +1,10 @@
 import { useNavigate } from 'react-router-dom'
 
 import type { FileMeta, FolderMeta } from '@/types/domain'
+import { type Blocker, blocking } from '@/lib/blocking'
 import { courseOf as courseOfFolders } from '@/lib/generation/course-lesson'
 import { paths } from '@/lib/paths'
+import { itemsOf } from '@/lib/working'
 import { useJobsStore } from '@/stores/jobs'
 import { useLibraryStore } from '@/stores/library'
 import { type DragState, useUiStore } from '@/stores/ui'
@@ -33,6 +35,26 @@ function canEnter(folderIds: string[], target: string | null): boolean {
     current = parent
   }
   return true
+}
+
+/**
+ * Moves one item at a time inside the window that holds the app, saying how many of how many and the one in hand; at "Cancelar" it
+ * stops after the item in hand. Returns how many moved.
+ */
+export async function moveItems(blocker: Blocker, fileIds: string[], folderIds: string[], target: string | null): Promise<number> {
+  const { files, folders, moveFiles, updateFolder } = useLibraryStore.getState()
+  const items = [
+    ...fileIds.map(id => ({ name: files.find(file => file.id === id)?.name ?? '', move: () => moveFiles([id], target) })),
+    ...folderIds.map(id => ({ name: folders.find(folder => folder.id === id)?.name ?? '', move: () => updateFolder(id, { parentId: target }) })),
+  ]
+  let moved = 0
+  for (const item of items) {
+    if (blocker.cancelled) break
+    blocker.progress({ done: moved, total: items.length, current: item.name })
+    await item.move()
+    moved++
+  }
+  return moved
 }
 
 export function useFileActions() {
@@ -75,11 +97,18 @@ export function useFileActions() {
     const moving = folderIds.filter(id => library.folders.find(folder => folder.id === id)?.parentId !== folderId)
     if (!files.length && !moving.length) return
     const wasChecked = useUiStore.getState().selection.has(dragged)
-    await library.moveFiles(files, folderId)
-    for (const id of moving) await library.updateFolder(id, { parentId: folderId })
-    if (wasChecked) ui.clearSelection()
     const name = library.folders.find(folder => folder.id === folderId)?.name ?? 'Biblioteca'
-    ui.toast(`${!fileIds.length && folderIds.length === 1 ? 'Pasta movida' : 'Movido'} para ${name}`)
+    const total = files.length + moving.length
+    const only = library.files.find(file => file.id === files[0])?.name ?? library.folders.find(folder => folder.id === moving[0])?.name
+    // one Drive write per item: the window holds the app and counts them, from the drop until the last one
+    try {
+      const moved = await blocking(total === 1 ? `Movendo "${only}"…` : `Movendo ${itemsOf(total)}…`, blocker => moveItems(blocker, files, moving, folderId), { phase: `Levando para ${name}`, cancellable: true })
+      if (wasChecked) ui.clearSelection()
+      if (moved < total) return ui.toast(`${moved} de ${total} movidos para ${name}`)
+      ui.toast(`${!fileIds.length && folderIds.length === 1 ? 'Pasta movida' : 'Movido'} para ${name}`)
+    } catch (error) {
+      ui.toast(`Não deu para mover: ${error instanceof Error ? error.message : 'tente de novo.'}`)
+    }
   }
 
   const dropTarget = (folderId: string | null) => ({

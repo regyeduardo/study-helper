@@ -6,6 +6,7 @@ import { Popover } from '@/components/ui/Popover'
 import { GooglePopupError, isGoogleLoginConfigured, preloadGoogleAccounts } from '@/controllers/google-auth.controller'
 import { LocalRepository } from '@/lib/storage/local-repository'
 import { applyTheme, savedTheme, type ThemeChoice } from '@/lib/theme'
+import { working } from '@/lib/working'
 import { type Account, initialsOf, useAccountStore } from '@/stores/account'
 import { useLibraryStore } from '@/stores/library'
 import { useServerAccount } from '@/stores/server-account'
@@ -79,10 +80,14 @@ export function AccountMenu() {
 
   const signOut = async () => {
     setBusy(true)
-    await useSyncStore.getState().removeThisDevice()
-    await useLibraryStore.getState().forgetCurrent()
-    await forgetAccount(active.id)
+    // the app is held in the window until the login and the cache are gone; a failure stays there with its reason
+    const ok = await working('Saindo da conta…', async () => {
+      await useSyncStore.getState().removeThisDevice()
+      await useLibraryStore.getState().forgetCurrent()
+      await forgetAccount(active.id)
+    })
     setBusy(false)
+    if (!ok) return
     ui.close()
     ui.toast('Saiu da conta; o login e o cache dela foram apagados deste navegador')
   }

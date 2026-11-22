@@ -129,6 +129,17 @@ describe('mudar o lugar', () => {
     expect(library().folders.find(folder => folder.name === 'Faculdade')?.place).toBeUndefined()
   })
 
+  it('escolhendo App, a pergunta fala do App (e não do Google Drive)', async () => {
+    await seed()
+    useLibraryStore.setState({ appOn: true } as never)
+    open()
+    fireEvent.change(placeOf('Faculdade'), { target: { value: 'app' } })
+    const ask = screen.getByRole('alertdialog', { name: 'Levar Faculdade para o App' })
+    expect(ask).toHaveTextContent('sua conta do Estudo')
+    expect(ask).not.toHaveTextContent('Google Drive')
+    expect(within(ask).getByRole('button', { name: 'Levar para o App' })).toBeInTheDocument()
+  })
+
   it('"Levar para Local" leva a pasta e a nota dela de verdade: depois, a nota está só neste navegador', async () => {
     await seed()
     open()
@@ -164,5 +175,96 @@ describe('sem login', () => {
     const ask = screen.getByRole('alertdialog', { name: 'Entrar para usar o Google Drive' })
     fireEvent.click(within(ask).getByRole('button', { name: 'Entrar com o Google' }))
     expect(useUiStore.getState().overlay).toEqual({ kind: 'account' })
+  })
+})
+
+describe('mudar o lugar em lote', () => {
+  const bar = () => screen.getByRole('toolbar', { name: 'Marcados' })
+  const mark = (name: string | RegExp) => fireEvent.click(within(row(name)).getByRole('checkbox'))
+
+  it('marca várias, diz quantas, e leva todas de uma vez com uma pergunta só (somando o lote)', async () => {
+    await seed()
+    useLibraryStore.setState({ appOn: false } as never)
+    open()
+    expect(screen.queryByRole('toolbar', { name: 'Marcados' })).not.toBeInTheDocument()
+    mark('Faculdade')
+    mark('Trabalho')
+    expect(bar()).toHaveTextContent('2 marcados')
+    fireEvent.click(within(bar()).getByRole('button', { name: 'Levar para Local' }))
+    const ask = screen.getByRole('alertdialog', { name: 'Levar 2 itens para Local' })
+    // Trabalho já tem a subpasta em Local: do lote, só a nota de Faculdade muda de lugar
+    expect(ask).toHaveTextContent('Vão 1 nota e')
+    expect(ask).toHaveTextContent('limpar os dados do navegador apaga')
+    fireEvent.click(within(ask).getByRole('button', { name: 'Levar para Local' }))
+    const lista = () => library().files.find(file => file.name === 'Lista de exercícios 3')!
+    await waitFor(() => expect((library().repo as CombinedRepository).sideOf(lista().id)).toBe('local'))
+    await waitFor(() => expect(placeOf('Trabalho').value).toBe('local'))
+    expect(placeOf('Faculdade').value).toBe('local')
+    // depois de levar, nada fica marcado
+    expect(screen.queryByRole('toolbar', { name: 'Marcados' })).not.toBeInTheDocument()
+  })
+
+  it('"Marcar tudo" marca o que está na lista, inclusive com busca; "Limpar" desmarca', async () => {
+    await seed()
+    useLibraryStore.setState({ appOn: false } as never)
+    open()
+    fireEvent.change(screen.getByRole('searchbox', { name: 'Buscar pasta ou nota' }), { target: { value: 'kickoff' } })
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Marcar tudo' }))
+    const visible = within(tree()).getAllByRole('treeitem').length
+    expect(bar()).toHaveTextContent(`${visible} marcados`)
+    fireEvent.click(within(bar()).getByRole('button', { name: 'Limpar' }))
+    expect(screen.queryByRole('toolbar', { name: 'Marcados' })).not.toBeInTheDocument()
+    expect(screen.getByRole('checkbox', { name: 'Marcar tudo' })).not.toBeChecked()
+  })
+
+  it('App só fica disponível com a estrutura do app ligada, como no seletor de cada linha', async () => {
+    await seed()
+    useLibraryStore.setState({ appOn: false } as never)
+    open()
+    mark('Faculdade')
+    expect(within(bar()).getByRole('button', { name: /Levar para o App/ })).toBeDisabled()
+    useLibraryStore.setState({ appOn: true } as never)
+    await waitFor(() => expect(within(bar()).getByRole('button', { name: 'Levar para o App' })).toBeEnabled())
+    fireEvent.click(within(bar()).getByRole('button', { name: 'Levar para o App' }))
+    expect(screen.getByRole('alertdialog', { name: 'Levar Faculdade para o App' })).toHaveTextContent('sua conta do Estudo')
+    useLibraryStore.setState({ appOn: false } as never)
+  })
+})
+
+describe('mudar o lugar em lote · revisão de design', () => {
+  it('com a pergunta aberta, a barra espera: um lugar para responder por vez', async () => {
+    await seed()
+    useLibraryStore.setState({ appOn: false } as never)
+    open()
+    fireEvent.click(within(row('Faculdade')).getByRole('checkbox'))
+    const bar = screen.getByRole('toolbar', { name: 'Marcados' })
+    fireEvent.click(within(bar).getByRole('button', { name: 'Levar para Local' }))
+    expect(screen.getByRole('alertdialog')).toBeInTheDocument()
+    expect(within(bar).getByRole('button', { name: 'Levar para Local' })).toBeDisabled()
+    expect(within(bar).getByRole('button', { name: 'Levar para o Google Drive' })).toBeDisabled()
+    fireEvent.click(within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Cancelar' }))
+    expect(within(bar).getByRole('button', { name: 'Levar para Local' })).toBeEnabled()
+  })
+})
+
+describe('mudar o lugar em lote · acessibilidade', () => {
+  it('setas andam pela barra, a contagem é anunciada e "Limpar" devolve o foco a "Marcar tudo"', async () => {
+    await seed()
+    useLibraryStore.setState({ appOn: false } as never)
+    open()
+    fireEvent.click(within(row('Faculdade')).getByRole('checkbox'))
+    const bar = screen.getByRole('toolbar', { name: 'Marcados' })
+    expect(within(bar).getByText('1 marcado')).toHaveAttribute('aria-live', 'polite')
+    const drive = within(bar).getByRole('button', { name: 'Levar para o Google Drive' })
+    drive.focus()
+    fireEvent.keyDown(drive, { key: 'ArrowRight' })
+    expect(within(bar).getByRole('button', { name: 'Levar para Local' })).toHaveFocus()
+    // o App desabilitado é pulado; End vai para o último que dá para usar
+    fireEvent.keyDown(document.activeElement!, { key: 'End' })
+    expect(within(bar).getByRole('button', { name: 'Limpar' })).toHaveFocus()
+    fireEvent.keyDown(document.activeElement!, { key: 'Home' })
+    expect(drive).toHaveFocus()
+    fireEvent.click(within(bar).getByRole('button', { name: 'Limpar' }))
+    expect(screen.getByRole('checkbox', { name: 'Marcar tudo' })).toHaveFocus()
   })
 })

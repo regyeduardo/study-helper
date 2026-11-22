@@ -21,6 +21,7 @@ export function useViewRoute(): ViewRoute {
   if (pathname.startsWith('/arquivo/')) return { view: entrada ? 'entry' : 'doc', folderId: null, fileId }
   if (pathname.startsWith('/entrada/')) return { view: 'entry', folderId: null, fileId }
   if (pathname.startsWith('/gravacoes') || pathname.startsWith('/entradas')) return { view: 'entries', folderId: null, fileId: null }
+  if (pathname.startsWith('/geracoes')) return { view: 'generations', folderId: null, fileId: null }
   if (pathname.startsWith('/biblioteca')) return { view: 'folder', folderId, fileId: null }
   if (pathname.startsWith('/revisar')) return { view: 'review', folderId: null, fileId: null }
   if (pathname.startsWith('/favoritos')) return { view: 'favorites', folderId: null, fileId: null }

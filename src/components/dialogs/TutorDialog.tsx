@@ -10,6 +10,7 @@ import { usePlayback } from '@/components/reader/use-playback'
 import { Dialog } from '@/components/ui/Dialog'
 import { Icon } from '@/components/ui/Icon'
 import { artifactsOf } from '@/lib/artifacts'
+import { blocking } from '@/lib/blocking'
 import { askChat, entryChatContext, type EntryChatContext } from '@/lib/generation/entry-chat'
 import { GenerationSession } from '@/lib/generation/session'
 import { momentLinks, momentPieces } from '@/lib/generation/moment-links'
@@ -212,15 +213,15 @@ export function TutorDialog({ fileId, conversationId, chat = false }: { fileId: 
   const renameConversation = (id: string, name: string) => {
     const said = name.trim()
     if (!said) return
-    void useLibraryStore.getState().renameArtifact(fileId, id, said).catch(fail)
+    const before = conversations.find(item => item.id === id)?.name ?? said
+    void blocking(`Renomeando “${before}”…`, () => useLibraryStore.getState().renameArtifact(fileId, id, said)).catch(fail)
     // the open one is kept in memory: it must not save the old name again with the next message
     if (conversation.current?.id === id) conversation.current = { ...conversation.current, name: said, provisionalName: false }
   }
 
   const deleteConversation = (id: string) => {
-    void useLibraryStore
-      .getState()
-      .deleteArtifact(fileId, id)
+    const name = conversations.find(item => item.id === id)?.name
+    void blocking(name ? `Apagando “${name}”…` : 'Apagando a conversa…', () => useLibraryStore.getState().deleteArtifact(fileId, id))
       .then(() => {
         if (conversation.current?.id === id) leave(true)
       })

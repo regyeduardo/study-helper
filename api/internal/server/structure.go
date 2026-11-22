@@ -146,7 +146,8 @@ func (srv *Server) setStructure(w http.ResponseWriter, r *http.Request, s *Sessi
 	now := stamp(srv.cfg.Now())
 	query := `UPDATE user SET app_enabled = ?1, updated_at = ?2 WHERE id = ?3`
 	if *body.On && s.User.Status != "enabled" {
-		if srv.requireCode() {
+		// the owner (admin) never needs an invite code
+		if srv.requireCode() && !srv.adminOf(s.User) {
 			fail(w, http.StatusForbidden, "code_required", nil)
 			return
 		}

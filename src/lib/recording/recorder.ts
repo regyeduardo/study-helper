@@ -323,6 +323,8 @@ export class MeetingRecorder {
   private originalTitle = ''
   private mime = ''
   private writing: Promise<void> = Promise.resolve()
+  /** Whoever stopped the recording waits for the file to close. */
+  private onClosed: (() => void) | null = null
   private mode: CaptureMode = 'microphone'
   private display: MediaStream | null = null
   private handed: MediaStream | null = null
@@ -484,7 +486,11 @@ export class MeetingRecorder {
       const writable = this.writable
       this.writing = this.writing.then(() => writable.write(event.data))
     }
-    this.recorder.onstop = () => void this.close()
+    this.recorder.onstop = () =>
+      void this.close().finally(() => {
+        this.onClosed?.()
+        this.onClosed = null
+      })
     this.recorder.start(CHUNK_MS)
     this.recordedMs = 0
     this.runningSince = Date.now()
@@ -621,16 +627,24 @@ export class MeetingRecorder {
     this.emit()
   }
 
-  finish(): void {
-    if (!this.active) return
+  /** Resolves once the file is closed and made seekable (or the failure told): "Finalizando a gravação…" lasts until then. */
+  finish(): Promise<void> {
+    if (!this.active) return Promise.resolve()
     this.cancelled = false
-    this.recorder!.stop()
+    return this.stopped()
   }
 
-  cancel(): void {
-    if (!this.active) return
+  /** Resolves once the file is gone. */
+  cancel(): Promise<void> {
+    if (!this.active) return Promise.resolve()
     this.cancelled = true
+    return this.stopped()
+  }
+
+  private stopped(): Promise<void> {
+    const closed = new Promise<void>(resolve => (this.onClosed = resolve))
     this.recorder!.stop()
+    return closed
   }
 
   async openFloating(): Promise<boolean> {

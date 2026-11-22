@@ -2,14 +2,15 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 
 import { FolderChooserDialog } from '@/components/dialogs/FolderChooser'
+import { moveItems } from '@/components/library/use-file-actions'
 import { Dialog } from '@/components/ui/Dialog'
 import { Icon } from '@/components/ui/Icon'
 import { useBusy } from '@/hooks/use-busy'
 import { usePathName } from '@/hooks/use-library-view'
+import { blocking } from '@/lib/blocking'
 import { descendantsOf, isNote } from '@/lib/family'
 import { paths } from '@/lib/paths'
 import { itemsOf } from '@/lib/working'
-import { useJobsStore } from '@/stores/jobs'
 import { useLibraryStore } from '@/stores/library'
 import { type Overlay, useUiStore } from '@/stores/ui'
 import { isSourceNote } from '@/lib/file-types'
@@ -183,20 +184,16 @@ export function MoveDialog({ fileIds, folderIds }: { fileIds: string[]; folderId
     const moving = [...new Set([...fileIds, ...family])]
     const total = moving.length + folderIds.length
     const only = useLibraryStore.getState().files.find(file => file.id === moving[0])?.name ?? useLibraryStore.getState().folders.find(folder => folder.id === folderIds[0])?.name
-    // the window closes at once and the items are already in the new folder; the writes (one per item) go on, with a line saying so
+    // the window closes at once; the writes (one per item) go on in the window that holds the app, counting them
     ui.close()
-    const task = useJobsStore.getState().trackTask(total === 1 ? `Movendo "${only}"…` : `Movendo ${itemsOf(total)}…`)
-    task.update(`Levando para ${folderName(target)}`, null)
     try {
-      await library.moveFiles(moving, target)
-      for (const id of folderIds) await library.updateFolder(id, { parentId: target })
-      task.drop?.()
+      const moved = await blocking(total === 1 ? `Movendo "${only}"…` : `Movendo ${itemsOf(total)}…`, blocker => moveItems(blocker, moving, folderIds, target), { phase: `Levando para ${folderName(target)}`, cancellable: true })
       ui.clearSelection()
+      if (moved < total) return ui.toast(`${moved} de ${total} movidos para ${folderName(target)}`)
       const notes = family.filter(id => useLibraryStore.getState().files.some(file => file.id === id && isNote(file))).length
       ui.toast(`Movido para ${folderName(target)}${notes ? `, com ${notes} ${notes === 1 ? 'nota' : 'notas'}` : ''}`)
     } catch (error) {
       // what the list showed in the new folder goes back (the store does it); the reason is a toast
-      task.drop?.()
       ui.toast(`Não deu para mover: ${error instanceof Error ? error.message : 'tente de novo.'}`)
     }
   }
