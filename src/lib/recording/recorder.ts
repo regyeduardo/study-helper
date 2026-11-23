@@ -32,11 +32,16 @@ export interface LiveCapture {
   screenOn: boolean
 }
 
+/** Where the recording goes: a media place, or the App (the note and its media in the App, with the structure on). */
+export type RecordingDestination = SourceStorage | 'app'
+
 export interface StartOptions {
   microphoneOn?: boolean
   microphoneId?: string | null
   video?: { fps: VideoFps } | null
-  destination?: SourceStorage
+  destination?: RecordingDestination
+  /** The library folder open when the recording started: it comes chosen at the end. */
+  folderId?: string | null
   display?: MediaStream | null
 }
 
@@ -46,7 +51,8 @@ export interface RecordingResult {
   durationSeconds: number
   storedName: string
   marks?: RecordingMark[]
-  destination?: SourceStorage
+  destination?: RecordingDestination
+  folderId?: string | null
 }
 
 export interface RecorderCallbacks {

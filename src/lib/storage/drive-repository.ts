@@ -36,8 +36,9 @@ export const INDEX_NAME = 'study-helper.json'
 const FOLDER_META_NAME = '.folder.json'
 const DEVICES_NAME = 'devices'
 const SOURCES_NAME = 'sources'
+const NOTES_NAME = 'notes'
 
-type Kind = 'root' | 'folder' | 'folder-meta' | 'md' | 'sidecar' | 'index' | 'devices' | 'device' | 'sources' | 'source'
+type Kind = 'root' | 'folder' | 'folder-meta' | 'md' | 'sidecar' | 'index' | 'devices' | 'device' | 'sources' | 'source' | 'notes'
 
 interface Cached<T> {
   md5: string
@@ -90,6 +91,12 @@ export class DriveRepository implements Repository {
   private sources = new Map<string, DriveFile>()
   private listing: DriveFile[] = []
   unlimited = false
+  /**
+   * Spec 005 (R5): after the account's hierarchy migrated, the Drive keeps only the content of its notes. A new note goes to one flat
+   * folder of the app's space, an old one stays where it is; folders are not made, renamed, moved or deleted here, and the tree
+   * (name, folder) comes from the account's hierarchy, not from where the files sit.
+   */
+  contentOnly = false
 
   constructor(
     readonly accountId: string,
@@ -153,6 +160,22 @@ export class DriveRepository implements Repository {
     return { snapshot, changedFileIds }
   }
 
+  /** Whether this Drive has the files of a note (another device's new note shows after the next listing). */
+  knows(fileId: string): boolean {
+    return Boolean(this.files.get(fileId)?.md)
+  }
+
+  /** The Drive id of a note's text: what the account's map keeps to point at it. */
+  driveRefOf(fileId: string): string | null {
+    return this.files.get(fileId)?.md?.id ?? null
+  }
+
+  /** The settings this browser last read from the Drive, for when the Drive does not answer. */
+  async cachedIndex(): Promise<LibraryIndex | null> {
+    const cached = await this.db.get<Cached<LibraryIndex>>('cache', 'index')
+    return cached ? { ...defaultIndex(), ...cached.value } : null
+  }
+
   async readContent(fileId: string): Promise<string> {
     const md = this.files.get(fileId)?.md
     if (!md) return ''
@@ -172,7 +195,8 @@ export class DriveRepository implements Repository {
   async saveFile(sidecar: FileSidecar, content?: string): Promise<FileSidecar> {
     const fileId = sidecar.meta.id
     const entry = this.files.get(fileId)
-    const parentId = this.driveFolderId(sidecar.meta.folderId)
+    // only content: a note stays where it is; a new one goes to the flat folder
+    const parentId = this.contentOnly ? (entry?.md?.parents?.[0] ?? (await this.notesFolder())) : this.driveFolderId(sidecar.meta.folderId)
     const growth = await this.growthOf(fileId, sidecar, content)
     await this.ensureRoom(growth)
 
@@ -227,6 +251,7 @@ export class DriveRepository implements Repository {
   }
 
   async saveFolder(folder: FolderMeta): Promise<void> {
+    if (this.contentOnly) return
     const parentDriveId = this.driveFolderId(folder.parentId)
     const entry = this.folders.get(folder.id)
     if (!entry) {
@@ -264,7 +289,7 @@ export class DriveRepository implements Repository {
 
   async removeFolder(folderId: string): Promise<void> {
     const entry = this.folders.get(folderId)
-    if (!entry) return
+    if (!entry || this.contentOnly) return
     await deleteDriveFileController(this.token, entry.folder.id)
     this.folders.delete(folderId)
     this.folderByDriveId.delete(entry.folder.id)
@@ -376,6 +401,12 @@ export class DriveRepository implements Repository {
     this.sourcesId = await this.ensureSystemFolder('sources', SOURCES_NAME)
   }
 
+  /** The flat folder of the notes kept only as content, made the first time one is needed. */
+  private async notesFolder(): Promise<string> {
+    if (!this.rootId) await this.ensureRoot()
+    return this.ensureSystemFolder('notes', NOTES_NAME)
+  }
+
   private async ensureSystemFolder(kind: Kind, name: string): Promise<string> {
     const found = this.listing.find(file => kindOf(file) === kind && file.parents?.includes(this.rootId))
     if (found) return found.id
@@ -425,6 +456,8 @@ export class DriveRepository implements Repository {
     }
     for (const [id, entry] of this.folders) if (!entry.folder.id) this.folders.delete(id)
 
+    // only content: the tree comes from the account, so the notes' files are not read until one opens
+    if (this.contentOnly) return { index: await this.loadIndex(), folders: [], files: [] }
     const [index, folders, files] = await Promise.all([this.loadIndex(), this.loadFolders(), this.loadFiles()])
     return { index, folders, files }
   }
@@ -473,6 +506,7 @@ export class DriveRepository implements Repository {
   private withTreeFacts(fileId: string, sidecar: FileSidecar): FileSidecar {
     const md = this.files.get(fileId)?.md
     if (!md) return sidecar
+    if (this.contentOnly) return { ...sidecar, meta: { ...sidecar.meta, id: fileId } }
     const parentDriveId = md.parents?.[0]
     return {
       ...sidecar,

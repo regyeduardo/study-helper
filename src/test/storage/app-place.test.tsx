@@ -2,7 +2,7 @@
 // Sem isso, nada muda para quem usa Google Drive e Local.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import 'fake-indexeddb/auto'
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 
 const { mockEnv } = vi.hoisted(() => ({ mockEnv: { apiUrl: 'https://api.example.test' } }))
@@ -61,16 +61,22 @@ afterEach(() => {
   useServerAccount.setState({ me: null, status: 'unknown' })
 })
 
-const appOption = () => within(screen.getAllByRole('combobox')[0]).getByRole('option', { name: /^App/ }) as HTMLOptionElement
+/** Locais (spec 005, opção E): with every note marked, the bar's "Levar para o App". */
+const appButton = () => {
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Marcar tudo' }))
+  return within(screen.getByRole('toolbar', { name: 'Notas marcadas' })).getByRole('button', { name: /^Levar para o App/ })
+}
 
 describe('o App como lugar', () => {
   it('sem a estrutura do app ligada, o App fica desligado e nada vai para lá', async () => {
     await library().connect(account, token)
     expect(library().appOn).toBe(false)
-    await library().createFolder({ name: 'Faculdade' })
+    const folder = await library().createFolder({ name: 'Faculdade' })
+    await library().createFile({ name: 'Lista', type: 'class', folderId: folder.id }, 'questão')
     render(<MemoryRouter><PlacesPanel /></MemoryRouter>)
-    expect(appOption().disabled).toBe(true)
-    expect(appOption().textContent).toBe('App · liberar com um código')
+    const app = appButton()
+    expect(app).toBeDisabled()
+    expect(app).toHaveAccessibleName('Levar para o App (liberar com um código)')
     expect(server.calls).toEqual([])
     expect(driveNames().some(name => name.includes('Faculdade'))).toBe(true)
   })
@@ -84,8 +90,9 @@ describe('o App como lugar', () => {
     expect(appNames()).toEqual([])
 
     render(<MemoryRouter><PlacesPanel /></MemoryRouter>)
-    expect(appOption().disabled).toBe(false)
-    expect(appOption().textContent).toBe('App')
+    const app = appButton()
+    expect(app).toBeEnabled()
+    expect(app).toHaveAccessibleName('Levar para o App')
 
     await usePlacesStore.getState().choosePlace([faculdade.id], 'app')
     expect(usePlacesStore.getState().failed.map(record => `${record.name}: ${record.reason}`)).toEqual([])

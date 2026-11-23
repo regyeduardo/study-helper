@@ -38,6 +38,7 @@ export function AvatarButton() {
 export function SyncPill() {
   const account = useAccountStore(state => state.active())
   const { busy, lastSyncAt, conflicts, error, syncNow, showConflicts } = useSyncStore()
+  const hierarchy = useLibraryStore(state => state.hierarchySync)
   const open = useUiStore(state => state.open)
   useNow()
   if (account.kind === 'local') {
@@ -49,20 +50,32 @@ export function SyncPill() {
     )
   }
   const conflict = conflicts.length > 0 && !busy
+  // with the hierarchy on the account (spec 005, escolha C): what waits for the connection, or "Tudo na conta"
+  const changes = hierarchy ? `${hierarchy.pending} ${hierarchy.pending === 1 ? 'mudança' : 'mudanças'}` : ''
+  const waiting = Boolean(hierarchy && hierarchy.pending > 0 && !hierarchy.online)
+  const sending = Boolean(hierarchy && hierarchy.pending > 0 && hierarchy.online)
+  const idle = hierarchy ? `Tudo na conta · ${agoText(lastSyncAt)}` : `Atualizado ${agoText(lastSyncAt)}`
   return (
     <button
-      className={`sync ${busy ? 'busy' : ''} ${conflict || error ? 'warn' : ''}`}
+      className={`sync ${busy || sending ? 'busy' : ''} ${conflict || error || waiting ? 'warn' : ''}`}
       onClick={() => (conflict ? showConflicts() : void syncNow())}
-      title={error ?? (conflict ? 'Resolver o conflito' : 'Sincronizar agora')}
+      title={waiting ? 'Sem conexão com a conta: o que você mudar sobe quando voltar' : (error ?? (conflict ? 'Resolver o conflito' : 'Sincronizar agora'))}
     >
       <span className="dot" />
-      {busy ? (
+      {conflict ? (
+        <span className="lbl">{`${conflicts.length} conflito${conflicts.length > 1 ? 's' : ''} · resolver`}</span>
+      ) : waiting ? (
+        <>
+          <Icon name="warn" />
+          <span className="lbl">{`${changes} esperando conexão`}</span>
+        </>
+      ) : busy || sending ? (
         <>
           <Icon name="sync" />
-          Sincronizando…
+          {sending ? `Enviando ${changes}…` : 'Sincronizando…'}
         </>
       ) : (
-        <span className="lbl">{conflict ? `${conflicts.length} conflito${conflicts.length > 1 ? 's' : ''} · resolver` : error ? 'Falhou · tentar de novo' : `Atualizado ${agoText(lastSyncAt)}`}</span>
+        <span className="lbl">{error ? 'Falhou · tentar de novo' : idle}</span>
       )}
     </button>
   )

@@ -18,7 +18,7 @@ import type {
   StoredQuestion,
 } from '@/types/domain'
 import type { TokenProvider } from '@/controllers/drive.controller'
-import { blocking } from '@/lib/blocking'
+import { blocking, blockingFailure } from '@/lib/blocking'
 import { legacyAiOf, normalizeSettings, targetFor } from '@/lib/ai/config'
 import { missingSetup } from '@/lib/ai/providers'
 import { artifactsOf, hasOldFields, migrated, removeArtifact, renameArtifact, withArtifact, withoutOldFields } from '@/lib/artifacts'
@@ -32,16 +32,20 @@ import { nameArtifact, nameSource } from '@/lib/generation/artifact-name'
 import { GenerationSession } from '@/lib/generation/session'
 import { activeLinks, saveSharedAttempt, type SharedAttempts, sharedLibrary } from '@/lib/share'
 import { setSharedRoot } from '@/lib/paths'
+import { env } from '@/lib/env'
 import { newId, nowIso } from '@/lib/ids'
 import { type LocalMedia, listLocalMedia, removeLocalMedia, watchLocalMedia } from '@/lib/recording/media-library'
 import { openLive } from '@/lib/storage/app-live'
 import { AppRepository } from '@/lib/storage/app-repository'
 import { CombinedRepository } from '@/lib/storage/combined-repository'
+import { migrateHierarchy } from '@/lib/storage/hierarchy-migration'
+import { HierarchyRepository } from '@/lib/storage/hierarchy-repository'
 import { openDriveLibrary } from '@/lib/storage/hidden-migration'
 import { LocalRepository } from '@/lib/storage/local-repository'
 import { MoveJournal, showingOf } from '@/lib/storage/moves'
 import type { Repository, StoredSize } from '@/lib/storage/repository'
 import { removeStoredSource } from '@/lib/storage/source-storage'
+import { useAccountStore } from '@/stores/account'
 import type { TrackedTask } from '@/stores/jobs'
 import { useServerAccount } from '@/stores/server-account'
 import { readingMinutes, wordCount } from '@/utils/format'
@@ -72,6 +76,8 @@ interface LibraryState {
   hiddenWarning: string | null
   /** The App is one of the places (spec 003, entrega 4): the account was freed by a code and "Usar a estrutura do app" is on. */
   appOn: boolean
+  /** The account's hierarchy: changes still waiting and whether the account answers (spec 005, FR-011); null without it. */
+  hierarchySync: { pending: number; online: boolean } | null
   /** Turns the App place on or off in the library of a Google account, and loads the library again. */
   attachApp(on: boolean): Promise<void>
   folders: FolderMeta[]
@@ -357,6 +363,7 @@ export const useLibraryStore = create<LibraryState>((set, get) => {
     sharedView: null,
 
     appOn: false,
+    hierarchySync: null,
 
     attachApp: async on => {
       const repo = get().repo
@@ -378,11 +385,12 @@ export const useLibraryStore = create<LibraryState>((set, get) => {
 
     connect: async (accountId, tokenProvider) => {
       followLive(null)
-      set({ repo: null, accountId, appOn: false, ready: false, loadError: null, hiddenPending: false, hiddenWarning: null, folders: [], files: [], opened: {}, openedAt: readOpened(accountId), sizes: {} })
+      set({ repo: null, accountId, appOn: false, hierarchySync: null, ready: false, loadError: null, hiddenPending: false, hiddenWarning: null, folders: [], files: [], opened: {}, openedAt: readOpened(accountId), sizes: {} })
       let repo: Repository
       try {
         if (!tokenProvider) repo = new LocalRepository()
         else {
+          void openServerSession(accountId, tokenProvider)
           const { useJobsStore } = await import('@/stores/jobs')
           let task: TrackedTask | null = null
           const library = await openDriveLibrary(accountId, tokenProvider, (message, fraction) => {
@@ -396,8 +404,10 @@ export const useLibraryStore = create<LibraryState>((set, get) => {
           const combined = new CombinedRepository(library.repo, new LocalRepository(`study-helper-local-${accountId}`, accountId))
           combined.setShowing(showingOf(await new MoveJournal(accountId).all().catch(() => [])))
           if (serverAppOn()) combined.setApp(new AppRepository(accountId))
+          if (hierarchyOn(accountId)) combined.setHierarchy(new HierarchyRepository(accountId))
           set({ appOn: Boolean(combined.app) })
           followLive(combined)
+          watchHierarchy(combined)
           repo = combined
           set({ hiddenPending: library.hiddenPending, hiddenWarning: library.warning })
         }
@@ -412,6 +422,7 @@ export const useLibraryStore = create<LibraryState>((set, get) => {
         get().applySnapshot(snapshot)
         set({ ready: true })
         await migrateOnLoad(repo, snapshot)
+        migrateHierarchyWhenReady()
         await get().purgeExpiredTrash()
         // a change of place stopped in the middle (a closed tab) continues from where it stopped (FR-054)
         if (repo instanceof CombinedRepository) void import('@/stores/places').then(({ usePlacesStore }) => usePlacesStore.getState().resume()).catch(() => undefined)
@@ -796,9 +807,30 @@ let stopLive: (() => void) | null = null
 function followLive(repo: CombinedRepository | null): void {
   stopLive?.()
   stopLive = null
+  // with the hierarchy on the account, every session follows it, with or without the App (spec 005, FR-004); before it, only the App
+  const hierarchy = repo?.hierarchy
   const app = repo?.app
-  if (!(app instanceof AppRepository) || typeof WebSocket === 'undefined') return
-  stopLive = openLive({ seq: () => app.currentSeq, onMap: () => void import('@/stores/sync').then(({ useSyncStore }) => useSyncStore.getState().syncNow()).catch(() => undefined) })
+  const seq = hierarchy ? () => hierarchy.currentSeq : app instanceof AppRepository ? () => app.currentSeq : null
+  if (!seq || typeof WebSocket === 'undefined') return
+  stopLive = openLive({ seq, onMap: () => void import('@/stores/sync').then(({ useSyncStore }) => useSyncStore.getState().syncNow()).catch(() => undefined) })
+}
+
+/**
+ * Every Google account opens its session on the server by itself, with the token the app already has and with no code (spec 005,
+ * R4). The library never waits for it: with the server out, it opens as before. Without a server set up, nothing is called. Only
+ * when the server was not asked yet: a person who left the server account on purpose is not put back in.
+ */
+async function openServerSession(accountId: string, tokenProvider: TokenProvider): Promise<void> {
+  if (!env.apiUrl) return
+  const server = useServerAccount.getState()
+  if (server.status !== 'unknown') return
+  try {
+    await server.refresh()
+    if (useServerAccount.getState().status !== 'signed-out' || useLibraryStore.getState().accountId !== accountId) return
+    await server.signInWithGoogleToken(await tokenProvider())
+  } catch {
+    return
+  }
 }
 
 /** Whether the server account has "Usar a estrutura do app" on (freed by a code). */
@@ -807,8 +839,84 @@ function serverAppOn(): boolean {
   return Boolean(user && user.status === 'enabled' && user.appEnabled)
 }
 
+/**
+ * Whether the library's tree comes from the account's hierarchy (spec 005): only once that account's hierarchy migrated
+ * (`hierarchyAt`), with the server session of the same person as the Google account of the library. Before that, all as it was.
+ */
+function hierarchyOn(accountId: string | null): boolean {
+  const { me, status } = useServerAccount.getState()
+  const account = useAccountStore.getState().accounts.find(item => item.id === accountId)
+  return Boolean(status === 'signed-in' && me?.user.hierarchyAt && account?.kind === 'google' && account.email && account.email.toLowerCase() === me.user.email?.toLowerCase())
+}
+
+/**
+ * The hierarchy of today has not gone to the account yet (spec 005, história 2): the server knows the hierarchy (`hierarchyAt` is null,
+ * not missing) and the session is the same person as the Google account of the library.
+ */
+function hierarchyToMigrate(accountId: string | null): boolean {
+  const { me, status } = useServerAccount.getState()
+  const account = useAccountStore.getState().accounts.find(item => item.id === accountId)
+  return Boolean(status === 'signed-in' && me?.user.hierarchyAt === null && account?.kind === 'google' && account.email && account.email.toLowerCase() === me.user.email?.toLowerCase())
+}
+
+const many = (count: number, one: string, more: string) => `${count.toLocaleString('pt-BR')} ${count === 1 ? one : more}`
+
+let migrating = false
+
+/** Once per account, in the window that holds the app; a failure leaves the library as it was and the next opening goes on (FR-016). */
+function migrateHierarchyWhenReady(): void {
+  const { repo, accountId, ready, folders, files } = useLibraryStore.getState()
+  if (migrating || !ready || !(repo instanceof CombinedRepository) || repo.hierarchy || !hierarchyToMigrate(accountId)) return
+  migrating = true
+  void (async () => {
+    try {
+      const count = await blocking('Levando a biblioteca para a sua conta', blocker => migrateHierarchy(repo, { folders, files }, blocker))
+      const { useUiStore } = await import('@/stores/ui')
+      useUiStore.getState().toast(`Pronto: ${many(count.folders, 'pasta', 'pastas')} e ${many(count.files, 'nota', 'notas')} na sua conta. Nada mudou de lugar.`)
+      // the session brings `hierarchyAt`, and the library follows the account's hierarchy
+      await useServerAccount.getState().refresh()
+    } catch (error) {
+      blockingFailure('A biblioteca continua como estava', new Error(`${error instanceof Error ? error.message : String(error)} Ela continua sozinha na próxima vez que você abrir o app.`))
+    } finally {
+      migrating = false
+    }
+  })()
+}
+
+// the connection is back: what waited for it goes up now (spec 005, FR-011)
+if (typeof window !== 'undefined')
+  window.addEventListener('online', () => {
+    const { repo } = useLibraryStore.getState()
+    if (repo instanceof CombinedRepository && repo.hierarchy) void import('@/stores/sync').then(({ useSyncStore }) => useSyncStore.getState().syncNow())
+  })
+
+/** The foot of the sidebar follows the account's hierarchy: what waits to go up and whether the account answers. */
+function watchHierarchy(repo: CombinedRepository): void {
+  const tree = repo.hierarchy
+  useLibraryStore.setState({ hierarchySync: tree ? { pending: 0, online: true } : null })
+  if (tree) tree.onState = state => repo.hierarchy === tree && useLibraryStore.setState({ hierarchySync: state })
+}
+
+/** The migration ended (or the session arrived) with the library open: the tree passes to the account's hierarchy, and loads again. */
+async function followHierarchy(repo: CombinedRepository, on: boolean): Promise<void> {
+  const accountId = useLibraryStore.getState().accountId
+  if (!accountId || on === Boolean(repo.hierarchy)) return
+  repo.setHierarchy(on ? new HierarchyRepository(accountId) : null)
+  followLive(repo)
+  watchHierarchy(repo)
+  try {
+    const snapshot = await repo.load()
+    if (useLibraryStore.getState().repo === repo) useLibraryStore.getState().applySnapshot(snapshot)
+  } catch (error) {
+    if (useLibraryStore.getState().repo === repo) useLibraryStore.setState({ loadError: error instanceof Error ? error.message : 'Não consegui abrir a biblioteca.' })
+  }
+}
+
 // the account on the server arrives after the library (or the person turns the structure on or off): the App place follows it
 useServerAccount.subscribe(() => {
   const on = serverAppOn()
   if (on !== useLibraryStore.getState().appOn) void useLibraryStore.getState().attachApp(on)
+  const { repo, accountId } = useLibraryStore.getState()
+  if (repo instanceof CombinedRepository && hierarchyOn(accountId) !== Boolean(repo.hierarchy)) void followHierarchy(repo, hierarchyOn(accountId))
+  migrateHierarchyWhenReady()
 })

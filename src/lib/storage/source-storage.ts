@@ -17,8 +17,9 @@ import { CombinedRepository } from '@/lib/storage/combined-repository'
 import type { Repository } from '@/lib/storage/repository'
 import { useLibraryStore } from '@/stores/library'
 
-export interface StorageOption {
-  id: SourceStorage
+/** `Id` is a media place; the recording also offers the App. */
+export interface StorageOption<Id extends string = SourceStorage> {
+  id: Id
   name: string
   description: string
   fits: boolean

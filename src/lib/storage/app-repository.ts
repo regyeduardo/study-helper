@@ -55,7 +55,7 @@ function parse<T>(text: string | undefined, fallback: T): T {
 }
 
 /** The meta that goes in the map: without the source text, which is a part of its own. */
-function mapMeta(meta: FileMeta): Record<string, unknown> {
+export function mapMeta(meta: FileMeta): Record<string, unknown> {
   const { sourceExcerpt: _excerpt, pendingExcerpt: _pending, source, ...rest } = meta
   const out: Record<string, unknown> = { ...rest, sourceExcerpt: null, pendingExcerpt: null }
   if (source) {
@@ -110,8 +110,10 @@ function folderFields(folder: FolderMeta): LibraryRowFields {
   }
 }
 
-const FIELD_KEYS = Object.keys(fileFields({ created: {}, updated: {} } as unknown as FileMeta)) as (keyof LibraryRowFields)[]
-const sameFields = (row: LibraryRow, fields: LibraryRowFields) => FIELD_KEYS.every(key => JSON.stringify(row[key] ?? null) === JSON.stringify(fields[key] ?? null))
+// spec 005: the server no longer sends placeOwn, and a folder's place comes back null; neither is a change to write again
+const FIELD_KEYS = (Object.keys(fileFields({ created: {}, updated: {} } as unknown as FileMeta)) as (keyof LibraryRowFields)[]).filter(key => key !== 'placeOwn')
+const sameFields = (row: LibraryRow, fields: LibraryRowFields) =>
+  FIELD_KEYS.every(key => (key === 'place' && fields.itemKind === 'folder') || JSON.stringify(row[key] ?? null) === JSON.stringify(fields[key] ?? null))
 
 /** What each part of a note holds; a part with nothing in it is not kept. `content` undefined = the text did not change. */
 function partsOf(sidecar: FileSidecar, content: string | undefined): Parts {
@@ -221,6 +223,17 @@ export class AppRepository implements Repository {
   /** What this device already has of the map (the live channel says it to the server). */
   get currentSeq(): number {
     return this.seq
+  }
+
+  /** The last row this device saw of an item (the hierarchy takes it after a write here, spec 005). */
+  rowOf(id: string): LibraryRow | undefined {
+    return this.rows.get(id)
+  }
+
+  /** A newer row of an item, from the account's hierarchy (spec 005): reads and writes start from it. */
+  takeRow(row: LibraryRow): void {
+    const seen = this.rows.get(row.id)
+    if (!seen || row.rev > seen.rev || (row.rev === seen.rev && row.seq >= seen.seq)) this.rows.set(row.id, row)
   }
 
   setConflictResolver(resolver: ConflictResolver): void {

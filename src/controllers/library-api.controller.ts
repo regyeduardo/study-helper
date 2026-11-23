@@ -23,8 +23,10 @@ export interface LibraryRowFields {
   name: string
   folderId: string | null
   parentFileId: string | null
-  place: 'app' | 'drive'
-  placeOwn: boolean
+  /** Only a note has a place; a folder's comes back null (spec 005, contracts/api-hierarquia.md). */
+  place: 'app' | 'drive' | null
+  /** Before spec 005; the server ignores it now and no longer sends it. */
+  placeOwn?: boolean
   recording: boolean
   position: number
   meta: Record<string, unknown>
@@ -128,6 +130,14 @@ export async function getIndex(): Promise<StoredPart | null> {
     throw error
   }
 }
+
+/** The hierarchy of before, kept on the server before the migration writes anything (FR-014); sent again, the same copy comes back. */
+export const hierarchyBackup = async (snapshot: { folders: unknown[]; files: unknown[] }) =>
+  (await (await send('POST', '/v1/library/hierarchy/backup', { json: { snapshot } })).json()) as { id: string; folders: number; files: number }
+
+/** Marks the migration done when the live folders and notes on the map are as many as sent; else 409 `count_mismatch` with the server's (FR-016). */
+export const hierarchyDone = async (backupId: string, folders: number, files: number) =>
+  (await (await send('POST', '/v1/library/hierarchy/done', { json: { backupId, folders, files } })).json()) as { hierarchyAt: string }
 
 export const putIndex = async (content: string, baseVersion: string | null) =>
   (await (await send('PUT', '/v1/library/index', { body: content, headers: { 'Content-Type': 'application/json', ...precondition(baseVersion) } })).json()) as { version: string; bytes: number }

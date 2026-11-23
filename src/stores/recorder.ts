@@ -43,6 +43,7 @@ interface RecorderState {
 
 let recorder: MeetingRecorder | null = null
 let destination: RecordingResult['destination'] = 'none'
+let folderId: string | null = null
 
 function createRecorder(set: (patch: Partial<RecorderState>) => void, get: () => RecorderState): MeetingRecorder {
   return new MeetingRecorder({
@@ -50,7 +51,7 @@ function createRecorder(set: (patch: Partial<RecorderState>) => void, get: () =>
     onFloating: floating => set({ floating }),
     onTick: seconds => set({ seconds }),
     onFinished: result => {
-      set({ active: false, result: { ...result, marks: get().marks, destination }, resultPlace: 'window', mode: null, live: null })
+      set({ active: false, result: { ...result, marks: get().marks, destination, folderId }, resultPlace: 'window', mode: null, live: null })
       void addLocalMedia({ storedName: result.storedName, name: result.file.name, mime: result.mime || result.file.type, durationSeconds: result.durationSeconds, size: result.file.size, createdAt: new Date().toISOString(), fileIds: [] })
     },
     onCancelled: () => {
@@ -90,6 +91,7 @@ export const useRecorderStore = create<RecorderState>((set, get) => ({
     set({ error: null, seconds: 0, result: null, live: null, marks: [] })
     recorder = createRecorder(set, get)
     destination = options?.destination ?? 'none'
+    folderId = options?.folderId ?? null
     try {
       await recorder.start(mode, computerAudio, options)
       set({ active: true, mode })
@@ -102,6 +104,7 @@ export const useRecorderStore = create<RecorderState>((set, get) => ({
     set({ error: null, seconds: 0, result: null, live: null, marks: [] })
     recorder = createRecorder(set, get)
     destination = options?.destination ?? 'none'
+    folderId = options?.folderId ?? null
     try {
       await recorder.startIntegration(capture, options)
       set({ active: true, mode: 'integration' })

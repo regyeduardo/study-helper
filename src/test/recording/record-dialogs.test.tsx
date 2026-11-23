@@ -79,7 +79,7 @@ describe('RecordDialog', () => {
     await waitFor(() => expect(captures[0].stop).toHaveBeenCalled())
     await waitFor(() => expect(screen.getByRole('button', { name: 'Começar a gravar' })).toBeEnabled())
     fireEvent.click(screen.getByRole('button', { name: 'Começar a gravar' }))
-    await waitFor(() => expect(startIntegration).toHaveBeenCalledWith(captures.at(-1), { microphoneOn: true, microphoneId: null, video: null, destination: 'none' }))
+    await waitFor(() => expect(startIntegration).toHaveBeenCalledWith(captures.at(-1), { microphoneOn: true, microphoneId: null, video: null, destination: 'none', folderId: null }))
     expect(captures.at(-1)!.stop).not.toHaveBeenCalled()
   })
 
@@ -147,7 +147,7 @@ describe('RecordDialog', () => {
     await screen.findByRole('option', { name: `${COMPUTER_INPUT.label} · som do computador` })
     fireEvent.change(screen.getByLabelText('Som do computador'), { target: { value: COMPUTER_INPUT.deviceId } })
     fireEvent.click(screen.getByRole('button', { name: /Começar a gravar/ }))
-    await waitFor(() => expect(start).toHaveBeenCalledWith('tab', COMPUTER_INPUT.deviceId, { microphoneOn: true, microphoneId: null, video: null, destination: 'none' }))
+    await waitFor(() => expect(start).toHaveBeenCalledWith('tab', COMPUTER_INPUT.deviceId, { microphoneOn: true, microphoneId: null, video: null, destination: 'none', folderId: null }))
   })
 
   it('starts recording the selected mode', async () => {
@@ -156,7 +156,7 @@ describe('RecordDialog', () => {
     render(<RecordDialog />)
     fireEvent.click(await screen.findByRole('radio', { name: /Sem compartilhar a tela/ }))
     fireEvent.click(screen.getByRole('button', { name: /Começar a gravar/ }))
-    await waitFor(() => expect(start).toHaveBeenCalledWith('microphone', 'auto', { microphoneOn: true, microphoneId: null, video: null, destination: 'none' }))
+    await waitFor(() => expect(start).toHaveBeenCalledWith('microphone', 'auto', { microphoneOn: true, microphoneId: null, video: null, destination: 'none', folderId: null }))
   })
 
   it('has a separate microphone check and does not start with nothing to record', async () => {
@@ -170,7 +170,7 @@ describe('RecordDialog', () => {
     expect(screen.getByText('Ligue o microfone ou escolha um som do computador.')).toBeInTheDocument()
     fireEvent.change(screen.getByLabelText('Som do computador'), { target: { value: 'auto' } })
     fireEvent.click(screen.getByRole('button', { name: /Começar a gravar/ }))
-    await waitFor(() => expect(start).toHaveBeenCalledWith('microphone', 'auto', { microphoneOn: false, microphoneId: null, video: null, destination: 'none' }))
+    await waitFor(() => expect(start).toHaveBeenCalledWith('microphone', 'auto', { microphoneOn: false, microphoneId: null, video: null, destination: 'none', folderId: null }))
   })
 
   it('explains a denied permission', async () => {

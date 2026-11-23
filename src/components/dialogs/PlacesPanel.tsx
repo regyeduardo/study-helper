@@ -1,9 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useId, useMemo, useRef, useState } from 'react'
 
-import type { FileMeta, FolderMeta, Place } from '@/types/domain'
+import type { FileMeta, Place } from '@/types/domain'
 import { Icon } from '@/components/ui/Icon'
-import { fileBytes, folderBytes } from '@/lib/storage/file-sizes'
-import { filePlaceOf, folderPlaceOf, mixedFolderIds } from '@/lib/storage/place'
+import { fileBytes } from '@/lib/storage/file-sizes'
 import { useAccountStore } from '@/stores/account'
 import { useLibraryStore } from '@/stores/library'
 import { placesApply, previewMove, sideOfItem, usePlacesStore } from '@/stores/places'
@@ -13,7 +12,10 @@ import { formatBytes } from '@/utils/format'
 import '@/styles/places.css'
 
 export const PLACE_LABEL: Record<Place, string> = { drive: 'Google Drive', local: 'Local', app: 'App' }
-const FOLLOW = 'segue'
+/** The buttons of the bar, in the wireframe's order (opção E). */
+const DESTINATIONS: Place[] = ['app', 'drive', 'local']
+const TO: Record<Place, string> = { app: 'o App', drive: 'o Google Drive', local: 'Local' }
+const IN: Record<Place, string> = { app: 'no App', drive: 'no Google Drive', local: 'em Local' }
 const LOCAL_WARNING = 'O que fica em Local está só neste navegador: não aparece nos seus outros aparelhos, e limpar os dados do navegador apaga.'
 const SAFARI_WARNING = 'No Safari do iPhone, fora da tela de início, o navegador apaga o que ficar 7 dias sem abrir.'
 
@@ -23,33 +25,35 @@ function safariPage(): boolean {
   return /iPhone|iPad/.test(navigator.userAgent) && !standalone
 }
 
+const notesText = (count: number) => `${count.toLocaleString('pt-BR')} ${count === 1 ? 'nota' : 'notas'}`
+
 interface Row {
   kind: 'folder' | 'file'
   id: string
   name: string
   depth: number
-  own?: Place
-  place: Place
-  above: Place
+  /** Only a note has a place (spec 005, FR-005); a folder only organizes. */
+  place?: Place
   bytes: number
-  mixed: boolean
   hasChildren: boolean
 }
 
 interface Ask {
+  /** Only notes, and only the ones somewhere else than `place`. */
   ids: string[]
-  /** One item: its name; a batch: "3 itens". */
+  /** One note: its name in quotes; more: "3 notas". */
   name: string
   batch: boolean
-  /** Asked from the bar of checked rows: confirming clears the checks. */
-  fromBar?: boolean
+  /** Marked notes already in `place`: they neither count nor go. */
+  already: number
   place: Place
 }
 
 /**
- * "Locais", in Configurações › Armazenamento (spec 003, história 9, opção A; once the window "Onde fica cada coisa"): the whole library,
- * each folder and note with its place on its own line; without an own choice it follows the folder above. Changing the place asks first
- * (how many notes, how much space, what Local means) and then moves for real, with the progress in view (FR-052 a FR-055).
+ * "Locais", in Configurações › Armazenamento (spec 005, história 3, opção E "Marcar e levar"): the whole library, where only a note has a
+ * place (App, Google Drive or Local) and a folder only organizes. Marking a folder marks every note inside it (and in the folders inside),
+ * with "−" when only part is marked; the bar takes the marked notes that are somewhere else to the place chosen, asking first (how many,
+ * how much space, what Local means) and then moving for real in the window that holds the app (FR-007 a FR-009, spec 003 FR-064).
  */
 export function PlacesPanel({ focusId }: { focusId?: string }) {
   const ui = useUiStore()
@@ -62,9 +66,9 @@ export function PlacesPanel({ focusId }: { focusId?: string }) {
   const { running, progress, failed, choosePlace, retry } = usePlacesStore()
   const mixesPlaces = placesApply()
   const signedIn = account.kind === 'google'
-  const root: Place = mixesPlaces || signedIn ? 'drive' : 'local'
   const folders = useMemo(() => allFolders.filter(folder => !folder.deletedAt), [allFolders])
   const files = useMemo(() => allFiles.filter(file => !file.deletedAt), [allFiles])
+  const allId = useId()
   const [query, setQuery] = useState('')
   const [open, setOpen] = useState<Set<string>>(() => {
     const start = new Set(folders.filter(folder => !folder.parentId).map(folder => folder.id))
@@ -83,9 +87,9 @@ export function PlacesPanel({ focusId }: { focusId?: string }) {
   }, [])
   const [ask, setAsk] = useState<Ask | null>(null)
   const [error, setError] = useState<string | null>(null)
-  // the batch: rows checked to change place all at once (the library's selection pattern)
+  // the marked NOTES (a folder is never marked itself: its box shows the notes inside it)
   const [marked, setMarked] = useState<Set<string>>(() => new Set())
-  // when the bar goes away (Limpar, or the batch confirmed), the focus comes back to "Marcar tudo" instead of getting lost
+  // when the bar goes away (Limpar, or the move confirmed), the focus comes back to "Marcar tudo" instead of getting lost
   const allBox = useRef<HTMLInputElement | null>(null)
   const clearMarks = () => {
     setMarked(new Set())
@@ -102,10 +106,33 @@ export function PlacesPanel({ focusId }: { focusId?: string }) {
   }
 
   const sizeOf = (file: FileMeta) => fileBytes(file, sizes[file.id], localMedia)
-  const mixed = useMemo(() => mixedFolderIds(folders, files, root), [folders, files, root])
-  const placeOf = (kind: 'folder' | 'file', item: FolderMeta | FileMeta): Place => (kind === 'folder' ? folderPlaceOf(item.id, folders, root) : filePlaceOf(item as FileMeta, folders, root))
+  /** Where a note is right now (during a move, the side the library shows). */
+  const placeOf = (id: string): Place => sideOfItem(id)
   const term = query.trim().toLocaleLowerCase('pt-BR')
   const matches = (name: string) => !term || name.toLocaleLowerCase('pt-BR').includes(term)
+
+  // every note inside each folder, and in the folders inside it: what the folder's box marks
+  const inside = useMemo(() => {
+    const childFolders = new Map<string | null, string[]>()
+    for (const folder of folders) childFolders.set(folder.parentId, [...(childFolders.get(folder.parentId) ?? []), folder.id])
+    const childFiles = new Map<string | null, string[]>()
+    for (const file of files) childFiles.set(file.folderId, [...(childFiles.get(file.folderId) ?? []), file.id])
+    const out = new Map<string, string[]>()
+    const collect = (id: string, seen: Set<string>): string[] => {
+      const known = out.get(id)
+      if (known) return known
+      // a loop in the data stops where it closes
+      if (seen.has(id)) return []
+      seen.add(id)
+      const list = [...(childFiles.get(id) ?? [])]
+      for (const child of childFolders.get(id) ?? []) list.push(...collect(child, seen))
+      out.set(id, list)
+      return list
+    }
+    for (const folder of folders) collect(folder.id, new Set())
+    return out
+  }, [folders, files])
+  const byId = useMemo(() => new Map(files.map(file => [file.id, file])), [files])
 
   const rows = useMemo(() => {
     const out: Row[] = []
@@ -116,62 +143,69 @@ export function PlacesPanel({ focusId }: { focusId?: string }) {
     const walk = (parentId: string | null, depth: number) => {
       for (const folder of childFolders(parentId)) {
         if (term && !holds(folder.id)) continue
-        out.push({ kind: 'folder', id: folder.id, name: folder.name, depth, own: folder.place, place: placeOf('folder', folder), above: folderPlaceOf(folder.parentId, folders, root), bytes: folderBytes(folder.id, folders, files, sizeOf), mixed: mixed.has(folder.id), hasChildren: childFolders(folder.id).length + childFiles(folder.id).length > 0 })
+        const notes = inside.get(folder.id) ?? []
+        out.push({ kind: 'folder', id: folder.id, name: folder.name, depth, bytes: notes.reduce((sum, id) => sum + sizeOf(byId.get(id)!), 0), hasChildren: childFolders(folder.id).length + childFiles(folder.id).length > 0 })
         if (term || open.has(folder.id)) walk(folder.id, depth + 1)
       }
       for (const file of childFiles(parentId)) {
         if (!matches(file.name)) continue
-        out.push({ kind: 'file', id: file.id, name: file.name, depth, own: file.place, place: placeOf('file', file), above: folderPlaceOf(file.folderId, folders, root), bytes: sizeOf(file), mixed: false, hasChildren: false })
+        out.push({ kind: 'file', id: file.id, name: file.name, depth, place: placeOf(file.id), bytes: sizeOf(file), hasChildren: false })
       }
     }
     walk(null, 0)
     return out
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [folders, files, open, term, mixed, sizes, localMedia, root])
+  }, [folders, files, inside, byId, open, term, sizes, localMedia])
 
+  const counts = { app: 0, drive: 0, local: 0 }
+  for (const file of files) counts[placeOf(file.id)]++
   const total = files.length
-  const here = files.filter(file => sideOfItem(file.id) === 'local').length
   const totalBytes = files.reduce((sum, file) => sum + sizeOf(file), 0)
 
-  const choose = (row: Row, value: string) => {
-    setError(null)
-    const place = value === FOLLOW ? row.above : (value as Place)
-    if (place === row.place && (value === FOLLOW) === !row.own) return
-    setAsk({ ids: [row.id], name: row.name, batch: false, place })
-  }
+  // the notes marked, the live ones only (one deleted meanwhile drops out)
+  const markedNotes = files.filter(file => marked.has(file.id))
+  const markedBytes = markedNotes.reduce((sum, file) => sum + sizeOf(file), 0)
+  /** The marked notes that are somewhere else than `place`: only these go. */
+  const goingTo = (place: Place) => markedNotes.filter(file => placeOf(file.id) !== place)
 
-  const allMarked = rows.length > 0 && rows.every(row => marked.has(row.id))
-  const someMarked = !allMarked && rows.some(row => marked.has(row.id))
-  const mark = (id: string) =>
+  // "Marcar tudo" marks every note (with a search, the ones it found)
+  const scope = term ? rows.filter(row => row.kind === 'file').map(row => row.id) : files.map(file => file.id)
+  const allMarked = scope.length > 0 && scope.every(id => marked.has(id))
+  const someMarked = !allMarked && scope.some(id => marked.has(id))
+  const markNotes = (ids: string[], on: boolean) =>
     setMarked(current => {
       const next = new Set(current)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
-      return next
-    })
-  // "Marcar tudo" marks what the list shows now (with a search, only what it found)
-  const markAll = () =>
-    setMarked(current => {
-      const next = new Set(current)
-      for (const row of rows) {
-        if (allMarked) next.delete(row.id)
-        else next.add(row.id)
+      for (const id of ids) {
+        if (on) next.add(id)
+        else next.delete(id)
       }
       return next
     })
-  const moveMarked = (place: Place) => {
+  const markAll = () => markNotes(scope, !allMarked)
+  /** A folder all marked unmarks every note inside it; empty or in "−", it marks them all. */
+  const markFolder = (id: string) => {
+    const notes = inside.get(id) ?? []
+    markNotes(notes, !notes.every(note => marked.has(note)))
+  }
+  const folderState = (id: string): { checked: boolean; mixed: boolean; empty: boolean } => {
+    const notes = inside.get(id) ?? []
+    const count = notes.filter(note => marked.has(note)).length
+    return { checked: notes.length > 0 && count === notes.length, mixed: count > 0 && count < notes.length, empty: notes.length === 0 }
+  }
+
+  const take = (place: Place) => {
     setError(null)
-    const ids = [...marked]
-    if (!ids.length) return
-    const one = ids.length === 1 ? rows.find(row => row.id === ids[0]) : undefined
-    setAsk({ ids, name: one ? one.name : `${ids.length.toLocaleString('pt-BR')} itens`, batch: !one, fromBar: true, place })
+    const going = goingTo(place)
+    if (!going.length) return
+    const one = going.length === 1 ? going[0] : undefined
+    setAsk({ ids: going.map(file => file.id), name: one ? `“${one.name}”` : notesText(going.length), batch: !one, already: markedNotes.length - going.length, place })
   }
 
   const confirm = async () => {
     if (!ask) return
     const target = ask
     setAsk(null)
-    if (target.fromBar) clearMarks()
+    clearMarks()
     try {
       await choosePlace(target.ids, target.place)
     } catch (failure) {
@@ -187,93 +221,102 @@ export function PlacesPanel({ focusId }: { focusId?: string }) {
       return next
     })
 
-  const summary = `${total.toLocaleString('pt-BR')} ${total === 1 ? 'nota' : 'notas'} · ${formatBytes(totalBytes)}${mixesPlaces ? `. ${(total - here).toLocaleString('pt-BR')} no Google Drive, ${here.toLocaleString('pt-BR')} só neste navegador` : signedIn ? '' : '. Tudo só neste navegador'}`
+  const where = [counts.app ? `${counts.app.toLocaleString('pt-BR')} no App` : '', `${counts.drive.toLocaleString('pt-BR')} no Google Drive`, `${counts.local.toLocaleString('pt-BR')} só neste navegador`].filter(Boolean).join(', ')
+  const summary = `${notesText(total)} · ${formatBytes(totalBytes)}${mixesPlaces ? `. ${where}` : signedIn ? '' : '. Tudo só neste navegador'}`
+
+  const button = (place: Place) => {
+    const none = goingTo(place).length === 0
+    const locked = place === 'app' && !appOn
+    const label = `Levar para ${TO[place]}`
+    const why = locked ? 'liberar com um código' : none ? (markedNotes.length === 1 ? 'já está lá' : 'já estão lá') : ''
+    return (
+      <button key={place} className="btn pl-go" onClick={() => take(place)} disabled={running || Boolean(ask) || locked || none} aria-label={why ? `${label} (${why})` : label} title={locked ? 'App · liberar com um código' : why ? `${markedNotes.length === 1 ? 'A nota marcada já está' : 'As notas marcadas já estão'} ${IN[place]}` : undefined}>
+        <span className="pl-go-to">{`Levar para ${TO[place].replace(PLACE_LABEL[place], '')}`.trim()}</span>
+        {PLACE_LABEL[place]}
+      </button>
+    )
+  }
 
   return (
-      <section className="pl" aria-label="Locais">
-        <p className="muted pl-lead">Cada pasta ou nota fica no lugar escolhido. Sem escolha própria, segue a pasta de cima.</p>
-        {!signedIn && (
-          <p className="pl-note" role="note">
-            Sem login, tudo fica em Local, só neste navegador.{' '}
-            <button className="pl-link" onClick={() => ui.open({ kind: 'account' })}>
-              Entre com o Google
-            </button>{' '}
-            para guardar no Google Drive.
-          </p>
-        )}
-        {running && progress && (
-          <p className="pl-progress" role="status">
-            {`Mudando de lugar: ${progress.done} de ${progress.total}${progress.totalBytes ? ` · ${formatBytes(progress.doneBytes)} de ${formatBytes(progress.totalBytes)}` : ''}. Pode fechar: continua de onde parou.`}
-          </p>
-        )}
-        {failed.length > 0 && !running && (
-          <div className="pl-failed" role="alert">
-            <b>{failed.length === 1 ? '1 item não mudou de lugar' : `${failed.length} itens não mudaram de lugar`}</b>
-            <ul>
-              {failed.slice(0, 5).map(record => (
-                <li key={record.id}>{`${record.name}: ${record.reason ?? 'falhou'}`}</li>
-              ))}
-            </ul>
-            <span className="muted">Nada foi apagado: cada um continua inteiro onde estava.</span>
-            <button className="btn" onClick={() => void retry()}>
-              Tentar de novo
-            </button>
-          </div>
-        )}
-        {error && (
-          <p className="pl-failed" role="alert">
-            {error}
-          </p>
-        )}
-        {ask && <AskMove ask={ask} signedIn={signedIn} onCancel={() => setAsk(null)} onConfirm={() => void confirm()} onSignIn={() => ui.open({ kind: 'account' })} />}
-        <input className="input pl-search" type="search" placeholder="Buscar pasta ou nota" aria-label="Buscar pasta ou nota" value={query} onChange={event => setQuery(event.target.value)} />
-        <div className="pl-select">
-          <label className="pl-check pl-all">
-            <input
-              ref={input => {
-                allBox.current = input
-                if (input) input.indeterminate = someMarked
-              }}
-              type="checkbox"
-              aria-label="Marcar tudo"
-              aria-checked={someMarked ? 'mixed' : undefined}
-              checked={allMarked}
-              onChange={markAll}
-              disabled={running || !rows.length}
-            />
-            <span aria-hidden="true">Marcar tudo</span>
-          </label>
-          {marked.size > 0 && (
-            <div className="selbar pl-bulk" role="toolbar" aria-label="Marcados" onKeyDown={barKeys}>
-              <strong aria-live="polite">{`${marked.size.toLocaleString('pt-BR')} ${marked.size === 1 ? 'marcado' : 'marcados'}`}</strong>
-              <span className="pl-bulk-lead">Levar para:</span>
-              <button className="btn" onClick={() => moveMarked('drive')} disabled={running || Boolean(ask)} aria-label="Levar para o Google Drive">
-                Google Drive
-              </button>
-              <button className="btn" onClick={() => moveMarked('local')} disabled={running || Boolean(ask)} aria-label="Levar para Local">
-                Local
-              </button>
-              <button className="btn" onClick={() => moveMarked('app')} disabled={running || Boolean(ask) || !appOn} aria-label={appOn ? 'Levar para o App' : 'Levar para o App (liberar com um código)'} title={appOn ? undefined : 'App · liberar com um código'}>
-                App
-              </button>
-              <button className="btn pl-bulk-clear" onClick={clearMarks}>
-                <Icon name="x" />
-                Limpar
-              </button>
-            </div>
-          )}
+    <section className="pl" aria-label="Locais">
+      <p className="muted pl-lead">Cada nota fica num lugar: App, Google Drive ou Local. A pasta não tem lugar, só organiza. Marque as notas, ou uma pasta para marcar todas as de dentro, e escolha para onde levar.</p>
+      {!signedIn && (
+        <p className="pl-note" role="note">
+          Sem login, tudo fica em Local, só neste navegador.{' '}
+          <button className="pl-link" onClick={() => ui.open({ kind: 'account' })}>
+            Entre com o Google
+          </button>{' '}
+          para guardar no Google Drive.
+        </p>
+      )}
+      {running && progress && (
+        <p className="pl-progress" role="status">
+          {`Mudando de lugar: ${progress.done} de ${progress.total}${progress.totalBytes ? ` · ${formatBytes(progress.doneBytes)} de ${formatBytes(progress.totalBytes)}` : ''}. Pode fechar: continua de onde parou.`}
+        </p>
+      )}
+      {failed.length > 0 && !running && (
+        <div className="pl-failed" role="alert">
+          <b>{failed.length === 1 ? '1 nota não mudou de lugar' : `${failed.length} notas não mudaram de lugar`}</b>
+          <ul>
+            {failed.slice(0, 5).map(record => (
+              <li key={record.id}>{`${record.name}: ${record.reason ?? 'falhou'}`}</li>
+            ))}
+          </ul>
+          <span className="muted">Nada foi apagado: cada uma continua inteira onde estava.</span>
+          <button className="btn" onClick={() => void retry()}>
+            Tentar de novo
+          </button>
         </div>
-        <div className="pl-head" aria-hidden="true">
-          <span />
-          <span>Pasta ou nota</span>
-          <span>Fica em</span>
-          <span>Tamanho</span>
-        </div>
-        <ul className="pl-tree" role="tree" aria-label="Biblioteca inteira" ref={tree}>
-          {rows.map(row => (
-            <li key={row.id} role="treeitem" aria-level={row.depth + 1} aria-expanded={row.kind === 'folder' && row.hasChildren ? open.has(row.id) || Boolean(term) : undefined} aria-label={row.name} className={`pl-row ${focusId === row.id ? 'pl-focus' : ''}`} style={{ '--depth': row.depth } as React.CSSProperties}>
-              <label className="pl-check">
-                <input type="checkbox" aria-label={`Marcar ${row.name}`} checked={marked.has(row.id)} onChange={() => mark(row.id)} disabled={running} />
+      )}
+      {error && (
+        <p className="pl-failed" role="alert">
+          {error}
+        </p>
+      )}
+      <input className="input pl-search" type="search" placeholder="Buscar pasta ou nota" aria-label="Buscar pasta ou nota" value={query} onChange={event => setQuery(event.target.value)} />
+      <div className="pl-head">
+        <span className="pl-check">
+          <input
+            id={allId}
+            ref={input => {
+              allBox.current = input
+              if (input) input.indeterminate = someMarked
+            }}
+            type="checkbox"
+            aria-label="Marcar tudo"
+            aria-checked={someMarked ? 'mixed' : undefined}
+            checked={allMarked}
+            onChange={markAll}
+            disabled={running || !scope.length}
+          />
+        </span>
+        <label className="pl-all" htmlFor={allId}>
+          Marcar tudo
+        </label>
+        <span className="pl-col pl-col-place" aria-hidden="true">
+          Fica em
+        </span>
+        <span className="pl-col" aria-hidden="true">
+          Tamanho
+        </span>
+      </div>
+      <ul className="pl-tree" role="tree" aria-label="Biblioteca inteira" ref={tree}>
+        {rows.map(row => {
+          const state = row.kind === 'folder' ? folderState(row.id) : { checked: marked.has(row.id), mixed: false, empty: false }
+          return (
+            <li key={row.id} role="treeitem" aria-level={row.depth + 1} aria-expanded={row.kind === 'folder' && row.hasChildren ? open.has(row.id) || Boolean(term) : undefined} aria-label={row.name} className={`pl-row ${row.kind === 'folder' ? 'pl-folder' : ''} ${focusId === row.id ? 'pl-focus' : ''}`} style={{ '--depth': row.depth } as React.CSSProperties}>
+              <label className="pl-check" title={state.empty ? 'Pasta sem notas' : undefined}>
+                <input
+                  ref={input => {
+                    if (input) input.indeterminate = state.mixed
+                  }}
+                  type="checkbox"
+                  aria-label={row.kind === 'folder' ? `Marcar as notas de ${row.name}` : `Marcar ${row.name}`}
+                  aria-checked={state.mixed ? 'mixed' : undefined}
+                  checked={state.checked}
+                  onChange={() => (row.kind === 'folder' ? markFolder(row.id) : markNotes([row.id], !marked.has(row.id)))}
+                  disabled={running || state.empty}
+                />
               </label>
               <span className="pl-name">
                 {row.kind === 'folder' ? (
@@ -289,29 +332,34 @@ export function PlacesPanel({ focusId }: { focusId?: string }) {
                     <span className="pl-title">{row.name}</span>
                   </>
                 )}
-                {row.mixed && (
-                  <span className="pl-mixed" title="Tem itens em mais de um lugar">
-                    2 lugares
-                  </span>
-                )}
               </span>
-              <span className="pl-place">
-                <select className={row.own ? 'own' : 'follow'} aria-label={`Onde fica ${row.name}`} value={row.own ?? FOLLOW} onChange={event => choose(row, event.target.value)} disabled={running}>
-                  <option value={FOLLOW}>{`Segue: ${PLACE_LABEL[row.above]}`}</option>
-                  <option value="drive">Google Drive</option>
-                  <option value="local">Local (só neste navegador)</option>
-                  <option value="app" disabled={!appOn}>
-                    {appOn ? 'App' : 'App · liberar com um código'}
-                  </option>
-                </select>
-              </span>
+              {row.place ? <span className="pl-place">{PLACE_LABEL[row.place]}</span> : <span className="pl-place" aria-hidden="true" />}
               <span className="pl-size">{formatBytes(row.bytes)}</span>
             </li>
-          ))}
-          {!rows.length && <li className="pl-empty muted">{term ? `Nada com “${query.trim()}”.` : 'A biblioteca está vazia.'}</li>}
-        </ul>
-        <p className="pl-summary muted">{summary}</p>
-      </section>
+          )
+        })}
+        {!rows.length && <li className="pl-empty muted">{term ? `Nada com “${query.trim()}”.` : 'A biblioteca está vazia.'}</li>}
+      </ul>
+      <p className="pl-summary muted">{summary}</p>
+      {(ask || markedNotes.length > 0) && (
+        <div className="pl-dock">
+          {ask && <AskMove ask={ask} signedIn={signedIn} onCancel={() => setAsk(null)} onConfirm={() => void confirm()} onSignIn={() => ui.open({ kind: 'account' })} />}
+          {markedNotes.length > 0 && (
+            <div className="selbar pl-bulk" role="toolbar" aria-label="Notas marcadas" onKeyDown={barKeys}>
+              <strong aria-live="polite">{`${notesText(markedNotes.length)} ${markedNotes.length === 1 ? 'marcada' : 'marcadas'} · ${formatBytes(markedBytes)}`}</strong>
+              <span className="pl-bulk-lead" aria-hidden="true">
+                Levar para
+              </span>
+              <span className="pl-bulk-go">{DESTINATIONS.map(button)}</span>
+              <button className="btn pl-bulk-clear" onClick={clearMarks}>
+                <Icon name="x" />
+                Limpar
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+    </section>
   )
 }
 
@@ -325,27 +373,28 @@ function AskMove({ ask, signedIn, onCancel, onConfirm, onSignIn }: { ask: Ask; s
           <button className="btn" onClick={onCancel}>
             Agora não
           </button>
-          <button className="btn primary" onClick={onSignIn}>
+          <button className="btn primary" onClick={onSignIn} autoFocus>
             Entrar com o Google
           </button>
         </div>
       </div>
     )
-  const where = ask.place === 'local' ? 'Local' : ask.place === 'app' ? 'o App' : 'o Google Drive'
-  const what = preview.notes ? `Vão ${preview.notes === 1 ? '1 nota' : `${preview.notes.toLocaleString('pt-BR')} notas`} e ${formatBytes(preview.bytes)} para ${where}.` : ask.batch ? 'Nada precisa mudar de lugar agora: só a escolha dos itens marcados muda.' : `Nada precisa mudar de lugar agora: só a escolha de “${ask.name}” muda.`
+  const to = TO[ask.place]
+  const what = preview.notes ? `Vão ${notesText(preview.notes)} e ${formatBytes(preview.bytes)} para ${to}.` : 'Nada precisa mudar de lugar agora.'
+  const already = ask.already ? ` ${ask.already === 1 ? '1 já está' : `${ask.already.toLocaleString('pt-BR')} já estão`} ${IN[ask.place]} e ${ask.already === 1 ? 'fica' : 'ficam'} onde ${ask.already === 1 ? 'está' : 'estão'}.` : ''
   return (
-    <div className="pl-ask" role="alertdialog" aria-label={`Levar ${ask.name} para ${where}`}>
-      <b>{ask.batch ? `Levar ${ask.name} para ${where}?` : `Levar “${ask.name}” para ${where}?`}</b>
-      <span>{what}</span>
+    <div className="pl-ask" role="alertdialog" aria-label={`Levar ${ask.name} para ${to}`}>
+      <b>{`Levar ${ask.name} para ${to}?`}</b>
+      <span>{`${what}${already} As pastas continuam como estão.`}</span>
       {ask.place === 'local' ? <span className="pl-warn">{LOCAL_WARNING}</span> : <span className="muted">{ask.place === 'app' ? 'Fica na sua conta do Estudo e aparece em todos os seus aparelhos.' : 'Aparece em todos os seus aparelhos com esta conta Google.'}</span>}
       {ask.place === 'local' && safariPage() && <span className="pl-warn">{SAFARI_WARNING}</span>}
-      <span className="muted">Cada item só sai de onde está depois de chegar inteiro.</span>
+      <span className="muted">Cada nota só sai de onde está depois de chegar inteira.</span>
       <div className="pl-ask-act">
         <button className="btn" onClick={onCancel}>
           Cancelar
         </button>
-        <button className="btn primary" onClick={onConfirm}>
-          {`Levar para ${where}`}
+        <button className="btn primary" onClick={onConfirm} autoFocus>
+          {`Levar para ${to}`}
         </button>
       </div>
     </div>

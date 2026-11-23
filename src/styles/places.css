@@ -1,38 +1,55 @@
-/* "Onde fica cada coisa" and "Sincronizar" (spec 003, história 9, opções A, S1 e T). App tokens only. */
+/* "Locais" (spec 005, história 3, opção E "Marcar e levar") and "Sincronizar" (spec 003, história 9, opções S1 e T). App tokens only. */
 .pl,.db.pl{display:flex;flex-direction:column;gap:10px;min-width:0}
-.pl-lead{margin:0;font-size:12.5px}
+.pl-lead{margin:0;font-size:12.5px;max-width:72ch}
 .pl-note{margin:0;padding:8px 12px;border-radius:8px;background:var(--bg-subtle);font-size:13px}
 .pl-search{width:100%}
-.pl-head{display:grid;grid-template-columns:28px minmax(0,1fr) 230px 84px;gap:12px;padding:0 4px 6px;border-bottom:1px solid var(--border);font-size:11.5px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--fg-muted)}
-.pl-head span:last-child{text-align:right}
-.pl-tree{list-style:none;margin:0;padding:0;max-height:min(52vh,520px);max-height:min(52dvh,520px);overflow:auto}
-.pl-row{display:grid;grid-template-columns:28px minmax(0,1fr) 230px 84px;gap:12px;align-items:center;min-height:34px;padding:2px 4px;border-bottom:1px solid var(--border-muted)}
+/* One grid for the head and the rows: the box, the name, where the note is and the size. A folder has no place. */
+.pl-head,.pl-row{display:grid;grid-template-columns:28px minmax(0,1fr) 112px 76px;gap:12px;align-items:center;padding:0 4px}
+.pl-head{min-height:34px;border-bottom:1px solid var(--border)}
+.pl-all{font-size:13px;font-weight:500;color:var(--fg-muted);cursor:pointer;justify-self:start}
+.pl-col{font-size:11.5px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--fg-muted)}
+.pl-col:last-child{text-align:right}
+.pl-tree{list-style:none;margin:0;padding:0;max-height:min(52vh,520px);max-height:min(52dvh,520px);overflow:auto;overscroll-behavior:contain}
+.pl-row{min-height:34px;padding-block:2px;border-bottom:1px solid var(--border-muted)}
+.pl-row:hover{background:var(--bg-hover)}
 .pl-row.pl-focus{background:var(--accent-soft)}
 .pl-name{display:flex;align-items:center;gap:6px;min-width:0;padding-left:calc(var(--depth,0) * 18px)}
-.pl-open{display:inline-flex;align-items:center;gap:6px;min-width:0;min-height:30px;padding:2px 4px 2px 2px;border:0;border-radius:6px;background:none;color:var(--fg);font:inherit;text-align:left;cursor:pointer}
-.pl-open:hover:not(:disabled){background:var(--bg-hover)}
+.pl-open{display:inline-flex;align-items:center;gap:6px;min-width:0;min-height:30px;padding:2px 6px 2px 2px;border:0;border-radius:6px;background:none;color:var(--fg);font:inherit;font-weight:500;text-align:left;cursor:pointer}
+.pl-open:hover:not(:disabled){background:var(--bg-muted)}
 .pl-open:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
 .pl-open:disabled{cursor:default;color:var(--fg)}
 .pl-open .ic,.pl-file{width:16px;height:16px;flex:none;color:var(--fg-muted)}
-.pl-caret{flex:none;color:var(--fg-muted)}
-.pl-file{margin-left:14px}
-.pl-caret{width:0;height:0;border-left:5px solid currentColor;border-top:4px solid transparent;border-bottom:4px solid transparent;transition:transform .12s}
+.pl-file{margin-left:13px}
+.pl-caret{flex:none;width:0;height:0;color:var(--fg-muted);border-left:5px solid currentColor;border-top:4px solid transparent;border-bottom:4px solid transparent;transition:transform .12s}
 .pl-caret.on{transform:rotate(90deg)}
 .pl-open:disabled .pl-caret{visibility:hidden}
 .pl-title{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.pl-place{display:flex;align-items:center;gap:6px;min-width:0}
-.pl-place select.follow{color:var(--fg-muted)}
-.pl-place select{flex:1;min-width:0;height:28px;padding:0 6px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--fg);font:inherit;font-size:13px}
-.pl-mixed{flex:none;margin-left:4px;padding:1px 7px;border-radius:9px;font-size:11.5px;color:var(--warn);background:var(--warn-soft);white-space:nowrap}
-.pl-size{font-size:12.5px;color:var(--fg-muted);text-align:right;white-space:nowrap}
+.pl-place{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12.5px;color:var(--fg-muted)}
+.pl-size{font-size:12.5px;color:var(--fg-muted);text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
 .pl-empty{padding:12px 4px}
-.pl-ask{display:flex;flex-direction:column;gap:6px;padding:12px 14px;border:1px solid var(--border);border-radius:8px;background:var(--bg-subtle);font-size:13.5px}
+.pl-summary{margin:0;min-width:0;font-size:12.5px}
+/* The box of each row: a real checkbox; a folder's shows "−" when only part of the notes inside is marked. */
+.pl-check{display:inline-flex;align-items:center;justify-content:center;min-width:28px;min-height:28px;cursor:pointer}
+.pl-check input{width:16px;height:16px;margin:0;accent-color:var(--accent);cursor:pointer}
+.pl-check input:disabled{cursor:default}
+.pl-check input:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+/* The bar of the marked notes and the question before taking them: under the tree, held at the bottom while the list scrolls. */
+.pl-dock{position:sticky;bottom:0;z-index:1;display:flex;flex-direction:column;gap:8px;padding-top:8px;background:var(--bg)}
+.pl-bulk{gap:8px;padding:8px 8px 8px 14px}
+.pl-bulk strong{flex:1 1 auto;min-width:0}
+.pl-bulk-go{display:flex;flex-wrap:wrap;gap:6px}
+.pl-bulk-lead{display:none;font-size:12.5px;opacity:.8}
+.pl-bulk .btn:disabled{opacity:.45;cursor:not-allowed}
+.pl-bulk .btn:active:not(:disabled){transform:translateY(1px)}
+.pl-bulk .btn:focus-visible{outline:2px solid var(--bg);outline-offset:1px}
+.btn.pl-go{gap:.3em}
+.pl-ask{display:flex;flex-direction:column;gap:6px;padding:12px 14px;border:1px solid var(--border);border-radius:10px;background:var(--bg-subtle);font-size:13.5px;box-shadow:var(--shadow)}
 .pl-ask-act{display:flex;justify-content:flex-end;gap:8px;margin-top:4px}
 .pl-warn{color:var(--warn)}
+.pl-link{padding:0;border:0;background:none;color:var(--accent);font:inherit;text-decoration:underline;text-underline-offset:3px;cursor:pointer}
 .pl-progress{margin:0;padding:8px 12px;border-radius:8px;background:var(--accent-soft);font-size:13px}
 .pl-failed{display:flex;flex-direction:column;align-items:flex-start;gap:6px;margin:0;padding:10px 12px;border-radius:8px;background:var(--bad-soft);font-size:13px}
 .pl-failed ul{margin:0;padding-left:18px}
-.pl-summary{flex:1;min-width:0;font-size:12.5px}
 .pl-banner{display:flex;align-items:center;gap:10px;margin:0 0 12px;padding:8px 10px 8px 12px;border:1px solid var(--border);border-radius:8px;background:var(--warn-soft);font-size:13.5px}
 .pl-banner>.ic{width:18px;height:18px;flex:none;color:var(--warn)}
 .pl-banner>span{flex:1;min-width:0}
@@ -45,34 +62,28 @@
 .pl-choice .muted{font-size:12.5px}
 .pl-choice.off{cursor:default;opacity:.65}
 .pl-choice input{margin-top:3px}
-/* The phone: the place goes under the name, full width, with a target the finger hits. */
+/* "Levar para o" and the place read as one phrase: the space between them is a word space, not the button's gap. */
+.btn.pl-go{gap:.3em}
+/* The phone: the same tree and the same bar; the note's place goes under its name, and every target is one the finger hits. */
 @media (max-width:700px){
-  .pl-head{display:none}
-  .pl-row{grid-template-columns:auto minmax(0,1fr) auto;grid-template-areas:"check name size" ". place place";row-gap:4px;padding:6px 4px}
+  .pl-head,.pl-row{grid-template-columns:40px minmax(0,1fr) auto;column-gap:8px;padding:0}
+  .pl-head .pl-col-place{display:none}
+  .pl-row{grid-template-areas:"check name size" "check place size";padding-block:4px;min-height:44px}
   .pl-row>.pl-check{grid-area:check}
-  .pl-name{grid-area:name}
+  .pl-name{grid-area:name;padding-left:calc(var(--depth,0) * 12px)}
   .pl-size{grid-area:size}
-  .pl-place{grid-area:place;padding-left:calc(var(--depth,0) * 18px + 20px)}
-  .pl-place select{height:40px}
+  .pl-place{grid-area:place;padding-left:calc(var(--depth,0) * 12px + 32px);font-size:12px;line-height:1.3}
+  .pl-place:empty{display:none}
+  .pl-check{min-width:40px;min-height:40px}
   .pl-open{min-height:40px}
+  .pl-bulk{display:grid;grid-template-columns:minmax(0,1fr) auto;padding:8px 8px 10px 12px;row-gap:6px}
+  .pl-bulk-lead{display:block;grid-column:1/-1}
+  .pl-bulk-go{grid-column:1/-1;display:grid;grid-template-columns:repeat(3,minmax(0,1fr))}
+  .pl-bulk-clear{grid-row:1;grid-column:2}
+  .pl-bulk .btn{min-height:44px;justify-content:center}
+  .pl-go{padding:0 6px}
+  .pl-go-to{display:none}
+  .pl-ask-act .btn{min-height:44px;flex:1;justify-content:center}
   .pl-banner{flex-wrap:wrap}
   .pl-banner>.btn{height:36px}
-}
-/* The batch (the library's selection pattern): a box per row, "Marcar tudo" and the bar of what to do with what is checked. */
-.pl-select{display:flex;align-items:center;gap:10px;flex-wrap:wrap;min-height:36px}
-.pl-check{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-width:28px;min-height:28px;cursor:pointer}
-.pl-check input{width:16px;height:16px;margin:0;accent-color:var(--accent);cursor:pointer}
-.pl-check input:disabled{cursor:default}
-.pl-all{font-size:13px;color:var(--fg-muted)}
-.pl-bulk{flex:1;min-width:0}
-.pl-bulk .btn:disabled{opacity:.5;cursor:not-allowed}
-.pl-bulk .btn:active:not(:disabled){transform:translateY(1px)}
-.pl-bulk-lead{font-size:13px;opacity:.85}
-.pl-bulk-clear{margin-left:auto}
-.pl-link{padding:0;border:0;background:none;color:var(--accent);font:inherit;text-decoration:underline;text-underline-offset:3px;cursor:pointer}
-/* The batch on the phone (after the base rules, so it wins): targets the finger hits, the bar on its own line. */
-@media (max-width:700px){
-  .pl-check{min-width:44px;min-height:44px}
-  .pl-bulk{flex-basis:100%}
-  .pl-bulk .btn{min-height:44px}
 }

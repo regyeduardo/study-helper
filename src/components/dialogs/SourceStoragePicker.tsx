@@ -53,18 +53,18 @@ export function KeepLevelPicker({ level, onLevel, traceless, fileReason, childre
   )
 }
 
-interface SourceStoragePickerProps {
+interface SourceStoragePickerProps<Id extends string> {
   label: string
   sizeBytes: number
-  options: StorageOption[]
-  chosen: SourceStorage
-  onChoose(storage: SourceStorage): void
+  options: StorageOption<Id>[]
+  chosen: NoInfer<Id>
+  onChoose(storage: NoInfer<Id>): void
   litterboxTime: LitterboxTime
   onLitterboxTime(time: LitterboxTime): void
-  names?: Partial<Record<SourceStorage, { name: string; description: string }>>
+  names?: Partial<Record<NoInfer<Id>, { name: string; description: string }>>
 }
 
-export function SourceStoragePicker({ label, sizeBytes, options, chosen, onChoose, litterboxTime, onLitterboxTime, names = {} }: SourceStoragePickerProps) {
+export function SourceStoragePicker<Id extends string = SourceStorage>({ label, sizeBytes, options, chosen, onChoose, litterboxTime, onLitterboxTime, names = {} }: SourceStoragePickerProps<Id>) {
   return (
     <div className="field">
       <span className="lab">{label}</span>

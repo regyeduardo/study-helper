@@ -5,6 +5,15 @@ export function rootPlace(signedIn: boolean): Place {
   return signedIn ? 'drive' : 'local'
 }
 
+/**
+ * Where a new note is born when the person does not choose (spec 005, FR-006, R9): the App with the app structure on, the Google Drive
+ * for who signed in with Google, else Local. Never the folder's place: a folder has none.
+ */
+export function defaultPlace(account: { appOn: boolean; signedIn: boolean }): Place {
+  if (account.appOn) return 'app'
+  return account.signedIn ? 'drive' : 'local'
+}
+
 /** A folder's own choice, else the one of the folder above, up to the root. A loop in the data stops where it closes. */
 export function folderPlaceOf(folderId: string | null, folders: FolderMeta[], root: Place): Place {
   const byId = new Map(folders.map(folder => [folder.id, folder]))

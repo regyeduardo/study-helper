@@ -12,6 +12,8 @@ export interface ServerUser {
   deleteAt: string | null
   hasPassword: boolean
   hasGoogle: boolean
+  /** When the person's hierarchy was taken to the account (spec 005, R8); null or absent = still the way of before. */
+  hierarchyAt?: string | null
 }
 
 export interface ServerMe {

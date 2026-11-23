@@ -1,7 +1,8 @@
 import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
+import { matchPath } from 'react-router-dom'
 
-import type { AtaModelId, AtaPart, SourceStorage } from '@/types/domain'
+import type { AtaModelId, AtaPart } from '@/types/domain'
 import { AtaPartsFields, toggledPart } from '@/components/dialogs/AtaPartsDialog'
 import { Dialog } from '@/components/ui/Dialog'
 import { Icon } from '@/components/ui/Icon'
@@ -27,8 +28,8 @@ import { PART_ORDER } from '@/lib/generation/ata'
 import { paths } from '@/lib/paths'
 import { removeLocalMedia } from '@/lib/recording/media-library'
 import { mountMiniplayer } from '@/lib/recording/miniplayer'
-import { type AudioInput, CaptureCheck, type CaptureMode, type CheckStatus, COMPUTER_AUDIO_AUTO, COMPUTER_AUDIO_NONE, hears, listAudioInputs, type LiveCapture, playTestSound, SOUND_LEVEL, systemAudioNotice, type VideoFps, VOICE_LEVEL } from '@/lib/recording/recorder'
-import { defaultStorage, storageOptions } from '@/lib/storage/source-storage'
+import { type AudioInput, CaptureCheck, type RecordingDestination, type CaptureMode, type CheckStatus, COMPUTER_AUDIO_AUTO, COMPUTER_AUDIO_NONE, hears, listAudioInputs, type LiveCapture, playTestSound, SOUND_LEVEL, systemAudioNotice, type VideoFps, VOICE_LEVEL } from '@/lib/recording/recorder'
+import { defaultStorage, type StorageOption, storageOptions } from '@/lib/storage/source-storage'
 import { blocking } from '@/lib/blocking'
 import { working } from '@/lib/working'
 import { useAccountStore } from '@/stores/account'
@@ -108,13 +109,29 @@ function IntegrationSourceOptions({ windows, listing }: { windows: IntegrationWi
   )
 }
 
-function useDestination(place: SourceStorage | null): SourceStorage {
-  const driveAvailable = useAccountStore(state => state.active().kind === 'google')
-  return place ?? (driveAvailable ? 'drive' : 'none')
+/** The library folder open in the page when the recording starts (the dialog lives over it). */
+function openFolderId(): string | null {
+  const id = matchPath('/biblioteca/:folderId', window.location.pathname)?.params.folderId ?? null
+  return id && useLibraryStore.getState().folders.some(folder => folder.id === id && !folder.deletedAt) ? id : null
 }
 
-function ScreenAndPlace({ fps, onFps, place, onPlace }: { fps: VideoFps | null; onFps(fps: VideoFps | null): void; place: SourceStorage | null; onPlace(place: SourceStorage): void }) {
+/** Unchosen: the App with the structure on (owner's choice A, 23/11); a folder has no place, so the open folder never decides (spec 005, FR-018). */
+function useDestination(place: RecordingDestination | null): RecordingDestination {
   const driveAvailable = useAccountStore(state => state.active().kind === 'google')
+  const appOn = useLibraryStore(state => state.appOn)
+  return place ?? (appOn ? 'app' : driveAvailable ? 'drive' : 'none')
+}
+
+interface ScreenAndPlaceProps {
+  fps: VideoFps | null
+  onFps(fps: VideoFps | null): void
+  place: RecordingDestination | null
+  onPlace(place: RecordingDestination): void
+}
+
+function ScreenAndPlace({ fps, onFps, place, onPlace }: ScreenAndPlaceProps) {
+  const driveAvailable = useAccountStore(state => state.active().kind === 'google')
+  const appOn = useLibraryStore(state => state.appOn)
   const destination = useDestination(place)
   return (
     <div className="row2">
@@ -156,6 +173,15 @@ function ScreenAndPlace({ fps, onFps, place, onPlace }: { fps: VideoFps | null; 
               <span>{driveAvailable ? 'Também vai para o seu Drive. Dá para trocar no fim.' : 'Entre com o Google para guardar no Drive.'}</span>
             </span>
           </button>
+          {appOn && (
+            <button className="opt" role="radio" aria-checked={destination === 'app'} onClick={() => onPlace('app')}>
+              <span className="radio" />
+              <span>
+                <b>App</b>
+                <span>A nota e a mídia ficam no App. Dá para trocar no fim.</span>
+              </span>
+            </button>
+          )}
         </div>
       </div>
     </div>
@@ -272,7 +298,8 @@ function IntegrationRecord() {
   const [microphoneId, setMicrophoneId] = useState('')
   const [capture, setCapture] = useState<IntegrationCapture | null>(null)
   const [fps, setFps] = useState<VideoFps | null>(null)
-  const [place, setPlace] = useState<SourceStorage | null>(null)
+  const [place, setPlace] = useState<RecordingDestination | null>(null)
+  const [folderId] = useState(openFolderId)
   const destination = useDestination(place)
   const [error, setError] = useState<string | null>(null)
   const handed = useRef(false)
@@ -336,7 +363,7 @@ function IntegrationRecord() {
     await blocking('Começando a gravar…', async () => {
       handed.current = true
       try {
-        await startIntegration(capture, { microphoneOn, microphoneId: microphoneId || null, video: fps ? { fps } : null, destination })
+        await startIntegration(capture, { microphoneOn, microphoneId: microphoneId || null, video: fps ? { fps } : null, destination, folderId })
         ui.close()
       } catch (failure) {
         handed.current = false
@@ -417,7 +444,8 @@ export function RecordDialog() {
   const [microphoneOn, setMicrophoneOn] = useState(true)
   const [microphoneId, setMicrophoneId] = useState('')
   const [fps, setFps] = useState<VideoFps | null>(null)
-  const [place, setPlace] = useState<SourceStorage | null>(null)
+  const [place, setPlace] = useState<RecordingDestination | null>(null)
+  const [folderId] = useState(openFolderId)
   const [inputs, setInputs] = useState<AudioInput[]>([])
   const [error, setError] = useState<string | null>(null)
   const [allowed, setAllowed] = useState(false)
@@ -487,7 +515,7 @@ export function RecordDialog() {
       const display = check.current?.handDisplay() ?? null
       await check.current?.stop()
       try {
-        await recorder.start(mode, computerAudio, { microphoneOn, microphoneId: microphoneId || null, video: fps ? { fps } : null, destination, ...(display ? { display } : {}) })
+        await recorder.start(mode, computerAudio, { microphoneOn, microphoneId: microphoneId || null, video: fps ? { fps } : null, destination, folderId, ...(display ? { display } : {}) })
         ui.close()
       } catch (failure) {
         setError(failure instanceof Error && failure.name === 'NotAllowedError' ? 'Você não deu permissão para gravar.' : failure instanceof Error ? failure.message : 'Não deu para começar a gravar.')
@@ -853,15 +881,20 @@ function RecordingDoneOptions({ place }: { place: 'dialog' | 'window' }) {
   // the Ata of a video goes step by step or all in one call; the other notes choose what the AI analyzes
   const analysis = useMediaAnalysis(writer, Boolean(writer) && isVideo, null, { ata: goal === 'meeting' && isVideo })
   const [discarding, setDiscarding] = useState(false)
-  const [folderId, setFolderId] = useState<string | null>(null)
-  const [storage, setStorage] = useState<SourceStorage | null>(null)
+  // unchosen: the folder open when the recording started
+  const [pickedFolder, setFolderId] = useState<string | null | undefined>(undefined)
+  const [storage, setStorage] = useState<RecordingDestination | null>(null)
+  const appOn = useLibraryStore(state => state.appOn)
   const [litterboxTime, setLitterboxTime] = useState<LitterboxTime>('72h')
   if (!result) return null
   const driveAvailable = account.kind === 'google'
   const room = usage && limit ? limit - usage.appBytes : null
-  const options = storageOptions(result.file.size, driveAvailable, room)
+  const folderId = pickedFolder === undefined ? (result.folderId ?? null) : pickedFolder
+  const media = storageOptions(result.file.size, driveAvailable, room)
+  const app: StorageOption<RecordingDestination> = { id: 'app', name: 'App', description: 'A nota e a mídia ficam no App.', fits: true, enabled: true, thirdParty: false }
+  const options: StorageOption<RecordingDestination>[] = appOn ? [...media.slice(0, 1), app, ...media.slice(1)] : media
   const preferred = storage ?? result.destination ?? null
-  const chosen: SourceStorage = preferred && options.some(option => option.id === preferred && option.fits && option.enabled) ? preferred : defaultStorage(driveAvailable, options)
+  const chosen: RecordingDestination = preferred && options.some(option => option.id === preferred && option.fits && option.enabled) ? preferred : appOn ? 'app' : defaultStorage(driveAvailable, media)
   const later = () => {
     clearResult()
     toast('A gravação ficou salva em Mídias')
@@ -876,6 +909,7 @@ function RecordingDoneOptions({ place }: { place: 'dialog' | 'window' }) {
     const { file, storedName, marks, durationSeconds } = result
     clearResult()
     setStorage(null)
+    setFolderId(undefined)
     const transcribing = goal === 'transcribe'
     // the note transcribes the recording first when it needs the text, so the recording is saved without transcribing by itself
     const write: RecordingWrite | undefined = writer
@@ -888,7 +922,7 @@ function RecordingDoneOptions({ place }: { place: 'dialog' | 'window' }) {
         }
       : undefined
     // the window closes at once and saving takes several writes: a line in the tasks says it is saving until the note opens
-    void working('Salvando a gravação…', async () => openNote(await saveRecording({ file, storedName, durationSeconds, folderId, storage: chosen, litterboxTime, marks: marks ?? [], transcribe: transcribing, ...(transcribing && heardBy.model ? { transcriptionModel: heardBy.model } : {}), ...(write ? { write } : {}) })), {
+    void working('Salvando a gravação…', async () => openNote(await saveRecording({ file, storedName, durationSeconds, folderId, storage: chosen === 'app' ? 'drive' : chosen, ...(chosen === 'app' || chosen === 'drive' ? { place: chosen } : {}), litterboxTime, marks: marks ?? [], transcribe: transcribing, ...(transcribing && heardBy.model ? { transcriptionModel: heardBy.model } : {}), ...(write ? { write } : {}) })), {
       message: 'Guardando a gravação',
     })
   }

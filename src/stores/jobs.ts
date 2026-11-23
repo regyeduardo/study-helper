@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 
-import type { AiSettings, AiStep, AiUse, Artifact, AtaModelId, AtaPart, AtaStepModels, CourseAnalysis, FileMeta, FileType, FolderMeta, GenerationChoice, GenerationMeta, MediaAnalysis, MeetingDocument, RecordingData, RecordingMark, SourceMeta, SourceStorage, StageTime, StoredQuestion } from '@/types/domain'
+import type { AiSettings, AiStep, AiUse, Artifact, AtaModelId, AtaPart, AtaStepModels, CourseAnalysis, FileMeta, FileType, FolderMeta, GenerationChoice, GenerationMeta, MediaAnalysis, MeetingDocument, Place, RecordingData, RecordingMark, SourceMeta, SourceStorage, StageTime, StoredQuestion } from '@/types/domain'
 import { Cancelled } from '@/controllers/ai.controller'
 import type { LitterboxTime } from '@/controllers/hosting.controller'
 import { youtubeId, youtubeTitle } from '@/controllers/sources.controller'
@@ -36,6 +36,7 @@ import { sourceKey } from '@/lib/entry-migration'
 import { isSourceNote, isYoutube, mediaOf, type NoteMedia, readsAsTranscript, recordingName, sourceTypeOf } from '@/lib/file-types'
 import { entryOfSource, entryOriginOf, keptInNote, linkIn, noteSourceOf } from '@/lib/note-source'
 import { cannotWatch, youtubeParts } from '@/lib/generation/youtube-video'
+import { folderPlaceOf } from '@/lib/storage/place'
 import { downloadStoredSource, sourceExpired, storeSource } from '@/lib/storage/source-storage'
 import { keepLocalMedia, linkLocalMedia, listLocalMedia, readLocalMedia } from '@/lib/recording/media-library'
 import { transcribe } from '@/lib/transcription'
@@ -134,6 +135,8 @@ export interface SaveRecordingRequest {
   durationSeconds: number
   folderId: string | null
   storage: SourceStorage
+  /** Where the person wants the note and its media (App or Google Drive); it becomes the note's own place only when the folder is elsewhere. */
+  place?: Place
   litterboxTime: LitterboxTime
   marks: RecordingMark[]
   transcribe: boolean
@@ -981,7 +984,8 @@ export const useJobsStore = create<JobsState>((set, get) => {
       const { file } = request
       const origin: SourceMeta = { input: 'recording', name: file.name, sizeBytes: file.size, mime: file.type || 'application/octet-stream', durationSeconds: request.durationSeconds, storage: 'none' }
       // the recording is a media note (Vídeo or Áudio): the transcription and what is generated from it live under it
-      const meta = await library().createFile({ name: recordingName(file.name), kept: 'registro', type: sourceTypeOf(origin), description: '', folderId: request.folderId, status: 'ready', pendingExcerpt: null, origin }, '')
+      const own = request.place && request.place !== folderPlaceOf(request.folderId, library().folders, 'drive') ? { place: request.place } : {}
+      const meta = await library().createFile({ name: recordingName(file.name), kept: 'registro', type: sourceTypeOf(origin), description: '', folderId: request.folderId, status: 'ready', pendingExcerpt: null, origin, ...own }, '')
       if (request.marks.length) await library().updateSidecar(meta.id, sidecar => ({ ...sidecar, recording: { blocks: [], speakers: [], marks: request.marks } }))
       if (request.storedName)
         await linkLocalMedia(request.storedName, meta.id).then(
@@ -990,7 +994,7 @@ export const useJobsStore = create<JobsState>((set, get) => {
         )
       if (request.storage !== 'none') {
         // the upload has no progress to tell: the window holds the app with a bar without a number until it ends
-        void blocking(request.storage === 'drive' ? 'Guardando a mídia no Drive…' : 'Guardando a mídia…', () =>
+        void blocking(request.storage !== 'drive' ? 'Guardando a mídia…' : request.place === 'app' ? 'Guardando a mídia no App…' : 'Guardando a mídia no Drive…', () =>
           storeSource(file, request.storage, meta.id, library().repo!, request.litterboxTime).then(stored => library().updateFile(meta.id, { origin: { ...origin, ...stored } as SourceMeta, kept: 'arquivo' })),
         ).catch(error => get().trackTask(`Guardar a mídia: ${meta.name}`).fail(failureText(error)))
       }

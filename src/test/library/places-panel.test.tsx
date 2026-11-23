@@ -1,4 +1,5 @@
-// História 9 (spec 003, FR-052 a FR-055, opção A): "Locais", em Configurações › Armazenamento (antes a janela "Onde fica cada coisa").
+// "Locais", em Configurações › Armazenamento: spec 003 (história 9, FR-052 a FR-055) com a opção E da spec 005 (história 3): só a nota tem lugar,
+// a pasta marca as notas de dentro e a barra leva as marcadas.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import 'fake-indexeddb/auto'
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
@@ -28,9 +29,9 @@ function google(id: string): Account {
 async function seed() {
   await library().connect(account, token)
   trabalho = await library().createFolder({ name: 'Trabalho' })
-  aurora = await library().createFolder({ name: 'Projeto Aurora — Reuniões semanais com o fornecedor', parentId: trabalho.id, place: 'local' })
-  await library().createFile({ name: 'Reunião de kickoff', type: 'class', folderId: aurora.id }, 'fala')
-  await library().createFile({ name: 'Ata do kickoff', type: 'meeting', folderId: aurora.id }, 'ata')
+  aurora = await library().createFolder({ name: 'Projeto Aurora — Reuniões semanais com o fornecedor', parentId: trabalho.id })
+  await library().createFile({ name: 'Reunião de kickoff', type: 'class', folderId: aurora.id, place: 'local' }, 'fala')
+  await library().createFile({ name: 'Ata do kickoff', type: 'meeting', folderId: aurora.id, place: 'local' }, 'ata')
   const faculdade = await library().createFolder({ name: 'Faculdade' })
   await library().createFile({ name: 'Lista de exercícios 3', type: 'class', folderId: faculdade.id }, 'lista')
 }
@@ -38,7 +39,9 @@ async function seed() {
 const open = () => render(<MemoryRouter><PlacesPanel /></MemoryRouter>)
 const tree = () => screen.getByRole('tree', { name: 'Biblioteca inteira' })
 const row = (name: string | RegExp) => within(tree()).getByRole('treeitem', { name })
-const placeOf = (name: string | RegExp) => within(row(name)).getByRole('combobox') as HTMLSelectElement
+const bar = () => screen.getByRole('toolbar', { name: 'Notas marcadas' })
+const mark = (name: string | RegExp) => fireEvent.click(within(row(name)).getByRole('checkbox'))
+const sideOf = (name: string) => (library().repo as CombinedRepository).sideOf(library().files.find(file => file.name === name)!.id)
 
 beforeEach(async () => {
   installMemoryStorage()
@@ -70,8 +73,8 @@ describe('onde fica', () => {
   })
 })
 
-describe('a hierarquia inteira, com o lugar de cada item', () => {
-  it('mostra pastas, subpastas e notas; sem escolha própria, "Segue" a pasta de cima', async () => {
+describe('a hierarquia inteira, com o lugar de cada nota', () => {
+  it('mostra pastas, subpastas e notas; cada nota diz onde fica, a pasta não; nenhum seletor por linha', async () => {
     await seed()
     open()
     expect(row('Trabalho')).toBeInTheDocument()
@@ -79,25 +82,24 @@ describe('a hierarquia inteira, com o lugar de cada item', () => {
     // the first level opens by itself; a deeper folder opens on its arrow
     expect(within(tree()).queryByRole('treeitem', { name: 'Reunião de kickoff' })).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: /^Abrir Projeto Aurora/ }))
-    expect(row('Reunião de kickoff')).toBeInTheDocument()
-    expect(row('Lista de exercícios 3')).toBeInTheDocument()
-    expect(placeOf('Trabalho').selectedOptions[0].textContent).toBe('Segue: Google Drive')
-    expect(placeOf(/Projeto Aurora/).value).toBe('local')
-    expect(placeOf('Reunião de kickoff').selectedOptions[0].textContent).toBe('Segue: Local')
+    expect(row('Reunião de kickoff')).toHaveTextContent('Local')
+    expect(row('Lista de exercícios 3')).toHaveTextContent('Google Drive')
+    expect(row('Trabalho')).not.toHaveTextContent(/Google Drive|Local|App/)
+    expect(within(tree()).queryAllByRole('combobox')).toEqual([])
   })
 
-  it('a pasta com itens em lugares diferentes fica marcada', async () => {
+  it('a pasta com notas em lugares diferentes não ganha marca nem lugar', async () => {
     await seed()
     open()
-    expect(within(row('Trabalho')).getByText('2 lugares')).toBeInTheDocument()
-    expect(within(row('Faculdade')).queryByText('2 lugares')).not.toBeInTheDocument()
+    expect(screen.queryByText('2 lugares')).not.toBeInTheDocument()
+    expect(screen.queryByText(/^Segue/)).not.toBeInTheDocument()
   })
 
   it('App aparece desligado, com o caminho para liberar', async () => {
     await seed()
     open()
-    const app = within(placeOf('Faculdade')).getByRole('option', { name: 'App · liberar com um código' }) as HTMLOptionElement
-    expect(app.disabled).toBe(true)
+    mark('Faculdade')
+    expect(within(bar()).getByRole('button', { name: 'Levar para o App (liberar com um código)' })).toBeDisabled()
   })
 
   it('o rodapé diz quantas notas, e quantas estão no Drive e só neste navegador', async () => {
@@ -120,46 +122,51 @@ describe('mudar o lugar', () => {
   it('pergunta antes, com quantas notas e quanto espaço, e o aviso de Local; "Cancelar" não muda nada', async () => {
     await seed()
     open()
-    fireEvent.change(placeOf('Faculdade'), { target: { value: 'local' } })
-    const ask = screen.getByRole('alertdialog', { name: 'Levar Faculdade para Local' })
+    mark('Faculdade')
+    fireEvent.click(within(bar()).getByRole('button', { name: 'Levar para Local' }))
+    const ask = screen.getByRole('alertdialog', { name: 'Levar “Lista de exercícios 3” para Local' })
     expect(ask).toHaveTextContent('Vão 1 nota e')
     expect(ask).toHaveTextContent('limpar os dados do navegador apaga')
     fireEvent.click(within(ask).getByRole('button', { name: 'Cancelar' }))
     expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
-    expect(library().folders.find(folder => folder.name === 'Faculdade')?.place).toBeUndefined()
+    expect(sideOf('Lista de exercícios 3')).toBe('drive')
   })
 
   it('escolhendo App, a pergunta fala do App (e não do Google Drive)', async () => {
     await seed()
     useLibraryStore.setState({ appOn: true } as never)
     open()
-    fireEvent.change(placeOf('Faculdade'), { target: { value: 'app' } })
-    const ask = screen.getByRole('alertdialog', { name: 'Levar Faculdade para o App' })
+    mark('Faculdade')
+    fireEvent.click(within(bar()).getByRole('button', { name: 'Levar para o App' }))
+    const ask = screen.getByRole('alertdialog', { name: 'Levar “Lista de exercícios 3” para o App' })
     expect(ask).toHaveTextContent('sua conta do Estudo')
     expect(ask).not.toHaveTextContent('Google Drive')
     expect(within(ask).getByRole('button', { name: 'Levar para o App' })).toBeInTheDocument()
   })
 
-  it('"Levar para Local" leva a pasta e a nota dela de verdade: depois, a nota está só neste navegador', async () => {
+  it('"Levar para Local" leva a nota de verdade: depois, ela está só neste navegador e a linha diz Local', async () => {
     await seed()
     open()
-    fireEvent.change(placeOf('Faculdade'), { target: { value: 'local' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Levar para Local' }))
+    mark('Faculdade')
+    fireEvent.click(within(bar()).getByRole('button', { name: 'Levar para Local' }))
+    fireEvent.click(within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Levar para Local' }))
     const lista = () => library().files.find(file => file.name === 'Lista de exercícios 3')!
-    await waitFor(() => expect((library().repo as CombinedRepository).sideOf(lista().id)).toBe('local'))
-    await waitFor(() => expect(placeOf('Faculdade').value).toBe('local'))
+    await waitFor(() => expect(sideOf('Lista de exercícios 3')).toBe('local'))
+    await waitFor(() => expect(row('Lista de exercícios 3')).toHaveTextContent('Local'))
     expect(await library().openFile(lista().id).then(opened => opened.content)).toBe('lista')
   })
 
-  it('voltar a "Segue" leva de volta para o lugar da pasta de cima', async () => {
+  it('levar as notas de uma pasta de volta para o Google Drive não muda a pasta', async () => {
     await seed()
     open()
-    fireEvent.change(placeOf(/Projeto Aurora/), { target: { value: 'segue' } })
-    expect(screen.getByRole('alertdialog')).toHaveTextContent('para o Google Drive')
-    fireEvent.click(screen.getByRole('button', { name: 'Levar para o Google Drive' }))
-    const kickoff = () => library().files.find(file => file.name === 'Reunião de kickoff')!
-    await waitFor(() => expect((library().repo as CombinedRepository).sideOf(kickoff().id)).toBe('drive'))
-    expect(library().folders.find(folder => folder.id === aurora.id)?.place).toBeUndefined()
+    mark(/Projeto Aurora/)
+    fireEvent.click(within(bar()).getByRole('button', { name: 'Levar para o Google Drive' }))
+    const ask = screen.getByRole('alertdialog', { name: 'Levar 2 notas para o Google Drive' })
+    expect(ask).toHaveTextContent('Vão 2 notas e')
+    fireEvent.click(within(ask).getByRole('button', { name: 'Levar para o Google Drive' }))
+    await waitFor(() => expect(sideOf('Reunião de kickoff')).toBe('drive'))
+    await waitFor(() => expect(sideOf('Ata do kickoff')).toBe('drive'))
+    expect(library().folders.find(folder => folder.id === aurora.id)).toMatchObject({ name: aurora.name, parentId: trabalho.id, position: aurora.position })
   })
 })
 
@@ -168,10 +175,13 @@ describe('sem login', () => {
     useAccountStore.setState({ activeId: LOCAL_ACCOUNT.id })
     await library().connect('local')
     const folder = await library().createFolder({ name: `Rascunhos ${account}` })
+    await library().createFile({ name: `Ideia ${account}`, type: 'class', folderId: folder.id }, 'ideia')
     open()
     expect(screen.getByText(/Sem login, tudo fica em Local/)).toBeInTheDocument()
-    expect(placeOf(folder.name).selectedOptions[0].textContent).toBe('Segue: Local')
-    fireEvent.change(placeOf(folder.name), { target: { value: 'drive' } })
+    expect(row(`Ideia ${account}`)).toHaveTextContent('Local')
+    mark(folder.name)
+    expect(within(bar()).getByRole('button', { name: /^Levar para Local/ })).toBeDisabled()
+    fireEvent.click(within(bar()).getByRole('button', { name: 'Levar para o Google Drive' }))
     const ask = screen.getByRole('alertdialog', { name: 'Entrar para usar o Google Drive' })
     fireEvent.click(within(ask).getByRole('button', { name: 'Entrar com o Google' }))
     expect(useUiStore.getState().overlay).toEqual({ kind: 'account' })
@@ -179,45 +189,47 @@ describe('sem login', () => {
 })
 
 describe('mudar o lugar em lote', () => {
-  const bar = () => screen.getByRole('toolbar', { name: 'Marcados' })
-  const mark = (name: string | RegExp) => fireEvent.click(within(row(name)).getByRole('checkbox'))
-
-  it('marca várias, diz quantas, e leva todas de uma vez com uma pergunta só (somando o lote)', async () => {
+  it('marca várias pastas, diz quantas notas, e leva só as que estão em outro lugar com uma pergunta só', async () => {
     await seed()
     useLibraryStore.setState({ appOn: false } as never)
     open()
-    expect(screen.queryByRole('toolbar', { name: 'Marcados' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('toolbar', { name: 'Notas marcadas' })).not.toBeInTheDocument()
     mark('Faculdade')
     mark('Trabalho')
-    expect(bar()).toHaveTextContent('2 marcados')
+    expect(bar()).toHaveTextContent('3 notas marcadas')
     fireEvent.click(within(bar()).getByRole('button', { name: 'Levar para Local' }))
-    const ask = screen.getByRole('alertdialog', { name: 'Levar 2 itens para Local' })
-    // Trabalho já tem a subpasta em Local: do lote, só a nota de Faculdade muda de lugar
+    // as 2 notas de Trabalho já estão em Local: do lote, só a de Faculdade muda de lugar
+    const ask = screen.getByRole('alertdialog', { name: 'Levar “Lista de exercícios 3” para Local' })
     expect(ask).toHaveTextContent('Vão 1 nota e')
+    expect(ask).toHaveTextContent('2 já estão em Local')
     expect(ask).toHaveTextContent('limpar os dados do navegador apaga')
     fireEvent.click(within(ask).getByRole('button', { name: 'Levar para Local' }))
-    const lista = () => library().files.find(file => file.name === 'Lista de exercícios 3')!
-    await waitFor(() => expect((library().repo as CombinedRepository).sideOf(lista().id)).toBe('local'))
-    await waitFor(() => expect(placeOf('Trabalho').value).toBe('local'))
-    expect(placeOf('Faculdade').value).toBe('local')
+    await waitFor(() => expect(sideOf('Lista de exercícios 3')).toBe('local'))
     // depois de levar, nada fica marcado
-    expect(screen.queryByRole('toolbar', { name: 'Marcados' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('toolbar', { name: 'Notas marcadas' })).not.toBeInTheDocument()
   })
 
-  it('"Marcar tudo" marca o que está na lista, inclusive com busca; "Limpar" desmarca', async () => {
+  it('"Marcar tudo" marca todas as notas, até as das pastas fechadas', async () => {
+    await seed()
+    open()
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Marcar tudo' }))
+    expect(bar()).toHaveTextContent('3 notas marcadas')
+    expect(within(row('Trabalho')).getByRole('checkbox')).toBeChecked()
+  })
+
+  it('"Marcar tudo" com busca marca só as notas que ela achou; "Limpar" desmarca', async () => {
     await seed()
     useLibraryStore.setState({ appOn: false } as never)
     open()
     fireEvent.change(screen.getByRole('searchbox', { name: 'Buscar pasta ou nota' }), { target: { value: 'kickoff' } })
     fireEvent.click(screen.getByRole('checkbox', { name: 'Marcar tudo' }))
-    const visible = within(tree()).getAllByRole('treeitem').length
-    expect(bar()).toHaveTextContent(`${visible} marcados`)
+    expect(bar()).toHaveTextContent('2 notas marcadas')
     fireEvent.click(within(bar()).getByRole('button', { name: 'Limpar' }))
-    expect(screen.queryByRole('toolbar', { name: 'Marcados' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('toolbar', { name: 'Notas marcadas' })).not.toBeInTheDocument()
     expect(screen.getByRole('checkbox', { name: 'Marcar tudo' })).not.toBeChecked()
   })
 
-  it('App só fica disponível com a estrutura do app ligada, como no seletor de cada linha', async () => {
+  it('App só fica disponível com a estrutura do app ligada', async () => {
     await seed()
     useLibraryStore.setState({ appOn: false } as never)
     open()
@@ -226,7 +238,7 @@ describe('mudar o lugar em lote', () => {
     useLibraryStore.setState({ appOn: true } as never)
     await waitFor(() => expect(within(bar()).getByRole('button', { name: 'Levar para o App' })).toBeEnabled())
     fireEvent.click(within(bar()).getByRole('button', { name: 'Levar para o App' }))
-    expect(screen.getByRole('alertdialog', { name: 'Levar Faculdade para o App' })).toHaveTextContent('sua conta do Estudo')
+    expect(screen.getByRole('alertdialog', { name: 'Levar “Lista de exercícios 3” para o App' })).toHaveTextContent('sua conta do Estudo')
     useLibraryStore.setState({ appOn: false } as never)
   })
 })
@@ -236,14 +248,14 @@ describe('mudar o lugar em lote · revisão de design', () => {
     await seed()
     useLibraryStore.setState({ appOn: false } as never)
     open()
-    fireEvent.click(within(row('Faculdade')).getByRole('checkbox'))
-    const bar = screen.getByRole('toolbar', { name: 'Marcados' })
-    fireEvent.click(within(bar).getByRole('button', { name: 'Levar para Local' }))
+    mark('Faculdade')
+    mark('Trabalho')
+    fireEvent.click(within(bar()).getByRole('button', { name: 'Levar para Local' }))
     expect(screen.getByRole('alertdialog')).toBeInTheDocument()
-    expect(within(bar).getByRole('button', { name: 'Levar para Local' })).toBeDisabled()
-    expect(within(bar).getByRole('button', { name: 'Levar para o Google Drive' })).toBeDisabled()
+    expect(within(bar()).getByRole('button', { name: 'Levar para Local' })).toBeDisabled()
+    expect(within(bar()).getByRole('button', { name: 'Levar para o Google Drive' })).toBeDisabled()
     fireEvent.click(within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Cancelar' }))
-    expect(within(bar).getByRole('button', { name: 'Levar para Local' })).toBeEnabled()
+    expect(within(bar()).getByRole('button', { name: 'Levar para Local' })).toBeEnabled()
   })
 })
 
@@ -252,19 +264,19 @@ describe('mudar o lugar em lote · acessibilidade', () => {
     await seed()
     useLibraryStore.setState({ appOn: false } as never)
     open()
-    fireEvent.click(within(row('Faculdade')).getByRole('checkbox'))
-    const bar = screen.getByRole('toolbar', { name: 'Marcados' })
-    expect(within(bar).getByText('1 marcado')).toHaveAttribute('aria-live', 'polite')
-    const drive = within(bar).getByRole('button', { name: 'Levar para o Google Drive' })
+    mark('Faculdade')
+    mark('Trabalho')
+    expect(within(bar()).getByText(/^3 notas marcadas · /)).toHaveAttribute('aria-live', 'polite')
+    const drive = within(bar()).getByRole('button', { name: 'Levar para o Google Drive' })
     drive.focus()
     fireEvent.keyDown(drive, { key: 'ArrowRight' })
-    expect(within(bar).getByRole('button', { name: 'Levar para Local' })).toHaveFocus()
-    // o App desabilitado é pulado; End vai para o último que dá para usar
+    expect(within(bar()).getByRole('button', { name: 'Levar para Local' })).toHaveFocus()
+    // o App desabilitado é pulado; End vai para o último que dá para usar, Home para o primeiro
     fireEvent.keyDown(document.activeElement!, { key: 'End' })
-    expect(within(bar).getByRole('button', { name: 'Limpar' })).toHaveFocus()
+    expect(within(bar()).getByRole('button', { name: 'Limpar' })).toHaveFocus()
     fireEvent.keyDown(document.activeElement!, { key: 'Home' })
     expect(drive).toHaveFocus()
-    fireEvent.click(within(bar).getByRole('button', { name: 'Limpar' }))
+    fireEvent.click(within(bar()).getByRole('button', { name: 'Limpar' }))
     expect(screen.getByRole('checkbox', { name: 'Marcar tudo' })).toHaveFocus()
   })
 })

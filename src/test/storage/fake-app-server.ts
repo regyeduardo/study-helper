@@ -1,6 +1,7 @@
 /**
  * An in-memory Estudo backend for the App storage tests (spec 003, entrega 4): the library map, the parts in versions, the index and
  * the uploads, as contracts/api-biblioteca.md and api-arquivos.md say, with the English names of data-model.md "Entrega 4".
+ * Spec 005 (contracts/api-hierarquia.md): the map needs only a session; a folder has no place; a note in the App needs the structure.
  */
 export const API = 'https://api.example.test'
 
@@ -32,8 +33,9 @@ interface Upload {
   status: 'open' | 'completed' | 'abandoned'
 }
 
-const SERVER_OWNED = ['parts', 'media', 'noteBytes', 'mediaBytes', 'rev', 'seq', 'removedAt']
+const SERVER_OWNED = ['parts', 'media', 'noteBytes', 'mediaBytes', 'rev', 'seq', 'removedAt', 'placeOwn']
 const MiB = 1024 * 1024
+const BACKUP_LIMIT = 4 * MiB
 
 export class FakeAppServer {
   seq = 0
@@ -49,7 +51,19 @@ export class FakeAppServer {
   dropParts = new Set<number>()
   /** Part numbers whose PUTs keep failing (the connection stays down) until taken out. */
   downParts = new Set<number>()
-  calls: { method: string; path: string }[] = []
+  calls: { method: string; path: string; query: string }[] = []
+  /** A session on the server (spec 005: the map needs only this). */
+  signedIn = true
+  /** "Usar a estrutura do app" on, for an account freed by a code: the App's content needs it. */
+  appEnabled = true
+  /** When the account's hierarchy was taken to the map (null = still the way of before). */
+  hierarchyAt: string | null = null
+  /** Whether `POST /v1/auth/google/token` opens a session (off: the route is not there, as before spec 005). */
+  acceptGoogle = false
+  googleTokens: string[] = []
+  backup: { id: string; snapshot: unknown; folders: number; files: number } | null = null
+  /** Makes every call fail as a dropped connection (the server is out). */
+  offline = false
   private versions = 0
 
   private nextVersion(): string {
@@ -85,15 +99,55 @@ export class FakeAppServer {
     const url = new URL(String(input))
     const method = (init.method ?? 'GET').toUpperCase()
     const path = url.pathname
-    this.calls.push({ method, path })
+    this.calls.push({ method, path, query: url.search })
+    if (this.offline) throw new TypeError('Failed to fetch')
     const headers = new Headers(init.headers)
     const json = (status: number, body: unknown, extra: Record<string, string> = {}) =>
       new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json', ...extra } })
     const body = async () => JSON.parse(String(init.body ?? '{}')) as Record<string, unknown>
     if (method !== 'GET' && method !== 'HEAD' && headers.get('X-Estudo') !== '1') return json(403, { error: 'origin_refused' })
 
+    if (path === '/v1/auth/google/token' && method === 'POST' && this.acceptGoogle) {
+      const { accessToken } = (await body()) as { accessToken?: string }
+      if (!accessToken) return json(401, { error: 'google_refused' })
+      this.googleTokens.push(accessToken)
+      this.signedIn = true
+      return json(200, { ok: true })
+    }
+
+    if (!this.signedIn) return json(401, { error: 'no_session' })
+
     if (path === '/v1/me') {
-      return json(200, { user: { id: 'u1', status: 'enabled', appEnabled: true }, requireCode: true, device: { id: 'd1', name: 'Teste' }, space: { notes: this.notesBytes(), media: this.mediaBytes, reserved: this.reserved, limit: this.limit, warnAt: 0.9 } })
+      return json(200, {
+        user: { id: 'u1', email: 'ana@example.com', status: 'enabled', appEnabled: this.appEnabled, hierarchyAt: this.hierarchyAt },
+        requireCode: true,
+        device: { id: 'd1', name: 'Teste' },
+        space: { notes: this.notesBytes(), media: this.mediaBytes, reserved: this.reserved, limit: this.limit, warnAt: 0.9 },
+      })
+    }
+
+    if (path === '/v1/library/hierarchy/backup' && method === 'POST') {
+      const text = String(init.body ?? '{}')
+      if (text.length > BACKUP_LIMIT) return json(413, { error: 'too_large' })
+      if (this.backup && !this.hierarchyAt) return json(200, { id: this.backup.id, folders: this.backup.folders, files: this.backup.files })
+      const { snapshot } = JSON.parse(text) as { snapshot: { folders?: unknown[]; files?: unknown[] } }
+      this.backup = { id: `b${Date.now().toString(36)}`, snapshot, folders: snapshot.folders?.length ?? 0, files: snapshot.files?.length ?? 0 }
+      return json(201, { id: this.backup.id, folders: this.backup.folders, files: this.backup.files })
+    }
+
+    if (path === '/v1/library/hierarchy/done' && method === 'POST') {
+      if (this.hierarchyAt) return json(200, { hierarchyAt: this.hierarchyAt })
+      const sent = (await body()) as { backupId: string; folders: number; files: number }
+      const live = [...this.rows.values()].filter(row => !row.removedAt)
+      const counted = { folders: live.filter(row => row.itemKind === 'folder').length, files: live.filter(row => row.itemKind === 'file').length }
+      if (counted.folders !== sent.folders || counted.files !== sent.files) return json(409, { error: 'count_mismatch', ...counted })
+      this.hierarchyAt = new Date().toISOString()
+      return json(200, { hierarchyAt: this.hierarchyAt })
+    }
+
+    // the App's content (parts, uploads, media, index) needs the structure on; the map needs only the session
+    if (!this.appEnabled && (/^\/v1\/library\/items\/[^/]+\/parts\//.test(path) || path === '/v1/library/parts/batch' || path === '/v1/library/index' || path.startsWith('/v1/uploads') || path.startsWith('/v1/media/'))) {
+      return json(403, { error: 'app_disabled' })
     }
 
     if (path === '/v1/library/map' && method === 'GET') {
@@ -109,8 +163,12 @@ export class FakeAppServer {
       if (method === 'GET') return current ? json(200, structuredClone(current)) : json(404, { error: 'not_found' })
       if (method === 'PUT') {
         const { baseRev, row } = (await body()) as { baseRev: number; row: Record<string, unknown> }
+        // a folder has no place (one sent is dropped); a note is in the App or in the Drive, and in the App only with the structure on
+        if (row.itemKind === 'file' && row.place !== 'app' && row.place !== 'drive') return json(422, { error: 'invalid_place' })
+        if (row.itemKind === 'file' && row.place === 'app' && !this.appEnabled) return json(403, { error: 'app_off' })
         if ((current?.rev ?? 0) !== baseRev) return json(409, { error: 'conflict', current: structuredClone(current ?? null) })
         const clean = Object.fromEntries(Object.entries(row).filter(([key]) => !SERVER_OWNED.includes(key)))
+        if (row.itemKind === 'folder') clean.place = null
         const next: Row = { parts: {}, media: null, noteBytes: 0, mediaBytes: 0, removedAt: null, trashedAt: null, trashedWith: null, rev: 0, seq: 0, ...current, ...clean, id } as Row
         this.bump(next)
         this.rows.set(id, next)
