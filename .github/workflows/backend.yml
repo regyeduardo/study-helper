@@ -90,6 +90,15 @@ jobs:
           ADMIN_EMAILS: ${{ secrets.ADMIN_EMAILS }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           DEEPINFRA_API_KEY: ${{ secrets.DEEPINFRA_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          XAI_API_KEY: ${{ secrets.XAI_API_KEY }}
+          TOGETHER_API_KEY: ${{ secrets.TOGETHER_API_KEY }}
+          VERCEL_API_KEY: ${{ secrets.VERCEL_API_KEY }}
           R2_ENDPOINT: ${{ vars.R2_ENDPOINT }}
           R2_BUCKET: ${{ vars.R2_BUCKET }}
           R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
@@ -103,6 +112,8 @@ jobs:
           printf 'APP_ORIGIN=%s\nPUBLIC_URL=%s\nGOOGLE_CLIENT_ID=%s\nGOOGLE_CLIENT_SECRET=%s\nTOKEN_KEY=%s\nADMIN_EMAILS=%s\nOPENROUTER_API_KEY=%s\nDEEPINFRA_API_KEY=%s\nR2_ENDPOINT=%s\nR2_BUCKET=%s\nR2_ACCESS_KEY_ID=%s\nR2_SECRET_ACCESS_KEY=%s\n' \
             "$APP_ORIGIN" "$PUBLIC_URL" "$GOOGLE_CLIENT_ID" "$GOOGLE_CLIENT_SECRET" "$TOKEN_KEY" "$ADMIN_EMAILS" "$OPENROUTER_API_KEY" "$DEEPINFRA_API_KEY" \
             "$R2_ENDPOINT" "$R2_BUCKET" "$R2_ACCESS_KEY_ID" "$R2_SECRET_ACCESS_KEY" > bundle/app.env
+          # spec 006: the keys of the other AI providers, when set (a provider without one stays off)
+          for name in ANTHROPIC_API_KEY OPENAI_API_KEY GEMINI_API_KEY GROQ_API_KEY MISTRAL_API_KEY DEEPSEEK_API_KEY XAI_API_KEY TOGETHER_API_KEY VERCEL_API_KEY; do printf '%s=%s\n' "$name" "${!name}" >> bundle/app.env; done
           tar -czf bundle.tgz -C bundle .
       - name: Deploy
         env:

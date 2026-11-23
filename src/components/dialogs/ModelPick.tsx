@@ -1,3 +1,4 @@
+import { useAppAiStore } from '@/lib/ai/app-ai'
 import { useEffect, useId, useMemo, useState } from 'react'
 
 import type { AiUse } from '@/types/domain'
@@ -31,7 +32,8 @@ export function useModelChoice(use: AiUse, media = false, last: { pick?: string;
   const live = useModelsStore(state => state.live)
   const probes = useModelsStore(state => state.probes)
   const readStale = useModelsStore(state => state.readStale)
-  const config = useMemo(() => aiConfigOf(settings), [settings])
+  const appAi = useAppAiStore(state => state.config)
+  const config = useMemo(() => aiConfigOf(settings), [settings, appAi])
   const [pick, setPick] = useState<string | null>(last.pick ?? null)
   const [videoWrites, setVideoWrites] = useState(Boolean(last.videoWrites))
 
@@ -52,8 +54,11 @@ export function useModelChoice(use: AiUse, media = false, last: { pick?: string;
 /** The selector itself ("Modelo"), always there at generation time; the video option only for media sources. */
 export function ModelPick({ choice, label = 'Modelo da IA' }: { choice: ModelChoice; label?: string }) {
   const settings = useLibraryStore(state => state.index.settings)
-  const config = useMemo(() => aiConfigOf(settings), [settings])
+  const appAi = useAppAiStore(state => state.config)
+  const config = useMemo(() => aiConfigOf(settings), [settings, appAi])
   const id = useId()
+  // spec 006: with the structure on, the model is the app's, chosen by the administration: nothing to pick here
+  if (appAi) return choice.model ? null : <p className="muted" role="note">{`A IA do app não está configurada para ${useInfo(choice.use).label}. Avise o administrador.`}</p>
   const name = (uid: string) => {
     const model = modelByUid(config, uid)
     const provider = providerById(config, model?.pid)

@@ -1,3 +1,4 @@
+import { aiFetch } from '@/lib/ai/app-ai'
 import type { AiSettings } from '@/types/domain'
 import { baseUrlOf, modelOf, providerOf } from '@/lib/ai/providers'
 
@@ -20,7 +21,7 @@ export async function askOnceController(target: AiSettings, parts: unknown[], ma
   const control = new AbortController()
   const timer = setTimeout(() => control.abort(), TIMEOUT_MS)
   try {
-    const response = await fetch(url, { method: 'POST', headers, signal: control.signal, body: JSON.stringify({ ...extra, model: modelOf(target), max_tokens: maxTokens, messages: [{ role: 'user', content: parts }] }) })
+    const response = await aiFetch(url, { method: 'POST', headers, signal: control.signal, body: JSON.stringify({ ...extra, model: modelOf(target), max_tokens: maxTokens, messages: [{ role: 'user', content: parts }] }) })
     const raw = await response.text().catch(() => '')
     let text = ''
     let cited: string[] = []

@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -12,6 +13,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/regyeduardo/study-helper/api/internal/blobs"
 )
@@ -196,7 +198,14 @@ func (srv *Server) putUploadPart(w http.ResponseWriter, r *http.Request, s *Sess
 		fail(w, http.StatusRequestEntityTooLarge, "larger_than_declared", nil)
 		return
 	}
-	etag, err := srv.cfg.Blobs.UploadPart(r.Context(), u.Key, u.ID, n, body)
+	// a part never waits forever on the storage (23/11: an upload looked stuck): past the limit it fails, and the app sends it again
+	limit := srv.cfg.PartTimeout
+	if limit <= 0 {
+		limit = 2 * time.Minute
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), limit)
+	defer cancel()
+	etag, err := srv.cfg.Blobs.UploadPart(ctx, u.Key, u.ID, n, body)
 	if err != nil {
 		fail(w, http.StatusBadGateway, "storage_failed", nil)
 		return

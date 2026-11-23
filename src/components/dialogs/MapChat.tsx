@@ -1,4 +1,5 @@
 // The map's own conversation (a subartefato): questions answer from the note, requests change the map at once.
+import { useAppAiStore } from '@/lib/ai/app-ai'
 import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react'
 
 import type { MapArtifact, MapChatTurn } from '@/types/domain'
@@ -36,7 +37,8 @@ interface MapChatProps {
 
 export function MapChat({ fileId, map, layout, open, onToggle, onBusy, actions }: MapChatProps) {
   const settings = useLibraryStore(state => state.index.settings)
-  const config = useMemo(() => aiConfigOf(settings), [settings])
+  const appAi = useAppAiStore(state => state.config)
+  const config = useMemo(() => aiConfigOf(settings), [settings, appAi])
   // The model that made the map, while it is still in the settings; else the one of Mapa mental.
   const made = map.made?.model && modelByUid(config, map.made.model) ? map.made.model : undefined
   const choice = useModelChoice('mapa', false, made ? { pick: made } : {})

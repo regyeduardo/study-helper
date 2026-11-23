@@ -54,6 +54,7 @@ func main() {
 		SecureCookies: env("SECURE_COOKIES", "true") != "false",
 		Version:       version,
 		Blobs:         storage,
+		AI:            aiConfig(),
 	})
 	// once a day: recount the space and clean the storage (orphans after 31 days, uploads forgotten for 7, tombstones after 60)
 	if storage != nil {
@@ -112,4 +113,16 @@ func googleConfig() server.GoogleConfig {
 		}
 	}
 	return google
+}
+
+// aiConfig reads the app's AI keys (spec 006) only from the env: <PROVIDER>_API_KEY (DEEPINFRA_API_KEY, OPENROUTER_API_KEY, ...);
+// a provider without one is off.
+func aiConfig() server.AIConfig {
+	keys := map[string]string{}
+	for _, id := range server.AIProviders() {
+		if key := strings.TrimSpace(os.Getenv(strings.ToUpper(id) + "_API_KEY")); key != "" {
+			keys[id] = key
+		}
+	}
+	return server.AIConfig{Keys: keys}
 }

@@ -33,6 +33,7 @@ import { GenerationSession } from '@/lib/generation/session'
 import { activeLinks, saveSharedAttempt, type SharedAttempts, sharedLibrary } from '@/lib/share'
 import { setSharedRoot } from '@/lib/paths'
 import { apiMessage } from '@/controllers/api.controller'
+import { followAppAi } from '@/lib/ai/app-ai'
 import { env } from '@/lib/env'
 import { newId, nowIso } from '@/lib/ids'
 import { type LocalMedia, listLocalMedia, removeLocalMedia, watchLocalMedia } from '@/lib/recording/media-library'
@@ -916,6 +917,8 @@ async function followHierarchy(repo: CombinedRepository, on: boolean): Promise<v
 // the account on the server arrives after the library (or the person turns the structure on or off): the App place follows it
 useServerAccount.subscribe(() => {
   const on = serverAppOn()
+  // spec 006: with the structure on, the AI is the app's
+  followAppAi(on && useServerAccount.getState().status === 'signed-in')
   if (on !== useLibraryStore.getState().appOn) void useLibraryStore.getState().attachApp(on)
   const { repo, accountId } = useLibraryStore.getState()
   if (repo instanceof CombinedRepository && hierarchyOn(accountId) !== Boolean(repo.hierarchy)) void followHierarchy(repo, hierarchyOn(accountId))

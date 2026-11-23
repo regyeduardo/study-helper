@@ -49,6 +49,10 @@ type Config struct {
 	Blobs blobs.Store
 	// PartSize is the size of each part of an upload (10 MiB); the tests use a few bytes.
 	PartSize int64
+	// AI is the app's AI (spec 006): the providers' keys, from the env only.
+	AI AIConfig
+	// PartTimeout bounds the sending of one upload part to the storage (2 minutes when zero); the tests use a few milliseconds.
+	PartTimeout time.Duration
 }
 
 // DefaultGoogle is Google's real sign-in.
@@ -126,6 +130,9 @@ func (srv *Server) Handler() http.Handler {
 	route("POST /v1/library/hierarchy/backup", signedIn, false, srv.hierarchyBackup)
 	route("POST /v1/library/hierarchy/done", signedIn, false, srv.hierarchyDone)
 	route("GET /v1/live", signedIn, false, srv.liveChannel)
+	// spec 006: the app's AI, only with the structure on; the key is the server's
+	route("GET /v1/ai/config", appOn, false, srv.aiConfig)
+	route("/v1/ai/{provider}/{path...}", appOn, false, srv.aiProxy)
 	// entrega 4: the content kept in the App
 	app := func(pattern string, handle handlerFunc) { route(pattern, appOn, false, srv.withBlobs(handle)) }
 	app("GET /v1/library/items/{id}/parts/{part...}", srv.getPart)
@@ -149,6 +156,8 @@ func (srv *Server) Handler() http.Handler {
 	adminRoute("POST /v1/admin/accounts/{id}/revoke", srv.adminRevoke)
 	adminRoute("GET /v1/admin/settings", srv.adminSettings)
 	adminRoute("PUT /v1/admin/settings", srv.adminSetSettings)
+	adminRoute("GET /v1/admin/ai", srv.adminAI)
+	adminRoute("PUT /v1/admin/ai", srv.adminSetAI)
 	mux.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { fail(w, http.StatusNotFound, "not_found", nil) }))
 	return srv.cors(mux)
 }
@@ -167,6 +176,12 @@ func (srv *Server) cors(next http.Handler) http.Handler {
 			if r.Method == http.MethodOptions {
 				h.Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE")
 				h.Set("Access-Control-Allow-Headers", "Content-Type, X-Estudo, If-Match, If-None-Match")
+				// the app's AI (spec 006) sends the provider's own headers; the keys among them are dropped before the provider
+				if strings.HasPrefix(r.URL.Path, "/v1/ai/") {
+					if asked := r.Header.Get("Access-Control-Request-Headers"); asked != "" {
+						h.Set("Access-Control-Allow-Headers", asked)
+					}
+				}
 				h.Set("Access-Control-Max-Age", "600")
 				w.WriteHeader(http.StatusNoContent)
 				return

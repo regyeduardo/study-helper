@@ -1,4 +1,5 @@
 import type { AiConfig, AiModel, AiProvider, AiProviderId, AiSettings, AiStep, AiUse, ProviderEngine, Settings, TranscriptionCredential, TranscriptionEngine, TranscriptionSettings } from '@/types/domain'
+import { appAiConfig } from '@/lib/ai/app-ai'
 import { baseUrlOf, isKnownProvider, missingSetup, PROVIDERS, providerOf } from '@/lib/ai/providers'
 import { defaultSettings } from '@/lib/defaults'
 
@@ -267,12 +268,18 @@ export function fromLegacy(settings: Settings): AiConfig {
 }
 
 /** The saved config, or the one derived from the old fields (indexes saved before this screen). */
+/** The AI in use: the app's (spec 006) with the structure on, else the person's own. */
 export function aiConfigOf(settings: Settings): AiConfig {
+  return appAiConfig() ?? ownAiConfigOf(settings)
+}
+
+/** The person's own AI, kept as it is even while the app's AI is in use (spec 006, FR-007). */
+export function ownAiConfigOf(settings: Settings): AiConfig {
   return settings.aiConfig ?? fromLegacy(settings)
 }
 
 /** On load: the config is always there and the old `ai` mirrors the Tutor model. */
 export function normalizeSettings(settings: Settings): Settings {
-  const aiConfig = aiConfigOf(settings)
+  const aiConfig = ownAiConfigOf(settings)
   return { ...settings, aiConfig, ai: legacyAiOf(aiConfig) }
 }

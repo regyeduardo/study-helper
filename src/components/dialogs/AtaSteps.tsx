@@ -1,3 +1,4 @@
+import { useAppAiStore } from '@/lib/ai/app-ai'
 import { useEffect, useId, useMemo, useState } from 'react'
 
 import type { AtaStepModels } from '@/types/domain'
@@ -47,7 +48,8 @@ export function useAtaSteps(writer: ModelChoice, on: boolean, last: AtaStepModel
   const live = useModelsStore(state => state.live)
   const probes = useModelsStore(state => state.probes)
   const readStale = useModelsStore(state => state.readStale)
-  const config = useMemo(() => aiConfigOf(settings), [settings])
+  const appAi = useAppAiStore(state => state.config)
+  const config = useMemo(() => aiConfigOf(settings), [settings, appAi])
   const [picked, setPicked] = useState<AtaStepModels>(last)
   const [asked, setAsked] = useState<boolean | null>(null)
   // "Usar recomendados": the models there were before (what was picked for Vídeo and Contexto, and the writer, default or picked) and the ones it left
@@ -157,6 +159,9 @@ function Row({ row }: { row: StepRow }) {
 /** The section of the window: closed it is one line; open, a model for each step. */
 export function AtaStepsField({ steps }: { steps: AtaSteps }) {
   const body = useId()
+  // spec 006: with the structure on, each step's model is the app's
+  const appAi = useAppAiStore(state => state.config)
+  if (appAi) return null
   return (
     <div className="field ata-steps" role="group" aria-label="Modelos por passo">
       <div className="ata-steps-head">

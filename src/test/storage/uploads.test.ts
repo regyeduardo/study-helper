@@ -62,6 +62,36 @@ describe('envio da mídia para o App', () => {
     expect(server.rows.get('n1')?.media?.status).toBe('stored')
   })
 
+  it('uma parte que não responde não prende o envio: passa do prazo, vai de novo e termina (23/11)', async () => {
+    let stuck = true
+    vi.stubGlobal('fetch', (input: string | URL | Request, init?: RequestInit) => {
+      // the first try of part 1 never answers until its time limit
+      if (stuck && init?.method === 'PUT' && String(input).endsWith('/parts/1')) {
+        stuck = false
+        return new Promise((_, reject) => init.signal?.addEventListener('abort', () => reject(new DOMException('timeout', 'TimeoutError'))))
+      }
+      return server.fetch(input as string, init)
+    })
+    await uploadMedia({ item: 'n1', media: 'm1', file: file(3 * MiB), name: 'reuniao.webm' }, { wait: noWait, partTimeout: 30 })
+    expect(server.rows.get('n1')?.media?.status).toBe('stored')
+  })
+
+  it('a janela mostra quanto já subiu e o Cancelar para entre as partes, guardando o que foi', async () => {
+    const { watchedUpload, UploadCancelled } = await import('@/lib/storage/uploads')
+    const seen: number[] = []
+    watchedUpload.onProgress = progress => seen.push(progress.sentBytes)
+    watchedUpload.cancelled = () => seen.length >= 2
+    try {
+      const error = await uploadMedia({ item: 'n1', media: 'm1', file: file(25 * MiB), name: 'reuniao.webm' }, { wait: noWait }).catch(e => e)
+      expect(error).toBeInstanceOf(UploadCancelled)
+      expect(seen).toEqual([0, 10 * MiB])
+      expect(server.rows.get('n1')?.media?.status).not.toBe('stored')
+    } finally {
+      watchedUpload.onProgress = undefined
+      watchedUpload.cancelled = undefined
+    }
+  })
+
   it('sem espaço nos 10 GB: diz quanto falta e não reserva nada', async () => {
     server.limit = 5 * MiB
     const error = await uploadMedia({ item: 'n1', media: 'm1', file: file(8 * MiB), name: 'grande.webm' }, { wait: noWait }).catch(e => e)

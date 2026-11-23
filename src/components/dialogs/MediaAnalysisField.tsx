@@ -1,3 +1,4 @@
+import { useAppAiStore } from '@/lib/ai/app-ai'
 import { useEffect, useMemo, useState } from 'react'
 
 import type { MediaAnalysis } from '@/types/domain'
@@ -44,7 +45,8 @@ export function useMediaAnalysis(choice: ModelChoice | null, on: boolean, unavai
   const live = useModelsStore(state => state.live)
   const probes = useModelsStore(state => state.probes)
   const readStale = useModelsStore(state => state.readStale)
-  const config = useMemo(() => aiConfigOf(settings), [settings])
+  const appAi = useAppAiStore(state => state.config)
+  const config = useMemo(() => aiConfigOf(settings), [settings, appAi])
   // in the Ata the media and the transcription in the same call is "Tudo numa chamada" too
   const [picked, setPicked] = useState<MediaAnalysis | null>(ata && initial === 'ambos' ? 'video' : (initial ?? null))
   useEffect(() => {

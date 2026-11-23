@@ -54,13 +54,13 @@ export interface StoredPart {
   content: string
 }
 
-async function send(method: string, path: string, options: { json?: unknown; body?: BodyInit; headers?: Record<string, string> } = {}): Promise<Response> {
+async function send(method: string, path: string, options: { json?: unknown; body?: BodyInit; headers?: Record<string, string>; signal?: AbortSignal } = {}): Promise<Response> {
   const headers: Record<string, string> = { ...options.headers }
   if (method !== 'GET' && method !== 'HEAD') headers['X-Estudo'] = '1'
   if (options.json !== undefined) headers['Content-Type'] = 'application/json'
   let response: Response
   try {
-    response = await fetch(`${env.apiUrl}${path}`, { method, credentials: 'include', headers, body: options.json !== undefined ? JSON.stringify(options.json) : options.body })
+    response = await fetch(`${env.apiUrl}${path}`, { method, credentials: 'include', headers, body: options.json !== undefined ? JSON.stringify(options.json) : options.body, signal: options.signal })
   } catch {
     throw new ApiError(0, 'offline')
   }
@@ -150,7 +150,9 @@ export interface UploadStart {
 
 export const startUpload = async (request: { item: string; media: string; name: string; mime: string; bytes: number }) => (await (await send('POST', '/v1/uploads', { json: request })).json()) as UploadStart
 export const getUpload = async (id: string) => (await (await send('GET', `/v1/uploads/${encodeURIComponent(id)}`)).json()) as { parts: { n: number; etag: string }[]; partSize: number; bytes: number; status: string }
-export const putUploadPart = async (id: string, n: number, blob: Blob) => (await (await send('PUT', `/v1/uploads/${encodeURIComponent(id)}/parts/${n}`, { body: blob, headers: { 'Content-Type': 'application/octet-stream' } })).json()) as { n: number; etag: string }
+/** One part; `signal` gives it a time limit (a part that does not answer fails as no connection, and is sent again). */
+export const putUploadPart = async (id: string, n: number, blob: Blob, signal?: AbortSignal) =>
+  (await (await send('PUT', `/v1/uploads/${encodeURIComponent(id)}/parts/${n}`, { body: blob, headers: { 'Content-Type': 'application/octet-stream' }, signal })).json()) as { n: number; etag: string }
 export const completeUpload = async (id: string) => (await (await send('POST', `/v1/uploads/${encodeURIComponent(id)}/complete`)).json()) as { key: string; bytes: number; mime: string }
 export const abandonUpload = async (id: string) => void (await send('DELETE', `/v1/uploads/${encodeURIComponent(id)}`))
 

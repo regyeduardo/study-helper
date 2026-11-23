@@ -1,3 +1,4 @@
+import { aiFetch } from '@/lib/ai/app-ai'
 import type { AiSettings } from '@/types/domain'
 import { baseUrlOf, missingSetup, modelOf, providerOf } from '@/lib/ai/providers'
 
@@ -63,7 +64,7 @@ async function send(settings: AiSettings, url: string, init: RequestInit, signal
   for (let attempt = 0; ; attempt++) {
     let response: Response
     try {
-      response = await fetch(url, { ...init, signal })
+      response = await aiFetch(url, { ...init, signal })
     } catch (error) {
       if (signal?.aborted) throw new Cancelled()
       throw new AiError(`Não consegui falar com a IA (${providerOf(settings.provider).name}). Confira a internet e o endereço.`)

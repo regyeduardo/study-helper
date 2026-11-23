@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react'
+import { createContext, type ReactNode, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 
 import type { AiConfig, AiProvider, AiProviderId, AiStep, AiUse } from '@/types/domain'
@@ -6,8 +6,9 @@ import { RecommendationsTab } from '@/components/dialogs/RecommendationsTab'
 import { Icon } from '@/components/ui/Icon'
 import { type CatalogModel, fetchModelList, type ModelPrice, ReadError } from '@/controllers/models.controller'
 import { errAdvice, errLong, errShort, eLista, keyMask, nem, nextSort, NO_PRICE, PER_TOKEN, plain, plural, priceSide, type SortState, sortedModels, validUrl } from '@/lib/ai/catalog'
-import { aiConfigOf, ATA_STEPS, compatible, MEDIA, type Media, MEDIA_LABEL, type MediaInfo, modelByUid, providerById, targetOf, USE_GROUPS, type UseGroup, type UseInfo, withoutModels, withoutProvider } from '@/lib/ai/config'
+import { ATA_STEPS, ownAiConfigOf, compatible, MEDIA, type Media, MEDIA_LABEL, type MediaInfo, modelByUid, providerById, targetOf, USE_GROUPS, type UseGroup, type UseInfo, withoutModels, withoutProvider } from '@/lib/ai/config'
 import { PROVIDERS, providerOf } from '@/lib/ai/providers'
+import { APP_KEY } from '@/lib/ai/app-ai'
 import { useLibraryStore } from '@/stores/library'
 import { type AiTab, type Assessment, assessModel, FRESH_MS, informs, type Live, mediaOfModel, type ProbeKey, searchesWeb, useModelsStore } from '@/stores/models'
 
@@ -30,11 +31,29 @@ const resorted = (current: SortState, key: 'name' | 'in' | 'out'): SortState => 
 
 const uid = () => `p${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`
 
+/**
+ * Where this screen reads and saves (spec 006): by default the person's own AI (Configurações); in Administração › IA do app, the AI
+ * of everyone with the structure, with no key (each provider's key is the server's, from its env) and only the providers the server has.
+ */
+export interface AiConfigSourceValue {
+  config: AiConfig
+  save(next: AiConfig): void
+  /** The providers with a key on the server; only them can be added. */
+  available: string[]
+}
+
+export const AiConfigSource = createContext<AiConfigSourceValue | null>(null)
+
+const useAppMode = () => useContext(AiConfigSource)
+
 function useAiConfig(): [AiConfig, (next: AiConfig) => void] {
+  const source = useAppMode()
   const settings = useLibraryStore(state => state.index.settings)
   const updateSettings = useLibraryStore(state => state.updateSettings)
-  const config = useMemo(() => aiConfigOf(settings), [settings])
-  return [config, next => void updateSettings({ aiConfig: next })]
+  // the person's own, never the app's: what is saved here goes to the person's settings (FR-007)
+  const own = useMemo(() => ownAiConfigOf(settings), [settings])
+  if (source) return [source.config, source.save]
+  return [own, next => void updateSettings({ aiConfig: next })]
 }
 
 const Reading = ({ text = 'lendo do provedor…' }: { text?: string }) => <span className="reading">{text}</span>
@@ -72,6 +91,7 @@ function subLine(provider: AiProvider, live: Live | undefined): { bad?: boolean;
 }
 
 function ProvidersTab({ config, save }: { config: AiConfig; save(next: AiConfig): void }) {
+  const appMode = useAppMode()
   const live = useModelsStore(state => state.live)
   const read = useModelsStore(state => state.read)
   const forget = useModelsStore(state => state.forget)
@@ -92,10 +112,10 @@ function ProvidersTab({ config, save }: { config: AiConfig; save(next: AiConfig)
 
   const openEditor = (id: string | null) => {
     const provider = id ? providerById(config, id) : undefined
-    const type = provider ? provider.type : PROVIDERS[0].id
+    const type = provider ? provider.type : ((appMode?.available[0] as AiProviderId | undefined) ?? PROVIDERS[0].id)
     token.current++
     focusName.current = !id
-    setEditing({ id, type, name: provider ? provider.name : providerOf(type).name, key: provider?.key ?? '', base: provider?.base ?? '', customBase: provider?.base ?? '', confirm: false, test: null })
+    setEditing({ id, type, name: provider ? provider.name : providerOf(type).name, key: appMode ? APP_KEY : (provider?.key ?? ''), base: provider?.base ?? '', customBase: provider?.base ?? '', confirm: false, test: null })
   }
   const patch = (change: Partial<Editing>) => setEditing(current => (current ? { ...current, ...change } : current))
 
@@ -129,7 +149,7 @@ function ProvidersTab({ config, save }: { config: AiConfig; save(next: AiConfig)
   const saveProvider = () => {
     if (!editing) return
     const type = providerOf(editing.type)
-    const data = { type: type.id, name: editing.name.trim() || type.name, key: editing.key.trim(), base: type.id === 'custom' ? editing.base.trim() : '' }
+    const data = { type: type.id, name: editing.name.trim() || type.name, key: appMode ? APP_KEY : editing.key.trim(), base: type.id === 'custom' ? editing.base.trim() : '' }
     if (type.id === 'custom' && !validUrl(data.base)) return patch({ test: { state: 'fail', text: 'Informe a URL base, com http:// ou https://.' } })
     const existing = editing.id ? providerById(config, editing.id) : undefined
     const provider: AiProvider = existing ? { ...existing, ...data } : { id: uid(), ...data }
@@ -190,7 +210,7 @@ function ProvidersTab({ config, save }: { config: AiConfig; save(next: AiConfig)
                       <span className={`pv-sub${sub.bad ? ' bad' : ''}`}>{sub.text}</span>
                     </td>
                     <td>{providerOf(provider.type).name}</td>
-                    <td className="c-key">{keyMask(provider.key)}</td>
+                    <td className="c-key">{appMode ? 'no servidor' : keyMask(provider.key)}</td>
                     <td className="c-count">{state?.state === 'ok' ? String(state.list.length) : '—'}</td>
                     <td className={`c-sit ${sit.cls}`}>{sit.text}</td>
                     <td className="c-act">
@@ -248,6 +268,7 @@ function ProvidersTab({ config, save }: { config: AiConfig; save(next: AiConfig)
 
 function ProviderPanel(props: { editing: Editing; models: number; nameInput: React.RefObject<HTMLInputElement | null>; onPatch(change: Partial<Editing>): void; onType(type: AiProviderId): void; onTest(): void; onSave(): void; onCancel(): void; onRemove(): void }) {
   const { editing, models, onPatch } = props
+  const appMode = useAppMode()
   const type = providerOf(editing.type)
   const custom = type.id === 'custom'
   return (
@@ -259,11 +280,15 @@ function ProviderPanel(props: { editing: Editing; models: number; nameInput: Rea
       <div className="pf top">
         <span className="lab">Tipo</span>
         <div className="chips" role="group" aria-label="Tipo">
-          {PROVIDERS.map(item => (
-            <button key={item.id} className="chip" aria-pressed={item.id === editing.type} onClick={() => props.onType(item.id)}>
-              {item.name}
-            </button>
-          ))}
+          {PROVIDERS.filter(item => !appMode || item.id !== 'custom').map(item => {
+            const off = Boolean(appMode && !appMode.available.includes(item.id))
+            return (
+              <button key={item.id} className="chip" aria-pressed={item.id === editing.type} disabled={off} title={off ? 'Sem chave no servidor' : undefined} onClick={() => props.onType(item.id)}>
+                {item.name}
+                {off ? ' · sem chave no servidor' : ''}
+              </button>
+            )
+          })}
         </div>
       </div>
       <div className="pf">
@@ -272,12 +297,14 @@ function ProviderPanel(props: { editing: Editing; models: number; nameInput: Rea
           <input ref={props.nameInput} className="input" id="pv-name" value={editing.name} autoComplete="off" onChange={event => onPatch({ name: event.target.value })} />
         </div>
       </div>
-      <div className="pf">
-        <label htmlFor="pv-key">Chave</label>
-        <div className="wrap">
-          <input className="input" id="pv-key" type="password" value={editing.key} autoComplete="new-password" spellCheck={false} placeholder={`Cole a chave de ${type.name}`} onChange={event => onPatch({ key: event.target.value })} />
+      {!appMode && (
+        <div className="pf">
+          <label htmlFor="pv-key">Chave</label>
+          <div className="wrap">
+            <input className="input" id="pv-key" type="password" value={editing.key} autoComplete="new-password" spellCheck={false} placeholder={`Cole a chave de ${type.name}`} onChange={event => onPatch({ key: event.target.value })} />
+          </div>
         </div>
-      </div>
+      )}
       <div className="pf">
         <label htmlFor="pv-base">URL base</label>
         <div className="wrap">

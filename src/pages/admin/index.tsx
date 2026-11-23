@@ -9,12 +9,17 @@ import {
   adminCodes,
   adminCreateCode,
   adminRevoke,
+  adminAi,
+  adminSetAi,
   adminSetSettings,
   adminSettings,
   apiMessage,
   type PromoCode,
 } from '@/controllers/api.controller'
 import { blocking } from '@/lib/blocking'
+import { AiConfigSource, AiSettings } from '@/components/dialogs/AiSettings'
+import { APP_KEY, fromAppConfig, toAppConfig } from '@/lib/ai/app-ai'
+import type { AiConfig } from '@/types/domain'
 import { useServerAccount } from '@/stores/server-account'
 import { useUiStore } from '@/stores/ui'
 import { agoText, formatBytes } from '@/utils/format'
@@ -23,10 +28,11 @@ import '@/styles/admin.css'
 /** Where the Administração lives; the account menu links here only for the admin account. */
 export const ADMIN_PATH = '/administracao'
 
-type Tab = 'codes' | 'accounts' | 'settings'
+type Tab = 'codes' | 'accounts' | 'ai' | 'settings'
 const TABS: [Tab, string][] = [
   ['codes', 'Códigos'],
   ['accounts', 'Contas'],
+  ['ai', 'IA do app'],
   ['settings', 'Configuração'],
 ]
 
@@ -330,6 +336,47 @@ function AccountsTab({ selfId }: { selfId: string }) {
   )
 }
 
+/**
+ * "IA do app" (spec 006): the AI screen of Configurações, for everyone with the structure: the providers with a key on the server and
+ * the model of each use (the Recomendações set them all at once). No key here: each provider's key is the server's, from its env.
+ */
+function AppAiTab() {
+  const [state, setState] = useState<{ config: AiConfig; available: string[] } | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [saved, setSaved] = useState<string | null>(null)
+  useEffect(() => {
+    adminAi()
+      .then(answer => setState({ config: toAppConfig(answer.uses, answer.known), available: answer.providers }))
+      .catch(failure => setError(apiMessage(failure)))
+  }, [])
+  if (error) return <p className="acc-error" role="alert">{error}</p>
+  if (!state) return <p className="muted">Lendo a IA do app…</p>
+  const save = (next: AiConfig) => {
+    const config = { ...next, providers: next.providers.map(provider => ({ ...provider, key: APP_KEY })) }
+    setState(current => (current ? { ...current, config } : current))
+    setSaved(null)
+    adminSetAi(fromAppConfig(config))
+      .then(() => setSaved('Salvo: vale para todos que usam a estrutura do app em até 1 minuto.'))
+      .catch(failure => setError(apiMessage(failure)))
+  }
+  return (
+    <div className="adm-ai">
+      <p className="muted">
+        Vale para todos que usam a estrutura do app: eles não escolhem modelo nem veem a parte de IA. As chaves ficam no servidor{' '}
+        {state.available.length ? `(com chave: ${state.available.join(', ')})` : '(nenhum provedor com chave no servidor)'}.
+      </p>
+      {saved && (
+        <p className="muted" role="status">
+          {saved}
+        </p>
+      )}
+      <AiConfigSource.Provider value={{ config: state.config, save, available: state.available }}>
+        <AiSettings />
+      </AiConfigSource.Provider>
+    </div>
+  )
+}
+
 function SettingsTab() {
   const [requireCode, setRequireCode] = useState<boolean | null>(null)
   const [error, setError] = useState<unknown>(null)
@@ -456,6 +503,7 @@ export default function AdminPage() {
         <section className="adm-panel" role="tabpanel" id={`adm-panel-${tab}`} aria-labelledby={`adm-tab-${tab}`}>
           {tab === 'codes' && <CodesTab />}
           {tab === 'accounts' && <AccountsTab selfId={me.user.id} />}
+          {tab === 'ai' && <AppAiTab />}
           {tab === 'settings' && <SettingsTab />}
         </section>
       </div>

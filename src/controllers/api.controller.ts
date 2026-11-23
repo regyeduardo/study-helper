@@ -121,6 +121,10 @@ export const adminAccounts = () => request<{ accounts: AdminAccount[] }>('GET', 
 export const adminRevoke = (id: string) => request<{ deleteAt: string }>('POST', `/v1/admin/accounts/${encodeURIComponent(id)}/revoke`)
 export const adminSettings = () => request<{ requireCode: boolean }>('GET', '/v1/admin/settings')
 export const adminSetSettings = (requireCode: boolean) => request<{ requireCode: boolean }>('PUT', '/v1/admin/settings', { requireCode })
+/** Spec 006: the app's AI for a person with the structure on (never a key) and the administration's choice of it. */
+export const appAi = () => request<{ providers: string[]; uses: unknown }>('GET', '/v1/ai/config')
+export const adminAi = () => request<{ providers: string[]; known: string[]; uses: unknown }>('GET', '/v1/admin/ai')
+export const adminSetAi = (uses: unknown) => request<{ uses: unknown }>('PUT', '/v1/admin/ai', { uses })
 
 function day(value: unknown): string {
   const date = new Date(String(value))

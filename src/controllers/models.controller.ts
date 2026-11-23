@@ -1,3 +1,4 @@
+import { aiFetch } from '@/lib/ai/app-ai'
 import type { AiProvider } from '@/types/domain'
 import type { Media, MediaInfo } from '@/lib/ai/config'
 import { providerOf } from '@/lib/ai/providers'
@@ -34,7 +35,7 @@ async function getJson(url: string, headers: Record<string, string> = {}): Promi
   const timer = setTimeout(() => control.abort(), TIMEOUT_MS)
   let response: Response
   try {
-    response = await fetch(url, { headers, signal: control.signal, cache: 'no-store', credentials: 'omit', referrerPolicy: 'no-referrer' })
+    response = await aiFetch(url, { headers, signal: control.signal, cache: 'no-store', credentials: 'omit', referrerPolicy: 'no-referrer' })
   } catch {
     throw new ReadError('net')
   } finally {

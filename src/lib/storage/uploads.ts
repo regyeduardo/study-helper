@@ -20,6 +20,21 @@ export interface UploadOptions {
   retries?: number
   /** The pause between tries; tests pass a no-op. */
   wait?: (ms: number) => Promise<void>
+  /** How long one part may take before it is given up and sent again (3 min: the server gives up on the storage at 2). */
+  partTimeout?: number
+}
+
+/**
+ * The upload the person is waiting for in the window right now (23/11, the owner: "não tem um botão de cancelar"): Cancelar stops it
+ * between parts, and the bar shows how much went. The parts already sent stay on the server, so sending again goes on from there.
+ */
+export const watchedUpload: { cancelled?: () => boolean; onProgress?: (progress: UploadProgress) => void } = {}
+
+/** Cancelar in the window: nothing more is sent; what went stays for a next try. */
+export class UploadCancelled extends Error {
+  constructor() {
+    super('Envio cancelado. O que já subiu fica guardado: mandar de novo continua de onde parou.')
+  }
 }
 
 /** The connection fell and the tries ran out: the parts already sent stay on the server for the next try. */
@@ -39,7 +54,7 @@ const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, m
 const transient = (error: unknown) => error instanceof ApiError && (error.code === 'offline' || error.status >= 500)
 
 export async function uploadMedia(job: { item: string; media: string; file: Blob; name: string; mime?: string }, options: UploadOptions = {}): Promise<{ upload: string; key: string; bytes: number; mime: string }> {
-  const { onProgress, retries = 3, wait = sleep } = options
+  const { onProgress, retries = 3, wait = sleep, partTimeout = 180_000 } = options
   const totalBytes = job.file.size
   const mime = job.mime || job.file.type || 'application/octet-stream'
   let start
@@ -54,13 +69,19 @@ export async function uploadMedia(job: { item: string; media: string; file: Blob
   const done = new Set(start.parts.map(part => part.n))
   const sizeOf = (n: number) => Math.min(n * size, totalBytes) - (n - 1) * size
   let sentBytes = [...done].reduce((sum, n) => sum + sizeOf(n), 0)
-  onProgress?.({ state: 'uploading', sentBytes, totalBytes })
+  const tell = (progress: UploadProgress) => {
+    onProgress?.(progress)
+    watchedUpload.onProgress?.(progress)
+  }
+  tell({ state: 'uploading', sentBytes, totalBytes })
   for (let n = 1; n <= count; n++) {
     if (done.has(n)) continue
+    if (watchedUpload.cancelled?.()) throw new UploadCancelled()
     const blob = job.file.slice((n - 1) * size, Math.min(n * size, totalBytes))
     for (let attempt = 0; ; attempt++) {
       try {
-        await putUploadPart(start.upload, n, blob)
+        // never waits forever (23/11, an upload looked stuck): past the limit the part counts as no connection and goes again
+        await putUploadPart(start.upload, n, blob, AbortSignal.timeout(partTimeout))
         break
       } catch (error) {
         if (!transient(error)) throw error
@@ -69,10 +90,10 @@ export async function uploadMedia(job: { item: string; media: string; file: Blob
       }
     }
     sentBytes += blob.size
-    onProgress?.({ state: 'uploading', sentBytes, totalBytes })
+    tell({ state: 'uploading', sentBytes, totalBytes })
   }
   const result = await completeUpload(start.upload)
-  onProgress?.({ state: 'stored', sentBytes: totalBytes, totalBytes })
+  tell({ state: 'stored', sentBytes: totalBytes, totalBytes })
   return { upload: start.upload, ...result }
 }
 

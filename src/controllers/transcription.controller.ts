@@ -1,3 +1,4 @@
+import { aiFetch } from '@/lib/ai/app-ai'
 import { env } from '@/lib/env'
 
 const GROQ_URL = 'https://api.groq.com/openai/v1/audio/transcriptions'
@@ -21,7 +22,7 @@ export async function transcribeWithGroqController(audio: Blob, apiKey: string, 
   for (let attempt = 0; ; attempt++) {
     let response: Response
     try {
-      response = await fetch(GROQ_URL, { method: 'POST', headers: { Authorization: `Bearer ${apiKey}` }, body: form, signal })
+      response = await aiFetch(GROQ_URL, { method: 'POST', headers: { Authorization: `Bearer ${apiKey}` }, body: form, signal })
     } catch {
       if (signal?.aborted) throw new TranscriptionError('Transcrição cancelada.')
       throw new TranscriptionError('A Groq não respondeu.')
@@ -107,7 +108,7 @@ export async function postAudioController(url: string, apiKey: string, form: For
     const limit = timeLimit(seconds, signal)
     let response: Response
     try {
-      response = await limit.race(fetch(url, { method: 'POST', headers: { Authorization: `Bearer ${apiKey}` }, body: form, signal: limit.signal }))
+      response = await limit.race(aiFetch(url, { method: 'POST', headers: { Authorization: `Bearer ${apiKey}` }, body: form, signal: limit.signal }))
     } catch {
       limit.stop()
       if (signal?.aborted) throw new TranscriptionError('Transcrição cancelada.')
@@ -146,7 +147,7 @@ const GEMINI_API = 'https://generativelanguage.googleapis.com/v1beta/models'
 export async function geminiAudioController(model: string, apiKey: string, audioBase64: string, mime: string, instruction: string, signal?: AbortSignal): Promise<string> {
   let response: Response
   try {
-    response = await fetch(`${GEMINI_API}/${model}:generateContent`, {
+    response = await aiFetch(`${GEMINI_API}/${model}:generateContent`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-goog-api-key': apiKey },
       body: JSON.stringify({ contents: [{ parts: [{ inline_data: { mime_type: mime, data: audioBase64 } }, { text: instruction }] }], generationConfig: { responseMimeType: 'application/json', temperature: 0 } }),
@@ -171,7 +172,7 @@ export async function chatAudioController(baseUrl: string, apiKey: string, model
     const last = attempt === AUDIO_ATTEMPTS - 1
     let response: Response
     try {
-      response = await fetch(`${base}/chat/completions`, {
+      response = await aiFetch(`${base}/chat/completions`, {
         method: 'POST',
         headers: { 'content-type': 'application/json', ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}) },
         body: JSON.stringify({ model, temperature: 0, messages: [{ role: 'user', content: [{ type: 'input_audio', input_audio: { data: wavBase64, format: 'wav' } }, { type: 'text', text: instruction }] }] }),

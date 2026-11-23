@@ -13,6 +13,7 @@ import { isNote } from '@/lib/family'
 import { placeOf } from '@/lib/library-filters'
 import type { LocalMedia } from '@/lib/recording/media-library'
 import { saveLocalMediaToDrive, saveToDrive } from '@/lib/storage/source-storage'
+import { UploadCancelled, watchedUpload } from '@/lib/storage/uploads'
 import { useAccountStore } from '@/stores/account'
 import { useLibraryStore } from '@/stores/library'
 import { sideOfItem, usePlacesStore } from '@/stores/places'
@@ -158,18 +159,30 @@ export function SaveToDrive({ fileId, media, compact = false, bare = false }: Sa
         await usePlacesStore.getState().choosePlace([fileId!], 'app')
         if (sideOfItem(fileId!) !== 'app') return
       } else {
-        // the upload holds the app in its window until the media is stored (no percent: the upload does not report it)
-        await blocking(words.saving, async () => {
-          if (media) {
-            await saveLocalMediaToDrive(media, entryId => {
-              marked.push(entryId)
-              mark(entryId)
-            })
-          } else await saveToDrive(fileId!)
-        })
+        // the upload holds the app in its window, with how much went and Cancelar (between parts; what went stays for a next try)
+        await blocking(
+          words.saving,
+          async blocker => {
+            watchedUpload.cancelled = () => blocker.cancelled
+            watchedUpload.onProgress = progress => blocker.progress({ phase: 'Enviando a mídia', doneBytes: progress.sentBytes, totalBytes: progress.totalBytes })
+            try {
+              if (media) {
+                await saveLocalMediaToDrive(media, entryId => {
+                  marked.push(entryId)
+                  mark(entryId)
+                })
+              } else await saveToDrive(fileId!)
+            } finally {
+              watchedUpload.cancelled = undefined
+              watchedUpload.onProgress = undefined
+            }
+          },
+          { cancellable: true },
+        )
       }
       toast(words.saved)
     } catch (failure) {
+      if (failure instanceof UploadCancelled) return toast(failure.message)
       toast(failureOf(failure, words.failed))
     } finally {
       useSaving.setState(state => ({ ids: new Set([...state.ids].filter(id => !marked.includes(id))) }))
