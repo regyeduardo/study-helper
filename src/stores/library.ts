@@ -32,6 +32,7 @@ import { nameArtifact, nameSource } from '@/lib/generation/artifact-name'
 import { GenerationSession } from '@/lib/generation/session'
 import { activeLinks, saveSharedAttempt, type SharedAttempts, sharedLibrary } from '@/lib/share'
 import { setSharedRoot } from '@/lib/paths'
+import { apiMessage } from '@/controllers/api.controller'
 import { env } from '@/lib/env'
 import { newId, nowIso } from '@/lib/ids'
 import { type LocalMedia, listLocalMedia, removeLocalMedia, watchLocalMedia } from '@/lib/recording/media-library'
@@ -866,7 +867,7 @@ let migrating = false
 /** Once per account, in the window that holds the app; a failure leaves the library as it was and the next opening goes on (FR-016). */
 function migrateHierarchyWhenReady(): void {
   const { repo, accountId, ready, folders, files } = useLibraryStore.getState()
-  if (migrating || !ready || !(repo instanceof CombinedRepository) || repo.hierarchy || !hierarchyToMigrate(accountId)) return
+  if (!env.hierarchyMigration || migrating || !ready || !(repo instanceof CombinedRepository) || repo.hierarchy || !hierarchyToMigrate(accountId)) return
   migrating = true
   void (async () => {
     try {
@@ -876,7 +877,7 @@ function migrateHierarchyWhenReady(): void {
       // the session brings `hierarchyAt`, and the library follows the account's hierarchy
       await useServerAccount.getState().refresh()
     } catch (error) {
-      blockingFailure('A biblioteca continua como estava', new Error(`${error instanceof Error ? error.message : String(error)} Ela continua sozinha na próxima vez que você abrir o app.`))
+      blockingFailure('A biblioteca continua como estava', new Error(`${apiMessage(error)} Nada mudou de lugar; ela tenta de novo na próxima vez que você abrir o app.`))
     } finally {
       migrating = false
     }

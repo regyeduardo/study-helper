@@ -4,8 +4,19 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import 'fake-indexeddb/auto'
 import { waitFor } from '@testing-library/react'
 
-const { mockEnv } = vi.hoisted(() => ({ mockEnv: { apiUrl: 'https://api.example.test' } }))
-vi.mock('@/lib/env', async importOriginal => ({ env: { ...((await importOriginal()) as { env: object }).env, apiUrl: mockEnv.apiUrl } }))
+const { mockEnv } = vi.hoisted(() => ({ mockEnv: { apiUrl: 'https://api.example.test', hierarchyMigration: true } }))
+vi.mock('@/lib/env', async importOriginal => {
+  const real = ((await importOriginal()) as { env: object }).env
+  return {
+    env: {
+      ...real,
+      apiUrl: mockEnv.apiUrl,
+      get hierarchyMigration() {
+        return mockEnv.hierarchyMigration
+      },
+    },
+  }
+})
 
 import { newFileMeta, newFolderMeta, newSidecar } from '@/lib/defaults'
 import { CombinedRepository } from '@/lib/storage/combined-repository'
@@ -73,6 +84,21 @@ describe('migração ao abrir', () => {
     await waitFor(() => expect(useUiStore.getState().toasts.map(toast => toast.text)).toContain('Pronto: 1 pasta e 2 notas na sua conta. Nada mudou de lugar.'))
     expect(library().files.map(file => file.name).sort()).toEqual(['Aula 1', 'Aula 2'])
     expect(library().folders.map(folder => folder.name)).toEqual(['Faculdade'])
+  })
+
+  it('com a migração desligada (o padrão no ar até o texto dos cursos ter lugar), nada muda e nenhuma janela abre', async () => {
+    mockEnv.hierarchyMigration = false
+    try {
+      await driveLibrary()
+      await library().connect(account, token)
+      await waitFor(() => expect(useServerAccount.getState().status).toBe('signed-in'))
+      await new Promise(resolve => setTimeout(resolve, 50))
+      expect(server.backup).toBeFalsy()
+      expect(titles).not.toContain('Levando a biblioteca para a sua conta')
+      expect((library().repo as CombinedRepository).hierarchy).toBeNull()
+    } finally {
+      mockEnv.hierarchyMigration = true
+    }
   })
 
   it('servidor que ainda não conhece a hierarquia (sem o campo) não migra nada', async () => {

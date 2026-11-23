@@ -164,7 +164,7 @@ export default function App() {
         )
       ) : (
         <div className="welcome" role="status">
-          <span className="muted">Abrindo a biblioteca{account.kind === 'google' ? ' no Google Drive' : ''}…</span>
+          <span className="muted">Abrindo a sua biblioteca…</span>
         </div>
       )}
       <ServerAccountGate />
