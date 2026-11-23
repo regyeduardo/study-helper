@@ -159,9 +159,11 @@ func (srv *Server) cors(next http.Handler) http.Handler {
 			h.Set("Access-Control-Allow-Origin", origin)
 			h.Set("Access-Control-Allow-Credentials", "true")
 			h.Add("Vary", "Origin")
+			// the app saves a note's parts with If-Match / If-None-Match and reads the new version from ETag
+			h.Set("Access-Control-Expose-Headers", "ETag")
 			if r.Method == http.MethodOptions {
 				h.Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE")
-				h.Set("Access-Control-Allow-Headers", "Content-Type, X-Estudo")
+				h.Set("Access-Control-Allow-Headers", "Content-Type, X-Estudo, If-Match, If-None-Match")
 				h.Set("Access-Control-Max-Age", "600")
 				w.WriteHeader(http.StatusNoContent)
 				return
