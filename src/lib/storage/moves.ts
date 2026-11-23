@@ -1,4 +1,5 @@
 import type { FileMeta, FileSidecar, FolderMeta } from '@/types/domain'
+import { apiMessage } from '@/controllers/api.controller'
 import type { CombinedRepository, Side } from '@/lib/storage/combined-repository'
 import { KeyValueStore } from '@/lib/storage/idb'
 import { filePlaceOf, folderPlaceOf } from '@/lib/storage/place'
@@ -204,7 +205,7 @@ export async function runMoves(repo: CombinedRepository, journal: MoveJournal, t
         }
       } catch (error) {
         if (error instanceof MoveStopped) throw error
-        await save(record, 'falhou', error instanceof Error ? error.message : String(error))
+        await save(record, 'falhou', apiMessage(error))
       }
     }
     // 3) a folder leaves the origin last, when nothing of the library is left in it there
@@ -228,7 +229,7 @@ export async function runMoves(repo: CombinedRepository, journal: MoveJournal, t
         await save(record, 'feito')
       } catch (error) {
         if (error instanceof MoveStopped) throw error
-        await save(record, 'falhou', error instanceof Error ? error.message : String(error))
+        await save(record, 'falhou', apiMessage(error))
       }
     }
   } catch (error) {

@@ -1,4 +1,5 @@
 // "Salvar no meu Drive" (FR-043): what is kept only in this browser says so, wherever it appears, and offers the Drive.
+// With the app structure on, a note offers the App instead (its default place, spec 005 FR-006): the note and its media go there.
 import { useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { create } from 'zustand'
@@ -14,6 +15,7 @@ import type { LocalMedia } from '@/lib/recording/media-library'
 import { saveLocalMediaToDrive, saveToDrive } from '@/lib/storage/source-storage'
 import { useAccountStore } from '@/stores/account'
 import { useLibraryStore } from '@/stores/library'
+import { sideOfItem, usePlacesStore } from '@/stores/places'
 import { useUiStore } from '@/stores/ui'
 import '@/styles/save-to-drive.css'
 import { formatBytes } from '@/utils/format'
@@ -24,6 +26,18 @@ const SAVING = 'Salvando no Drive…'
 const RISK = 'Hoje este arquivo está só neste navegador: se os dados do navegador forem limpos, ele se perde. No Drive, ele fica na sua conta, disponível em qualquer aparelho.'
 const SAVED = 'Salvo no seu Drive. Agora ele está disponível em qualquer aparelho.'
 const NEW_ENTRY = 'Para ir ao Drive, a mídia vira uma nota de mídia na biblioteca.'
+
+/** The words of each destination. */
+const WORDS = {
+  drive: { action: ACTION, saving: SAVING, risk: RISK, saved: SAVED, failed: 'Não deu para salvar no Drive.' },
+  app: {
+    action: 'Salvar no App',
+    saving: 'Salvando no App…',
+    risk: 'Hoje este arquivo está só neste navegador: se os dados do navegador forem limpos, ele se perde. No App, ele fica na sua conta, disponível em qualquer aparelho.',
+    saved: 'Salvo no App. Agora ele está disponível em qualquer aparelho.',
+    failed: 'Não deu para salvar no App.',
+  },
+}
 
 /** What is uploading now, because the same file can be on screen twice: in a list and in its note. */
 const useSaving = create<{ ids: ReadonlySet<string> }>(() => ({ ids: new Set() }))
@@ -38,7 +52,7 @@ export function useOnlyHere(): (file: FileMeta) => boolean {
   return file => placeOf(file, { localMedia, library, now: Date.now() }) === 'navegador'
 }
 
-function AskToSave({ size, extra, onCancel, onSave }: { size: string; extra?: string; onCancel(): void; onSave(): void }) {
+function AskToSave({ words, size, extra, onCancel, onSave }: { words: (typeof WORDS)['drive']; size: string; extra?: string; onCancel(): void; onSave(): void }) {
   // Esc closes this window only, not Mídias under it.
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -54,7 +68,7 @@ function AskToSave({ size, extra, onCancel, onSave }: { size: string; extra?: st
     // React events cross the portal: unstopped, a click here would also open the row behind it.
     <div onClick={stop} onKeyDown={stop} onContextMenu={stop}>
       <Dialog
-        title={`${ACTION}?`}
+        title={`${words.action}?`}
         size="narrow"
         onClose={onCancel}
         footer={
@@ -63,14 +77,14 @@ function AskToSave({ size, extra, onCancel, onSave }: { size: string; extra?: st
               Agora não
             </button>
             <button className="btn primary" onClick={onSave}>
-              {ACTION}
+              {words.action}
             </button>
           </>
         }
       >
         <div className="db">
           <span className="muted">
-            {RISK}
+            {words.risk}
             {size && ` Tamanho: ${size}.`}
           </span>
           {extra && <span className="muted">{extra}</span>}
@@ -99,6 +113,7 @@ export function SaveToDrive({ fileId, media, compact = false, bare = false }: Sa
   const local = useLibraryStore(state => (fileId ? state.localMedia.find(item => item.fileIds.includes(fileId)) : undefined))
   const repoKind = useLibraryStore(state => state.repo?.kind)
   const shared = useLibraryStore(state => Boolean(state.sharedView))
+  const appOn = useLibraryStore(state => state.appOn)
   const saving = useSaving(state => state.ids.has(key))
   const onlyHere = useOnlyHere()
   const openOverlay = useUiStore(state => state.open)
@@ -114,8 +129,10 @@ export function SaveToDrive({ fileId, media, compact = false, bare = false }: Sa
 
   // An entrada kept in the Mídias of another browser: there is nothing here to upload.
   const canSave = Boolean(media) || isNote(file!) || Boolean(local || file!.origin?.storedFileId)
+  // a note goes to the App when the structure is on; a media with no note yet keeps the Drive road (T136)
+  const words = appOn && fileId ? WORDS.app : WORDS.drive
   const busy = saving || signingIn
-  const busyText = saving ? SAVING : 'Entrando…'
+  const busyText = saving ? words.saving : 'Entrando…'
 
   const signIn = async () => {
     setSigningIn(true)
@@ -136,18 +153,24 @@ export function SaveToDrive({ fileId, media, compact = false, bare = false }: Sa
     const mark = (id: string) => useSaving.setState(state => ({ ids: new Set(state.ids).add(id) }))
     mark(key)
     try {
-      // the upload holds the app in its window until the media is in the Drive (no percent: the upload does not report it)
-      await blocking(SAVING, async () => {
-        if (media) {
-          await saveLocalMediaToDrive(media, entryId => {
-            marked.push(entryId)
-            mark(entryId)
-          })
-        } else await saveToDrive(fileId!)
-      })
-      toast(SAVED)
+      if (words === WORDS.app && sideOfItem(fileId!) === 'local') {
+        // a note of this browser moves to the App with its media, in the window of the move
+        await usePlacesStore.getState().choosePlace([fileId!], 'app')
+        if (sideOfItem(fileId!) !== 'app') return
+      } else {
+        // the upload holds the app in its window until the media is stored (no percent: the upload does not report it)
+        await blocking(words.saving, async () => {
+          if (media) {
+            await saveLocalMediaToDrive(media, entryId => {
+              marked.push(entryId)
+              mark(entryId)
+            })
+          } else await saveToDrive(fileId!)
+        })
+      }
+      toast(words.saved)
     } catch (failure) {
-      toast(failureOf(failure, 'Não deu para salvar no Drive.'))
+      toast(failureOf(failure, words.failed))
     } finally {
       useSaving.setState(state => ({ ids: new Set([...state.ids].filter(id => !marked.includes(id))) }))
     }
@@ -164,11 +187,11 @@ export function SaveToDrive({ fileId, media, compact = false, bare = false }: Sa
     onKeyDown: (event: React.KeyboardEvent) => event.stopPropagation(),
   }
   const bytes = media?.size || local?.size || file?.origin?.sizeBytes
-  const ask = asking && <AskToSave size={bytes ? formatBytes(bytes) : ''} extra={media ? NEW_ENTRY : undefined} onCancel={() => setAsking(false)} onSave={() => void save()} />
+  const ask = asking && <AskToSave words={words} size={bytes ? formatBytes(bytes) : ''} extra={media ? NEW_ENTRY : undefined} onCancel={() => setAsking(false)} onSave={() => void save()} />
 
   if (compact) {
     if (!canSave) return <span className="sdrive-row">{NOTICE}</span>
-    const line = `${NOTICE} · ${busy ? busyText : ACTION}`
+    const line = `${NOTICE} · ${busy ? busyText : words.action}`
     return (
       <>
         <button className="sdrive-row" aria-label={busy ? line : `${line}: ${file!.name}`} {...control}>
@@ -185,7 +208,7 @@ export function SaveToDrive({ fileId, media, compact = false, bare = false }: Sa
       {canSave && (
         <button className="btn sdrive-btn" {...control}>
           <Icon name="upload" />
-          {busy ? busyText : ACTION}
+          {busy ? busyText : words.action}
         </button>
       )}
       {ask}

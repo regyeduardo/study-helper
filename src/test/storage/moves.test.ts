@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import 'fake-indexeddb/auto'
 
 import type { FileMeta, FolderMeta } from '@/types/domain'
+import { ApiError } from '@/controllers/api.controller'
 import { newFileMeta, newFolderMeta, newSidecar } from '@/lib/defaults'
 import { CombinedRepository } from '@/lib/storage/combined-repository'
 import { DriveRepository } from '@/lib/storage/drive-repository'
@@ -137,6 +138,16 @@ describe('quando falha', () => {
     expect(done[0].state).toBe('feito')
     expect(repo.sideOf(meta.id)).toBe('local')
     expect(await repo.readContent(meta.id)).toBe('plano')
+  })
+
+  it('sem resposta do servidor, o motivo é uma frase que a pessoa entende, não o código "offline"', async () => {
+    const meta = newFileMeta({ name: 'Validação Sistema', type: 'class', folderId: null })
+    await repo.saveFile(newSidecar(meta), 'texto')
+    const write = vi.spyOn(repo.local, 'saveFile').mockRejectedValueOnce(new ApiError(0, 'offline'))
+    await plan([meta.id], 'local')
+    const failed = await runMoves(repo, journal, await library())
+    expect(failed[0]).toMatchObject({ state: 'falhou', reason: 'Não deu para falar com o servidor. Confira a internet e tente de novo.' })
+    write.mockRestore()
   })
 
   it('uma pasta do Drive que ainda tem algo dentro nunca é apagada', async () => {

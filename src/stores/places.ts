@@ -82,9 +82,9 @@ export const usePlacesStore = create<PlacesState>((set, get) => {
       })
       blocker.progress({ phase: 'Atualizando a biblioteca', done: undefined, total: undefined, doneBytes: undefined, totalBytes: undefined, current: undefined })
       useLibraryStore.getState().applySnapshot(await repo.load())
-      // a note that came from this browser takes its media from Mídias to the Drive too (FR-021)
+      // a note that came from this browser takes its media from Mídias with it, to the Drive or to the App (FR-021)
       const library = useLibraryStore.getState()
-      const media = records.filter(item => item.state === 'feito' && item.kind === 'file' && item.to === 'drive' && item.from === 'local').filter(record => {
+      const media = records.filter(item => item.state === 'feito' && item.kind === 'file' && item.to !== 'local' && item.from === 'local').filter(record => {
         const file = library.files.find(item => item.id === record.id)
         return file?.origin && file.origin.storage !== 'drive' && library.localMedia.some(item => item.fileIds.includes(record.id))
       })
