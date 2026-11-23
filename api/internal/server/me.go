@@ -1,6 +1,9 @@
 package server
 
-import "net/http"
+import (
+	"database/sql"
+	"net/http"
+)
 
 const (
 	// spaceLimit: each account has up to 10 GB in the App; the app warns at 90% (FR-044).
@@ -13,11 +16,14 @@ func (srv *Server) me(w http.ResponseWriter, _ *http.Request, s *Session) {
 	required := "1"
 	_ = srv.db.QueryRow(`SELECT value FROM app_settings WHERE key = 'require_code'`).Scan(&required)
 	user := s.User
+	// spec 005: when the hierarchy was taken to the account (null = still the way of before)
+	var hierarchyAt sql.NullString
+	_ = srv.db.QueryRow(`SELECT hierarchy_at FROM user WHERE id = ?`, user.ID).Scan(&hierarchyAt)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"user": map[string]any{
 			"id": user.ID, "email": user.Email, "name": nullable(user.Name.String, user.Name.Valid), "photoUrl": nullable(user.PhotoURL.String, user.PhotoURL.Valid),
 			"status": user.Status, "appEnabled": user.AppEnabled, "admin": srv.adminOf(user), "deleteAt": user.DeleteAt,
-			"hasPassword": user.HasPassword, "hasGoogle": user.HasGoogle,
+			"hasPassword": user.HasPassword, "hasGoogle": user.HasGoogle, "hierarchyAt": nullable(hierarchyAt.String, hierarchyAt.Valid),
 		},
 		"requireCode": required == "1" && !srv.adminOf(user),
 		"device":      map[string]any{"id": s.DeviceID, "name": s.Device},

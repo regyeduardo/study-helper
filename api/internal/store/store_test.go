@@ -7,7 +7,8 @@ import (
 	"time"
 )
 
-var tables = []string{"app_settings", "auth_google", "devices", "library_index", "library_items", "orphans", "promo_code_uses", "promo_codes", "schema_migrations", "shared_links", "shared_links_used", "upload_parts", "uploads", "user"}
+// hierarchy_backups: spec 005 (migration 0003)
+var tables = []string{"app_settings", "auth_google", "devices", "hierarchy_backups", "library_index", "library_items", "orphans", "promo_code_uses", "promo_codes", "schema_migrations", "shared_links", "shared_links_used", "upload_parts", "uploads", "user"}
 
 func list(t *testing.T, path string) []string {
 	t.Helper()
@@ -126,9 +127,10 @@ func TestLibraryTablesFollowTheApprovedModel(t *testing.T) {
 		return out
 	}
 	items := columns("library_items")
+	// spec 005 (migration 0003): place is empty on a folder and place_own is gone
 	for name, want := range map[string]string{
 		"user_id": "TEXT NOT NULL PK", "id": "TEXT NOT NULL PK", "item_kind": "TEXT NOT NULL", "note_type": "TEXT", "name": "TEXT NOT NULL",
-		"folder_id": "TEXT", "parent_file_id": "TEXT", "place": "TEXT NOT NULL", "place_own": "INTEGER NOT NULL", "recording": "INTEGER NOT NULL",
+		"folder_id": "TEXT", "parent_file_id": "TEXT", "place": "TEXT", "recording": "INTEGER NOT NULL",
 		"position": "REAL NOT NULL", "meta": "TEXT NOT NULL", "parts": "TEXT NOT NULL", "media": "TEXT", "note_bytes": "INTEGER NOT NULL",
 		"media_bytes": "INTEGER NOT NULL", "drive_ref": "TEXT", "created_at": "TEXT NOT NULL", "updated_at": "TEXT NOT NULL", "trashed_at": "TEXT",
 		"trashed_with": "TEXT", "removed_at": "TEXT", "rev": "INTEGER NOT NULL", "seq": "INTEGER NOT NULL",
@@ -137,8 +139,8 @@ func TestLibraryTablesFollowTheApprovedModel(t *testing.T) {
 			t.Errorf("library_items.%s = %q, want %q", name, items[name], want)
 		}
 	}
-	if len(items) != 24 {
-		t.Errorf("library_items has %d columns, want 24: %v", len(items), items)
+	if len(items) != 23 {
+		t.Errorf("library_items has %d columns, want 23: %v", len(items), items)
 	}
 	uploads := columns("uploads")
 	for _, name := range []string{"id", "user_id", "item_id", "media_id", "object_key", "file_name", "mime", "declared_bytes", "part_size", "status", "created_at", "updated_at"} {

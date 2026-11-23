@@ -68,8 +68,7 @@ type libraryRow struct {
 	Name         string            `json:"name"`
 	FolderID     *string           `json:"folderId"`
 	ParentFileID *string           `json:"parentFileId"`
-	Place        string            `json:"place"`
-	PlaceOwn     bool              `json:"placeOwn"`
+	Place        *string           `json:"place"` // nil on a folder: only a note has a place (spec 005)
 	Recording    bool              `json:"recording"`
 	Position     float64           `json:"position"`
 	Meta         json.RawMessage   `json:"meta"`
@@ -94,8 +93,7 @@ type rowFields struct {
 	Name         string          `json:"name"`
 	FolderID     *string         `json:"folderId"`
 	ParentFileID *string         `json:"parentFileId"`
-	Place        string          `json:"place"`
-	PlaceOwn     bool            `json:"placeOwn"`
+	Place        string          `json:"place"` // ignored on a folder; "app" or "drive" on a note (spec 005)
 	Recording    bool            `json:"recording"`
 	Position     float64         `json:"position"`
 	Meta         json.RawMessage `json:"meta"`
@@ -106,16 +104,16 @@ type rowFields struct {
 	TrashedWith  *string         `json:"trashedWith"`
 }
 
-const rowColumns = `id, item_kind, note_type, name, folder_id, parent_file_id, place, place_own, recording, position, meta, parts, media, note_bytes, media_bytes, drive_ref, created_at, updated_at, trashed_at, trashed_with, removed_at, rev, seq`
+const rowColumns = `id, item_kind, note_type, name, folder_id, parent_file_id, place, recording, position, meta, parts, media, note_bytes, media_bytes, drive_ref, created_at, updated_at, trashed_at, trashed_with, removed_at, rev, seq`
 
 type scanner interface{ Scan(...any) error }
 
 func scanRow(row scanner) (*libraryRow, error) {
 	var out libraryRow
-	var noteType, folderID, parentID, media, driveRef, trashedAt, trashedWith, removedAt sql.NullString
-	var placeOwn, recording int
+	var noteType, folderID, parentID, place, media, driveRef, trashedAt, trashedWith, removedAt sql.NullString
+	var recording int
 	var meta, parts string
-	if err := row.Scan(&out.ID, &out.ItemKind, &noteType, &out.Name, &folderID, &parentID, &out.Place, &placeOwn, &recording, &out.Position, &meta, &parts, &media,
+	if err := row.Scan(&out.ID, &out.ItemKind, &noteType, &out.Name, &folderID, &parentID, &place, &recording, &out.Position, &meta, &parts, &media,
 		&out.NoteBytes, &out.MediaBytes, &driveRef, &out.CreatedAt, &out.UpdatedAt, &trashedAt, &trashedWith, &removedAt, &out.Rev, &out.Seq); err != nil {
 		return nil, err
 	}
@@ -126,9 +124,9 @@ func scanRow(row scanner) (*libraryRow, error) {
 		v := value.String
 		return &v
 	}
-	out.NoteType, out.FolderID, out.ParentFileID, out.DriveRef = str(noteType), str(folderID), str(parentID), str(driveRef)
+	out.NoteType, out.FolderID, out.ParentFileID, out.Place, out.DriveRef = str(noteType), str(folderID), str(parentID), str(place), str(driveRef)
 	out.TrashedAt, out.TrashedWith, out.RemovedAt = str(trashedAt), str(trashedWith), str(removedAt)
-	out.PlaceOwn, out.Recording = placeOwn == 1, recording == 1
+	out.Recording = recording == 1
 	out.Meta = json.RawMessage(meta)
 	out.Parts = map[string]string{}
 	_ = json.Unmarshal([]byte(parts), &out.Parts)
@@ -244,13 +242,24 @@ type rowError struct {
 
 func (e *rowError) Error() string { return e.code }
 
-// applyRow writes the app's fields of one row, if it is still at baseRev.
-func (srv *Server) applyRow(tx *sql.Tx, userID, id string, baseRev int64, fields rowFields, seq int64) (int64, error) {
+// applyRow writes the app's fields of one row, if it is still at baseRev. A folder has no place; a note is in the App only with
+// the structure on (spec 005).
+func (srv *Server) applyRow(tx *sql.Tx, userID, id string, baseRev int64, fields rowFields, seq int64, structure bool) (int64, error) {
 	if !safeID.MatchString(id) {
 		return 0, &rowError{code: "invalid_id"}
 	}
-	if (fields.ItemKind != "file" && fields.ItemKind != "folder") || (fields.Place != "app" && fields.Place != "drive") || strings.TrimSpace(fields.Name) == "" {
+	if (fields.ItemKind != "file" && fields.ItemKind != "folder") || strings.TrimSpace(fields.Name) == "" {
 		return 0, &rowError{code: "invalid_row"}
+	}
+	var place *string
+	if fields.ItemKind == "file" {
+		if fields.Place != "app" && fields.Place != "drive" {
+			return 0, &rowError{code: "invalid_place"}
+		}
+		if fields.Place == "app" && !structure {
+			return 0, &rowError{code: "app_off"}
+		}
+		place = &fields.Place
 	}
 	current, err := findRow(tx, userID, id)
 	if err != nil {
@@ -277,13 +286,13 @@ func (srv *Server) applyRow(tx *sql.Tx, userID, id string, baseRev int64, fields
 	if fields.UpdatedAt == "" {
 		fields.UpdatedAt = now
 	}
-	_, err = tx.Exec(`INSERT INTO library_items (user_id, id, item_kind, note_type, name, folder_id, parent_file_id, place, place_own, recording, position, meta, drive_ref, created_at, updated_at, trashed_at, trashed_with, rev, seq)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+	_, err = tx.Exec(`INSERT INTO library_items (user_id, id, item_kind, note_type, name, folder_id, parent_file_id, place, recording, position, meta, drive_ref, created_at, updated_at, trashed_at, trashed_with, rev, seq)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
 		ON CONFLICT (user_id, id) DO UPDATE SET item_kind = excluded.item_kind, note_type = excluded.note_type, name = excluded.name, folder_id = excluded.folder_id,
-		parent_file_id = excluded.parent_file_id, place = excluded.place, place_own = excluded.place_own, recording = excluded.recording, position = excluded.position,
+		parent_file_id = excluded.parent_file_id, place = excluded.place, recording = excluded.recording, position = excluded.position,
 		meta = excluded.meta, drive_ref = excluded.drive_ref, created_at = excluded.created_at, updated_at = excluded.updated_at, trashed_at = excluded.trashed_at,
 		trashed_with = excluded.trashed_with, removed_at = NULL, rev = library_items.rev + 1, seq = excluded.seq`,
-		userID, id, fields.ItemKind, fields.NoteType, fields.Name, fields.FolderID, fields.ParentFileID, fields.Place, boolInt(fields.PlaceOwn), boolInt(fields.Recording),
+		userID, id, fields.ItemKind, fields.NoteType, fields.Name, fields.FolderID, fields.ParentFileID, place, boolInt(fields.Recording),
 		fields.Position, meta, fields.DriveRef, fields.CreatedAt, fields.UpdatedAt, fields.TrashedAt, fields.TrashedWith, seq)
 	if err != nil {
 		return 0, err
@@ -299,8 +308,10 @@ func (srv *Server) rowRefusal(w http.ResponseWriter, err error) bool {
 	switch refusal.code {
 	case "conflict":
 		fail(w, http.StatusConflict, "conflict", map[string]any{"current": refusal.current})
-	case "cycle":
-		fail(w, http.StatusUnprocessableEntity, "cycle", nil)
+	case "cycle", "invalid_place":
+		fail(w, http.StatusUnprocessableEntity, refusal.code, nil)
+	case "app_off":
+		fail(w, http.StatusForbidden, "app_off", nil)
 	default:
 		fail(w, http.StatusBadRequest, refusal.code, nil)
 	}
@@ -372,7 +383,7 @@ func (srv *Server) putLibraryItem(w http.ResponseWriter, r *http.Request, s *Ses
 	seq, err := nextSeq(tx, s.User.ID)
 	if err == nil {
 		var rev int64
-		rev, err = srv.applyRow(tx, s.User.ID, r.PathValue("id"), body.BaseRev, body.Row, seq)
+		rev, err = srv.applyRow(tx, s.User.ID, r.PathValue("id"), body.BaseRev, body.Row, seq, structureOn(s.User))
 		if err == nil && tx.Commit() == nil {
 			srv.notifyMap(s.User.ID, seq)
 			writeJSON(w, http.StatusOK, map[string]any{"rev": rev, "seq": seq})
@@ -411,7 +422,7 @@ func (srv *Server) libraryBatch(w http.ResponseWriter, r *http.Request, s *Sessi
 	revs := map[string]int64{}
 	currents := []*libraryRow{}
 	for _, op := range body.Operations {
-		rev, err := srv.applyRow(tx, s.User.ID, op.ID, op.BaseRev, op.Row, seq)
+		rev, err := srv.applyRow(tx, s.User.ID, op.ID, op.BaseRev, op.Row, seq, structureOn(s.User))
 		var refusal *rowError
 		switch {
 		case errors.As(err, &refusal) && refusal.code == "conflict":

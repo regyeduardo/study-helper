@@ -101,13 +101,13 @@ func TestLibraryMapRows(t *testing.T) {
 		t.Fatalf("no tombstone: %v", body)
 	}
 
-	// another account sees nothing; an account with the structure off cannot use it
+	// another account sees nothing; spec 005: an account with the structure off uses the map too (its own, empty here)
 	bia, _ := h.account("enabled", true, "bia@exemplo.com")
 	if res, _ := h.do(bia, call{path: "/v1/library/items/n1"}); res.StatusCode != 404 {
 		t.Fatalf("another account read a row: %d", res.StatusCode)
 	}
 	off, _ := h.account("enabled", false, "carla@exemplo.com")
-	if res, body := h.do(off, call{path: "/v1/library/map?since=0"}); res.StatusCode != 403 || body["error"] != "app_disabled" {
+	if res, body := h.do(off, call{path: "/v1/library/map?since=0"}); res.StatusCode != 200 || len(body["rows"].([]any)) != 0 {
 		t.Fatalf("structure off: %d %v", res.StatusCode, body)
 	}
 }

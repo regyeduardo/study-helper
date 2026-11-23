@@ -117,13 +117,17 @@ func (srv *Server) Handler() http.Handler {
 	route("GET /v1/devices", signedIn, false, srv.devices)
 	route("PATCH /v1/devices/{id}", signedIn, false, srv.renameDevice)
 	route("DELETE /v1/devices/{id}", signedIn, false, srv.signOutDevice)
-	// entrega 4: the library kept in the App
+	// spec 005: the map is the hierarchy of every signed-in account, with or without the structure; it never touches the storage
+	route("GET /v1/library/map", signedIn, false, srv.libraryMap)
+	route("GET /v1/library/items/{id}", signedIn, false, srv.getLibraryItem)
+	route("PUT /v1/library/items/{id}", signedIn, false, srv.putLibraryItem)
+	route("DELETE /v1/library/items/{id}", signedIn, false, srv.deleteLibraryItem)
+	route("POST /v1/library/items/batch", signedIn, false, srv.libraryBatch)
+	route("POST /v1/library/hierarchy/backup", signedIn, false, srv.hierarchyBackup)
+	route("POST /v1/library/hierarchy/done", signedIn, false, srv.hierarchyDone)
+	route("GET /v1/live", signedIn, false, srv.liveChannel)
+	// entrega 4: the content kept in the App
 	app := func(pattern string, handle handlerFunc) { route(pattern, appOn, false, srv.withBlobs(handle)) }
-	app("GET /v1/library/map", srv.libraryMap)
-	app("GET /v1/library/items/{id}", srv.getLibraryItem)
-	app("PUT /v1/library/items/{id}", srv.putLibraryItem)
-	app("DELETE /v1/library/items/{id}", srv.deleteLibraryItem)
-	app("POST /v1/library/items/batch", srv.libraryBatch)
 	app("GET /v1/library/items/{id}/parts/{part...}", srv.getPart)
 	app("PUT /v1/library/items/{id}/parts/{part...}", srv.putPart)
 	app("DELETE /v1/library/items/{id}/parts/{part...}", srv.deletePart)
@@ -137,7 +141,6 @@ func (srv *Server) Handler() http.Handler {
 	app("DELETE /v1/uploads/{id}", srv.abandonUpload)
 	app("GET /v1/media/{item}/{media}", srv.getMedia)
 	app("DELETE /v1/media/{item}/{media}", srv.deleteMedia)
-	route("GET /v1/live", appOn, false, srv.liveChannel)
 	adminRoute := func(pattern string, handle handlerFunc) { mux.Handle(pattern, srv.adminOnly(handle)) }
 	adminRoute("GET /v1/admin/codes", srv.adminCodes)
 	adminRoute("POST /v1/admin/codes", srv.adminCreateCode)
@@ -199,7 +202,7 @@ func (srv *Server) rules(who access, revokedOK bool, handle handlerFunc) http.Ha
 				fail(w, http.StatusForbidden, "access_revoked", map[string]any{"deleteAt": found.User.DeleteAt})
 				return
 			}
-			if who == appOn && !(found.User.Status == "enabled" && found.User.AppEnabled) {
+			if who == appOn && !structureOn(found.User) {
 				fail(w, http.StatusForbidden, "app_disabled", nil)
 				return
 			}
@@ -208,6 +211,9 @@ func (srv *Server) rules(who access, revokedOK bool, handle handlerFunc) http.Ha
 		handle(w, r, session)
 	})
 }
+
+// structureOn says whether the account is freed by a code with "Usar a estrutura do app" on.
+func structureOn(user User) bool { return user.Status == "enabled" && user.AppEnabled }
 
 // adminOf says whether the account is the administration: its e-mail is in ADMIN_EMAILS and was proven (by Google). An e-mail typed
 // with a password proves nothing.
