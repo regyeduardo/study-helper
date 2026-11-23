@@ -26,9 +26,9 @@ export interface HierarchySnapshot {
 
 export type NotePlace = 'app' | 'drive'
 
-/** The meta of a folder in the map: a folder has no place. */
+/** The meta of a folder in the map: a folder has no place, and its course text is content (it goes to a place of its own). */
 function folderRowMeta(folder: FolderMeta): Record<string, unknown> {
-  const { place: _place, awayParentId: _away, ...rest } = folder
+  const { place: _place, awayParentId: _away, courseDescription: _description, courseMaterial: _material, ...rest } = folder
   return JSON.parse(JSON.stringify(rest)) as Record<string, unknown>
 }
 

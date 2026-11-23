@@ -341,6 +341,32 @@ export class AppRepository implements Repository {
     throw new Error('As configurações mudaram em outro aparelho várias vezes seguidas. Tente de novo.')
   }
 
+  /** A folder's course text in the App (part "course"), at the version the account's map says (spec 005). */
+  async courseOf(folderId: string, version: string): Promise<{ courseDescription: string | null; courseMaterial: string | null } | null> {
+    const hit = this.cached(folderId, 'course', version)
+    const content = hit ?? (await getPart(folderId, 'course', version)).content
+    if (hit === undefined) this.parts.set(`${folderId}/course`, { version, content })
+    return parse(content, null)
+  }
+
+  /** Keeps a folder's course text in the App; the version it was based on comes from the account's map. Returns the new version. */
+  async saveCourse(folderId: string, course: { courseDescription: string | null; courseMaterial: string | null }, baseVersion: string | null): Promise<string> {
+    const content = JSON.stringify(course)
+    let base = baseVersion
+    for (let round = 0; round < 4; round++) {
+      try {
+        const stored = await putPart(folderId, 'course', content, base)
+        this.parts.set(`${folderId}/course`, { version: stored.version, content })
+        return stored.version
+      } catch (error) {
+        // another device kept the course in between: the course is written whole, so this one goes over it
+        if (!(error instanceof ApiError && error.code === 'conflict')) throw error
+        base = (error.data.currentVersion as string | null | undefined) ?? null
+      }
+    }
+    throw new Error('O curso mudou em outro aparelho várias vezes seguidas. Tente de novo.')
+  }
+
   async putSource(fileId: string, blob: Blob, name: string): Promise<StoredSource> {
     // the same file again gets the same media id, so the server continues the upload that stopped instead of starting over (FR-019)
     const media = mediaIdOf(name, blob)

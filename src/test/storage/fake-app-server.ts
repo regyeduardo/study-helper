@@ -162,7 +162,15 @@ export class FakeAppServer {
       const current = this.rows.get(id)
       if (method === 'GET') return current ? json(200, structuredClone(current)) : json(404, { error: 'not_found' })
       if (method === 'PUT') {
+        // as the real server: a body over 1 MiB does not decode (readJSON)
+        if (new TextEncoder().encode(String(init.body ?? '')).length > 1 << 20) return json(400, { error: 'invalid_body' })
         const { baseRev, row } = (await body()) as { baseRev: number; row: Record<string, unknown> }
+        // as the real server (cleanMeta): the text never goes in the map
+        if (row.meta && typeof row.meta === 'object') {
+          const meta = row.meta as Record<string, unknown>
+          for (const key of ['sourceExcerpt', 'pendingExcerpt', 'courseMaterial', 'courseDescription']) if (key in meta) meta[key] = null
+          if (meta.source && typeof meta.source === 'object') delete (meta.source as Record<string, unknown>).text
+        }
         // a folder has no place (one sent is dropped); a note is in the App or in the Drive, and in the App only with the structure on
         if (row.itemKind === 'file' && row.place !== 'app' && row.place !== 'drive') return json(422, { error: 'invalid_place' })
         if (row.itemKind === 'file' && row.place === 'app' && !this.appEnabled) return json(403, { error: 'app_off' })

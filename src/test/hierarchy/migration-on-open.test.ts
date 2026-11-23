@@ -86,7 +86,7 @@ describe('migração ao abrir', () => {
     expect(library().folders.map(folder => folder.name)).toEqual(['Faculdade'])
   })
 
-  it('com a migração desligada (o padrão no ar até o texto dos cursos ter lugar), nada muda e nenhuma janela abre', async () => {
+  it('com a migração desligada (VITE_HIERARCHY_MIGRATION=0), nada muda e nenhuma janela abre', async () => {
     mockEnv.hierarchyMigration = false
     try {
       await driveLibrary()

@@ -38,7 +38,13 @@ const DEVICES_NAME = 'devices'
 const SOURCES_NAME = 'sources'
 const NOTES_NAME = 'notes'
 
-type Kind = 'root' | 'folder' | 'folder-meta' | 'md' | 'sidecar' | 'index' | 'devices' | 'device' | 'sources' | 'source' | 'notes'
+type Kind = 'root' | 'folder' | 'folder-meta' | 'md' | 'sidecar' | 'index' | 'devices' | 'device' | 'sources' | 'source' | 'notes' | 'course'
+
+/** The course text of a folder: content, kept apart from the account's hierarchy (spec 005). */
+export interface CourseText {
+  courseDescription: string | null
+  courseMaterial: string | null
+}
 
 interface Cached<T> {
   md5: string
@@ -89,6 +95,7 @@ export class DriveRepository implements Repository {
   private folderByDriveId = new Map<string, string>()
   private devices = new Map<string, DriveFile>()
   private sources = new Map<string, DriveFile>()
+  private courses = new Map<string, DriveFile>()
   private listing: DriveFile[] = []
   unlimited = false
   /**
@@ -401,6 +408,26 @@ export class DriveRepository implements Repository {
     this.sourcesId = await this.ensureSystemFolder('sources', SOURCES_NAME)
   }
 
+  /** The course text of a folder: its own file (spec 005), or the folder's meta of before the hierarchy went to the account. */
+  async courseOf(folderId: string): Promise<CourseText | null> {
+    const own = this.courses.get(folderId)
+    if (own) return this.cachedJson<CourseText>(`course:${folderId}`, own)
+    const meta = this.folders.get(folderId)?.meta
+    if (!meta) return null
+    const before = await this.cachedJson<FolderMeta>(`folder:${folderId}`, meta)
+    return { courseDescription: before.courseDescription ?? null, courseMaterial: before.courseMaterial ?? null }
+  }
+
+  /** Keeps a folder's course text in a file of its own, next to the notes kept only as content. */
+  async saveCourse(folderId: string, course: CourseText): Promise<void> {
+    const own = this.courses.get(folderId)
+    const file = own
+      ? await updateDriveFileController(this.token, own.id, { media: jsonBlob(course) })
+      : await createDriveFileController(this.token, `curso-${folderId}.json`, await this.notesFolder(), jsonBlob(course), { shKind: 'course', shId: folderId })
+    this.courses.set(folderId, file)
+    await this.db.put('cache', `course:${folderId}`, { md5: file.md5Checksum ?? '', value: course })
+  }
+
   /** The flat folder of the notes kept only as content, made the first time one is needed. */
   private async notesFolder(): Promise<string> {
     if (!this.rootId) await this.ensureRoot()
@@ -431,6 +458,7 @@ export class DriveRepository implements Repository {
     this.folderByDriveId = new Map()
     this.devices = new Map()
     this.sources = new Map()
+    this.courses = new Map()
     this.indexFile = null
 
     for (const file of this.listing) {
@@ -452,6 +480,8 @@ export class DriveRepository implements Repository {
         this.devices.set(id, file)
       } else if (kind === 'source') {
         this.sources.set(file.id, file)
+      } else if (kind === 'course') {
+        this.courses.set(id, file)
       }
     }
     for (const [id, entry] of this.folders) if (!entry.folder.id) this.folders.delete(id)

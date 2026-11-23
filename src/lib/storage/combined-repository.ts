@@ -230,6 +230,7 @@ export class CombinedRepository implements Repository {
     if (this.tree) {
       const { place: _place, awayParentId: _away, ...plain } = folder
       await this.tree.saveFolder(plain)
+      await this.keepCourse(plain)
       this.folders.set(folder.id, plain)
       return
     }
@@ -417,12 +418,53 @@ export class CombinedRepository implements Repository {
     if (row && row.place === 'drive') await tree.remove(fileId)
   }
 
+  /** What this device knows of each folder's course text, so an unchanged course is not written again. */
+  private readonly courseTexts = new Map<string, string>()
+
+  /**
+   * A folder's course text is content (spec 005): it goes to the account's default place, the App with the structure on and the
+   * Google Drive without it, never in the folder's line of the hierarchy.
+   */
+  private async keepCourse(folder: FolderMeta): Promise<void> {
+    const course = { courseDescription: folder.courseDescription ?? null, courseMaterial: folder.courseMaterial ?? null }
+    const text = JSON.stringify(course)
+    if ((course.courseDescription === null && course.courseMaterial === null && !this.courseTexts.has(folder.id)) || this.courseTexts.get(folder.id) === text) return
+    if (this.appRepo instanceof AppRepository) await this.appRepo.saveCourse(folder.id, course, this.tree?.rowOf(folder.id)?.parts.course ?? null)
+    else if (this.drive instanceof DriveRepository) await this.drive.saveCourse(folder.id, course)
+    this.courseTexts.set(folder.id, text)
+  }
+
+  /** The course text of the folders that have one, from where it is: the App's part, or the Google Drive (its own file or the meta of before). */
+  private async withCourses(folders: FolderMeta[]): Promise<FolderMeta[]> {
+    return Promise.all(
+      folders.map(async folder => {
+        const version = this.tree?.rowOf(folder.id)?.parts.course
+        if (!version && !folder.isCourse) return folder
+        try {
+          const course =
+            version && this.appRepo instanceof AppRepository
+              ? await this.appRepo.courseOf(folder.id, version)
+              : this.drive instanceof DriveRepository
+                ? await this.drive.courseOf(folder.id)
+                : null
+          if (!course) return folder
+          this.courseTexts.set(folder.id, JSON.stringify({ courseDescription: course.courseDescription ?? null, courseMaterial: course.courseMaterial ?? null }))
+          return { ...folder, courseDescription: course.courseDescription ?? null, courseMaterial: course.courseMaterial ?? null }
+        } catch {
+          // the course text could not be read now: the folder shows, and the text comes with the next opening
+          return folder
+        }
+      }),
+    )
+  }
+
   /** The tree from the account's hierarchy; the notes in Local from this browser, at the root when their folder is gone for good. */
   private async fromTree(tree: HierarchySnapshot, drive: Snapshot | null, local: Snapshot): Promise<Snapshot> {
     this.sides.clear()
     this.folders.clear()
     this.lostFolder.clear()
-    for (const folder of tree.folders) this.folders.set(folder.id, folder)
+    const folders = await this.withCourses(tree.folders)
+    for (const folder of folders) this.folders.set(folder.id, folder)
     const files: FileMeta[] = []
     for (const file of tree.files) {
       this.sides.set(file.id, file.place === 'app' ? 'app' : 'drive')
@@ -436,7 +478,7 @@ export class CombinedRepository implements Repository {
       files.push(lost ? { ...file, folderId: null } : file)
     }
     const index = drive?.index ?? (this.drive instanceof DriveRepository ? await this.drive.cachedIndex() : null) ?? defaultIndex()
-    return { folders: tree.folders, files, index }
+    return { folders, files, index }
   }
 
   private async inLocal(ref: string): Promise<boolean> {
