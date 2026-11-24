@@ -45,6 +45,12 @@ export function toAppConfig(raw: unknown, providers: string[]): AiConfig {
   }
 }
 
+/** The administration saved in this tab: its own app AI follows at once, without waiting for the next minute. Off here, stays off. */
+export function followAdminChoice(saved: AiConfig): void {
+  const { config, providers } = useAppAiStore.getState()
+  if (config) useAppAiStore.setState({ config: toAppConfig(saved, providers) })
+}
+
 /** What the server keeps of the administration's choice: never a key. */
 export function fromAppConfig(config: AiConfig): AiConfig {
   return { ...config, providers: config.providers.map(provider => ({ ...provider, key: '', base: '' })) }

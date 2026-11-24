@@ -7,6 +7,7 @@ const { mockEnv } = vi.hoisted(() => ({ mockEnv: { apiUrl: 'https://api.example.
 vi.mock('@/lib/env', () => ({ env: mockEnv }))
 
 import AdminPage from '@/pages/admin'
+import { APP_KEY, toAppConfig, useAppAiStore } from '@/lib/ai/app-ai'
 import { useServerAccount } from '@/stores/server-account'
 import { useUiStore } from '@/stores/ui'
 
@@ -77,5 +78,37 @@ describe('Administração › IA do app', () => {
     await waitFor(() => expect(puts.length).toBeGreaterThan(0))
     expect(JSON.stringify(puts.at(-1))).not.toMatch(/"key":"(?!")/)
     expect(screen.getByRole('status')).toHaveTextContent('vale para todos que usam a estrutura do app')
+  })
+
+  // Dono, 24/11: escolheu os modelos na Administração, voltou ao app e a Ata falhou com "Escolha um modelo": a aba seguia com a IA
+  // de antes até a leitura do minuto seguinte. Salvar vale na hora para a própria aba.
+  it('salvar vale na hora para a IA do app desta aba, sem esperar o minuto', async () => {
+    useAppAiStore.setState({ config: toAppConfig({}, ['deepinfra', 'openrouter']), providers: ['deepinfra', 'openrouter'] })
+    render(
+      <MemoryRouter initialEntries={['/administracao']}>
+        <AdminPage />
+      </MemoryRouter>,
+    )
+    fireEvent.click(await screen.findByRole('tab', { name: 'IA do app' }))
+    await screen.findByText(/com chave: deepinfra/)
+    fireEvent.click(screen.getByRole('tab', { name: 'Padrões por uso' }))
+    fireEvent.change(await screen.findByLabelText('Estudo'), { target: { value: 'm-whisper' } })
+    await waitFor(() => expect(useAppAiStore.getState().config?.defaults.estudo).toBe('m-whisper'))
+    expect(useAppAiStore.getState().config?.providers.every(provider => provider.key === APP_KEY)).toBe(true)
+  })
+
+  it('sem a estrutura nesta aba, salvar não liga a IA do app nela', async () => {
+    useAppAiStore.setState({ config: null, providers: [] })
+    render(
+      <MemoryRouter initialEntries={['/administracao']}>
+        <AdminPage />
+      </MemoryRouter>,
+    )
+    fireEvent.click(await screen.findByRole('tab', { name: 'IA do app' }))
+    await screen.findByText(/com chave: deepinfra/)
+    fireEvent.click(screen.getByRole('tab', { name: 'Padrões por uso' }))
+    fireEvent.change(await screen.findByLabelText('Estudo'), { target: { value: 'm-whisper' } })
+    await waitFor(() => expect(puts.length).toBeGreaterThan(0))
+    expect(useAppAiStore.getState().config).toBeNull()
   })
 })

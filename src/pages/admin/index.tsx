@@ -18,7 +18,7 @@ import {
 } from '@/controllers/api.controller'
 import { blocking } from '@/lib/blocking'
 import { AiConfigSource, AiSettings } from '@/components/dialogs/AiSettings'
-import { APP_KEY, fromAppConfig, toAppConfig } from '@/lib/ai/app-ai'
+import { APP_KEY, followAdminChoice, fromAppConfig, toAppConfig } from '@/lib/ai/app-ai'
 import type { AiConfig } from '@/types/domain'
 import { useServerAccount } from '@/stores/server-account'
 import { useUiStore } from '@/stores/ui'
@@ -356,7 +356,10 @@ function AppAiTab() {
     setState(current => (current ? { ...current, config } : current))
     setSaved(null)
     adminSetAi(fromAppConfig(config))
-      .then(() => setSaved('Salvo: vale para todos que usam a estrutura do app em até 1 minuto.'))
+      .then(() => {
+        followAdminChoice(fromAppConfig(config))
+        setSaved('Salvo: vale para todos que usam a estrutura do app em até 1 minuto.')
+      })
       .catch(failure => setError(apiMessage(failure)))
   }
   return (
