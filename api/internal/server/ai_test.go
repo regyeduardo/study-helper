@@ -4,8 +4,10 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
+	"time"
 )
 
 // Spec 006: the app's AI for the people with the structure on. The browser calls /v1/ai/{provider}/{path...}; the server sends it on
@@ -88,6 +90,36 @@ func TestAIProxyPassesTheAudioOfATranscription(t *testing.T) {
 	}
 	if got := (*calls)[0]; got.body != form || got.contentType != "multipart/form-data; boundary=b" {
 		t.Fatalf("the audio goes whole: %+v", got)
+	}
+}
+
+// toProvider sends every request to the fake provider, as the real address would reach the real one.
+type toProvider struct{ url string }
+
+func (p toProvider) RoundTrip(r *http.Request) (*http.Response, error) {
+	target, _ := url.Parse(p.url)
+	r.URL.Scheme, r.URL.Host = target.Scheme, target.Host
+	return http.DefaultTransport.RoundTrip(r)
+}
+
+// The server's client has a limit for the whole answer (15 s for Google): an AI that writes for longer came cut in the middle,
+// and the Ata got no JSON ("A IA respondeu vazio ou sem JSON legível").
+func TestAIProxyAnswerLongerThanTheClientLimitComesWhole(t *testing.T) {
+	h := newHarness(t)
+	ana, _ := h.account("enabled", true, "ana@exemplo.com")
+	provider, _ := fakeProvider(t, func(w http.ResponseWriter) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "data: {\"choices\":[{\"delta\":{\"content\":\"{\\\"a\\\":\"}}]}\n\n")
+		w.(http.Flusher).Flush()
+		time.Sleep(300 * time.Millisecond)
+		_, _ = io.WriteString(w, "data: {\"choices\":[{\"delta\":{\"content\":\"1}\"}}]}\n\ndata: [DONE]\n\n")
+	})
+	withAI(h, map[string]string{"deepseek": "k"}, nil)
+	h.srv.cfg.HTTPClient = &http.Client{Timeout: 100 * time.Millisecond, Transport: toProvider{provider.URL}}
+
+	res, out := h.raw(ana, http.MethodPost, "/v1/ai/deepseek/chat/completions", []byte(`{"stream":true}`), map[string]string{"Content-Type": "application/json"})
+	if res.StatusCode != 200 || !strings.Contains(string(out), "data: [DONE]") {
+		t.Fatalf("the answer came cut: %d %q", res.StatusCode, out)
 	}
 }
 

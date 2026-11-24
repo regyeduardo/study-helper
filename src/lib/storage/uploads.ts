@@ -22,6 +22,8 @@ export interface UploadOptions {
   wait?: (ms: number) => Promise<void>
   /** How long one part may take before it is given up and sent again (3 min: the server gives up on the storage at 2). */
   partTimeout?: number
+  /** Cancelar of the window it runs in: the part going stops at once, and nothing more is sent. */
+  signal?: AbortSignal
 }
 
 /**
@@ -54,7 +56,7 @@ const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, m
 const transient = (error: unknown) => error instanceof ApiError && (error.code === 'offline' || error.status >= 500)
 
 export async function uploadMedia(job: { item: string; media: string; file: Blob; name: string; mime?: string }, options: UploadOptions = {}): Promise<{ upload: string; key: string; bytes: number; mime: string }> {
-  const { onProgress, retries = 3, wait = sleep, partTimeout = 180_000 } = options
+  const { onProgress, retries = 3, wait = sleep, partTimeout = 180_000, signal } = options
   const totalBytes = job.file.size
   const mime = job.mime || job.file.type || 'application/octet-stream'
   let start
@@ -76,14 +78,17 @@ export async function uploadMedia(job: { item: string; media: string; file: Blob
   tell({ state: 'uploading', sentBytes, totalBytes })
   for (let n = 1; n <= count; n++) {
     if (done.has(n)) continue
-    if (watchedUpload.cancelled?.()) throw new UploadCancelled()
+    if (watchedUpload.cancelled?.() || signal?.aborted) throw new UploadCancelled()
     const blob = job.file.slice((n - 1) * size, Math.min(n * size, totalBytes))
     for (let attempt = 0; ; attempt++) {
       try {
         // never waits forever (23/11, an upload looked stuck): past the limit the part counts as no connection and goes again
-        await putUploadPart(start.upload, n, blob, AbortSignal.timeout(partTimeout), sent => tell({ state: 'uploading', sentBytes: sentBytes + sent, totalBytes }))
+        const limit = AbortSignal.timeout(partTimeout)
+        // a browser without AbortSignal.any stops between parts instead
+        await putUploadPart(start.upload, n, blob, signal && typeof AbortSignal.any === 'function' ? AbortSignal.any([limit, signal]) : limit, sent => tell({ state: 'uploading', sentBytes: sentBytes + sent, totalBytes }))
         break
       } catch (error) {
+        if (signal?.aborted) throw new UploadCancelled()
         if (!transient(error)) throw error
         if (attempt >= retries) throw new UploadInterrupted(start.upload, sentBytes, totalBytes)
         await wait(1000 * 2 ** attempt)

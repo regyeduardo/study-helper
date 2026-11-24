@@ -1,5 +1,6 @@
 import { ApiError } from '@/controllers/api.controller'
 import { env } from '@/lib/env'
+import { countedBlob, type Transfer } from '@/lib/storage/repository'
 
 /**
  * The library kept in the App (spec 003, entrega 4): the map, the parts in versions, the index, the uploads in parts and the media.
@@ -188,5 +189,5 @@ export const abandonUpload = async (id: string) => void (await send('DELETE', `/
 
 /** Where the player reads the media from (same site: the session cookie goes along; Range works). */
 export const mediaUrl = (item: string, media: string, download = false) => `${env.apiUrl}/v1/media/${encodeURIComponent(item)}/${encodeURIComponent(media)}${download ? '?download=1' : ''}`
-export const getMedia = async (item: string, media: string) => (await send('GET', `/v1/media/${encodeURIComponent(item)}/${encodeURIComponent(media)}`)).blob()
+export const getMedia = async (item: string, media: string, transfer?: Transfer) => countedBlob(await send('GET', `/v1/media/${encodeURIComponent(item)}/${encodeURIComponent(media)}`, { signal: transfer?.signal }), transfer)
 export const deleteMedia = async (item: string, media: string) => (await (await send('DELETE', `/v1/media/${encodeURIComponent(item)}/${encodeURIComponent(media)}`)).json()) as { seq: number }

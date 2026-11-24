@@ -5,7 +5,7 @@ import { DriveRepository } from '@/lib/storage/drive-repository'
 import { fileOfRow, type HierarchyRepository, type HierarchySnapshot } from '@/lib/storage/hierarchy-repository'
 import { LocalRepository } from '@/lib/storage/local-repository'
 import { defaultPlace, filePlaceOf, folderPlaceOf } from '@/lib/storage/place'
-import type { ConflictResolver, RemoteChanges, Repository, StorageUsage, StoredSize, StoredSource } from '@/lib/storage/repository'
+import type { ConflictResolver, RemoteChanges, Repository, StorageUsage, StoredSize, StoredSource, Transfer } from '@/lib/storage/repository'
 
 /** Where an item is kept right now: the account's Google Drive, this browser (Local) or the App (spec 003, entrega 4). */
 export type Side = 'drive' | 'local' | 'app'
@@ -306,13 +306,13 @@ export class CombinedRepository implements Repository {
     await this.drive.saveIndex(index)
   }
 
-  async putSource(fileId: string, blob: Blob, name: string): Promise<StoredSource> {
-    return this.repoOf(fileId).putSource(fileId, blob, name)
+  async putSource(fileId: string, blob: Blob, name: string, transfer?: Transfer): Promise<StoredSource> {
+    return this.repoOf(fileId).putSource(fileId, blob, name, transfer)
   }
 
-  async getSource(ref: string): Promise<Blob> {
-    if (ref.startsWith('app:') && this.appRepo) return this.appRepo.getSource(ref)
-    return (await this.inLocal(ref)) ? this.local.getSource(ref) : this.drive.getSource(ref)
+  async getSource(ref: string, transfer?: Transfer): Promise<Blob> {
+    if (ref.startsWith('app:') && this.appRepo) return this.appRepo.getSource(ref, transfer)
+    return (await this.inLocal(ref)) ? this.local.getSource(ref) : this.drive.getSource(ref, transfer)
   }
 
   async removeSource(ref: string): Promise<void> {

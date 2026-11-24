@@ -1,5 +1,6 @@
 import { env } from '@/lib/env'
 import { newId } from '@/lib/ids'
+import { countedBlob, type Transfer } from '@/lib/storage/repository'
 
 export const FOLDER_MIME = 'application/vnd.google-apps.folder'
 
@@ -120,9 +121,9 @@ export async function downloadDriveTextController(token: TokenProvider, id: stri
   return response.text()
 }
 
-export async function downloadDriveBlobController(token: TokenProvider, id: string): Promise<Blob> {
-  const response = await call(token, `/drive/v3/files/${id}?alt=media`)
-  return response.blob()
+export async function downloadDriveBlobController(token: TokenProvider, id: string, transfer?: Transfer): Promise<Blob> {
+  const response = await call(token, `/drive/v3/files/${id}?alt=media`, { signal: transfer?.signal })
+  return countedBlob(response, transfer)
 }
 
 export async function createDriveFolderController(
@@ -152,19 +153,45 @@ function multipart(metadata: object, media: Blob): { body: Blob; boundary: strin
 
 const MULTIPART_LIMIT_BYTES = 5 * 1024 * 1024
 
-async function createResumable(token: TokenProvider, metadata: object, media: Blob): Promise<DriveFile> {
+async function createResumable(token: TokenProvider, metadata: object, media: Blob, transfer?: Transfer): Promise<DriveFile> {
   const type = media.type || 'application/octet-stream'
   const opened = await call(token, `/upload/drive/v3/files?uploadType=resumable&fields=${FILE_FIELDS}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json; charset=UTF-8', 'X-Upload-Content-Type': type, 'X-Upload-Content-Length': String(media.size) },
     body: JSON.stringify(metadata),
+    signal: transfer?.signal,
   })
   const uploadId = opened.headers.get('X-GUploader-UploadID')
   const session = opened.headers.get('Location') ?? (uploadId ? `${env.googleApiBase}/upload/drive/v3/files?uploadType=resumable&fields=${FILE_FIELDS}&upload_id=${uploadId}` : null)
   if (!session) throw new DriveError(0, 'O Google Drive não abriu o envio do arquivo grande.')
-  const response = await fetch(session, { method: 'PUT', headers: { 'Content-Type': type }, body: media })
+  if (transfer?.onProgress && typeof XMLHttpRequest !== 'undefined' && import.meta.env.MODE !== 'test') return putWithProgress(session, type, media, transfer)
+  const response = await fetch(session, { method: 'PUT', headers: { 'Content-Type': type }, body: media, signal: transfer?.signal })
   if (!response.ok) throw new DriveError(response.status, driveMessage(response.status, await response.text().catch(() => '')))
+  transfer?.onProgress?.(media.size, media.size)
   return (await response.json()) as DriveFile
+}
+
+/** The big file goes by XMLHttpRequest where the bar must move with the bytes (fetch cannot tell how much went). */
+function putWithProgress(session: string, type: string, media: Blob, transfer: Transfer): Promise<DriveFile> {
+  return new Promise((resolve, reject) => {
+    const request = new XMLHttpRequest()
+    request.open('PUT', session)
+    request.setRequestHeader('Content-Type', type)
+    request.upload.onprogress = event => transfer.onProgress?.(event.loaded, media.size)
+    request.onload = () => {
+      if (request.status < 200 || request.status >= 300) return reject(new DriveError(request.status, driveMessage(request.status, request.responseText)))
+      try {
+        resolve(JSON.parse(request.responseText) as DriveFile)
+      } catch {
+        reject(new DriveError(request.status, 'O Google Drive respondeu de um jeito inesperado ao envio.'))
+      }
+    }
+    request.onerror = () => reject(new DriveError(0, 'A conexão caiu no meio do envio para o Google Drive.'))
+    request.onabort = () => reject(new DOMException('Cancelado', 'AbortError'))
+    transfer.signal?.addEventListener('abort', () => request.abort(), { once: true })
+    if (transfer.signal?.aborted) return request.abort()
+    request.send(media)
+  })
 }
 
 export async function createDriveFileController(
@@ -173,15 +200,18 @@ export async function createDriveFileController(
   parentId: string,
   media: Blob,
   appProperties: Record<string, string>,
+  transfer?: Transfer,
 ): Promise<DriveFile> {
   const metadata = { name, parents: [parentId], appProperties, mimeType: media.type || undefined }
-  if (media.size > MULTIPART_LIMIT_BYTES) return createResumable(token, metadata, media)
+  if (media.size > MULTIPART_LIMIT_BYTES) return createResumable(token, metadata, media, transfer)
   const { body, boundary } = multipart(metadata, media)
   const response = await call(token, `/upload/drive/v3/files?uploadType=multipart&fields=${FILE_FIELDS}`, {
     method: 'POST',
     headers: { 'Content-Type': `multipart/related; boundary=${boundary}` },
     body,
+    signal: transfer?.signal,
   })
+  transfer?.onProgress?.(media.size, media.size)
   return (await response.json()) as DriveFile
 }
 

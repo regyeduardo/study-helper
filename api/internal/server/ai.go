@@ -111,9 +111,11 @@ func (srv *Server) aiProxy(w http.ResponseWriter, r *http.Request, s *Session) {
 	default:
 		out.Header.Set("Authorization", "Bearer "+key)
 	}
-	client := srv.cfg.HTTPClient
-	if client == nil || srv.cfg.AI.Origins[provider] != "" {
-		client = http.DefaultClient
+	// never the server's limit for the whole answer (15 s, made for Google): the AI writes for minutes and came cut in the middle.
+	// The call ends when the browser's does (r.Context()).
+	client := http.DefaultClient
+	if srv.cfg.HTTPClient != nil && srv.cfg.AI.Origins[provider] == "" {
+		client = &http.Client{Transport: srv.cfg.HTTPClient.Transport}
 	}
 	res, err := client.Do(out)
 	if err != nil {

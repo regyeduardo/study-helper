@@ -92,7 +92,8 @@ export function timeLeft(op: BlockingOp, now = Date.now()): string | null {
   const byBytes = (op.totalBytes ?? 0) > 0 && (op.doneBytes ?? 0) > op.countedBytesFrom
   const done = byBytes ? (op.doneBytes ?? 0) - op.countedBytesFrom : (op.done ?? 0) - op.countedFrom
   const rest = byBytes ? (op.totalBytes ?? 0) - (op.doneBytes ?? 0) : (op.total ?? 0) - (op.done ?? 0)
-  if (!op.total || rest <= 0 || done < (byBytes ? 1 : 2)) return null
+  // by bytes it needs no count of items (a media going whole is one step of its own)
+  if ((!byBytes && !op.total) || rest <= 0 || done < (byBytes ? 1 : 2)) return null
   const seconds = (rest * elapsed) / done / 1000
   if (seconds < 45) return 'faltam alguns segundos'
   const minutes = Math.round(seconds / 60)

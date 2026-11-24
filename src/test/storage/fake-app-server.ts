@@ -29,8 +29,19 @@ interface Upload {
   mime: string
   bytes: number
   partSize: number
-  parts: Map<number, { etag: string; bytes: number }>
+  parts: Map<number, { etag: string; bytes: number; blob?: Blob }>
   status: 'open' | 'completed' | 'abandoned'
+}
+
+/** A Blob's bytes, whether it came from the page (jsdom) or from a fetch (Node). */
+async function bytesOf(blob: Blob | undefined): Promise<ArrayBuffer> {
+  if (!blob) return new ArrayBuffer(0)
+  if (typeof blob.arrayBuffer === 'function') return blob.arrayBuffer()
+  return new Promise(resolve => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(reader.result as ArrayBuffer)
+    reader.readAsArrayBuffer(blob)
+  })
 }
 
 const SERVER_OWNED = ['parts', 'media', 'noteBytes', 'mediaBytes', 'rev', 'seq', 'removedAt', 'placeOwn']
@@ -43,6 +54,8 @@ export class FakeAppServer {
   partStore = new Map<string, { version: string; content: string }[]>()
   index: { version: string; content: string } | null = null
   uploads = new Map<string, Upload>()
+  /** The bytes of each media that finished going up, by its key: the media GET gives them back. */
+  mediaBlobs = new Map<string, Uint8Array>()
   limit = 10 * 1024 * MiB
   reserved = 0
   mediaBytes = 0
@@ -293,7 +306,7 @@ export class FakeAppServer {
         const size = (init.body as Blob).size
         const received = [...upload.parts].filter(([k]) => k !== n).reduce((sum, [, part]) => sum + part.bytes, 0)
         if (received + size > upload.bytes) return json(413, { error: 'larger_than_declared' })
-        upload.parts.set(n, { etag: `e${n}`, bytes: size })
+        upload.parts.set(n, { etag: `e${n}`, bytes: size, blob: init.body as Blob })
         return json(200, { n, etag: `e${n}` })
       }
       if (match[3] && method === 'POST') {
@@ -305,6 +318,10 @@ export class FakeAppServer {
         const row = this.rows.get(upload.item)
         if (row?.media) row.media = { ...row.media, status: 'stored', bytes: total }
         if (row) this.touch(row)
+        const pieces = await Promise.all([...upload.parts].sort(([a], [b]) => a - b).map(([, part]) => bytesOf(part.blob)))
+        const whole = new Uint8Array(pieces.reduce((sum, piece) => sum + piece.byteLength, 0))
+        pieces.reduce((at, piece) => (whole.set(new Uint8Array(piece), at), at + piece.byteLength), 0)
+        this.mediaBlobs.set(`u/u1/i/${upload.item}/media/${upload.media}`, whole)
         return json(200, { key: `u/u1/i/${upload.item}/media/${upload.media}`, bytes: total, mime: upload.mime })
       }
       if (!match[2] && !match[3] && method === 'GET') return json(200, { parts: [...upload.parts].map(([n, part]) => ({ n, etag: part.etag })), partSize: upload.partSize, bytes: upload.bytes, status: upload.status })
@@ -319,7 +336,7 @@ export class FakeAppServer {
     if (match && method === 'GET') {
       const row = this.rows.get(decodeURIComponent(match[1]))
       if (!row?.media || row.media.status === 'deleted') return json(410, { error: 'media_deleted' })
-      return new Response(new Blob([new Uint8Array(4)]), { status: 200, headers: { 'Content-Type': row.media.mime } })
+      return new Response(this.mediaBlobs.get(row.media.key) ?? new Blob([new Uint8Array(4)]), { status: 200, headers: { 'Content-Type': row.media.mime } })
     }
     if (match && method === 'DELETE') {
       const row = this.rows.get(decodeURIComponent(match[1]))

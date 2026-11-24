@@ -258,6 +258,9 @@ describe('Quanto falta', () => {
     expect(timeLeft(op({ done: 1, total: 100 }), 60_000)).toBeNull()
     expect(timeLeft(op({ done: 50, total: 100 }), 2000)).toBeNull()
   })
+  it('pelos bytes também numa etapa sem contagem de itens (a mídia de uma nota indo para outro lugar)', () => {
+    expect(timeLeft(op({ doneBytes: 1e8, totalBytes: 4e8 }), 60_000)).toBe('faltam ~3 min')
+  })
   it('perto do fim: alguns segundos; muito: horas', () => {
     expect(timeLeft(op({ done: 90, total: 100 }), 90_000)).toBe('faltam alguns segundos')
     expect(timeLeft(op({ done: 10, total: 1000 }), 60_000)).toBe('faltam ~1 h 39 min')

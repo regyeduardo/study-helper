@@ -28,6 +28,7 @@ import {
   type StorageUsage,
   type StoredSize,
   type StoredSource,
+  type Transfer,
 } from '@/lib/storage/repository'
 import { applyFieldChoices, hasTextConflict, joinHunks, mergeFolder, mergeKept, mergeShares, mergeSidecar, mergeText } from '@/lib/sync/merge'
 
@@ -310,15 +311,15 @@ export class DriveRepository implements Repository {
     await this.db.put('cache', 'index', { md5: this.indexFile.md5Checksum ?? '', value: merged })
   }
 
-  async putSource(fileId: string, blob: Blob, name: string): Promise<StoredSource> {
+  async putSource(fileId: string, blob: Blob, name: string, transfer?: Transfer): Promise<StoredSource> {
     await this.ensureRoom(blob.size)
-    const file = await createDriveFileController(this.token, `${fileId}-${name}`, this.sourcesId, blob, { shKind: 'source', shId: fileId })
+    const file = await createDriveFileController(this.token, `${fileId}-${name}`, this.sourcesId, blob, { shKind: 'source', shId: fileId }, transfer)
     this.sources.set(file.id, file)
     return { ref: file.id }
   }
 
-  getSource(ref: string): Promise<Blob> {
-    return downloadDriveBlobController(this.token, ref)
+  getSource(ref: string, transfer?: Transfer): Promise<Blob> {
+    return downloadDriveBlobController(this.token, ref, transfer)
   }
 
   /** The player streams a media kept here through the app's service worker; null where this browser cannot (it is downloaded whole). */

@@ -20,7 +20,7 @@ import {
 import { defaultIndex } from '@/lib/defaults'
 import { isRecording } from '@/lib/file-types'
 import { type HeldNote, PartCache } from '@/lib/storage/part-cache'
-import type { Conflict, ConflictResolver, RemoteChanges, Repository, StorageUsage, StoredSize, StoredSource } from '@/lib/storage/repository'
+import type { Conflict, ConflictResolver, RemoteChanges, Repository, StorageUsage, StoredSize, StoredSource, Transfer } from '@/lib/storage/repository'
 import { uploadMedia, type UploadOptions } from '@/lib/storage/uploads'
 import { applyFieldChoices, hasTextConflict, joinHunks, mergeFolder, mergeKept, mergeShares, mergeSidecar, mergeText } from '@/lib/sync/merge'
 
@@ -465,16 +465,17 @@ export class AppRepository implements Repository {
     throw new Error('O curso mudou em outro aparelho várias vezes seguidas. Tente de novo.')
   }
 
-  async putSource(fileId: string, blob: Blob, name: string): Promise<StoredSource> {
+  async putSource(fileId: string, blob: Blob, name: string, transfer?: Transfer): Promise<StoredSource> {
     // the same file again gets the same media id, so the server continues the upload that stopped instead of starting over (FR-019)
     const media = mediaIdOf(name, blob)
-    await uploadMedia({ item: fileId, media, file: blob, name, mime: blob.type }, this.uploadOptions)
+    const watch = transfer ? { signal: transfer.signal, onProgress: transfer.onProgress && ((progress: { sentBytes: number; totalBytes: number }) => transfer.onProgress!(progress.sentBytes, progress.totalBytes)) } : {}
+    await uploadMedia({ item: fileId, media, file: blob, name, mime: blob.type }, { ...this.uploadOptions, ...watch })
     return { ref: `app:${fileId}/${media}`, url: mediaUrl(fileId, media) }
   }
 
-  async getSource(ref: string): Promise<Blob> {
+  async getSource(ref: string, transfer?: Transfer): Promise<Blob> {
     const [item, media] = this.mediaOf(ref)
-    return getMedia(item, media)
+    return getMedia(item, media, transfer)
   }
 
   /** The player streams the media from the API: the browser asks for the parts (Range) with the session cookie. */

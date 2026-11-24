@@ -147,6 +147,16 @@ function sameNote(a: { content: string; sidecar: FileSidecar }, b: { content: st
   return a.content === b.content && plain(a.sidecar) === plain(b.sidecar)
 }
 
+/** The media of the note in hand on its way: brought from the origin ('down'), then sent to the destination ('up'). */
+export interface MediaProgress {
+  step: 'down' | 'up'
+  from: Side
+  to: Side
+  name: string
+  doneBytes: number
+  totalBytes: number
+}
+
 export interface RunOptions {
   /** Called after each step, with the journal as it is now (the window shows the progress). */
   onProgress?: (progress: MoveProgress) => void
@@ -162,6 +172,10 @@ export interface RunOptions {
    * hierarchy the Drive only keeps content, so it does not show twice); any other original is kept in these copies before it leaves.
    */
   copies?: OriginalCopies
+  /** Cancelar of the window: the media in hand stops at once and its note stays whole where it was. */
+  signal?: AbortSignal
+  /** How much of the media in hand went (a media of hundreds of MB is most of the time of a move). */
+  onMedia?: (progress: MediaProgress) => void
 }
 
 export class MoveStopped extends Error {}
@@ -173,6 +187,15 @@ export class MoveStopped extends Error {}
  */
 export async function runMoves(repo: CombinedRepository, journal: MoveJournal, tree: Tree, options: RunOptions = {}): Promise<MoveRecord[]> {
   const records = await journal.all()
+  // with the account's hierarchy a folder has no place (spec 005): a folder's move left from before has nothing to do, failed or not
+  if (repo.hierarchy) {
+    for (const record of records) {
+      if (record.kind !== 'folder' || record.state === 'feito') continue
+      Object.assign(record, { state: 'feito' })
+      delete record.reason
+      await journal.put(record)
+    }
+  }
   const open = records.filter(record => record.state !== 'feito' && record.state !== 'falhou')
   const total = open.length
   const totalBytes = open.reduce((sum, record) => sum + record.bytes, 0)
@@ -224,8 +247,10 @@ export async function runMoves(repo: CombinedRepository, journal: MoveJournal, t
           if (record.expired && sidecar.meta.kept === 'arquivo') sidecar = { ...sidecar, meta: { ...sidecar.meta, kept: 'registro' } }
           // the note's file kept in the library goes with it, under a new address at the destination
           if (origin?.storage === 'drive' && origin.storedFileId && !origin.removedAt && !(record.from === 'drive' && record.to === 'drive')) {
-            const blob = await repo.repoFor(record.from).getSource(origin.storedFileId)
-            const stored = await repo.repoFor(record.to).putSource(record.id, blob, origin.name)
+            const media = (step: MediaProgress['step']) => (doneBytes: number, totalBytes: number) =>
+              options.onMedia?.({ step, from: record.from, to: record.to, name: record.name, doneBytes, totalBytes })
+            const blob = await repo.repoFor(record.from).getSource(origin.storedFileId, { signal: options.signal, onProgress: media('down'), sizeBytes: origin.sizeBytes })
+            const stored = await repo.repoFor(record.to).putSource(record.id, blob, origin.name, { signal: options.signal, onProgress: media('up') })
             sidecar = { ...sidecar, meta: { ...sidecar.meta, origin: { ...origin, storedFileId: stored.ref } } }
             record.media = true
           }
@@ -255,6 +280,13 @@ export async function runMoves(repo: CombinedRepository, journal: MoveJournal, t
         }
       } catch (error) {
         if (error instanceof MoveStopped) throw error
+        // Cancelar in the middle of its media: the note never left the origin, so it stays there whole, as one that did not start
+        if (options.signal?.aborted && (record.state === 'copiando' || record.state === 'pendente')) {
+          record.state = 'pendente'
+          await journal.remove(record.id)
+          repo.setShowing(showingOf(records))
+          continue
+        }
         await save(record, 'falhou', apiMessage(error))
       }
     }

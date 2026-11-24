@@ -5,7 +5,7 @@ import { type Blocker, blocking } from '@/lib/blocking'
 import { newId } from '@/lib/ids'
 import { CombinedRepository, type Side } from '@/lib/storage/combined-repository'
 import { fileBytes } from '@/lib/storage/file-sizes'
-import { MoveJournal, type MoveProgress, type MoveRecord, OriginalCopies, planMoves, retryFailed, runMoves } from '@/lib/storage/moves'
+import { type MediaProgress, MoveJournal, type MoveProgress, type MoveRecord, OriginalCopies, planMoves, retryFailed, runMoves } from '@/lib/storage/moves'
 import { filePlaceOf, folderPlaceOf } from '@/lib/storage/place'
 import { saveToDrive } from '@/lib/storage/source-storage'
 import { useLibraryStore } from '@/stores/library'
@@ -60,6 +60,12 @@ function placeName(side: Side): string {
   return side === 'app' ? 'o App' : side === 'local' ? 'Local' : 'o Google Drive'
 }
 
+/** What the window says while a note's media goes: from where it is brought, then where it is sent. */
+function mediaPhase(media: MediaProgress): string {
+  if (media.step === 'down') return media.from === 'app' ? 'Baixando a mídia do App' : media.from === 'local' ? 'Lendo a mídia deste navegador' : 'Baixando a mídia do Google Drive'
+  return media.to === 'app' ? 'Enviando a mídia para o App' : media.to === 'local' ? 'Guardando a mídia neste navegador' : 'Enviando a mídia para o Google Drive'
+}
+
 const notesOf = (count: number) => `${count.toLocaleString('pt-BR')} ${count === 1 ? 'nota' : 'notas'}`
 
 /** The item's own choice, written so that a choice equal to the folder above is no own choice (it goes back to following it). */
@@ -93,9 +99,14 @@ export const usePlacesStore = create<PlacesState>((set, get) => {
           blocker.progress({ phase: 'Levando as notas', done: progress.done, total: progress.total, doneBytes: progress.doneBytes, totalBytes: progress.totalBytes, current: progress.current })
         },
         cancelled: () => blocker.cancelled,
+        // the media of the note in hand: the bar moves with its bytes, and Cancelar stops it at once
+        signal: blocker.signal,
+        // the bar and the line speak only of this media: the count of notes comes back with the next note
+        onMedia: media => blocker.progress({ phase: mediaPhase(media), done: undefined, total: undefined, doneBytes: media.doneBytes, totalBytes: media.totalBytes, current: media.name }),
       })
       blocker.progress({ phase: 'Atualizando a biblioteca', done: undefined, total: undefined, doneBytes: undefined, totalBytes: undefined, current: undefined })
-      useLibraryStore.getState().applySnapshot(await repo.load())
+      // a note that moved is read again from its new place: the copy opened before would write its old media address back
+      useLibraryStore.getState().applySnapshot(await repo.load(), records.filter(record => record.kind === 'file' && record.state === 'feito').map(record => record.id))
       // a note that came from this browser takes its media from Mídias with it, to the Drive or to the App (FR-021)
       const library = useLibraryStore.getState()
       const media = records.filter(item => item.state === 'feito' && item.kind === 'file' && item.to !== 'local' && item.from === 'local').filter(record => {
