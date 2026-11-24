@@ -83,11 +83,12 @@ describe('IA do app com a estrutura ligada', () => {
     expect(targetFor(useLibraryStore.getState().index.settings, 'transcricao')).toMatchObject({ provider: 'deepinfra', model: 'openai/whisper-large-v3-turbo', apiKey: APP_KEY })
   })
 
-  it('uso sem modelo escolhido pelo dono: diz para avisar o administrador', () => {
+  it('uso sem modelo escolhido pelo dono: nenhum aviso na janela (pedido do dono, 23/11)', () => {
     useAppAiStore.setState({ config: toAppConfig({ ...ADMIN, defaults: {} }, ['deepinfra']), providers: ['deepinfra'] })
     render(<Pick />)
     expect(screen.queryByRole('combobox')).toBeNull()
-    expect(screen.getByRole('note')).toHaveTextContent('A IA do app não está configurada para')
+    expect(screen.queryByRole('note')).toBeNull()
+    expect(screen.queryByText(/não está configurada/)).toBeNull()
   })
 
   it('sem a estrutura, o seletor aparece com os modelos da pessoa', () => {

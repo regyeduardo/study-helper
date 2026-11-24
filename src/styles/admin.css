@@ -107,3 +107,15 @@
   .revoked-card{padding:22px 18px}
   .revoked-card h1{font-size:19px}
 }
+/* spec 006: the AI screen of Configurações inside Administração › IA do app; on the phone it scrolls inside, never the page */
+.adm-ias{min-width:0;container:body / inline-size}
+.adm-ias .app-providers > .muted{margin:10px 0 8px}
+.adm-ias .app-provider-list{list-style:none;margin:0;padding:0;border:1px solid var(--border);border-radius:10px;background:var(--bg-elev, transparent)}
+.adm-ias .app-provider{display:grid;grid-template-columns:minmax(0,1fr) auto auto;align-items:center;gap:12px;padding:10px 14px;border-bottom:1px solid var(--border-muted)}
+.adm-ias .app-provider:last-child{border-bottom:0}
+.adm-ias .app-provider .c-sit{font-size:13px}
+@container body (max-width:520px){
+  .adm-ias .app-provider{grid-template-columns:minmax(0,1fr) auto;row-gap:2px}
+  .adm-ias .app-provider .c-sit{grid-column:1;grid-row:2;font-size:12px}
+  .adm-ias .app-provider .btn{grid-column:2;grid-row:1 / span 2}
+}

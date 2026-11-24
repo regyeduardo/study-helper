@@ -31,6 +31,11 @@ import { dateTime, duration, formatBytes, shortDate } from '@/utils/format'
 import { isSourceNote } from '@/lib/file-types'
 
 const INPUT_LABEL: Record<string, string> = { file: 'Arquivo', url: 'Link', youtube: 'YouTube', topic: 'Tema', text: 'Texto', recording: 'Gravação', import: 'Importado', shared: 'Compartilhamento' }
+/** Where the media is: the App keeps it under the "drive" storage with an `app:` address (spec 003); the Drive is only the Drive. */
+export function storedIn(origin: { storage: string; storedFileId?: string | null }): string {
+  return origin.storage === 'drive' && origin.storedFileId?.startsWith('app:') ? 'App' : (STORAGE_LABEL[origin.storage] ?? origin.storage)
+}
+
 const STORAGE_LABEL: Record<string, string> = { drive: 'Google Drive', gofile: 'Gofile', litterbox: 'Litterbox', filebin: 'filebin', tmpfiles: 'tmpfiles', onlyfiles: 'OnlyFiles', none: 'Não guardada' }
 
 export function TocPanel({ onPick }: { onPick?: () => void }) {
@@ -259,7 +264,7 @@ function SourceActions({ meta }: { meta: FileMeta }) {
       {confirming && (
         <div className="inline-confirm" style={{ marginTop: 8 }}>
           {origin.storage === 'drive' || origin.storage === 'filebin'
-            ? `Apagar o arquivo guardado em ${STORAGE_LABEL[origin.storage]}? A nota continua, só com o nome.`
+            ? `Apagar o arquivo guardado em ${storedIn(origin)}? A nota continua, só com o nome.`
             : `O ${STORAGE_LABEL[origin.storage]} não deixa apagar pelo app; a nota passa a guardar só o nome.`}
           <button
             className="btn danger"
@@ -308,7 +313,7 @@ export function InfoPanel({ fileId }: { fileId: string }) {
       ? 'Arquivo removido; ficou só o nome.'
       : origin.storage === 'none'
         ? 'Não guardada'
-        : `${STORAGE_LABEL[origin.storage]}${origin.expiresAt ? ` · até ${dateTime(origin.expiresAt, timeZone)}${sourceExpired(origin) ? ' (expirou)' : ''}` : ''}`
+        : `${storedIn(origin)}${origin.expiresAt ? ` · até ${dateTime(origin.expiresAt, timeZone)}${sourceExpired(origin) ? ' (expirou)' : ''}` : ''}`
 
   return (
     <>

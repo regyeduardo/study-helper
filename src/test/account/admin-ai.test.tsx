@@ -57,7 +57,10 @@ describe('Administração › IA do app', () => {
     expect(await screen.findByText(/com chave: deepinfra, openrouter/)).toBeInTheDocument()
     expect(screen.getAllByText('DeepInfra').length).toBeGreaterThan(0)
     expect(screen.queryByLabelText('Chave')).toBeNull()
-    expect(screen.getAllByText('no servidor').length).toBeGreaterThan(0)
+    // the providers are the server's: no adding, editing or removing, only testing the connection
+    expect(screen.queryByRole('button', { name: /Adicionar provedor/ })).toBeNull()
+    expect(screen.queryByRole('button', { name: /Editar/ })).toBeNull()
+    expect(screen.getAllByRole('button', { name: 'Testar conexão' })).toHaveLength(2)
   })
 
   it('salvar manda a escolha para todos, sem nenhuma chave', async () => {
@@ -68,10 +71,9 @@ describe('Administração › IA do app', () => {
     )
     fireEvent.click(await screen.findByRole('tab', { name: 'IA do app' }))
     await screen.findByText(/com chave: deepinfra/)
-    // removing the provider is a change that saves (any change of the screen goes the same way)
-    fireEvent.click(screen.getAllByRole('button', { name: /Remover|Tirar/ })[0])
-    const confirm = screen.queryAllByRole('button', { name: /Remover|Tirar|Confirmar/ }).at(-1)
-    if (confirm) fireEvent.click(confirm)
+    // choosing the model of a use is what this screen is for
+    fireEvent.click(screen.getByRole('tab', { name: 'Padrões por uso' }))
+    fireEvent.change(await screen.findByLabelText('Transcrição'), { target: { value: '' } })
     await waitFor(() => expect(puts.length).toBeGreaterThan(0))
     expect(JSON.stringify(puts.at(-1))).not.toMatch(/"key":"(?!")/)
     expect(screen.getByRole('status')).toHaveTextContent('vale para todos que usam a estrutura do app')

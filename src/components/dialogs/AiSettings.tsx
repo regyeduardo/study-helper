@@ -60,6 +60,35 @@ const Reading = ({ text = 'lendo do provedor…' }: { text?: string }) => <span 
 
 /* ---------- Provedores ---------- */
 
+/**
+ * The providers of the app's AI (spec 006, the owner: "não é pra gerenciar provedores. Só usa o que foi predefinido, no máximo é
+ * testar conexão"): one per key on the server, nothing to add, rename or remove; each one only tests its connection.
+ */
+function AppProvidersTab({ config }: { config: AiConfig }) {
+  const live = useModelsStore(state => state.live)
+  const read = useModelsStore(state => state.read)
+  return (
+    <div className="app-providers">
+      <p className="muted">Os provedores com chave no servidor. Os modelos vêm deles, lidos ao vivo.</p>
+      <ul className="app-provider-list">
+        {config.providers.map(provider => {
+          const state = live[provider.id]
+          const sit = situation(state, provider)
+          return (
+            <li key={provider.id} className="app-provider">
+              <b>{provider.name}</b>
+              <span className={`c-sit ${sit.cls}`}>{sit.text}</span>
+              <button className="btn" onClick={() => void read(provider, true)}>
+                Testar conexão
+              </button>
+            </li>
+          )
+        })}
+      </ul>
+    </div>
+  )
+}
+
 interface Editing {
   id: string | null
   type: AiProviderId
@@ -84,7 +113,8 @@ function situation(live: Live | undefined, provider: AiProvider): { cls: string;
 function subLine(provider: AiProvider, live: Live | undefined): { bad?: boolean; text: string } {
   const type = providerOf(provider.type)
   if (live?.state === 'error') return { bad: true, text: live.error.kind === 'nokey' ? 'sem chave' : errLong(live.error) }
-  const who = provider.key ? keyMask(provider.key) : type.needsKey ? 'sem chave' : type.name
+  // the app's AI (spec 006) has no key here: it is the server's
+  const who = provider.key === APP_KEY ? 'chave no servidor' : provider.key ? keyMask(provider.key) : type.needsKey ? 'sem chave' : type.name
   if (!live || live.state === 'reading') return { text: `${who} · lendo do provedor…` }
   if (keyless(provider)) return { bad: true, text: `sem chave · ${plural(live.list.length, 'modelo', 'modelos')}` }
   return { text: `${who} · ${plural(live.list.length, 'modelo', 'modelos')} · ${informs(live) ? 'ok' : 'não informa mídias'}` }
@@ -1022,6 +1052,7 @@ function DefaultsTab({ config, save }: { config: AiConfig; save(next: AiConfig):
 /* ---------- área ---------- */
 
 export function AiSettings() {
+  const appMode = useAppMode()
   const [config, save] = useAiConfig()
   const ui = useModelsStore(state => state.ui)
   const setUi = useModelsStore(state => state.setUi)
@@ -1050,7 +1081,7 @@ export function AiSettings() {
         ))}
       </div>
       <div id="tab" role="tabpanel">
-        {ui.tab === 'provedores' && <ProvidersTab key="provedores" config={config} save={save} />}
+        {ui.tab === 'provedores' && (appMode ? <AppProvidersTab key="provedores" config={config} /> : <ProvidersTab key="provedores" config={config} save={save} />)}
         {ui.tab === 'modelos' && <ModelsTab config={config} save={save} />}
         {ui.tab === 'padroes' && <DefaultsTab config={config} save={save} />}
         {ui.tab === 'recomendacoes' && <RecommendationsTab config={config} save={save} />}

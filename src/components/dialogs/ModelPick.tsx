@@ -48,7 +48,8 @@ export function useModelChoice(use: AiUse, media = false, last: { pick?: string;
   const options = config.models.filter(model => model.uid === chosen || compatible(mediaOfModel(config, live, probes, model.uid), needs)).map(model => model.uid)
   const video = media && use !== 'transcricao' ? uidFor(config, 'midia') : undefined
   const model = videoWrites && video ? video : modelByUid(config, chosen) ? chosen : ''
-  return { use, pick: chosen, setPick, touched: pick !== null, video, videoWrites: Boolean(videoWrites && video), setVideoWrites, model, options, ready: Boolean(model) || options.length === 0 }
+  // with the app's AI the window never waits on a choice: the app decides (spec 006)
+  return { use, pick: chosen, setPick, touched: pick !== null, video, videoWrites: Boolean(videoWrites && video), setVideoWrites, model, options, ready: Boolean(appAi) || Boolean(model) || options.length === 0 }
 }
 
 /** The selector itself ("Modelo"), always there at generation time; the video option only for media sources. */
@@ -58,7 +59,8 @@ export function ModelPick({ choice, label = 'Modelo da IA' }: { choice: ModelCho
   const config = useMemo(() => aiConfigOf(settings), [settings, appAi])
   const id = useId()
   // spec 006: with the structure on, the model is the app's, chosen by the administration: nothing to pick here
-  if (appAi) return choice.model ? null : <p className="muted" role="note">{`A IA do app não está configurada para ${useInfo(choice.use).label}. Avise o administrador.`}</p>
+  // (no warning either: the owner asked for none, 23/11; the generation itself says it if the app's AI has no model for the use)
+  if (appAi) return null
   const name = (uid: string) => {
     const model = modelByUid(config, uid)
     const provider = providerById(config, model?.pid)

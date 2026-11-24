@@ -30,7 +30,12 @@ export function appAiConfig(): AiConfig | null {
 /** The administration's choice, ready to use: only providers with a key on the server, each with the server's key. */
 export function toAppConfig(raw: unknown, providers: string[]): AiConfig {
   const chosen = (raw && typeof raw === 'object' ? raw : {}) as Partial<AiConfig>
-  const kept = (chosen.providers ?? []).filter(provider => providers.includes(provider.type))
+  // every provider with a key on the server is there by itself (one per kind); the ones chosen before keep their id
+  const kept = providers.flatMap(type => {
+    const before = (chosen.providers ?? []).find(provider => provider.type === type)
+    const info = PROVIDERS.find(provider => provider.id === type)
+    return info ? [before ?? { id: type, type: info.id, name: info.name, key: '', base: '' }] : []
+  })
   const ids = new Set(kept.map(provider => provider.id))
   return {
     providers: kept.map(provider => ({ ...provider, key: APP_KEY, base: '' })),

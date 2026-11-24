@@ -346,7 +346,7 @@ function AppAiTab() {
   const [saved, setSaved] = useState<string | null>(null)
   useEffect(() => {
     adminAi()
-      .then(answer => setState({ config: toAppConfig(answer.uses, answer.known), available: answer.providers }))
+      .then(answer => setState({ config: toAppConfig(answer.uses, answer.providers), available: answer.providers }))
       .catch(failure => setError(apiMessage(failure)))
   }, [])
   if (error) return <p className="acc-error" role="alert">{error}</p>
@@ -370,9 +370,12 @@ function AppAiTab() {
           {saved}
         </p>
       )}
-      <AiConfigSource.Provider value={{ config: state.config, save, available: state.available }}>
-        <AiSettings />
-      </AiConfigSource.Provider>
+      {/* the AI screen's look lives under .ias, as in Configurações */}
+      <div className="ias adm-ias">
+        <AiConfigSource.Provider value={{ config: state.config, save, available: state.available }}>
+          <AiSettings />
+        </AiConfigSource.Provider>
+      </div>
     </div>
   )
 }

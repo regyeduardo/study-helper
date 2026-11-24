@@ -81,7 +81,7 @@ export async function uploadMedia(job: { item: string; media: string; file: Blob
     for (let attempt = 0; ; attempt++) {
       try {
         // never waits forever (23/11, an upload looked stuck): past the limit the part counts as no connection and goes again
-        await putUploadPart(start.upload, n, blob, AbortSignal.timeout(partTimeout))
+        await putUploadPart(start.upload, n, blob, AbortSignal.timeout(partTimeout), sent => tell({ state: 'uploading', sentBytes: sentBytes + sent, totalBytes }))
         break
       } catch (error) {
         if (!transient(error)) throw error

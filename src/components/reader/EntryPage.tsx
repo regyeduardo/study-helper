@@ -1,4 +1,5 @@
 // Página da entrada: a fonte, a transcrição e tudo o que nasceu dela, cada parte num card que rola por dentro.
+import { storedIn } from '@/components/reader/Inspector'
 import { type CSSProperties, Fragment, type ReactNode, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 
@@ -133,7 +134,7 @@ function MediaOriginal({ entry, origin, media, playback, date, stays }: { entry:
         <Facts
           rows={[
             ['Mídia', was],
-            ['Guardado em', stored ? STORAGE_LABEL[origin.storage] : inBrowser ? <SaveToDrive fileId={entry.id} /> : ''],
+            ['Guardado em', stored ? storedIn(origin) : inBrowser ? <SaveToDrive fileId={entry.id} /> : ''],
             ['Fica até', stored ? (origin.expiresAt ? date(origin.expiresAt) : 'Você apagar') : ''],
           ]}
         />
@@ -147,7 +148,7 @@ function MediaOriginal({ entry, origin, media, playback, date, stays }: { entry:
         <Notice gone title={`O arquivo temporário expirou em ${date(origin.expiresAt!)}`}>
           <div className="muted">O {noun} saiu do serviço temporário. {stays}</div>
         </Notice>
-        <Facts rows={[['Era', was], ['Guardado em', STORAGE_LABEL[origin.storage]]]} />
+        <Facts rows={[['Era', was], ['Guardado em', storedIn(origin)]]} />
       </>
     )
   }
@@ -206,7 +207,7 @@ function Original({ entry, opened, media, playback, date, notes }: { entry: File
           <Notice gone title={`O arquivo temporário expirou em ${date(origin.expiresAt!)}`}>
             <div className="muted">O arquivo saiu do serviço temporário. {whatStays(false, notes)}</div>
           </Notice>
-          <Facts rows={[['Era', origin.name], ['Guardado em', STORAGE_LABEL[origin.storage]]]} />
+          <Facts rows={[['Era', origin.name], ['Guardado em', storedIn(origin)]]} />
         </>
       )
     }
@@ -217,7 +218,7 @@ function Original({ entry, opened, media, playback, date, notes }: { entry: File
           <div className="muted">{stored ? 'O arquivo está guardado com a nota.' : `Guardado só como registro: o arquivo não foi copiado. ${whatStays(false, notes)}`}</div>
           {stored && <DownloadSource origin={origin} />}
         </Notice>
-        <Facts rows={[['Arquivo', size], ['Guardado em', stored ? STORAGE_LABEL[origin.storage] : ''], ['Veio de', stored ? '' : ARRIVED_BY[origin.input]]]} />
+        <Facts rows={[['Arquivo', size], ['Guardado em', stored ? storedIn(origin) : ''], ['Veio de', stored ? '' : ARRIVED_BY[origin.input]]]} />
       </>
     )
   }

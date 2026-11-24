@@ -150,9 +150,39 @@ export interface UploadStart {
 
 export const startUpload = async (request: { item: string; media: string; name: string; mime: string; bytes: number }) => (await (await send('POST', '/v1/uploads', { json: request })).json()) as UploadStart
 export const getUpload = async (id: string) => (await (await send('GET', `/v1/uploads/${encodeURIComponent(id)}`)).json()) as { parts: { n: number; etag: string }[]; partSize: number; bytes: number; status: string }
-/** One part; `signal` gives it a time limit (a part that does not answer fails as no connection, and is sent again). */
-export const putUploadPart = async (id: string, n: number, blob: Blob, signal?: AbortSignal) =>
-  (await (await send('PUT', `/v1/uploads/${encodeURIComponent(id)}/parts/${n}`, { body: blob, headers: { 'Content-Type': 'application/octet-stream' }, signal })).json()) as { n: number; etag: string }
+/**
+ * One part; `signal` gives it a time limit (a part that does not answer fails as no connection, and is sent again). `onSent` hears
+ * the bytes as they leave (23/11: a 10 MB part takes a minute on a slow line, and the bar must move meanwhile); fetch cannot tell
+ * that, so in the browser the part goes by XMLHttpRequest.
+ */
+export async function putUploadPart(id: string, n: number, blob: Blob, signal?: AbortSignal, onSent?: (bytes: number) => void): Promise<{ n: number; etag: string }> {
+  const path = `/v1/uploads/${encodeURIComponent(id)}/parts/${n}`
+  if (!onSent || typeof XMLHttpRequest === 'undefined' || import.meta.env.MODE === 'test') return (await (await send('PUT', path, { body: blob, headers: { 'Content-Type': 'application/octet-stream' }, signal })).json()) as { n: number; etag: string }
+  return new Promise((resolve, reject) => {
+    const request = new XMLHttpRequest()
+    request.open('PUT', `${env.apiUrl}${path}`)
+    request.withCredentials = true
+    request.setRequestHeader('X-Estudo', '1')
+    request.setRequestHeader('Content-Type', 'application/octet-stream')
+    request.upload.onprogress = event => onSent(event.loaded)
+    request.onload = () => {
+      let answer: Record<string, unknown> = {}
+      try {
+        answer = JSON.parse(request.responseText) as Record<string, unknown>
+      } catch {
+        answer = {}
+      }
+      if (request.status >= 200 && request.status < 300) return resolve(answer as { n: number; etag: string })
+      const { error, ...data } = answer
+      reject(new ApiError(request.status, typeof error === 'string' ? error : 'internal_error', data))
+    }
+    request.onerror = () => reject(new ApiError(0, 'offline'))
+    request.ontimeout = () => reject(new ApiError(0, 'offline'))
+    signal?.addEventListener('abort', () => request.abort())
+    request.onabort = () => reject(new ApiError(0, 'offline'))
+    request.send(blob)
+  })
+}
 export const completeUpload = async (id: string) => (await (await send('POST', `/v1/uploads/${encodeURIComponent(id)}/complete`)).json()) as { key: string; bytes: number; mime: string }
 export const abandonUpload = async (id: string) => void (await send('DELETE', `/v1/uploads/${encodeURIComponent(id)}`))
 

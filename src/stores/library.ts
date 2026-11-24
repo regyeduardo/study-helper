@@ -425,6 +425,7 @@ export const useLibraryStore = create<LibraryState>((set, get) => {
         set({ ready: true })
         await migrateOnLoad(repo, snapshot)
         migrateHierarchyWhenReady()
+        warnLostFolders(repo)
         await get().purgeExpiredTrash()
         // a change of place stopped in the middle (a closed tab) continues from where it stopped (FR-054)
         if (repo instanceof CombinedRepository) void import('@/stores/places').then(({ usePlacesStore }) => usePlacesStore.getState().resume()).catch(() => undefined)
@@ -892,6 +893,15 @@ if (typeof window !== 'undefined')
     if (repo instanceof CombinedRepository && repo.hierarchy) void import('@/stores/sync').then(({ useSyncStore }) => useSyncStore.getState().syncNow())
   })
 
+/** Spec 005, R6: notes in Local whose folder was deleted for good on another device show at the root, and the app says so once. */
+function warnLostFolders(repo: Repository): void {
+  if (!(repo instanceof CombinedRepository) || !repo.lostFolder.size) return
+  const count = repo.lostFolder.size
+  void import('@/stores/ui').then(({ useUiStore }) =>
+    useUiStore.getState().toast(`${count === 1 ? '1 nota em Local estava numa pasta apagada' : `${count} notas em Local estavam numa pasta apagada`} em outro aparelho: ${count === 1 ? 'ela está' : 'elas estão'} na raiz da biblioteca.`),
+  )
+}
+
 /** The foot of the sidebar follows the account's hierarchy: what waits to go up and whether the account answers. */
 function watchHierarchy(repo: CombinedRepository): void {
   const tree = repo.hierarchy
@@ -908,7 +918,10 @@ async function followHierarchy(repo: CombinedRepository, on: boolean): Promise<v
   watchHierarchy(repo)
   try {
     const snapshot = await repo.load()
-    if (useLibraryStore.getState().repo === repo) useLibraryStore.getState().applySnapshot(snapshot)
+    if (useLibraryStore.getState().repo === repo) {
+      useLibraryStore.getState().applySnapshot(snapshot)
+      warnLostFolders(repo)
+    }
   } catch (error) {
     if (useLibraryStore.getState().repo === repo) useLibraryStore.setState({ loadError: error instanceof Error ? error.message : 'Não consegui abrir a biblioteca.' })
   }
