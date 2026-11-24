@@ -50,6 +50,7 @@
 .pl-progress{margin:0;padding:8px 12px;border-radius:8px;background:var(--accent-soft);font-size:13px}
 .pl-failed{display:flex;flex-direction:column;align-items:flex-start;gap:6px;margin:0;padding:10px 12px;border-radius:8px;background:var(--bad-soft);font-size:13px}
 .pl-failed ul{margin:0;padding-left:18px}
+.pl-done{display:flex;flex-direction:column;align-items:flex-start;gap:6px;margin:0;padding:10px 12px;border-radius:8px;background:var(--ok-soft);font-size:13px}
 .pl-banner{display:flex;align-items:center;gap:10px;margin:0 0 12px;padding:8px 10px 8px 12px;border:1px solid var(--border);border-radius:8px;background:var(--warn-soft);font-size:13.5px}
 .pl-banner>.ic{width:18px;height:18px;flex:none;color:var(--warn)}
 .pl-banner>span{flex:1;min-width:0}

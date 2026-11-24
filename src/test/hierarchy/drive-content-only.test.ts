@@ -7,6 +7,7 @@ import 'fake-indexeddb/auto'
 const { mockEnv } = vi.hoisted(() => ({ mockEnv: { apiUrl: 'https://api.example.test' } }))
 vi.mock('@/lib/env', async importOriginal => ({ env: { ...((await importOriginal()) as { env: object }).env, apiUrl: mockEnv.apiUrl } }))
 
+import type { Highlight } from '@/types/domain'
 import { newFileMeta, newFolderMeta, newSidecar } from '@/lib/defaults'
 import { CombinedRepository } from '@/lib/storage/combined-repository'
 import { DriveRepository } from '@/lib/storage/drive-repository'
@@ -117,6 +118,21 @@ describe('nota no Drive é só conteúdo', () => {
     await repo.saveFile(await repo.readSidecar(aula.id), 'derivadas e limites')
     expect(mdOf(aula.id).parents).toEqual(parents)
     expect(mdOf(aula.id).content).toBe('derivadas e limites')
+  })
+
+  it('mudar só o que fica no corpo da nota (marcação, artefato), sem o texto, chega ao Drive e abre em outro aparelho', async () => {
+    const { repo } = device()
+    await repo.load()
+    const aula = newFileMeta({ name: 'Aula 1', type: 'class', folderId: null })
+    await repo.saveFile(newSidecar(aula), 'derivadas')
+
+    const sidecar = await repo.readSidecar(aula.id)
+    const highlight: Highlight = { id: 'h1', kind: 'highlight', quote: 'derivadas', text: '', color: 'yellow', startOffset: 0, endOffset: 9, createdAt: '2026-11-24T10:00:00.000Z', updatedAt: '2026-11-24T10:00:00.000Z' }
+    await repo.saveFile({ ...sidecar, highlights: [highlight] })
+
+    const other = device('b')
+    await other.repo.load()
+    expect((await other.repo.readSidecar(aula.id)).highlights).toEqual([highlight])
   })
 
   it('a nota antiga continua onde está no Drive e abre igual', async () => {

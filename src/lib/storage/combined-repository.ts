@@ -28,6 +28,9 @@ function stable(value: unknown): string {
 
 const withoutTree = (meta: Record<string, unknown>) => stable(Object.fromEntries(Object.entries(meta).filter(([key]) => !TREE_KEYS.includes(key))))
 
+/** Everything of a note but its meta: highlights, artifacts, cards, the Prova… */
+const bodyOf = ({ meta: _meta, ...body }: FileSidecar) => stable(body)
+
 /**
  * The library of a Google account (spec 003, história 9, R16): its Google Drive and this browser's Local in one tree. Each write goes to the
  * place of the item; an item already kept somewhere stays there until a move (moves.ts) takes it. Local never reaches the Drive: a note or
@@ -56,10 +59,38 @@ export class CombinedRepository implements Repository {
     return this.appRepo
   }
 
+  /** Told when what waits for the connection changes (the App's content written without internet). */
+  onHeld: (() => void) | null = null
+  /** Told when the server refused for good a note written without internet (kept in a copy in this browser). */
+  onRefused: ((name: string, reason: string) => void) | null = null
+
   /** Turning the app structure on or off; the library loads again after it. */
   setApp(app: Repository | null): void {
     this.appRepo = app
     if (app && this.resolver) app.setConflictResolver(this.resolver)
+    if (app instanceof AppRepository) {
+      app.onHeld = () => this.onHeld?.()
+      app.onRefused = (note, reason) => this.onRefused?.(note.sidecar.meta.name, reason)
+    }
+  }
+
+  /** What waits for the connection, each note once (its line in the hierarchy and its content in the App), and whether the account answers. */
+  async waiting(): Promise<{ pending: number; online: boolean }> {
+    const app = this.appRepo instanceof AppRepository ? this.appRepo : null
+    const ids = new Set([...(this.tree ? await this.tree.pendingIds() : []), ...(app ? await app.heldIds() : [])])
+    return { pending: ids.size, online: (this.tree?.online ?? true) && (app?.online ?? true) }
+  }
+
+  /** What was written in the App without internet goes up, after the hierarchy's own queue (a new note has its line first). */
+  private async sendHeld(): Promise<string[]> {
+    const app = this.appRepo
+    if (!(app instanceof AppRepository)) return []
+    const sent = await app.sendHeld(id => this.tree?.rowOf(id))
+    for (const id of sent) {
+      const row = app.rowOf(id)
+      if (row && this.tree) await this.tree.adopt(row)
+    }
+    return sent
   }
 
   get hierarchy(): HierarchyRepository | null {
@@ -148,8 +179,10 @@ export class CombinedRepository implements Repository {
   async pullChanges(): Promise<RemoteChanges> {
     if (this.tree) {
       const [tree, drive, local] = await Promise.all([this.tree.pullChanges(), this.drive.pullChanges().catch(() => null), this.local.load()])
-      return { snapshot: await this.fromTree(tree.snapshot, drive?.snapshot ?? null, local), changedFileIds: [...new Set([...tree.changedFileIds, ...(drive?.changedFileIds ?? [])])] }
+      const sent = await this.sendHeld()
+      return { snapshot: await this.fromTree(this.tree.snapshot(), drive?.snapshot ?? null, local), changedFileIds: [...new Set([...tree.changedFileIds, ...sent, ...(drive?.changedFileIds ?? [])])] }
     }
+    await this.sendHeld()
     const [{ snapshot, changedFileIds }, local, app] = await Promise.all([this.drive.pullChanges(), this.local.load(), this.appRepo?.pullChanges() ?? Promise.resolve(null)])
     return { snapshot: this.merge(snapshot, local, app?.snapshot ?? null), changedFileIds: [...new Set([...changedFileIds, ...(app?.changedFileIds ?? [])])] }
   }
@@ -196,6 +229,7 @@ export class CombinedRepository implements Repository {
     if (this.tree) {
       const repo = await this.contentRepo(side, fileId)
       const [content, sidecar] = await Promise.all([withContent ? repo.readContent(fileId) : '', repo.readSidecar(fileId)])
+      if (side !== 'local') this.bodies.set(fileId, bodyOf(sidecar))
       return { content, sidecar: side === 'local' ? sidecar : this.withTree(sidecar) }
     }
     const repo = this.repoFor(side)
@@ -366,10 +400,16 @@ export class CombinedRepository implements Repository {
     }
   }
 
+  /** The last body this device read or wrote of each note in the App or the Drive: a change only of the meta leaves it as it is. */
+  private readonly bodies = new Map<string, string>()
+
   /** Whether a change of a note touches only what the hierarchy owns (name, folder, position, Lixeira): then the content place is not written. */
-  private onlyTreeChanged(side: Side, meta: FileMeta, content: string | undefined): boolean {
+  private onlyTreeChanged(side: Side, sidecar: FileSidecar, content: string | undefined): boolean {
+    const meta = sidecar.meta
     const row = this.tree?.rowOf(meta.id)
     if (content !== undefined || !row || row.removedAt || row.place !== side) return false
+    // a highlight, an artifact or the Prova changed without the text: the body goes to the content place
+    if (this.bodies.get(meta.id) !== bodyOf(sidecar)) return false
     return withoutTree(mapMeta(meta)) === withoutTree(row.meta)
   }
 
@@ -384,15 +424,18 @@ export class CombinedRepository implements Repository {
       if (!this.sides.has(id)) this.sides.set(id, 'local')
       return saved
     }
-    if (this.onlyTreeChanged(side, next.meta, content)) {
+    if (this.onlyTreeChanged(side, next, content)) {
       await tree.saveFile(next.meta, side, tree.rowOf(id)?.driveRef ?? null)
       return next
     }
     const repo = await this.contentRepo(side, id)
     const saved = await repo.saveFile(next, content)
+    this.bodies.set(id, bodyOf(saved))
     if (side === 'app') {
       const row = repo instanceof AppRepository ? repo.rowOf(id) : undefined
       if (row) await tree.adopt(row)
+      // a new note written without internet: the hierarchy has its line now (it waits too), and the content goes up after it
+      else await tree.saveFile(saved.meta, 'app', null)
     } else {
       await tree.saveFile(saved.meta, 'drive', this.drive instanceof DriveRepository ? this.drive.driveRefOf(id) : null)
     }

@@ -146,6 +146,11 @@ export class HierarchyRepository {
     return (await this.cache.outbox()).length
   }
 
+  /** The items with a change not on the server yet. */
+  async pendingIds(): Promise<string[]> {
+    return [...new Set((await this.cache.outbox()).map(entry => entry.change.id))]
+  }
+
   rowOf(id: string): LibraryRow | undefined {
     return this.rows.get(id)
   }

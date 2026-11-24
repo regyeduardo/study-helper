@@ -277,7 +277,11 @@ function destinationName(folderId: string | null): string {
   return folder ? `pasta "${folder.name}"` : 'Biblioteca (raiz)'
 }
 
+/** What the person reads of a failure; without internet, that generating needs it (história 6, US6/AC4). */
+export const OFFLINE_GENERATION = 'Gerar precisa de internet. Quando a conexão voltar, use “Tentar de novo” em Gerações.'
+
 function failureText(error: unknown): string {
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) return OFFLINE_GENERATION
   return error instanceof Error ? error.message : String(error)
 }
 

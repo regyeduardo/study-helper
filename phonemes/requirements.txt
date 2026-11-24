@@ -1,0 +1,5 @@
+# the same versions the prototype was validated with (specs/004-aprender-idiomas/prototipo/.venv-fonemas)
+numpy==2.5.5
+onnxruntime==1.32.0
+phonemizer-fork==3.3.2
+espeakng-loader==0.2.4

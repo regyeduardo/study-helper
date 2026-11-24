@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
 
+import type { Place } from '@/types/domain'
 import { Dialog } from '@/components/ui/Dialog'
 import { Icon } from '@/components/ui/Icon'
 import { folderBytes } from '@/lib/storage/file-sizes'
@@ -76,6 +77,10 @@ export function SyncLocalDialog({ ids }: { ids?: string[] }) {
   const { running, progress, failed, syncLocal, retry } = usePlacesStore()
   const offered = ids ? tops.filter(top => ids.includes(top.id)).concat(ids.filter(id => !tops.some(top => top.id === id)).map(id => ({ id, kind: 'file' as const }))) : tops
   const [chosen, setChosen] = useState<Set<string>>(() => new Set(offered.map(top => top.id)))
+  // with the structure on, the App is the default place (spec 005, FR-006): each note goes there with its media (US5/AC6)
+  const appOn = useLibraryStore(state => state.appOn)
+  const [to, setTo] = useState<Place>(() => (appOn ? 'app' : 'drive'))
+  const toName = to === 'app' ? 'o App' : 'o Google Drive'
   const [done, setDone] = useState<number | null>(null)
   const live = files.filter(file => !file.deletedAt)
   const pathOf = (folderId: string | null): string => {
@@ -104,7 +109,7 @@ export function SyncLocalDialog({ ids }: { ids?: string[] }) {
 
   const start = async () => {
     const before = count
-    await syncLocal(picked.map(item => item.id))
+    await syncLocal(picked.map(item => item.id), to)
     setDone(before)
   }
 
@@ -134,19 +139,29 @@ export function SyncLocalDialog({ ids }: { ids?: string[] }) {
         <fieldset className="pl-dest">
           <legend>Para onde vão?</legend>
           <label className="pl-choice">
-            <input type="radio" name="destino" checked readOnly />
+            <input type="radio" name="destino" checked={to === 'drive'} onChange={() => setTo('drive')} disabled={running} />
             <span>
               <b>Google Drive</b>
               <span className="muted">Aparecem em todos os seus aparelhos com esta conta Google.</span>
             </span>
           </label>
-          <label className="pl-choice off">
-            <input type="radio" name="destino" disabled />
-            <span>
-              <b>App · desligado</b>
-              <span className="muted">Guardado na conta do Estudo. Liberar com um código (em breve).</span>
-            </span>
-          </label>
+          {appOn ? (
+            <label className="pl-choice">
+              <input type="radio" name="destino" checked={to === 'app'} onChange={() => setTo('app')} disabled={running} />
+              <span>
+                <b>App</b>
+                <span className="muted">Guardadas na conta do Estudo, cada uma com a sua mídia. Aparecem em todos os seus aparelhos.</span>
+              </span>
+            </label>
+          ) : (
+            <label className="pl-choice off">
+              <input type="radio" name="destino" disabled />
+              <span>
+                <b>App · desligado</b>
+                <span className="muted">Guardado na conta do Estudo. Liberar com um código (em breve).</span>
+              </span>
+            </label>
+          )}
         </fieldset>
         {items.length > 0 && (
           <fieldset className="pl-which">
@@ -174,7 +189,7 @@ export function SyncLocalDialog({ ids }: { ids?: string[] }) {
             ))}
           </fieldset>
         )}
-        {count > 0 && done === null && !running && <p className="muted">{`Vão ${notesText(count)} e ${formatBytes(bytes)} para o Google Drive. Cada item só sai deste navegador depois de chegar inteiro.`}</p>}
+        {count > 0 && done === null && !running && <p className="muted">{`Vão ${notesText(count)} e ${formatBytes(bytes)} para ${toName}. Cada item só sai deste navegador depois de chegar inteiro.`}</p>}
         {running && progress && (
           <p className="pl-progress" role="status">
             {`Andamento: ${progress.done} de ${progress.total}${progress.totalBytes ? ` · ${formatBytes(progress.doneBytes)} de ${formatBytes(progress.totalBytes)}` : ''}. Pode fechar a janela: continua de onde parou.`}
@@ -182,7 +197,7 @@ export function SyncLocalDialog({ ids }: { ids?: string[] }) {
         )}
         {done !== null && !running && !failed.length && (
           <p className="pl-progress" role="status">
-            {`Pronto: ${notesText(done)} no Google Drive.`}
+            {`Pronto: ${notesText(done)} ${to === 'app' ? 'no App' : 'no Google Drive'}.`}
           </p>
         )}
         {failed.length > 0 && !running && (

@@ -24,7 +24,7 @@ import { useLibraryStore } from '@/stores/library'
 import { type InspectorTab, useUiStore } from '@/stores/ui'
 import { useScrollerRef } from '@/pages/workspace/container/shared'
 
-const TITLES: Record<View, string> = { folder: 'Biblioteca', review: 'Para revisar', favorites: 'Favoritos', trash: 'Lixeira', home: 'Biblioteca', doc: 'Biblioteca', entries: 'Gravações', entry: 'Nota', generations: 'Gerações', ...SHARING_TITLES }
+const TITLES: Record<View, string> = { folder: 'Biblioteca', review: 'Para revisar', favorites: 'Favoritos', trash: 'Lixeira', home: 'Biblioteca', doc: 'Biblioteca', entries: 'Gravações', entry: 'Nota', generations: 'Gerações', languages: 'Idiomas', ...SHARING_TITLES }
 
 function ListColumn({ view, folderId, currentId }: { view: View; folderId: string | null; currentId: string | null }) {
   const ui = useUiStore()

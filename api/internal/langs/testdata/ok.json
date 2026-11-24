@@ -1,0 +1,45 @@
+{
+  "lines": ["I used to walk to school every day", "But now I won't walk in the rain"],
+  "equivalences": [["won't", "will not"], ["i'm", "i am"]],
+  "items": {
+    "walk": {
+      "area": "lexico", "kind": "word", "label": "walk", "meaning": "andar, caminhar", "needs": [],
+      "test": [
+        {"id": "t_walk_mc", "type": "mc", "skill": "read", "q": "\"walk\" quer dizer:", "opts": ["correr", "andar", "pular", "parar", "nadar"], "a": 1, "covers": ["walk"]},
+        {"id": "t_walk_listen", "type": "listen_mc", "skill": "listen", "q": "Ouça e escolha:", "say": "I walk to school", "opts": ["Eu corro para a escola", "Eu ando até a escola", "Eu andei até a escola", "Eu vou de carro à escola", "Eu ando pela escola"], "a": 1, "covers": ["walk"]}
+      ]
+    },
+    "used_to": {
+      "area": "gramatica", "kind": "structure", "label": "used to", "meaning": "costumava", "needs": ["walk"],
+      "test": [
+        {"id": "t_used_gap", "type": "gap", "skill": "read", "q": "Complete:", "text": "I ___ walk to school.", "opts": ["use to", "used to", "was used to", "get used to", "am used to"], "a": 1, "covers": ["used_to"]}
+      ]
+    },
+    "walk_way": {
+      "area": "semantica", "kind": "sense", "label": "walk (caminho)", "meaning": "percurso a pé", "word": "walk", "pattern": "a walk / take a walk", "core": "mover-se a pé", "needs": ["walk"],
+      "test": [
+        {"id": "t_way_tf", "type": "tf", "skill": "read", "q": "\"take a walk\" quer dizer dar uma volta.", "a": true, "covers": ["walk_way"]}
+      ]
+    },
+    "neg_will": {
+      "area": "gramatica", "kind": "contraction", "label": "won't", "meaning": "não vai", "needs": [],
+      "test": [
+        {"id": "t_wont_dict", "type": "dictation", "skill": "listen", "q": "Ouça e escreva:", "say": "I won't walk in the rain", "covers": ["neg_will", "walk"]}
+      ]
+    }
+  },
+  "practice": [
+    {"id": "p_order", "type": "order", "skill": "read", "q": "Monte \"Eu costumava andar\":", "tokens": ["used", "I", "walk", "to"], "answer": "I used to walk", "covers": ["used_to"]},
+    {"id": "p_match", "type": "match", "skill": "read", "q": "Ligue:", "pairs": [["walk", "andar"], ["rain", "chuva"]], "covers": ["walk"]},
+    {"id": "p_odd", "type": "odd", "skill": "read", "q": "Ache o intruso:", "opts": ["walk", "run", "jump", "swim", "table"], "a": 4, "covers": ["walk"]},
+    {"id": "p_mp", "type": "minimal_pair", "skill": "listen", "q": "\"walk\" ou \"work\"?", "pair": ["walk", "work"], "covers": ["walk"]},
+    {"id": "p_sd", "type": "same_diff", "skill": "listen", "q": "São iguais?", "say": ["walk", "work"], "a": "diff", "covers": ["walk"]},
+    {"id": "p_fd", "type": "find_diff", "skill": "listen", "q": "Toque a palavra que mudou:", "text": "I used to walk to school", "say": "I used to run to school", "a": 3, "covers": ["walk"]},
+    {"id": "p_stress", "type": "stress", "skill": "listen", "q": "Sílaba forte de \"today\":", "word": "today", "syllables": ["to", "day"], "a": 1, "covers": ["walk"]},
+    {"id": "p_dgap", "type": "dictation_gap", "skill": "listen", "q": "Ouça e complete:", "say": "I used to walk to school", "text": "I ___ walk to ___", "answers": [["used to"], ["school"]], "covers": ["used_to"]},
+    {"id": "p_speak", "type": "speak", "skill": "speak", "q": "Ouça e repita:", "mode": "repeat", "say": "I won't walk", "target": "I won't walk", "accept": [], "covers": ["neg_will"]}
+  ],
+  "context": [
+    {"id": "c_lit", "type": "mc", "skill": "read", "q": "Como a pessoa ia para a escola?", "opts": ["de ônibus", "a pé", "de carro", "de bicicleta", "de trem"], "a": 1, "dp": "literal", "covers": ["walk"]}
+  ]
+}

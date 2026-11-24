@@ -2,6 +2,7 @@ import React from 'react'
 import ReactDOM from 'react-dom/client'
 import { RouterProvider } from 'react-router-dom'
 
+import { keepAppOffline } from '@/lib/storage/media-stream'
 import { applyTheme } from '@/lib/theme'
 import { watchVisualViewport } from '@/lib/viewport'
 import { router } from '@/routes'
@@ -12,6 +13,7 @@ import '@/styles/phone.css'
 
 applyTheme()
 watchVisualViewport()
+keepAppOffline()
 
 // Back from a Google sign-in made in this same tab (the road iPhone uses): finish it and return to where the person was.
 void useAccountStore

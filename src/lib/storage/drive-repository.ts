@@ -38,7 +38,7 @@ const DEVICES_NAME = 'devices'
 const SOURCES_NAME = 'sources'
 const NOTES_NAME = 'notes'
 
-type Kind = 'root' | 'folder' | 'folder-meta' | 'md' | 'sidecar' | 'index' | 'devices' | 'device' | 'sources' | 'source' | 'notes' | 'course'
+type Kind = 'root' | 'folder' | 'folder-meta' | 'md' | 'sidecar' | 'index' | 'devices' | 'device' | 'sources' | 'source' | 'notes' | 'course' | 'idiomas'
 
 /** The course text of a folder: content, kept apart from the account's hierarchy (spec 005). */
 export interface CourseText {
@@ -432,6 +432,12 @@ export class DriveRepository implements Repository {
   private async notesFolder(): Promise<string> {
     if (!this.rootId) await this.ensureRoot()
     return this.ensureSystemFolder('notes', NOTES_NAME)
+  }
+
+  /** Spec 004 (FR-040): the "idiomas" folder of the app's space, where the languages mode keeps its JSON files, and how to reach it. */
+  async languagesFolder(): Promise<{ token: TokenProvider; space: DriveSpace; folderId: string }> {
+    if (!this.rootId) await this.ensureRoot()
+    return { token: this.token, space: this.space, folderId: await this.ensureSystemFolder('idiomas', 'idiomas') }
   }
 
   private async ensureSystemFolder(kind: Kind, name: string): Promise<string> {

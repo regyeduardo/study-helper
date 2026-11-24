@@ -17,7 +17,7 @@ import { useLibraryStore } from '@/stores/library'
 import { useUiStore } from '@/stores/ui'
 import '@/styles/generations.css'
 
-const VIEW_NAME: Record<View, string> = { home: 'Início', folder: 'Biblioteca', review: 'Para revisar', entries: 'Gravações', entry: 'Nota', generations: 'Gerações', favorites: 'Favoritos', trash: 'Lixeira', doc: 'Documento', ...SHARING_TITLES }
+const VIEW_NAME: Record<View, string> = { home: 'Início', folder: 'Biblioteca', review: 'Para revisar', entries: 'Gravações', entry: 'Nota', generations: 'Gerações', favorites: 'Favoritos', trash: 'Lixeira', doc: 'Documento', languages: 'Idiomas', ...SHARING_TITLES }
 
 export function useCounts() {
   const { files } = useLiveLibrary()
@@ -86,6 +86,7 @@ export function ReaderShell({ children, docActions }: { children: ReactNode; doc
             {generations.failed > 0 && <FailedDot />}
           </button>
           <FavoriteFolders current={view === 'folder' ? folderId : undefined} onGo={() => ui.set({ drawer: false })} />
+          <div className="nav-lang">{nav('languages', 'globe', 'Idiomas', paths.languages)}</div>
           <div className="nh">Pastas</div>
           <FolderTree folders={folders} current={view === 'folder' ? folderId : view === 'doc' ? (doc?.folderId ?? null) : undefined} hits={hitCounts} onGo={() => ui.set({ drawer: false })} />
           {tags.length > 0 && (

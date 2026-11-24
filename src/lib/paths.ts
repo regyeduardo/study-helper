@@ -20,6 +20,10 @@ export const paths = {
   shares: '/compartilhados',
   sharedWithMe: '/compartilhados-comigo',
   shared: (id: string) => `/shared/${id}`,
+  /** Idiomas (spec 004): the languages, each one's page and the study of a text. */
+  languages: '/idiomas',
+  language: (code: string) => `/idiomas/${encodeURIComponent(code)}`,
+  study: (code: string, textId: string) => `/idiomas/${encodeURIComponent(code)}/${encodeURIComponent(textId)}`,
 }
 
-export type View = 'home' | 'folder' | 'review' | 'favorites' | 'trash' | 'doc' | 'entries' | 'entry' | 'generations' | 'shares' | 'sharedWithMe' | 'shared'
+export type View = 'home' | 'folder' | 'review' | 'favorites' | 'trash' | 'doc' | 'entries' | 'entry' | 'generations' | 'shares' | 'sharedWithMe' | 'shared' | 'languages'

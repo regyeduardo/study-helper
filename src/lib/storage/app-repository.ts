@@ -19,6 +19,7 @@ import {
 } from '@/controllers/library-api.controller'
 import { defaultIndex } from '@/lib/defaults'
 import { isRecording } from '@/lib/file-types'
+import { type HeldNote, PartCache } from '@/lib/storage/part-cache'
 import type { Conflict, ConflictResolver, RemoteChanges, Repository, StorageUsage, StoredSize, StoredSource } from '@/lib/storage/repository'
 import { uploadMedia, type UploadOptions } from '@/lib/storage/uploads'
 import { applyFieldChoices, hasTextConflict, joinHunks, mergeFolder, mergeKept, mergeShares, mergeSidecar, mergeText } from '@/lib/sync/merge'
@@ -204,6 +205,11 @@ function mergeIndex(base: LibraryIndex, mine: LibraryIndex, theirs: LibraryIndex
   }
 }
 
+/** The server did not answer: no internet, or the account out of reach. */
+const offline = (error: unknown) => error instanceof ApiError && error.code === 'offline'
+/** The server said no for good (a note deleted, the structure off): trying again would get the same answer. Not a missing session nor a busy server. */
+const refused = (error: unknown) => error instanceof ApiError && error.status >= 400 && error.status < 500 && ![401, 408, 409, 429].includes(error.status)
+
 export class AppRepository implements Repository {
   readonly kind = 'app' as const
   /** The last row this device saw of each item: the base of its next write. */
@@ -213,12 +219,24 @@ export class AppRepository implements Repository {
   private seq = 0
   private index: { version: string; value: LibraryIndex } | null = null
   private resolver: ConflictResolver | null = null
+  /** The same parts in this browser (IndexedDB): a note opens at once, and without internet, after a reload (história 6). */
+  private readonly cache: PartCache
+  /** Notes written here without internet, until they go up (história 6); read from this browser at the first need. */
+  private heldNotes: Map<string, HeldNote> | null = null
+  /** False after a write did not reach the server; true again at the next one that does. */
+  online = true
+  /** Told when what waits to go up changes: the foot of the sidebar says it (escolha C de 23/11). */
+  onHeld: (() => void) | null = null
+  /** Told when the server refused for good a note that waited: it left the queue and is kept in a copy here (the app says so). */
+  onRefused: ((note: HeldNote, reason: string) => void) | null = null
 
   constructor(
     readonly accountId: string,
     /** How the media goes up (tests pass a wait that does not wait). */
     private readonly uploadOptions: UploadOptions = {},
-  ) {}
+  ) {
+    this.cache = new PartCache(accountId)
+  }
 
   /** What this device already has of the map (the live channel says it to the server). */
   get currentSeq(): number {
@@ -264,12 +282,16 @@ export class AppRepository implements Repository {
   }
 
   async readContent(fileId: string): Promise<string> {
+    const held = (await this.held()).get(fileId)
+    if (held?.content !== undefined) return held.content
     const row = this.rows.get(fileId) ?? (await this.fetchRow(fileId))
     if (!row?.parts.text) return ''
     return (await this.part(fileId, 'text', row.parts.text)) ?? ''
   }
 
   async readSidecar(fileId: string): Promise<FileSidecar> {
+    const held = (await this.held()).get(fileId)
+    if (held) return held.sidecar
     const row = this.rows.get(fileId) ?? (await this.fetchRow(fileId))
     if (!row) throw new Error('Esta nota não existe mais no App.')
     return sidecarOf(row, await this.allParts(row))
@@ -287,7 +309,83 @@ export class AppRepository implements Repository {
     }
   }
 
+  /**
+   * Without internet the note is kept in this browser, whole, and the write counts as done: it goes up with `sendHeld` when the internet
+   * comes back. A note that waits goes whole: a later change of only its sidecar takes the text it kept along.
+   */
   async saveFile(sidecar: FileSidecar, content?: string): Promise<FileSidecar> {
+    const held = (await this.held()).get(sidecar.meta.id)
+    const text = content ?? held?.content
+    try {
+      const saved = await this.send(sidecar, text)
+      this.online = true
+      if (held) await this.release(sidecar.meta.id)
+      return saved
+    } catch (error) {
+      if (!offline(error)) throw error
+      this.online = false
+      await this.hold(sidecar, text)
+      return sidecar
+    }
+  }
+
+  /** The ids of the notes that wait to go up. */
+  async heldIds(): Promise<string[]> {
+    return [...(await this.held()).keys()]
+  }
+
+  /** What waits goes up, oldest first; it stops at the first that finds no internet. `rowOf`: the newest row this device has of a note. */
+  async sendHeld(rowOf?: (id: string) => LibraryRow | undefined): Promise<string[]> {
+    const sent: string[] = []
+    for (const note of [...(await this.held()).values()].sort((a, b) => a.at.localeCompare(b.at))) {
+      const row = rowOf?.(note.id)
+      if (row) this.takeRow(row)
+      try {
+        await this.send(note.sidecar, note.content)
+      } catch (error) {
+        if (offline(error)) {
+          this.online = false
+          break
+        }
+        // refused for good (a note deleted on another device meanwhile): never tried again; what was written here stays in a copy
+        if (refused(error)) {
+          const reason = (error as ApiError).code
+          await this.cache.keepRefused(note, reason).catch(() => undefined)
+          await this.release(note.id)
+          this.onRefused?.(note, reason)
+        }
+        // anything else (the server busy, the session gone) stays whole and goes the next time
+        continue
+      }
+      this.online = true
+      await this.release(note.id)
+      sent.push(note.id)
+    }
+    return sent
+  }
+
+  private async held(): Promise<Map<string, HeldNote>> {
+    if (!this.heldNotes) {
+      const kept = await this.cache.held().catch(() => [])
+      this.heldNotes ??= new Map(kept.map(note => [note.id, note]))
+    }
+    return this.heldNotes
+  }
+
+  private async hold(sidecar: FileSidecar, content: string | undefined): Promise<void> {
+    const note: HeldNote = { id: sidecar.meta.id, sidecar, ...(content !== undefined ? { content } : {}), at: new Date().toISOString() }
+    // a browser that refuses to keep it still has it in memory until the tab closes
+    ;(await this.held()).set(note.id, await this.cache.hold(note).catch(() => note))
+    this.onHeld?.()
+  }
+
+  private async release(id: string): Promise<void> {
+    ;(await this.held()).delete(id)
+    await this.cache.release(id).catch(() => undefined)
+    this.onHeld?.()
+  }
+
+  private async send(sidecar: FileSidecar, content?: string): Promise<FileSidecar> {
     let mine = sidecar
     let text = content
     for (let round = 0; round < 4; round++) {
@@ -343,9 +441,9 @@ export class AppRepository implements Repository {
 
   /** A folder's course text in the App (part "course"), at the version the account's map says (spec 005). */
   async courseOf(folderId: string, version: string): Promise<{ courseDescription: string | null; courseMaterial: string | null } | null> {
-    const hit = this.cached(folderId, 'course', version)
+    const hit = this.cached(folderId, 'course', version) ?? (await this.kept(folderId, 'course', version))
     const content = hit ?? (await getPart(folderId, 'course', version)).content
-    if (hit === undefined) this.parts.set(`${folderId}/course`, { version, content })
+    if (hit === undefined) await this.keep(folderId, 'course', version, content)
     return parse(content, null)
   }
 
@@ -356,7 +454,7 @@ export class AppRepository implements Repository {
     for (let round = 0; round < 4; round++) {
       try {
         const stored = await putPart(folderId, 'course', content, base)
-        this.parts.set(`${folderId}/course`, { version: stored.version, content })
+        await this.keep(folderId, 'course', stored.version, content)
         return stored.version
       } catch (error) {
         // another device kept the course in between: the course is written whole, so this one goes over it
@@ -410,6 +508,7 @@ export class AppRepository implements Repository {
     this.parts.clear()
     this.index = null
     this.seq = 0
+    await this.cache.forget().catch(() => undefined)
   }
 
   // ---------- inside ----------
@@ -428,21 +527,36 @@ export class AppRepository implements Repository {
     return hit && hit.version === version ? hit.content : undefined
   }
 
+  /** A part kept in this browser at that version, into the memory too; undefined when it is not there (or the browser refuses). */
+  private async kept(id: string, part: string, version: string): Promise<string | undefined> {
+    const content = await this.cache.get(id, part, version).catch(() => undefined)
+    if (content !== undefined) this.parts.set(`${id}/${part}`, { version, content })
+    return content
+  }
+
+  /** The part at that version in memory and in this browser; a browser that refuses to keep it only loses the cache. */
+  private async keep(id: string, part: string, version: string, content: string): Promise<void> {
+    this.parts.set(`${id}/${part}`, { version, content })
+    await this.cache.put(id, part, version, content).catch(() => undefined)
+  }
+
   /** What the list shows without opening a note: the source text of notes and the course of folders, in one batch. */
   private async bringListParts(rows: LibraryRow[]): Promise<void> {
-    const wanted = rows
+    const missing = rows
       .filter(row => !row.removedAt)
       .flatMap(row => (['source', 'course'] as const).filter(part => row.parts[part] && this.cached(row.id, part, row.parts[part]) === undefined).map(part => ({ item: row.id, part, version: row.parts[part] })))
+    const inBrowser = await Promise.all(missing.map(item => this.kept(item.item, item.part, item.version)))
+    const wanted = missing.filter((_, index) => inBrowser[index] === undefined)
     if (!wanted.length) return
-    for (const found of await getParts(wanted)) if (found.content !== undefined) this.parts.set(`${found.item}/${found.part}`, { version: found.version, content: found.content })
+    for (const found of await getParts(wanted)) if (found.content !== undefined) await this.keep(found.item, found.part, found.version, found.content)
   }
 
   private async part(id: string, part: string, version: string): Promise<string | undefined> {
-    const hit = this.cached(id, part, version)
+    const hit = this.cached(id, part, version) ?? (await this.kept(id, part, version))
     if (hit !== undefined) return hit
     try {
       const stored = await getPart(id, part, version)
-      this.parts.set(`${id}/${part}`, { version, content: stored.content })
+      await this.keep(id, part, version, stored.content)
       return stored.content
     } catch (error) {
       if (error instanceof ApiError && error.code === 'part_not_found') return undefined
@@ -485,7 +599,7 @@ export class AppRepository implements Repository {
       if (current && base && base.version === current && base.content === value) continue
       const baseVersion = base?.version ?? current ?? null
       const stored = await stale(() => putPart(id, part, value, baseVersion))
-      this.parts.set(`${id}/${part}`, { version: stored.version, content: value })
+      await this.keep(id, part, stored.version, value)
       row = { ...row, parts: { ...row.parts, [part]: stored.version }, seq: stored.seq }
       this.rows.set(id, row)
       this.seq = Math.max(this.seq, stored.seq)
@@ -512,7 +626,7 @@ export class AppRepository implements Repository {
     if (course !== null && !(row.parts.course && base?.version === row.parts.course && base.content === course)) {
       const baseVersion = base?.version ?? row.parts.course ?? null
       const stored = await stale(() => putPart(id, 'course', course, baseVersion))
-      this.parts.set(`${id}/course`, { version: stored.version, content: course })
+      await this.keep(id, 'course', stored.version, course)
       row = { ...row, parts: { ...row.parts, course: stored.version }, seq: stored.seq }
       this.rows.set(id, row)
     }
@@ -612,11 +726,13 @@ export class AppRepository implements Repository {
   }
 
   private async removeItem(id: string): Promise<void> {
+    if ((await this.held()).has(id)) await this.release(id)
     const row = this.rows.get(id)
     if (!row || row.removedAt) return
     const done = await deleteItem(id, row.rev)
     this.rows.set(id, { ...row, removedAt: new Date().toISOString(), parts: {}, seq: done.seq })
     for (const key of [...this.parts.keys()]) if (key.startsWith(`${id}/`)) this.parts.delete(key)
+    await this.cache.dropItem(id).catch(() => undefined)
   }
 
   private mediaOf(ref: string): [string, string] {

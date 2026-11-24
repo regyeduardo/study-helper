@@ -16,6 +16,7 @@ vi.mock('@/lib/recording/media-library', async importOriginal => ({
 
 import type { ServerMe } from '@/controllers/api.controller'
 import { SaveToDrive } from '@/components/library/SaveToDrive'
+import { SyncLocalBanner, SyncLocalDialog } from '@/components/library/SyncLocal'
 import { type LocalMedia, listLocalMedia, readLocalMedia } from '@/lib/recording/media-library'
 import { CombinedRepository } from '@/lib/storage/combined-repository'
 import { type Account, LOCAL_ACCOUNT, useAccountStore } from '@/stores/account'
@@ -97,5 +98,32 @@ describe('Gravação só neste navegador, com a estrutura do app ligada', () => 
     fireEvent.click(within(dialog).getByRole('button', { name: 'Salvar no App' }))
     await waitFor(() => expect(repo().sideOf(note.id)).toBe('app'))
     await waitFor(() => expect(originOf(note.id)?.storedFileId).toMatch(/^app:/))
+  })
+
+  // US5/AC6 (T142): ao abrir o app neste navegador com a estrutura ligada, a faixa "Sincronizar" leva cada mídia daqui para a sua nota no App
+  it('"Sincronizar" oferece o App, já marcado, e leva a nota e a mídia para o App', async () => {
+    const note = await localRecording()
+    render(<SyncLocalBanner />)
+    fireEvent.click(screen.getByRole('button', { name: 'Sincronizar' }))
+    expect(useUiStore.getState().overlay).toMatchObject({ kind: 'sync-local' })
+    render(<SyncLocalDialog />)
+    const dialog = screen.getByRole('dialog', { name: 'Sincronizar' })
+    const app = within(dialog).getByRole('radio', { name: /^App/ })
+    expect(app).toBeEnabled()
+    expect(app).toBeChecked()
+    expect(within(dialog).getByText(/para o App\. Cada item só sai deste navegador/)).toBeInTheDocument()
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Sincronizar 1 nota' }))
+    await waitFor(() => expect(repo().sideOf(note.id)).toBe('app'))
+    await waitFor(() => expect(originOf(note.id)?.storedFileId).toMatch(/^app:/))
+    expect(await within(dialog).findByText('Pronto: 1 nota no App.')).toBeInTheDocument()
+  })
+
+  it('"Sincronizar" ainda deixa escolher o Google Drive', async () => {
+    const note = await localRecording()
+    render(<SyncLocalDialog />)
+    const dialog = screen.getByRole('dialog', { name: 'Sincronizar' })
+    fireEvent.click(within(dialog).getByRole('radio', { name: /^Google Drive/ }))
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Sincronizar 1 nota' }))
+    await waitFor(() => expect(repo().sideOf(note.id)).toBe('drive'))
   })
 })

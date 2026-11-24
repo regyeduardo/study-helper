@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/regyeduardo/study-helper/api/internal/blobs"
+	"github.com/regyeduardo/study-helper/api/internal/langs"
+	"github.com/regyeduardo/study-helper/api/internal/speech"
 )
 
 // GoogleConfig is the Google sign-in done by the server; the URLs are Google's own, replaced by a fake Google in the tests.
@@ -53,6 +55,10 @@ type Config struct {
 	AI AIConfig
 	// PartTimeout bounds the sending of one upload part to the storage (2 minutes when zero); the tests use a few milliseconds.
 	PartTimeout time.Duration
+	// LanguagesAI, Voice and LeadIn replace, in the tests, the AI that writes the cards, the model voice and the silence before it (spec 004).
+	LanguagesAI langs.Chatter
+	Voice       speech.Speaker
+	LeadIn      func([]byte) []byte
 }
 
 // DefaultGoogle is Google's real sign-in.
@@ -76,6 +82,9 @@ type Server struct {
 	keys *jwksCache
 	mu   sync.Mutex
 	live *hub
+	// the languages mode (spec 004)
+	generator *langs.Generator
+	tts       *speech.TTS
 }
 
 func New(db *sql.DB, cfg Config) *Server {
@@ -88,7 +97,9 @@ func New(db *sql.DB, cfg Config) *Server {
 	if cfg.PartSize == 0 {
 		cfg.PartSize = 10 << 20
 	}
-	return &Server{db: db, cfg: cfg, keys: &jwksCache{}, live: newHub()}
+	srv := &Server{db: db, cfg: cfg, keys: &jwksCache{}, live: newHub()}
+	srv.startLanguages()
+	return srv
 }
 
 // access says who may call a route: anyone, any signed-in account, or an account freed by a code with "Usar a estrutura do app" on.
@@ -133,6 +144,20 @@ func (srv *Server) Handler() http.Handler {
 	// spec 006: the app's AI, only with the structure on; the key is the server's
 	route("GET /v1/ai/config", appOn, false, srv.aiConfig)
 	route("/v1/ai/{provider}/{path...}", appOn, false, srv.aiProxy)
+	// spec 004: the languages mode, only with the structure on
+	route("GET /v1/languages", appOn, false, srv.listLanguages)
+	route("POST /v1/languages", appOn, false, srv.addLanguage)
+	route("GET /v1/languages/{code}", appOn, false, srv.getLanguage)
+	route("POST /v1/languages/{code}/texts", appOn, false, srv.addText)
+	route("GET /v1/languages/{code}/texts/{id}", appOn, false, srv.getText)
+	route("DELETE /v1/languages/{code}/texts/{id}", appOn, false, srv.deleteText)
+	route("POST /v1/languages/{code}/texts/{id}/retry", appOn, false, srv.retryText)
+	route("GET /v1/languages/{code}/texts/{id}/progress", appOn, false, srv.getProgress)
+	route("PUT /v1/languages/{code}/texts/{id}/progress", appOn, false, srv.putProgress)
+	route("POST /v1/languages/{code}/answers", appOn, false, srv.addAnswer)
+	route("POST /v1/languages/{code}/texts/{id}/cards/{card}/report", appOn, false, srv.reportCard)
+	route("GET /v1/languages/{code}/knowledge", appOn, false, srv.getKnowledge)
+	route("POST /v1/speech/tts", appOn, false, srv.speak)
 	// entrega 4: the content kept in the App
 	app := func(pattern string, handle handlerFunc) { route(pattern, appOn, false, srv.withBlobs(handle)) }
 	app("GET /v1/library/items/{id}/parts/{part...}", srv.getPart)

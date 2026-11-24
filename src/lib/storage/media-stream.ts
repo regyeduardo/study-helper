@@ -32,6 +32,14 @@ export async function driveStreamUrl(ref: string, token: TokenProvider): Promise
   return (await taking) ? `${import.meta.env.BASE_URL}${STREAM}${encodeURIComponent(ref)}` : null
 }
 
+/** The app opens without internet (história 6): the worker that keeps the app's files is registered as soon as the app opens. */
+export function keepAppOffline(built = import.meta.env.PROD): void {
+  const workers = typeof navigator === 'undefined' ? undefined : navigator.serviceWorker
+  // while the app is being written (Vite's server), nothing is kept
+  if (!workers || !built) return
+  void workers.register(`${import.meta.env.BASE_URL}${WORKER}`, { scope: import.meta.env.BASE_URL }).catch(() => undefined)
+}
+
 function fitsWorker(userAgent: string): boolean {
   const firefox = /Firefox\/(\d+)/.exec(userAgent)
   return !firefox || Number(firefox[1]) >= FIRST_FIREFOX

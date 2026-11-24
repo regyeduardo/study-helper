@@ -10,7 +10,7 @@ import { isTouchScreen, useFileActions } from '@/components/library/use-file-act
 import { entryKind } from '@/components/library/entry-kind'
 import { Icon } from '@/components/ui/Icon'
 import { useIsNarrow } from '@/hooks/use-is-narrow'
-import { useFilterSource, useLiveLibrary, useSearchHits, useSearchPending } from '@/hooks/use-library-view'
+import { useFilterSource, useLiveLibrary, useSearchHits, useSearchMissed, useSearchPending } from '@/hooks/use-library-view'
 import { isRecording } from '@/lib/file-types'
 import { filterLibrary, type ItemKind, NO_FILTERS, withoutFilter } from '@/lib/library-filters'
 import { searchWords } from '@/lib/library-search'
@@ -39,6 +39,8 @@ export function EntryList() {
   // the same search as the folders (FR-074), only among the recordings
   const hits = useSearchHits(query)
   const pending = useSearchPending()
+  // without internet the search looks only at what this device has (FR-040)
+  const missed = useSearchMissed()
   const searching = searchWords(query).length > 0
   const found = useMemo(() => (searching ? every.filter(file => hits.has(file.id)) : every), [searching, every, hits])
   const folderName = useMemo(() => new Map(folders.map(folder => [folder.id, folder.name])), [folders])
@@ -116,6 +118,7 @@ export function EntryList() {
               `Nada com “${term}” ${result.active.length ? 'com esses filtros' : 'nas gravações'}.`
             )}
             {reading && <span className="ex-reading" aria-hidden="true">{` Lendo ${plural(pending, 'item', 'itens')}…`}</span>}
+            {missed > 0 && <span className="ex-offline">{' Sem internet: a busca olhou só o que já está neste aparelho, e pode faltar algo.'}</span>}
           </p>
         )}
         {/* a search with nothing found keeps only its sentence, like the folders: no heading of an empty table */}

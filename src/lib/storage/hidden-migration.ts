@@ -1,5 +1,5 @@
 import type { FileSidecar, FolderMeta } from '@/types/domain'
-import { DriveError, hasAppDataAccessController, type TokenProvider } from '@/controllers/drive.controller'
+import { DriveError, type DriveSpace, hasAppDataAccessController, type TokenProvider } from '@/controllers/drive.controller'
 import { DriveRepository } from '@/lib/storage/drive-repository'
 
 const MAX_VISIBLE_FOLDERS = 5
@@ -10,6 +10,27 @@ export interface DriveLibrary {
   repo: DriveRepository
   hiddenPending: boolean
   warning: string | null
+  /** The Google Drive did not answer (no internet): the library opens in the place it was the last time (história 6). */
+  offline?: boolean
+}
+
+const spaceKey = (accountId: string) => `study-helper-espaco-drive-${accountId}`
+
+function rememberSpace(accountId: string, space: DriveSpace): void {
+  try {
+    localStorage.setItem(spaceKey(accountId), space)
+  } catch {
+    // a browser that keeps nothing only does not open without internet
+  }
+}
+
+function lastSpace(accountId: string): DriveSpace | null {
+  try {
+    const space = localStorage.getItem(spaceKey(accountId))
+    return space === 'drive' || space === 'appDataFolder' ? space : null
+  } catch {
+    return null
+  }
 }
 
 function stable(value: unknown): string {
@@ -103,6 +124,19 @@ export async function differencesBetween(visible: DriveRepository, hidden: Drive
 }
 
 export async function openDriveLibrary(accountId: string, token: TokenProvider, report: MigrationReport): Promise<DriveLibrary> {
+  try {
+    const library = await findDriveLibrary(accountId, token, report)
+    rememberSpace(accountId, library.repo.space)
+    return library
+  } catch (error) {
+    // an answer of the Drive (a refusal) is not a missing internet: it says its reason as before
+    const space = error instanceof DriveError ? null : lastSpace(accountId)
+    if (!space) throw error
+    return { repo: new DriveRepository(accountId, token, space), hiddenPending: false, warning: null, offline: true }
+  }
+}
+
+async function findDriveLibrary(accountId: string, token: TokenProvider, report: MigrationReport): Promise<DriveLibrary> {
   const visible = new DriveRepository(accountId, token, 'drive')
   if (!(await hasAppDataAccessController(token))) return { repo: visible, hiddenPending: true, warning: null }
   const hidden = new DriveRepository(accountId, token, 'appDataFolder')

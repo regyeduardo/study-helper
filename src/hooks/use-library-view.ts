@@ -1,6 +1,7 @@
-import { useEffect, useMemo } from 'react'
+import { useEffect, useMemo, useSyncExternalStore } from 'react'
 
 import type { FileMeta, FolderMeta } from '@/types/domain'
+import { ApiError } from '@/controllers/api.controller'
 import { isNote } from '@/lib/family'
 import { LOW_MASTERY_BELOW, REVIEW_BELOW } from '@/lib/file-types'
 import { filterLibrary, type FilterSource, type PlaceContext } from '@/lib/library-filters'
@@ -104,6 +105,25 @@ const BATCH_MS = 100
 const INDEX_SLICE_MS = 8
 const reading = new Set<string>()
 const unreadable = new Set<string>()
+/** Not read because there was no internet (FR-040): the search says something may be missing, and reads them when it comes back. */
+const missed = new Set<string>()
+const missedListeners = new Set<() => void>()
+let missedVersion = 0
+const tellMissed = () => {
+  missedVersion++
+  for (const listener of missedListeners) listener()
+}
+const offline = (error: unknown) =>
+  (typeof navigator !== 'undefined' && navigator.onLine === false) ||
+  (error instanceof ApiError && error.code === 'offline') ||
+  // what each browser throws when the request does not get out ("Failed to fetch", "NetworkError…", "Load failed")
+  (error instanceof TypeError && /fetch|network|load failed/i.test(error.message))
+if (typeof window !== 'undefined')
+  window.addEventListener('online', () => {
+    if (!missed.size) return
+    missed.clear()
+    tellMissed()
+  })
 let indexing: ReturnType<typeof setTimeout> | null = null
 
 /** Indexes what was read, a slice at a time, so the first search after reading only compares. */
@@ -126,7 +146,7 @@ export function readForSearch(): () => void {
   if (!repo || state.sharedView) return () => undefined
   const missing = liveFiles(state.files, state.folders)
     .map(file => file.id)
-    .filter(id => !state.opened[id] && !reading.has(id) && !unreadable.has(id))
+    .filter(id => !state.opened[id] && !reading.has(id) && !unreadable.has(id) && !missed.has(id))
   if (!missing.length) {
     indexInSlices()
     return () => undefined
@@ -135,9 +155,14 @@ export function readForSearch(): () => void {
   let next = 0
   let ready: Record<string, OpenedFile> = {}
   let failed = false
+  let lost = false
   const flush = () => {
     const batch = ready
     ready = {}
+    if (lost) {
+      lost = false
+      tellMissed()
+    }
     if ((!Object.keys(batch).length && !failed) || useLibraryStore.getState().repo !== repo) return
     failed = false
     // what was opened meanwhile is fresher than what was read
@@ -152,8 +177,11 @@ export function readForSearch(): () => void {
       try {
         const [content, sidecar] = await Promise.all([repo.readContent(id), repo.readSidecar(id)])
         ready[id] = { content, sidecar }
-      } catch {
-        unreadable.add(id)
+      } catch (error) {
+        if (offline(error)) {
+          missed.add(id)
+          lost = true
+        } else unreadable.add(id)
         failed = true
       } finally {
         reading.delete(id)
@@ -169,11 +197,28 @@ export function readForSearch(): () => void {
   }
 }
 
-/** How many items the search has not read yet. */
+const watchMissed = (listener: () => void) => {
+  missedListeners.add(listener)
+  return () => void missedListeners.delete(listener)
+}
+const missedNow = () => missedVersion
+
+/** How many items the search has not read yet (what waits for the internet is not "reading"). */
 export function useSearchPending(): number {
   const { files } = useLiveLibrary()
   const opened = useLibraryStore(state => state.opened)
-  return useMemo(() => files.filter(file => !opened[file.id] && !unreadable.has(file.id)).length, [files, opened])
+  const version = useSyncExternalStore(watchMissed, missedNow, missedNow)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  return useMemo(() => files.filter(file => !opened[file.id] && !unreadable.has(file.id) && !missed.has(file.id)).length, [files, opened, version])
+}
+
+/** How many items the search could not read for lack of internet: what it shows may be missing something (FR-040). */
+export function useSearchMissed(): number {
+  const { files } = useLiveLibrary()
+  const opened = useLibraryStore(state => state.opened)
+  const version = useSyncExternalStore(watchMissed, missedNow, missedNow)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  return useMemo(() => files.filter(file => missed.has(file.id) && !opened[file.id]).length, [files, opened, version])
 }
 
 const NO_HITS = new Map<string, SearchHit>()
@@ -183,7 +228,9 @@ export function useSearchHits(query: string): Map<string, SearchHit> {
   const { files } = useLiveLibrary()
   const opened = useLibraryStore(state => state.opened)
   const searching = searchWords(query).length > 0
-  useEffect(() => (searching ? readForSearch() : undefined), [searching, files])
+  // the internet back: what was missed is read now
+  const version = useSyncExternalStore(watchMissed, missedNow, missedNow)
+  useEffect(() => (searching ? readForSearch() : undefined), [searching, files, version])
   return useMemo(() => (searching ? searchLibrary(files, opened, query) : NO_HITS), [searching, files, opened, query])
 }
 

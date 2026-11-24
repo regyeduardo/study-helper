@@ -56,6 +56,8 @@ func main() {
 		Blobs:         storage,
 		AI:            aiConfig(),
 	})
+	// spec 004: texts left generating when the server stopped go back to the queue
+	api.ResumeLanguages()
 	// once a day: recount the space and clean the storage (orphans after 31 days, uploads forgotten for 7, tombstones after 60)
 	if storage != nil {
 		go func() {
@@ -119,10 +121,15 @@ func googleConfig() server.GoogleConfig {
 // a provider without one is off.
 func aiConfig() server.AIConfig {
 	keys := map[string]string{}
+	// <PROVIDER>_API_BASE points a provider elsewhere (the fake provider of the end-to-end tests); empty in production
+	origins := map[string]string{}
 	for _, id := range server.AIProviders() {
 		if key := strings.TrimSpace(os.Getenv(strings.ToUpper(id) + "_API_KEY")); key != "" {
 			keys[id] = key
 		}
+		if base := strings.TrimSpace(os.Getenv(strings.ToUpper(id) + "_API_BASE")); base != "" {
+			origins[id] = base
+		}
 	}
-	return server.AIConfig{Keys: keys}
+	return server.AIConfig{Keys: keys, Origins: origins}
 }

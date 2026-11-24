@@ -5,7 +5,7 @@ import { Icon } from '@/components/ui/Icon'
 import { fileBytes } from '@/lib/storage/file-sizes'
 import { useAccountStore } from '@/stores/account'
 import { useLibraryStore } from '@/stores/library'
-import { placesApply, previewMove, sideOfItem, usePlacesStore } from '@/stores/places'
+import { type MoveSummary, placesApply, previewMove, sideOfItem, usePlacesStore } from '@/stores/places'
 import { useUiStore } from '@/stores/ui'
 import { formatBytes } from '@/utils/format'
 
@@ -63,7 +63,7 @@ export function PlacesPanel({ focusId }: { focusId?: string }) {
   const sizes = useLibraryStore(state => state.sizes)
   const localMedia = useLibraryStore(state => state.localMedia)
   const appOn = useLibraryStore(state => state.appOn)
-  const { running, progress, failed, choosePlace, retry } = usePlacesStore()
+  const { running, progress, failed, summary: moved, closeSummary, choosePlace, retry } = usePlacesStore()
   const mixesPlaces = placesApply()
   const signedIn = account.kind === 'google'
   const folders = useMemo(() => allFolders.filter(folder => !folder.deletedAt), [allFolders])
@@ -254,6 +254,14 @@ export function PlacesPanel({ focusId }: { focusId?: string }) {
           {`Mudando de lugar: ${progress.done} de ${progress.total}${progress.totalBytes ? ` · ${formatBytes(progress.doneBytes)} de ${formatBytes(progress.totalBytes)}` : ''}. Pode fechar: continua de onde parou.`}
         </p>
       )}
+      {moved && !running && (
+        <div className="pl-done" role="status" aria-label="O que veio para o App">
+          {summaryLines(moved).map((line, index) => (index === 0 ? <b key={line}>{line}</b> : <span key={line}>{line}</span>))}
+          <button className="btn" onClick={closeSummary}>
+            Fechar
+          </button>
+        </div>
+      )}
       {failed.length > 0 && !running && (
         <div className="pl-failed" role="alert">
           <b>{failed.length === 1 ? '1 nota não mudou de lugar' : `${failed.length} notas não mudaram de lugar`}</b>
@@ -399,4 +407,34 @@ function AskMove({ ask, signedIn, onCancel, onConfirm, onSignIn }: { ask: Ask; s
       </div>
     </div>
   )
+}
+
+const counted = (count: number, one: string, many: string) => `${count.toLocaleString('pt-BR')} ${count === 1 ? one : many}`
+
+/** "3 notas, 2 artefatos e 1 mídia": the parts that are not zero, joined as a sentence. */
+function joined(parts: string[]): string {
+  return parts.length > 1 ? `${parts.slice(0, -1).join(', ')} e ${parts[parts.length - 1]}` : parts[0]
+}
+
+/** The summary of a move to the App, in sentences (FR-043, FR-041). */
+export function summaryLines(summary: MoveSummary): string[] {
+  const parts = [counted(summary.notes, 'nota', 'notas')]
+  if (summary.artifacts) parts.push(counted(summary.artifacts, 'artefato', 'artefatos'))
+  if (summary.media) parts.push(counted(summary.media, 'mídia', 'mídias'))
+  const single = parts.length === 1 && summary.notes === 1
+  const lines = [`${joined(parts)} ${single ? 'veio' : 'vieram'} para o App.`]
+  lines.push(
+    summary.kept === 'drive'
+      ? 'A original continua no Google Drive.'
+      : summary.kept === 'local'
+        ? 'A original ficou guardada numa cópia neste navegador.'
+        : 'A original continua no Google Drive; a deste navegador ficou guardada numa cópia aqui.',
+  )
+  if (summary.expired)
+    lines.push(
+      summary.expired === 1
+        ? '1 mídia tinha vencido no serviço temporário e chegou como “Só o registro”.'
+        : `${summary.expired.toLocaleString('pt-BR')} mídias tinham vencido no serviço temporário e chegaram como “Só o registro”.`,
+    )
+  return lines
 }

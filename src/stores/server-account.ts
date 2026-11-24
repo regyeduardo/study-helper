@@ -24,6 +24,11 @@ export type ServerAccountStatus = 'unknown' | 'signed-out' | 'signed-in' | 'offl
 interface ServerAccountState {
   me: ServerMe | null
   status: ServerAccountStatus
+  /**
+   * The last session the server gave in this browser, while it does not answer (história 6): the library opens without internet with
+   * what it had. Only the library reads it; `me` stays empty until the server answers.
+   */
+  remembered: ServerMe | null
   refresh(): Promise<void>
   /** Leaves for Google in this same tab; the server brings the person back to this page. */
   signInWithGoogle(): void
@@ -53,6 +58,26 @@ export function loginOutcome(): string | null {
   return OUTCOMES[outcome] ?? OUTCOMES.failed
 }
 
+const REMEMBERED = 'study-helper-ultima-sessao'
+
+function remember(me: ServerMe | null): void {
+  try {
+    if (me) localStorage.setItem(REMEMBERED, JSON.stringify(me))
+    else localStorage.removeItem(REMEMBERED)
+  } catch {
+    // a browser that keeps nothing only does not open without internet
+  }
+}
+
+function rememberedSession(): ServerMe | null {
+  try {
+    const kept = localStorage.getItem(REMEMBERED)
+    return kept ? (JSON.parse(kept) as ServerMe) : null
+  } catch {
+    return null
+  }
+}
+
 /** Runs a call and throws the sentence the person reads. */
 async function readable<T>(run: () => Promise<T>): Promise<T> {
   try {
@@ -65,13 +90,15 @@ async function readable<T>(run: () => Promise<T>): Promise<T> {
 export const useServerAccount = create<ServerAccountState>((set, get) => ({
   me: null,
   status: 'unknown',
+  remembered: null,
 
   refresh: async () => {
     try {
       const me = await getMe()
-      set({ me, status: me ? 'signed-in' : 'signed-out' })
+      remember(me)
+      set({ me, status: me ? 'signed-in' : 'signed-out', remembered: null })
     } catch (error) {
-      if (error instanceof ApiError && error.code === 'offline') set({ status: 'offline' })
+      if (error instanceof ApiError && error.code === 'offline') set({ status: 'offline', remembered: rememberedSession() })
       else throw error
     }
   },
@@ -102,7 +129,8 @@ export const useServerAccount = create<ServerAccountState>((set, get) => ({
 
   signOut: async () => {
     await readable(() => logout())
-    set({ me: null, status: 'signed-out' })
+    remember(null)
+    set({ me: null, status: 'signed-out', remembered: null })
   },
 
   redeemCode: async code => {

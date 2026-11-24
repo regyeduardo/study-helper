@@ -50,7 +50,8 @@ describe('RecordDialog', () => {
     render(<RecordDialog />)
     const download = await screen.findByRole('link', { name: 'Baixar a integração (Linux)' })
     expect(download).toHaveAttribute('href', expect.stringMatching(/desktop-latest\/study-helper-audio-x86_64\.AppImage$/))
-    expect(screen.getByRole('status', { name: 'Integração' })).toHaveTextContent('Integração não conectada')
+    // the link shows while the search runs; the status says "não conectada" when the search ends (slow on a busy machine)
+    await waitFor(() => expect(screen.getByRole('status', { name: 'Integração' })).toHaveTextContent('Integração não conectada'), { timeout: 5000 })
     expect(screen.getByRole('radio', { name: /A aba da reunião/ })).toBeInTheDocument()
   })
 

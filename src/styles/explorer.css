@@ -73,6 +73,8 @@ th .ex-box{margin:0}
 .ex-found{margin:0;font-size:13px;color:var(--fg-muted)}
 .ex-found b{font-weight:600;color:var(--fg);font-variant-numeric:tabular-nums}
 .ex-reading{color:var(--fg-muted)}
+/* without internet the search looked only at this device (FR-040): its own line, in the color of a warning */
+.ex-offline{display:block;margin-top:2px;color:var(--warn)}
 .ex-title mark{background:#f5d34f;color:#1f2328;border-radius:2px;padding:0 1px}
 /* where it was found: a label, so above the faint text's 3.45:1 (WCAG AA asks 4.5:1) */
 .ex-snip .ex-at{margin-right:6px;color:var(--fg-muted);font-weight:500}

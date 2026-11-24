@@ -64,6 +64,10 @@ export class FakeAppServer {
   backup: { id: string; snapshot: unknown; folders: number; files: number } | null = null
   /** Makes every call fail as a dropped connection (the server is out). */
   offline = false
+  /** An item whose content writes (its parts) fail with a server error; its line in the hierarchy still goes. */
+  failPutFor: string | null = null
+  /** How those writes fail: a server error by default, or a refusal (404 not_found, 403 app_off…). */
+  failWith = { status: 500, error: 'internal_error' }
   private versions = 0
 
   private nextVersion(): string {
@@ -117,6 +121,11 @@ export class FakeAppServer {
 
     if (!this.signedIn) return json(401, { error: 'no_session' })
 
+    if (path === '/v1/auth/logout' && method === 'POST') {
+      this.signedIn = false
+      return json(200, { ok: true })
+    }
+
     if (path === '/v1/me') {
       return json(200, {
         user: { id: 'u1', email: 'ana@example.com', status: 'enabled', appEnabled: this.appEnabled, hierarchyAt: this.hierarchyAt },
@@ -155,6 +164,8 @@ export class FakeAppServer {
       const rows = [...this.rows.values()].filter(row => row.seq > since).sort((a, b) => a.seq - b.seq)
       return json(200, { seq: this.seq, rows: structuredClone(rows), more: false })
     }
+
+    if (this.failPutFor && method === 'PUT' && path.startsWith(`/v1/library/items/${encodeURIComponent(this.failPutFor)}/parts/`)) return json(this.failWith.status, { error: this.failWith.error })
 
     let match = path.match(/^\/v1\/library\/items\/([^/]+)$/)
     if (match) {

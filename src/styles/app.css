@@ -203,6 +203,7 @@ input,select,textarea{font:inherit;color:inherit}
 .tag-nav{list-style:none;margin:0;padding:0;display:grid;gap:1px}
 .tag-nav .nv[aria-pressed="true"]{background:var(--accent-soft);color:var(--accent)}
 .nav-end{display:grid;grid-template-columns:minmax(0,1fr);gap:1px;margin-top:14px;padding-top:8px;border-top:1px solid var(--border-muted)}
+.nav-lang{display:grid;grid-template-columns:minmax(0,1fr);margin-top:10px;padding:8px 0;border-top:1px solid var(--border-muted);border-bottom:1px solid var(--border-muted)}
 .explorer{display:grid;gap:12px;min-width:0}
 .ex-tools{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
 .ex-tools .spacer{flex:1}
@@ -554,7 +555,11 @@ textarea.input{resize:vertical;min-height:62px}
 .c1 .srch{white-space:nowrap;overflow:hidden;margin:4px 10px 8px;height:32px;border:1px solid var(--border);border-radius:8px;background:var(--bg);display:flex;align-items:center;gap:6px;padding:0 7px;color:var(--fg-faint);font-size:12.5px}
 .c1 .srch .t{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;text-align:left}
 .c1 .srch .kbd{margin-left:auto;flex:none}
-.c1 .nav{padding:4px 8px;display:grid;grid-template-columns:minmax(0,1fr);gap:1px;overflow:auto;flex:1;align-content:start}
+.c1 .nav{padding:4px 8px;display:flex;flex-direction:column;gap:1px;overflow:auto;flex:1;min-height:0}
+.c1 .nav>*{flex:none;min-width:0}
+/* only the folder list scrolls; in a short window it keeps ~4 rows and then the whole menu scrolls */
+.c1 .nav>.tree{flex:0 1 auto;min-height:0;overflow-y:auto;overscroll-behavior:contain}
+@supports (min-height:calc-size(max-content,size)){.c1 .nav>.tree{min-height:calc-size(max-content,min(size,132px))}}
 .nv{display:flex;align-items:center;gap:9px;padding:6px 8px;border-radius:7px;font-size:13.5px;color:var(--fg-muted);text-align:left;width:100%}
 .nv:hover{background:var(--bg-hover);color:var(--fg)}
 .nv[aria-current="true"]{background:var(--bg-muted);color:var(--fg);font-weight:500}

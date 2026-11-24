@@ -2,6 +2,9 @@ import { createBrowserRouter } from 'react-router-dom'
 
 import App from '@/App'
 import AdminPage, { ADMIN_PATH } from '@/pages/admin'
+import LanguagesPage from '@/pages/idiomas'
+import LanguagePage from '@/pages/idiomas/language'
+import StudyPage from '@/pages/idiomas/study'
 import WorkspacePage from '@/pages/workspace'
 
 export const router = createBrowserRouter(
@@ -24,6 +27,9 @@ export const router = createBrowserRouter(
         { path: '/shared/:shareId', element: <WorkspacePage /> },
         { path: '/shared/:shareId/pasta/:folderId', element: <WorkspacePage /> },
         { path: '/shared/:shareId/arquivo/:fileId', element: <WorkspacePage /> },
+        { path: '/idiomas', element: <LanguagesPage /> },
+        { path: '/idiomas/:code', element: <LanguagePage /> },
+        { path: '/idiomas/:code/:textId', element: <StudyPage /> },
         { path: ADMIN_PATH, element: <AdminPage /> },
         { path: '*', element: <WorkspacePage /> },
       ],

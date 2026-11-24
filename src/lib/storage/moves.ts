@@ -20,6 +20,12 @@ export interface MoveRecord {
   batch: string
   order: number
   bytes: number
+  /** Counted when the note is copied, for the summary of what came (FR-043). */
+  artifacts?: number
+  /** The note's media file went with it. */
+  media?: boolean
+  /** The media was in a temporary service and had expired: the note arrives as "Só o registro" (FR-043). */
+  expired?: boolean
 }
 
 export interface MoveProgress {
@@ -53,6 +59,33 @@ export class MoveJournal {
 
   async clearDone(): Promise<void> {
     for (const record of await this.all()) if (record.state === 'feito') await this.db.delete('files', record.id)
+  }
+}
+
+/** A note as it was before it went to the App, kept in this browser (FR-041: the original is never deleted). */
+export interface OriginalCopy {
+  id: string
+  name: string
+  from: Side
+  at: string
+  content: string
+  sidecar: FileSidecar
+}
+
+/** The originals of what went to the App from this browser, one store per account (`study-helper-copias-<conta>`). */
+export class OriginalCopies {
+  private readonly db: KeyValueStore
+
+  constructor(accountId: string) {
+    this.db = new KeyValueStore(`study-helper-copias-${accountId}`)
+  }
+
+  async all(): Promise<OriginalCopy[]> {
+    return this.db.all<OriginalCopy>('files')
+  }
+
+  async put(copy: OriginalCopy): Promise<void> {
+    await this.db.put('files', copy.id, copy)
   }
 }
 
@@ -108,9 +141,9 @@ function stable(value: unknown): string {
   return JSON.stringify(value)
 }
 
-/** The parts of a note that must arrive the same: its text and everything in its sidecar but the stamp of the write. */
+/** The parts of a note that must arrive the same: its text and everything in its sidecar but the stamp of the write and its place (what a move changes). */
 function sameNote(a: { content: string; sidecar: FileSidecar }, b: { content: string; sidecar: FileSidecar }): boolean {
-  const plain = ({ meta: { updated: _updated, awayFolderId: _away, folderId: _folder, ...meta }, ...rest }: FileSidecar) => stable({ ...rest, meta })
+  const plain = ({ meta: { updated: _updated, awayFolderId: _away, folderId: _folder, place: _place, ...meta }, ...rest }: FileSidecar) => stable({ ...rest, meta })
   return a.content === b.content && plain(a.sidecar) === plain(b.sidecar)
 }
 
@@ -124,6 +157,11 @@ export interface RunOptions {
    * stays whole where it is); one already under way ends first, and a folder already made at the destination ends as always.
    */
   cancelled?: () => boolean
+  /**
+   * Bringing the library to the App (FR-041) never deletes the original: a note of the Google Drive stays there (with the account's
+   * hierarchy the Drive only keeps content, so it does not show twice); any other original is kept in these copies before it leaves.
+   */
+  copies?: OriginalCopies
 }
 
 export class MoveStopped extends Error {}
@@ -180,11 +218,16 @@ export async function runMoves(repo: CombinedRepository, journal: MoveJournal, t
           const from = await repo.readFrom(record.from, record.id)
           let sidecar = from.sidecar
           const origin = sidecar.meta.origin
+          record.artifacts = sidecar.artifacts?.length ?? 0
+          record.expired = Boolean(origin?.storedUrl && origin.storage !== 'none' && origin.storage !== 'drive' && !origin.removedAt && origin.expiresAt && Date.parse(origin.expiresAt) < Date.now())
+          // the file is gone from the temporary service: at the destination the note is "Só o registro" (FR-043)
+          if (record.expired && sidecar.meta.kept === 'arquivo') sidecar = { ...sidecar, meta: { ...sidecar.meta, kept: 'registro' } }
           // the note's file kept in the library goes with it, under a new address at the destination
           if (origin?.storage === 'drive' && origin.storedFileId && !origin.removedAt && !(record.from === 'drive' && record.to === 'drive')) {
             const blob = await repo.repoFor(record.from).getSource(origin.storedFileId)
             const stored = await repo.repoFor(record.to).putSource(record.id, blob, origin.name)
             sidecar = { ...sidecar, meta: { ...sidecar.meta, origin: { ...origin, storedFileId: stored.ref } } }
+            record.media = true
           }
           await repo.writeFileTo(record.to, sidecar, from.content)
           const arrived = await repo.readFrom(record.to, record.id)
@@ -194,10 +237,17 @@ export async function runMoves(repo: CombinedRepository, journal: MoveJournal, t
         if (record.state === 'conferido' || record.state === 'apagando-da-origem') {
           await save(record, 'apagando-da-origem')
           const old = await repo.readFrom(record.from, record.id).catch(() => null)
-          await repo.removeFrom(record.from, record.id)
-          const kept = old?.sidecar.meta.origin
-          const arrived = (await repo.readFrom(record.to, record.id)).sidecar.meta.origin
-          if (kept?.storedFileId && kept.storedFileId !== arrived?.storedFileId) await repo.repoFor(record.from).removeSource(kept.storedFileId).catch(() => undefined)
+          const bringing = record.to === 'app'
+          // FR-041: a note of the Google Drive stays whole there, as content the account's hierarchy no longer points to
+          const keepInDrive = bringing && record.from === 'drive' && Boolean(repo.hierarchy)
+          if (!keepInDrive) {
+            if (bringing && old) await options.copies?.put({ id: record.id, name: record.name, from: record.from, at: new Date().toISOString(), content: old.content, sidecar: old.sidecar })
+            await repo.removeFrom(record.from, record.id)
+            const kept = old?.sidecar.meta.origin
+            const arrived = (await repo.readFrom(record.to, record.id)).sidecar.meta.origin
+            // the original's media file stays too when the note came to the App
+            if (!bringing && kept?.storedFileId && kept.storedFileId !== arrived?.storedFileId) await repo.repoFor(record.from).removeSource(kept.storedFileId).catch(() => undefined)
+          }
           repo.adopt(record.id, record.to)
           done++
           doneBytes += record.bytes

@@ -32,7 +32,7 @@ import { nameArtifact, nameSource } from '@/lib/generation/artifact-name'
 import { GenerationSession } from '@/lib/generation/session'
 import { activeLinks, saveSharedAttempt, type SharedAttempts, sharedLibrary } from '@/lib/share'
 import { setSharedRoot } from '@/lib/paths'
-import { apiMessage } from '@/controllers/api.controller'
+import { apiMessage, type ServerMe } from '@/controllers/api.controller'
 import { followAppAi } from '@/lib/ai/app-ai'
 import { env } from '@/lib/env'
 import { newId, nowIso } from '@/lib/ids'
@@ -389,10 +389,11 @@ export const useLibraryStore = create<LibraryState>((set, get) => {
       followLive(null)
       set({ repo: null, accountId, appOn: false, hierarchySync: null, ready: false, loadError: null, hiddenPending: false, hiddenWarning: null, folders: [], files: [], opened: {}, openedAt: readOpened(accountId), sizes: {} })
       let repo: Repository
+      let offlineOpening = false
       try {
         if (!tokenProvider) repo = new LocalRepository()
         else {
-          void openServerSession(accountId, tokenProvider)
+          const session = openServerSession(accountId, tokenProvider)
           const { useJobsStore } = await import('@/stores/jobs')
           let task: TrackedTask | null = null
           const library = await openDriveLibrary(accountId, tokenProvider, (message, fraction) => {
@@ -401,10 +402,16 @@ export const useLibraryStore = create<LibraryState>((set, get) => {
           })
           if (library.warning) (task as TrackedTask | null)?.fail(library.warning)
           else (task as TrackedTask | null)?.done('Tudo na pasta oculta do Drive')
+          // without internet, the last session of the account says what opens (história 6): its hierarchy and the App, from the cache
+          if (library.offline) {
+            offlineOpening = true
+            await session
+          }
           if (get().accountId !== accountId) return
           // The account's Drive and this browser's Local in one tree (spec 003, história 9); a move left open shows its origin until checked.
           const combined = new CombinedRepository(library.repo, new LocalRepository(`study-helper-local-${accountId}`, accountId))
           combined.setShowing(showingOf(await new MoveJournal(accountId).all().catch(() => [])))
+          combined.onRefused = tellRefused
           if (serverAppOn()) combined.setApp(new AppRepository(accountId))
           if (hierarchyOn(accountId)) combined.setHierarchy(new HierarchyRepository(accountId))
           set({ appOn: Boolean(combined.app) })
@@ -423,6 +430,7 @@ export const useLibraryStore = create<LibraryState>((set, get) => {
         if (get().repo !== repo) return
         get().applySnapshot(snapshot)
         set({ ready: true })
+        if (offlineOpening) void import('@/stores/ui').then(({ useUiStore }) => useUiStore.getState().toast('Sem internet: a biblioteca abriu com o que está neste aparelho. O que está no Google Drive abre quando a conexão voltar.'))
         await migrateOnLoad(repo, snapshot)
         migrateHierarchyWhenReady()
         warnLostFolders(repo)
@@ -836,9 +844,26 @@ async function openServerSession(accountId: string, tokenProvider: TokenProvider
   }
 }
 
+/** A note written without internet that the server refused for good: it is in a copy in this browser, and the person is told why. */
+function tellRefused(name: string, reason: string): void {
+  const why = reason === 'not_found' ? 'a nota foi apagada em outro aparelho' : reason === 'app_off' ? 'a estrutura do app está desligada' : 'o servidor recusou'
+  void import('@/stores/ui').then(({ useUiStore }) => useUiStore.getState().toast(`“${name}” não subiu: ${why}. O que você escreveu sem internet ficou guardado numa cópia neste navegador.`))
+}
+
+/** The session of the server; while it does not answer, the last one this browser had (história 6: the library opens without internet). */
+function sessionNow(): { me: ServerMe | null; known: boolean } {
+  const { me, status, remembered } = useServerAccount.getState()
+  if (status === 'offline') {
+    // the session this tab already had, else the one this browser kept
+    const last = me ?? remembered
+    return { me: last, known: Boolean(last) }
+  }
+  return { me, known: status === 'signed-in' }
+}
+
 /** Whether the server account has "Usar a estrutura do app" on (freed by a code). */
 function serverAppOn(): boolean {
-  const user = useServerAccount.getState().me?.user
+  const user = sessionNow().me?.user
   return Boolean(user && user.status === 'enabled' && user.appEnabled)
 }
 
@@ -847,9 +872,9 @@ function serverAppOn(): boolean {
  * (`hierarchyAt`), with the server session of the same person as the Google account of the library. Before that, all as it was.
  */
 function hierarchyOn(accountId: string | null): boolean {
-  const { me, status } = useServerAccount.getState()
+  const { me, known } = sessionNow()
   const account = useAccountStore.getState().accounts.find(item => item.id === accountId)
-  return Boolean(status === 'signed-in' && me?.user.hierarchyAt && account?.kind === 'google' && account.email && account.email.toLowerCase() === me.user.email?.toLowerCase())
+  return Boolean(known && me?.user.hierarchyAt && account?.kind === 'google' && account.email && account.email.toLowerCase() === me.user.email?.toLowerCase())
 }
 
 /**
@@ -889,6 +914,8 @@ function migrateHierarchyWhenReady(): void {
 // the connection is back: what waited for it goes up now (spec 005, FR-011)
 if (typeof window !== 'undefined')
   window.addEventListener('online', () => {
+    // a library opened with the last session (história 6): the server's own answer takes its place
+    if (useServerAccount.getState().status === 'offline') void useServerAccount.getState().refresh().catch(() => undefined)
     const { repo } = useLibraryStore.getState()
     if (repo instanceof CombinedRepository && repo.hierarchy) void import('@/stores/sync').then(({ useSyncStore }) => useSyncStore.getState().syncNow())
   })
@@ -906,7 +933,11 @@ function warnLostFolders(repo: Repository): void {
 function watchHierarchy(repo: CombinedRepository): void {
   const tree = repo.hierarchy
   useLibraryStore.setState({ hierarchySync: tree ? { pending: 0, online: true } : null })
-  if (tree) tree.onState = state => repo.hierarchy === tree && useLibraryStore.setState({ hierarchySync: state })
+  if (!tree) return
+  // the hierarchy's changes and the App's content written without internet, each note once (história 6)
+  const tell = () => void repo.waiting().then(state => repo.hierarchy === tree && useLibraryStore.setState({ hierarchySync: state }), () => undefined)
+  tree.onState = tell
+  repo.onHeld = tell
 }
 
 /** The migration ended (or the session arrived) with the library open: the tree passes to the account's hierarchy, and loads again. */

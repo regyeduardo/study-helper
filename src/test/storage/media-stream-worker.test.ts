@@ -150,11 +150,11 @@ describe('o service worker que toca a mídia do Drive aos pedaços', () => {
     expect(worker.asked).toEqual([])
   })
 
-  it('não mexe em nenhum outro pedido do app', async () => {
+  // the page and the pieces of the build are the app's own files, kept for opening without internet (app-offline-shell.test.ts)
+  it('não mexe na API nem no que não é leitura, e não pede ao Drive nada além da mídia', async () => {
     const worker = startWorker(drive.fetch)
-    expect(await ask(worker, `${APP}/`)).toBeNull()
-    expect(await ask(worker, `${APP}/assets/index.js`)).toBeNull()
     expect(await ask(worker, `https://api.study.test/v1/media/n1/m1`, { Range: 'bytes=0-' })).toBeNull()
+    expect(await ask(worker, `${APP}/v1/library/map`)).toBeNull()
     expect(await ask(worker, `${APP}/media-stream/${ID}`, {}, 'POST')).toBeNull()
     expect(drive.calls).toEqual([])
   })

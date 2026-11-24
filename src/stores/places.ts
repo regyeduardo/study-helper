@@ -5,21 +5,34 @@ import { type Blocker, blocking } from '@/lib/blocking'
 import { newId } from '@/lib/ids'
 import { CombinedRepository, type Side } from '@/lib/storage/combined-repository'
 import { fileBytes } from '@/lib/storage/file-sizes'
-import { MoveJournal, type MoveProgress, type MoveRecord, planMoves, retryFailed, runMoves } from '@/lib/storage/moves'
+import { MoveJournal, type MoveProgress, type MoveRecord, OriginalCopies, planMoves, retryFailed, runMoves } from '@/lib/storage/moves'
 import { filePlaceOf, folderPlaceOf } from '@/lib/storage/place'
 import { saveToDrive } from '@/lib/storage/source-storage'
 import { useLibraryStore } from '@/stores/library'
 import { useUiStore } from '@/stores/ui'
+
+/** What came to the App in the last move (FR-043): counted from what arrived; `kept` says where the original stayed (FR-041). */
+export interface MoveSummary {
+  to: 'app'
+  notes: number
+  artifacts: number
+  media: number
+  expired: number
+  kept: 'drive' | 'local' | 'both'
+}
 
 interface PlacesState {
   /** The move running now, for the window and the banner. */
   progress: MoveProgress | null
   running: boolean
   failed: MoveRecord[]
+  /** The last move to the App, until the person closes it. */
+  summary: MoveSummary | null
+  closeSummary(): void
   /** "Onde fica cada coisa" (FR-052, FR-054): the item's own choice, then the move of it and of all inside it that follows it. */
   choosePlace(ids: string[], place: Place): Promise<void>
-  /** "Sincronizar" (FR-056): what is only in this browser goes to the Google Drive. */
-  syncLocal(ids: string[]): Promise<void>
+  /** "Sincronizar" (FR-056): what is only in this browser goes to the Google Drive, or to the App with the structure on (US5/AC6). */
+  syncLocal(ids: string[], place?: Place): Promise<void>
   /** Opening the app again continues every move that stopped in the middle. */
   resume(): Promise<void>
   retry(): Promise<void>
@@ -69,11 +82,12 @@ export const usePlacesStore = create<PlacesState>((set, get) => {
     const repo = combined()
     const accountId = useLibraryStore.getState().accountId
     if (!repo || !accountId || get().running) return
-    set({ running: true, failed: [] })
+    set({ running: true, failed: [], summary: null })
     const journal = new MoveJournal(accountId)
     try {
       const { folders, files } = useLibraryStore.getState()
       const records = await runMoves(repo, journal, { folders, files }, {
+        copies: new OriginalCopies(accountId),
         onProgress: progress => {
           set({ progress })
           blocker.progress({ phase: 'Levando as notas', done: progress.done, total: progress.total, doneBytes: progress.doneBytes, totalBytes: progress.totalBytes, current: progress.current })
@@ -88,9 +102,10 @@ export const usePlacesStore = create<PlacesState>((set, get) => {
         const file = library.files.find(item => item.id === record.id)
         return file?.origin && file.origin.storage !== 'drive' && library.localMedia.some(item => item.fileIds.includes(record.id))
       })
+      let sent = 0
       for (const [index, record] of media.entries()) {
         blocker.progress({ phase: 'Enviando as mídias', done: index, total: media.length, current: record.name })
-        await saveToDrive(record.id).catch(() => undefined)
+        if (await saveToDrive(record.id).then(() => true, () => false)) sent++
       }
       // cancelled: what did not start stays whole where it is, and says so as its own choice
       const stayed = records.filter(record => record.state === 'pendente')
@@ -100,6 +115,22 @@ export const usePlacesStore = create<PlacesState>((set, get) => {
       await journal.clearDone()
       const went = records.filter(record => record.state === 'feito' && record.kind === 'file')
       const to = records[0]?.to
+      if (to === 'app' && went.length) {
+        const from = new Set(went.map(record => record.from))
+        // a Google Drive note stays there only with the account's hierarchy; without it, its original went to the copies in this browser
+        const inDrive = from.has('drive') && Boolean(repo.hierarchy)
+        const inCopies = from.has('local') || (from.has('drive') && !repo.hierarchy)
+        set({
+          summary: {
+            to: 'app',
+            notes: went.length,
+            artifacts: went.reduce((sum, record) => sum + (record.artifacts ?? 0), 0),
+            media: went.filter(record => record.media).length + sent,
+            expired: went.filter(record => record.expired).length,
+            kept: inDrive && inCopies ? 'both' : inCopies ? 'local' : 'drive',
+          },
+        })
+      }
       if (stayed.length) useUiStore.getState().toast(went.length ? `Parou: ${notesOf(went.length)} ${went.length === 1 ? 'foi' : 'foram'} para ${placeName(to!)}; o resto ficou onde estava.` : 'Parou: nada mudou de lugar.')
       else if (!failed.length && went.length) useUiStore.getState().toast(`Pronto: ${notesOf(went.length)} ${to === 'local' ? 'em Local' : to === 'app' ? 'no App' : 'no Google Drive'}`)
     } finally {
@@ -111,6 +142,8 @@ export const usePlacesStore = create<PlacesState>((set, get) => {
     progress: null,
     running: false,
     failed: [],
+    summary: null,
+    closeSummary: () => set({ summary: null }),
 
     choosePlace: async (ids, place) => {
       const repo = combined()
@@ -147,7 +180,7 @@ export const usePlacesStore = create<PlacesState>((set, get) => {
       )
     },
 
-    syncLocal: ids => get().choosePlace(ids, 'drive'),
+    syncLocal: (ids, place = 'drive') => get().choosePlace(ids, place),
 
     resume: async () => {
       const accountId = useLibraryStore.getState().accountId

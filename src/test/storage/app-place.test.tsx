@@ -11,6 +11,7 @@ vi.mock('@/lib/env', async importOriginal => ({ env: { ...((await importOriginal
 import type { ServerMe } from '@/controllers/api.controller'
 import { PlacesPanel } from '@/components/dialogs/PlacesPanel'
 import { CombinedRepository } from '@/lib/storage/combined-repository'
+import { OriginalCopies } from '@/lib/storage/moves'
 import { type Account, LOCAL_ACCOUNT, useAccountStore } from '@/stores/account'
 import { useLibraryStore } from '@/stores/library'
 import { usePlacesStore } from '@/stores/places'
@@ -81,7 +82,7 @@ describe('o App como lugar', () => {
     expect(driveNames().some(name => name.includes('Faculdade'))).toBe(true)
   })
 
-  it('com a estrutura ligada, mover uma pasta para o App leva ela e as notas, e tira do Drive', async () => {
+  it('com a estrutura ligada, mover uma pasta para o App leva ela e as notas, e tira do Drive guardando antes a original neste navegador', async () => {
     useServerAccount.setState({ me: freed(true), status: 'signed-in' })
     await library().connect(account, token)
     expect(library().appOn).toBe(true)
@@ -98,6 +99,9 @@ describe('o App como lugar', () => {
     expect(usePlacesStore.getState().failed.map(record => `${record.name}: ${record.reason}`)).toEqual([])
     expect(appNames().sort()).toEqual(['Faculdade', 'Lista de exercícios 3'])
     expect(driveNames().some(name => name.includes('Lista de exercícios 3'))).toBe(false)
+    // FR-041: without the account's hierarchy the Drive note would show twice, so its original is kept in this browser before it leaves
+    expect((await new OriginalCopies(account).all()).map(copy => ({ id: copy.id, from: copy.from, content: copy.content }))).toEqual([{ id: lista.id, from: 'drive', content: 'questão 1' }])
+    expect(usePlacesStore.getState().summary).toMatchObject({ notes: 1, kept: 'local' })
     const repo = library().repo as CombinedRepository
     expect(repo.sideOf(lista.id)).toBe('app')
     expect(await repo.readContent(lista.id)).toBe('questão 1')

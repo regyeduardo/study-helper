@@ -11,7 +11,7 @@ import { SyncLocalBanner } from '@/components/library/SyncLocal'
 import { isTouchScreen, useFileActions } from '@/components/library/use-file-actions'
 import { Icon } from '@/components/ui/Icon'
 import { useIsNarrow } from '@/hooks/use-is-narrow'
-import { readForSearch, useFilterSource, useLiveLibrary, usePathName, useSearchHits, useSearchPending } from '@/hooks/use-library-view'
+import { readForSearch, useFilterSource, useLiveLibrary, usePathName, useSearchHits, useSearchMissed, useSearchPending } from '@/hooks/use-library-view'
 import { isNote } from '@/lib/family'
 import { LOW_MASTERY_BELOW, REVIEW_BELOW } from '@/lib/file-types'
 import { filterLibrary, type LibraryFilters, placeOf, withoutFilter } from '@/lib/library-filters'
@@ -127,6 +127,8 @@ export function Explorer({ view, folderId }: { view: View; folderId: string | nu
   const [shownResults, setShownResults] = useState(RESULTS_AT_ONCE)
   const hits = useSearchHits(query)
   const pending = useSearchPending()
+  // without internet the search looks only at what this device has (FR-040)
+  const missed = useSearchMissed()
   const searching = searchWords(query).length > 0
   // the folder is a list of notes: its "Tipo" is the type of the note (FR-073)
   const notesFilters = useMemo<LibraryFilters>(() => ({ ...filters, scope: 'notas' }), [filters])
@@ -223,6 +225,7 @@ export function Explorer({ view, folderId }: { view: View; folderId: string | nu
             )}
             {/* out of what is announced: it changes every few tenths of a second while the library is read */}
             {reading && <span className="ex-reading" aria-hidden="true">{` Lendo ${plural(pending, 'item', 'itens')}…`}</span>}
+            {missed > 0 && <span className="ex-offline">{' Sem internet: a busca olhou só o que já está neste aparelho, e pode faltar algo.'}</span>}
           </p>
         )}
         {average !== null && view === 'folder' && !searching && (

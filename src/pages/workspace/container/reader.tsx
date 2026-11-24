@@ -26,7 +26,7 @@ import { useLibraryStore } from '@/stores/library'
 import { useUiStore } from '@/stores/ui'
 import { useScrollerRef } from '@/pages/workspace/container/shared'
 
-const TITLES = { folder: 'Biblioteca', review: 'Para revisar', favorites: 'Favoritos', trash: 'Lixeira', home: 'Início', doc: '', entries: 'Gravações', entry: 'Nota', generations: 'Gerações', ...SHARING_TITLES }
+const TITLES = { folder: 'Biblioteca', review: 'Para revisar', favorites: 'Favoritos', trash: 'Lixeira', home: 'Início', doc: '', entries: 'Gravações', entry: 'Nota', generations: 'Gerações', languages: 'Idiomas', ...SHARING_TITLES }
 
 export function Library({ route }: { route: ViewRoute }) {
   const ui = useUiStore()
