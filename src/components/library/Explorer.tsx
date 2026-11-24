@@ -161,12 +161,13 @@ export function Explorer({ view, folderId }: { view: View; folderId: string | nu
     if (kept.length < current.size) setSelection(kept)
   }, [visible])
 
-  const where = useMemo(() => ({ localMedia: new Set(source.localMedia), library: source.library, now: source.now }), [source])
+  const where = useMemo(() => ({ localMedia: new Set(source.localMedia), library: source.library, app: new Set(source.app ?? []), now: source.now }), [source])
   const placeLabels = new Map(result.facets.places.map(option => [option.id, option.label]))
   // said only when it differs from the library; "Só neste navegador" is the SaveToDrive notice, in the same line
   const placeNote = (file: FileMeta) => {
     const place = placeOf(file, where)
-    return shared || place === where.library || place === 'navegador' ? null : placeLabels.get(place)
+    // a note of the App is where the library is, for who uses the structure: the row says nothing, as before
+    return shared || place === where.library || place === 'app' || place === 'navegador' ? null : placeLabels.get(place)
   }
 
   const tested = result.items.filter(file => file.mastery !== null)

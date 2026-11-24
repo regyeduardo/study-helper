@@ -12,6 +12,7 @@ import type { FileMeta, FolderMeta } from '@/types/domain'
 import type { ServerMe } from '@/controllers/api.controller'
 import { PlacesPanel } from '@/components/dialogs/PlacesPanel'
 import { CombinedRepository } from '@/lib/storage/combined-repository'
+import { MoveJournal } from '@/lib/storage/moves'
 import { type Account, LOCAL_ACCOUNT, useAccountStore } from '@/stores/account'
 import { useBlockingStore } from '@/stores/blocking'
 import { useLibraryStore } from '@/stores/library'
@@ -79,10 +80,11 @@ afterEach(() => {
 async function faculdade() {
   const folder = await library().createFolder({ name: 'Faculdade' })
   const calculo = await library().createFolder({ name: 'Cálculo', parentId: folder.id })
-  const aula1 = await library().createFile({ name: 'Aula 1', type: 'class', folderId: folder.id }, 'texto da aula 1')
-  const aula2 = await library().createFile({ name: 'Aula 2', type: 'class', folderId: folder.id }, 'texto da aula 2')
+  // in the Google Drive: with the structure on, a note made without a place is born in the App
+  const aula1 = await library().createFile({ name: 'Aula 1', type: 'class', folderId: folder.id, place: 'drive' }, 'texto da aula 1')
+  const aula2 = await library().createFile({ name: 'Aula 2', type: 'class', folderId: folder.id, place: 'drive' }, 'texto da aula 2')
   const lista = await library().createFile({ name: 'Lista', type: 'class', folderId: folder.id, place: 'app' }, 'questão 1')
-  const aula3 = await library().createFile({ name: 'Aula 3', type: 'class', folderId: calculo.id }, 'texto da aula 3')
+  const aula3 = await library().createFile({ name: 'Aula 3', type: 'class', folderId: calculo.id, place: 'drive' }, 'texto da aula 3')
   expect([aula1, aula2, aula3].map(note => repo().sideOf(note.id))).toEqual(['drive', 'drive', 'drive'])
   expect(repo().sideOf(lista.id)).toBe('app')
   return { folder, calculo, aula1, aula2, lista, aula3 }
@@ -188,7 +190,7 @@ describe('Locais: só a nota tem lugar', () => {
     const inner: FolderMeta[] = []
     for (const name of ['Módulo 1', 'Módulo 2', 'Módulo 3', 'Módulo 4']) inner.push(await library().createFolder({ name, parentId: top.id }))
     const notes: FileMeta[] = []
-    for (let index = 0; index < 100; index++) notes.push(await library().createFile({ name: `Nota ${index + 1}`, type: 'class', folderId: inner[index % 4].id }, `texto ${index + 1}`))
+    for (let index = 0; index < 100; index++) notes.push(await library().createFile({ name: `Nota ${index + 1}`, type: 'class', folderId: inner[index % 4].id, place: 'drive' }, `texto ${index + 1}`))
     const before = foldersNow()
     open()
     fireEvent.click(box('Curso'))
@@ -201,6 +203,34 @@ describe('Locais: só a nota tem lugar', () => {
     expect(new Set(sent[0])).toEqual(new Set(notes.map(note => note.id)))
     expect(foldersNow()).toEqual(before)
   }, 30_000)
+
+  it('a falha de uma mudança antiga não aparece como erro de uma mudança nova que deu certo', async () => {
+    const { aula1, aula2, aula3 } = await faculdade()
+    // what a move of yesterday left in this browser's journal
+    await new MoveJournal(account).put({ id: aula3.id, kind: 'file', name: 'Aula 3', from: 'drive', to: 'app', state: 'falhou', reason: 'offline', batch: 'ontem', order: 0, bytes: 0 })
+    open()
+    fireEvent.click(box('Aula 1'))
+    fireEvent.click(box('Aula 2'))
+    fireEvent.click(within(bar()).getByRole('button', { name: 'Levar para o App' }))
+    fireEvent.click(within(screen.getByRole('alertdialog', { name: 'Levar 2 notas para o App' })).getByRole('button', { name: 'Levar para o App' }))
+    await waitFor(() => expect([aula1, aula2].map(note => repo().sideOf(note.id))).toEqual(['app', 'app']))
+    await waitFor(() => expect(usePlacesStore.getState().running).toBe(false))
+    expect(await screen.findByRole('status', { name: 'O que veio para o App' })).toHaveTextContent('2 notas vieram para o App.')
+    expect(screen.queryByText(/não mudou de lugar/)).not.toBeInTheDocument()
+  })
+
+  it('a nota que não mudou de lugar aparece com o nome que tem agora', async () => {
+    const { aula1 } = await faculdade()
+    // planned while it still had the recording's name; renamed by the title before the move ran
+    await new MoveJournal(account).put({ id: aula1.id, kind: 'file', name: 'Reunião 23-11-2026, 17-51-57', from: 'drive', to: 'app', state: 'pendente', batch: 'agora', order: 0, bytes: 0 })
+    server.failPutFor = aula1.id
+    open()
+    await usePlacesStore.getState().resume()
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent('1 nota não mudou de lugar')
+    expect(alert).toHaveTextContent('Aula 1:')
+    expect(alert).not.toHaveTextContent('Reunião')
+  })
 
   it('notas que já estão no destino não contam: com todas as marcadas no App, "Levar para o App" fica desligado', async () => {
     await faculdade()

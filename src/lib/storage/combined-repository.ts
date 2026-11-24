@@ -161,6 +161,15 @@ export class CombinedRepository implements Repository {
     return this.sides.get(id)
   }
 
+  /**
+   * Where a note made now in this folder is born (spec 005, R9): the App with the structure on, also before the account's hierarchy
+   * migrated (owner, 24/11/2026); else the default place with the hierarchy, and the folder's place before it, as it was.
+   */
+  sideForNew(folderId: string | null): Side {
+    if (this.tree || this.appRepo) return this.defaultSide()
+    return this.sideOfPlace(filePlaceOf({ folderId, place: undefined }, [...this.folders.values()], 'drive'))
+  }
+
   /** After a move, the item lives on the other side. */
   adopt(id: string, side: Side): void {
     this.sides.set(id, side)
@@ -201,9 +210,8 @@ export class CombinedRepository implements Repository {
 
   async saveFile(sidecar: FileSidecar, content?: string): Promise<FileSidecar> {
     const meta = sidecar.meta
-    // a new note is born in the place chosen, else in the default one; never in "the folder's place" (spec 005, R9)
-    if (this.tree) return this.writeFileTo(this.sides.get(meta.id) ?? (meta.place ? this.sideOfPlace(meta.place) : this.defaultSide()), sidecar, content)
-    return this.writeFileTo(this.sides.get(meta.id) ?? this.sideOfPlace(filePlaceOf(meta, [...this.folders.values()], 'drive')), sidecar, content)
+    // a new note is born in the place chosen, else where a new note is born (the App with the structure on); never "the folder's place" (spec 005, R9)
+    return this.writeFileTo(this.sides.get(meta.id) ?? (meta.place ? this.sideOfPlace(meta.place) : this.sideForNew(meta.folderId)), sidecar, content)
   }
 
   /** Writes a note to one side, whatever side it is on now: a move copies with it before taking the item out of the other side. */
@@ -597,4 +605,10 @@ export function driveOf(repo: Repository | null): DriveRepository | null {
   if (repo instanceof DriveRepository) return repo
   if (repo instanceof CombinedRepository && repo.drive instanceof DriveRepository) return repo.drive
   return null
+}
+
+/** Where a note made now is born, and its media with it: what a window says before it keeps a media ("No App", "No Google Drive"). */
+export function sideForNew(repo: Repository | null, folderId: string | null): Side {
+  if (repo instanceof CombinedRepository) return repo.sideForNew(folderId)
+  return repo?.kind === 'app' ? 'app' : repo?.kind === 'drive' ? 'drive' : 'local'
 }

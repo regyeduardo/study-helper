@@ -36,7 +36,7 @@ export function NoteParts({ meta }: { meta: FileMeta }) {
   const recording = opened?.sidecar.recording
   const transcript = recording?.blocks.length ? transcriptText(recording) : ''
   const parts: Part[] = []
-  if (mediaOf(meta) !== 'text' && (local || kept)) parts.push({ id: 'media', label: 'Mídia', bytes: local?.size ?? origin?.sizeBytes ?? 0, where: [local && 'este computador', kept && origin?.storage === 'drive' ? 'Google Drive' : kept ? 'nuvem' : ''].filter(Boolean).join(' e ') })
+  if (mediaOf(meta) !== 'text' && (local || kept)) parts.push({ id: 'media', label: 'Mídia', bytes: local?.size ?? origin?.sizeBytes ?? 0, where: [local && 'este computador', kept && origin?.storage === 'drive' ? (origin.storedFileId?.startsWith('app:') ? 'App' : 'Google Drive') : kept ? 'nuvem' : ''].filter(Boolean).join(' e ') })
   if (transcript) parts.push({ id: 'transcript', label: 'Transcrição', bytes: new Blob([transcript]).size, where: 'na nota' })
   if (transcript && (meta.type === 'meeting' || meta.type === 'class') && opened?.content) parts.push({ id: 'generated', label: meta.type === 'meeting' ? 'Ata' : 'Aula', bytes: new Blob([opened.content]).size, where: 'na nota' })
   if (!parts.length) return null

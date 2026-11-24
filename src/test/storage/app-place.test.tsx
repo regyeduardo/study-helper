@@ -87,7 +87,10 @@ describe('o App como lugar', () => {
     await library().connect(account, token)
     expect(library().appOn).toBe(true)
     const faculdade = await library().createFolder({ name: 'Faculdade' })
+    // made in the Google Drive before the structure was on: a note made now would be born in the App
+    await library().attachApp(false)
     const lista = await library().createFile({ name: 'Lista de exercícios 3', type: 'class', folderId: faculdade.id }, 'questão 1')
+    await library().attachApp(true)
     expect(appNames()).toEqual([])
 
     render(<MemoryRouter><PlacesPanel /></MemoryRouter>)

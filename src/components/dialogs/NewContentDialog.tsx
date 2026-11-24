@@ -17,6 +17,7 @@ import { ATA_MODELS, PART_ORDER } from '@/lib/generation/ata'
 import type { ContentInput } from '@/lib/generation/inputs'
 import { detectKind } from '@/lib/generation/uploads'
 import { paths } from '@/lib/paths'
+import { sideForNew } from '@/lib/storage/combined-repository'
 import { defaultStorage, storageOptions } from '@/lib/storage/source-storage'
 import { useAccountStore } from '@/stores/account'
 import { type Agent, defaultKeep, type KeepLevel, useJobsStore } from '@/stores/jobs'
@@ -134,12 +135,14 @@ export function NewContentDialog({ folderId: initialFolder, prefill }: { folderI
   const input = useRef<HTMLInputElement>(null)
 
   const driveAvailable = account.kind === 'google'
+  // the note is born in the App with the structure on, and the file kept with it goes there too
+  const inApp = useLibraryStore(state => sideForNew(state.repo, folderId) === 'app')
   const room = usage && settings.storageLimitBytes ? settings.storageLimitBytes - usage.appBytes : null
-  const options = useMemo(() => (file ? storageOptions(file.size, driveAvailable, room) : []), [file, driveAvailable, room])
+  const options = useMemo(() => (file ? storageOptions(file.size, driveAvailable, room, inApp) : []), [file, driveAvailable, room, inApp])
   const writes: Agent = tab === 'topic' && agent === 'lesson' ? 'explanation' : agent
   // under "Registro e arquivo", not keeping the file would be "Só o registro"; for media, 'none' is Mídias, on this computer
   const places = options.filter(option => isMedia || option.id !== 'none')
-  const chosen = file ? (storage && places.find(option => option.id === storage && option.fits && option.enabled) ? storage : defaultStorage(driveAvailable, places)) : 'none'
+  const chosen = file ? (storage && places.find(option => option.id === storage && option.fits && option.enabled) ? storage : defaultStorage(driveAvailable || inApp, places)) : 'none'
   const fileReason = tab !== 'file' ? 'Só para arquivo e mídia.' : places.some(option => option.fits && option.enabled) ? null : (places.find(option => option.reason)?.reason ?? 'Não há onde guardar este arquivo.')
   const wanted = keep ?? defaultKeep(tab, writes)
   // an Ata always has an entrada (FR-055)

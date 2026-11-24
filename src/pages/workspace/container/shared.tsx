@@ -10,6 +10,7 @@ import { useViewRoute } from '@/hooks/use-view-route'
 import { isNote } from '@/lib/family'
 import { mediaOf, REVIEW_BELOW } from '@/lib/file-types'
 import { dueCount } from '@/lib/generation/cards'
+import { sideForNew } from '@/lib/storage/combined-repository'
 import { useAccountStore } from '@/stores/account'
 import { useDocumentStore } from '@/stores/document'
 import { useLibraryStore } from '@/stores/library'
@@ -121,13 +122,17 @@ export function ContinueCard({ file, className = 'cont' }: { file: FileMeta; cla
 export function WelcomeEmpty() {
   const open = useUiStore(state => state.open)
   const account = useAccountStore(state => state.active())
+  // with the structure on, a new note is born in the App
+  const inApp = useLibraryStore(state => sideForNew(state.repo, null) === 'app')
   return (
     <div className="welcome">
       <h1>Sua biblioteca está vazia</h1>
       <p className="muted" style={{ margin: 0 }}>
         {account.kind === 'local'
           ? 'Você está no perfil Local: tudo fica só neste navegador. Entre com o Google para guardar no seu Drive.'
-          : 'Tudo o que você criar vai para a pasta .sync-study-helper do seu Google Drive.'}
+          : inApp
+            ? 'Tudo o que você criar vai para o App, na sua conta do Estudo.'
+            : 'Tudo o que você criar vai para a pasta .sync-study-helper do seu Google Drive.'}
       </p>
       <div className="quick" style={{ justifyContent: 'center' }}>
         <button className="btn primary" onClick={() => open({ kind: 'new' })}>

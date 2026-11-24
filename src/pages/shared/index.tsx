@@ -3,16 +3,25 @@ import { useLocation } from 'react-router-dom'
 
 import type { SharedItem } from '@/types/domain'
 import { Icon } from '@/components/ui/Icon'
+import { fetchLiveContent } from '@/controllers/live-share.controller'
 import { fetchSharedItemController } from '@/controllers/share.controller'
 import type { ViewRoute } from '@/hooks/use-view-route'
 import { nowIso } from '@/lib/ids'
-import { isExpired, linkMediaState, readSharedAttempts } from '@/lib/share'
+import { isExpired, linkMediaState, liveSharedItem, readSharedAttempts } from '@/lib/share'
 import { useLibraryStore } from '@/stores/library'
 
 /** How often a link whose media is still going up is read again, to show the media as soon as it is there. */
 export const sharedPoll = { ms: 5000 }
 
 type LoadState = { kind: 'loading' } | { kind: 'unavailable' } | { kind: 'ready'; item: SharedItem }
+
+/** A link of the App first (read as it is now, spec 003, história 7); one the App does not know is a link of the share-worker, as before. */
+async function openLink(shareId: string): Promise<SharedItem | null> {
+  const live = await fetchLiveContent(shareId)
+  if (live === 'gone') return null
+  if (live) return liveSharedItem(live).catch(() => null)
+  return fetchSharedItemController(shareId)
+}
 
 function sharedRoute(item: SharedItem, pathname: string): ViewRoute {
   const [, , , section, id] = pathname.split('/')
@@ -36,7 +45,7 @@ export function useSharedRoute(shareId: string): ViewRoute {
   useEffect(() => {
     let alive = true
     setState({ kind: 'loading' })
-    void fetchSharedItemController(shareId).then(item => {
+    void openLink(shareId).then(item => {
       if (!alive) return
       if (!item || !item.files.length || isExpired(item.expiresAt)) {
         setState({ kind: 'unavailable' })
@@ -45,7 +54,7 @@ export function useSharedRoute(shareId: string): ViewRoute {
       enterShared(item, readSharedAttempts(item.id))
       document.documentElement.dataset.shared = 'true'
       setState({ kind: 'ready', item })
-      if (!ownShares.some(share => share.id === item.id)) void rememberSharedLink({ id: item.id, kind: item.kind, title: item.title, openedAt: nowIso(), expiresAt: item.expiresAt }).catch(() => undefined)
+      if (!ownShares.some(share => share.id === item.id)) void rememberSharedLink({ id: item.id, kind: item.kind, title: item.title, openedAt: nowIso(), expiresAt: item.expiresAt, ...(item.live ? { live: true } : {}) }).catch(() => undefined)
     })
     return () => {
       alive = false

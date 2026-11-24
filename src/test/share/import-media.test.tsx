@@ -27,7 +27,8 @@ function memoryRepository() {
   const contents = new Map<string, string>()
   const putSource = vi.fn(async () => ({ ref: 'drive-nova' }))
   const repo = {
-    kind: 'local',
+    // a Google account's library: the media "No Google Drive" goes with the note
+    kind: 'drive',
     accountId: 'local',
     readContent: async (id: string) => contents.get(id) ?? '',
     readSidecar: async (id: string) => sidecars.get(id)!,

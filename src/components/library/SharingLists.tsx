@@ -3,11 +3,13 @@ import { useNavigate } from 'react-router-dom'
 
 import type { ShareRecord } from '@/types/domain'
 import { Icon } from '@/components/ui/Icon'
+import { stopLiveLink } from '@/controllers/live-share.controller'
 import { deleteShareController, ShareError } from '@/controllers/share.controller'
+import { ApiError, apiMessage } from '@/controllers/api.controller'
 import { useNow } from '@/hooks/use-now'
 import { blocking } from '@/lib/blocking'
 import { paths } from '@/lib/paths'
-import { activeLinks, daysLeftText, isExpired, shareUrl } from '@/lib/share'
+import { activeLinks, daysLeftText, isExpired, linkUrl } from '@/lib/share'
 import { useAccountStore } from '@/stores/account'
 import { useLibraryStore } from '@/stores/library'
 import { useUiStore } from '@/stores/ui'
@@ -20,13 +22,22 @@ function ShareRow({ share }: { share: ShareRecord }) {
   const account = useAccountStore(state => state.active())
   const tokenFor = useAccountStore(state => state.tokenFor)
   const dropShare = useLibraryStore(state => state.dropShare)
-  const url = shareUrl(share.id)
+  const url = linkUrl(share)
   const expired = isExpired(share.expiresAt)
 
-  // the Worker, then the index: the app is held in the window until both answer
+  // the Worker (or the App, for a live link), then the index: the app is held in the window until both answer
   const remove = () =>
     blocking('Apagando o compartilhamento…', async () => {
-      if (!expired) {
+      if (share.live) {
+        try {
+          await stopLiveLink(share.id)
+        } catch (error) {
+          if (!(error instanceof ApiError && error.status === 404)) {
+            ui.toast(apiMessage(error))
+            return
+          }
+        }
+      } else if (!expired) {
         if (account.kind !== 'google') {
           ui.toast('Entre com o Google para apagar o compartilhamento')
           return
@@ -68,9 +79,9 @@ function ShareRow({ share }: { share: ShareRecord }) {
         )}
         <div className="sub">
           <span>
-            <Icon name="clock" /> {expired ? 'expirado' : `faltam ${daysLeftText(share.expiresAt)}`}
+            <Icon name="clock" /> {share.live ? 'ao vivo · não vence' : expired ? 'expirado' : `faltam ${daysLeftText(share.expiresAt)}`}
           </span>
-          <span>{formatBytes(share.bytes)}</span>
+          {!share.live && <span>{formatBytes(share.bytes)}</span>}
           {share.withExams && <span>com as provas</span>}
         </div>
       </div>
@@ -136,7 +147,7 @@ function SharedWithMe() {
             <div className="title">{link.title}</div>
             <div className="sub">
               <span>
-                <Icon name="clock" /> faltam {daysLeftText(link.expiresAt)}
+                <Icon name="clock" /> {link.live ? 'ao vivo' : `faltam ${daysLeftText(link.expiresAt)}`}
               </span>
             </div>
           </div>

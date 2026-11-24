@@ -298,7 +298,8 @@ describe('página do link', () => {
   it('link apagado mostra "Item indisponível"', async () => {
     renderLink('/shared/ApagadoApagadoApagado1')
     expect(await screen.findByText('Item indisponível')).toBeInTheDocument()
-    expect(calls[0].url).toBe('https://files.test/shared/ApagadoApagadoApagado1/share.json')
+    // the App does not know it (a link of the share-worker), so the share-worker's manifest is read
+    expect(calls.map(call => call.url)).toContain('https://files.test/shared/ApagadoApagadoApagado1/share.json')
   })
 
   it('link expirado mostra "Item indisponível" e não entra em Compartilhado comigo', async () => {

@@ -13,7 +13,7 @@ export type DateField = 'updated' | 'created'
 export type PeriodPreset = 'hoje' | '7dias' | '30dias'
 /** A preset, or the days of "Escolher datas…": YYYY-MM-DD, both inclusive, either may be missing. */
 export type Period = PeriodPreset | { from?: string; to?: string }
-export type Place = 'drive' | 'navegador' | 'temporario' | 'registro' | 'apagado'
+export type Place = 'app' | 'drive' | 'navegador' | 'temporario' | 'registro' | 'apagado'
 export type FilterGroup = 'noteKinds' | 'kinds' | 'generated' | 'period' | 'tags' | 'folders' | 'places'
 
 export interface LibraryFilters {
@@ -44,6 +44,8 @@ export interface PlaceContext {
   localMedia: ReadonlySet<string>
   /** Where the library itself lives: the Drive or, in the Local profile, this browser. */
   library: 'drive' | 'navegador'
+  /** Ids of the notes kept in the App (spec 003): "No App", not "No meu Drive". */
+  app?: ReadonlySet<string>
   now: Date | number | string
 }
 
@@ -53,6 +55,7 @@ export interface FilterSource {
   folders: FolderMeta[]
   localMedia?: Iterable<string>
   library?: PlaceContext['library']
+  app?: Iterable<string>
   now: PlaceContext['now']
   /** Settings' timezone: where "hoje" begins. */
   timeZone?: string
@@ -160,6 +163,7 @@ const PRESETS: (Option<PeriodPreset> & { daysBack: number })[] = [
 ]
 
 const PLACES: Option<Place>[] = [
+  { id: 'app', label: 'No App', chip: 'no App' },
   { id: 'drive', label: 'No meu Drive', chip: 'no meu Drive' },
   { id: 'navegador', label: 'Só neste navegador', chip: 'só neste navegador' },
   { id: 'temporario', label: 'Temporário', chip: 'temporário' },
@@ -195,13 +199,15 @@ export function noteKindOf(file: FileMeta): NoteKind {
 }
 
 /** Where it is kept now. A note is where the library is, unless its media is only here; `storage: 'drive'` means the library's own store. */
-export function placeOf(file: FileMeta, { localMedia, library, now }: PlaceContext): Place {
+export function placeOf(file: FileMeta, { localMedia, library, app, now }: PlaceContext): Place {
   const here = localMedia.has(file.id)
   const origin = file.origin
   const addressed = origin?.storage === 'drive' && Boolean(origin.storedFileId)
-  if (isNote(file)) return here && !addressed ? 'navegador' : library
+  // the App keeps its media under the same "drive" storage, with an `app:` address
+  const kept: Place = app?.has(file.id) || origin?.storedFileId?.startsWith('app:') ? 'app' : library
+  if (isNote(file)) return here && !addressed ? 'navegador' : kept
   if (origin?.removedAt) return 'apagado'
-  if (addressed) return library
+  if (addressed) return kept
   const hosted = Boolean(origin?.storedUrl && origin.storage !== 'none' && origin.storage !== 'drive')
   if (hosted && !(origin?.expiresAt && Date.parse(origin.expiresAt) < new Date(now).getTime())) return 'temporario'
   if (here) return 'navegador'
@@ -362,7 +368,7 @@ function facetOf<Id>(options: Pick<Option<Id>, 'id' | 'label'>[], counts: Map<Id
 export function filterLibrary(source: FilterSource, filters: LibraryFilters): FilterResult {
   const { files, folders, only } = source
   const timeZone = source.timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone
-  const where: PlaceContext = { localMedia: new Set(source.localMedia ?? []), library: source.library ?? 'drive', now: source.now }
+  const where: PlaceContext = { localMedia: new Set(source.localMedia ?? []), library: source.library ?? 'drive', app: new Set(source.app ?? []), now: source.now }
   const chains = liveChains(folders)
   const isLive = (file: FileMeta) => !file.deletedAt && (file.folderId === null || chains.has(file.folderId))
 
@@ -473,7 +479,8 @@ export function filterLibrary(source: FilterSource, filters: LibraryFilters): Fi
       tags: facetOf(tagNames.map(tag => ({ id: tag, label: tag })), tagCounts, filters.tags),
       folders: folderTree(folders, chains).map(({ id, label, depth }) => ({ id, label, depth, count: folderCounts.get(id) ?? 0, selected: chosenFolders.has(id) })),
       withSubfolders,
-      places: facetOf(PLACES, placeCounts, filters.places),
+      // "No App" only in a library that has the App
+      places: facetOf(PLACES, placeCounts, filters.places).filter(option => option.id !== 'app' || option.count > 0 || option.selected),
     },
     active: activeFilters(filters, folders),
   }

@@ -12,6 +12,8 @@ import { blocking } from '@/lib/blocking'
 import { isNote } from '@/lib/family'
 import { placeOf } from '@/lib/library-filters'
 import type { LocalMedia } from '@/lib/recording/media-library'
+import { CombinedRepository, sideForNew } from '@/lib/storage/combined-repository'
+import type { Repository } from '@/lib/storage/repository'
 import { saveLocalMediaToDrive, saveToDrive } from '@/lib/storage/source-storage'
 import { UploadCancelled, watchedUpload } from '@/lib/storage/uploads'
 import { useAccountStore } from '@/stores/account'
@@ -30,14 +32,27 @@ const NEW_ENTRY = 'Para ir ao Drive, a mídia vira uma nota de mídia na bibliot
 
 /** The words of each destination. */
 const WORDS = {
-  drive: { action: ACTION, saving: SAVING, risk: RISK, saved: SAVED, failed: 'Não deu para salvar no Drive.' },
+  drive: { action: ACTION, saving: SAVING, risk: RISK, saved: SAVED, failed: 'Não deu para salvar no Drive.', newEntry: NEW_ENTRY },
   app: {
+    newEntry: 'Para ir ao App, a mídia vira uma nota de mídia na biblioteca.',
     action: 'Salvar no App',
     saving: 'Salvando no App…',
     risk: 'Hoje este arquivo está só neste navegador: se os dados do navegador forem limpos, ele se perde. No App, ele fica na sua conta, disponível em qualquer aparelho.',
     saved: 'Salvo no App. Agora ele está disponível em qualquer aparelho.',
     failed: 'Não deu para salvar no App.',
   },
+}
+
+/**
+ * Where "Salvar" really takes it: a note of this browser moves to the App with the structure on; a note elsewhere keeps its media where
+ * it is (its media goes with it); a media with no note yet goes where a new note is born (the App with the structure on).
+ */
+function destinationOf(repo: Repository | null, fileId?: string): 'app' | 'drive' {
+  if (!(repo instanceof CombinedRepository)) return 'drive'
+  if (!fileId) return sideForNew(repo, null) === 'app' ? 'app' : 'drive'
+  const side = repo.sideOf(fileId)
+  if (side === 'local' || side === undefined) return repo.app ? 'app' : 'drive'
+  return side === 'app' ? 'app' : 'drive'
 }
 
 /** What is uploading now, because the same file can be on screen twice: in a list and in its note. */
@@ -114,7 +129,7 @@ export function SaveToDrive({ fileId, media, compact = false, bare = false }: Sa
   const local = useLibraryStore(state => (fileId ? state.localMedia.find(item => item.fileIds.includes(fileId)) : undefined))
   const repoKind = useLibraryStore(state => state.repo?.kind)
   const shared = useLibraryStore(state => Boolean(state.sharedView))
-  const appOn = useLibraryStore(state => state.appOn)
+  const destination = useLibraryStore(state => destinationOf(state.repo, fileId))
   const saving = useSaving(state => state.ids.has(key))
   const onlyHere = useOnlyHere()
   const openOverlay = useUiStore(state => state.open)
@@ -130,8 +145,7 @@ export function SaveToDrive({ fileId, media, compact = false, bare = false }: Sa
 
   // An entrada kept in the Mídias of another browser: there is nothing here to upload.
   const canSave = Boolean(media) || isNote(file!) || Boolean(local || file!.origin?.storedFileId)
-  // a note goes to the App when the structure is on; a media with no note yet keeps the Drive road (T136)
-  const words = appOn && fileId ? WORDS.app : WORDS.drive
+  const words = WORDS[destination]
   const busy = saving || signingIn
   const busyText = saving ? words.saving : 'Entrando…'
 
@@ -154,7 +168,7 @@ export function SaveToDrive({ fileId, media, compact = false, bare = false }: Sa
     const mark = (id: string) => useSaving.setState(state => ({ ids: new Set(state.ids).add(id) }))
     mark(key)
     try {
-      if (words === WORDS.app && sideOfItem(fileId!) === 'local') {
+      if (destination === 'app' && fileId && sideOfItem(fileId) === 'local') {
         // a note of this browser moves to the App with its media, in the window of the move
         await usePlacesStore.getState().choosePlace([fileId!], 'app')
         if (sideOfItem(fileId!) !== 'app') return
@@ -200,7 +214,7 @@ export function SaveToDrive({ fileId, media, compact = false, bare = false }: Sa
     onKeyDown: (event: React.KeyboardEvent) => event.stopPropagation(),
   }
   const bytes = media?.size || local?.size || file?.origin?.sizeBytes
-  const ask = asking && <AskToSave words={words} size={bytes ? formatBytes(bytes) : ''} extra={media ? NEW_ENTRY : undefined} onCancel={() => setAsking(false)} onSave={() => void save()} />
+  const ask = asking && <AskToSave words={words} size={bytes ? formatBytes(bytes) : ''} extra={media ? words.newEntry : undefined} onCancel={() => setAsking(false)} onSave={() => void save()} />
 
   if (compact) {
     if (!canSave) return <span className="sdrive-row">{NOTICE}</span>

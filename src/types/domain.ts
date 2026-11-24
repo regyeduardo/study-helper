@@ -574,6 +574,8 @@ export interface ShareRecord {
   /** When the same link last got the version of that day (the link can be updated in place). */
   updatedAt?: string
   expiresAt: string
+  /** A link of the App (spec 003, história 7): it shows the item as it is now and never expires. */
+  live?: boolean
 }
 
 export interface SharedLink {
@@ -582,6 +584,7 @@ export interface SharedLink {
   title: string
   openedAt: string
   expiresAt: string
+  live?: boolean
 }
 
 export interface SharedFolder {
@@ -638,6 +641,8 @@ export interface SharedItem extends ShareContent {
   createdAt: string
   expiresAt: string
   mediaExpiresAt?: string
+  /** Read from the App as it is now (spec 003, história 7): never a copy, never expires. */
+  live?: boolean
 }
 
 export interface LibraryIndex {

@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 
 import type { ArtifactKind, ShareContent, ShareKind, ShareRecord } from '@/types/domain'
 import { EntryShareTree } from '@/components/dialogs/EntryShareTree'
+import { LiveShareDialog, sharesFromApp } from '@/components/dialogs/LiveShareDialog'
 import { entryKind } from '@/components/library/EntryList'
 import { Dialog } from '@/components/ui/Dialog'
 import { Icon } from '@/components/ui/Icon'
@@ -141,7 +142,13 @@ function fallbackNotice(failure: unknown): string | null {
   return null
 }
 
+/** Who uses the app structure shares from the App (live link, no share-worker); who does not, as before. */
 export function ShareDialog({ target, id }: { target: ShareKind; id: string }) {
+  const live = useLibraryStore(state => sharesFromApp(target, id, state.appOn, state.files, state.folders))
+  return live ? <LiveShareDialog target={target} id={id} /> : <WorkerShareDialog target={target} id={id} />
+}
+
+function WorkerShareDialog({ target, id }: { target: ShareKind; id: string }) {
   const ui = useUiStore()
   const navigate = useNavigate()
   const account = useAccountStore(state => state.active())

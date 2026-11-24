@@ -70,12 +70,24 @@ afterEach(() => {
   useServerAccount.setState({ me: null, status: 'unknown' })
 })
 
+/** Notes of the Google Drive made before the structure was on, without a place of their own: a note made now would be born in the App. */
+async function madeBeforeTheApp<T>(make: () => Promise<T>): Promise<T> {
+  await library().attachApp(false)
+  const made = await make()
+  await library().attachApp(true)
+  // the windows of setting up are not what the test looks at
+  seen = []
+  return made
+}
+
 /** Faculdade (Drive) with 3 notes. */
 async function faculdade() {
-  const folder = await library().createFolder({ name: 'Faculdade' })
-  const notes = []
-  for (const name of ['Aula 1', 'Aula 2', 'Aula 3']) notes.push(await library().createFile({ name, type: 'class', folderId: folder.id }, `texto de ${name}`))
-  return { folder, notes }
+  return madeBeforeTheApp(async () => {
+    const folder = await library().createFolder({ name: 'Faculdade' })
+    const notes = []
+    for (const name of ['Aula 1', 'Aula 2', 'Aula 3']) notes.push(await library().createFile({ name, type: 'class', folderId: folder.id }, `texto de ${name}`))
+    return { folder, notes }
+  })
 }
 
 describe('Levar para o App com a janela', () => {
@@ -120,7 +132,9 @@ describe('Levar para o App com a janela', () => {
 
   it('Cancelar enquanto grava a escolha: desfaz as escolhas gravadas e nada muda de lugar', async () => {
     const notes: FileMeta[] = []
-    for (const name of ['Nota A', 'Nota B', 'Nota C']) notes.push(await library().createFile({ name, type: 'class', folderId: null }, name))
+    await madeBeforeTheApp(async () => {
+      for (const name of ['Nota A', 'Nota B', 'Nota C']) notes.push(await library().createFile({ name, type: 'class', folderId: null }, name))
+    })
     const stop = useBlockingStore.subscribe(state => {
       const op = state.ops.at(-1)
       if (op?.phase === 'Gravando a escolha' && op.done === 1 && !op.cancelling) useBlockingStore.getState().cancel(op.id)

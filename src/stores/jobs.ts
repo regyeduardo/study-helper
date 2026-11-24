@@ -36,7 +36,6 @@ import { sourceKey } from '@/lib/entry-migration'
 import { isSourceNote, isYoutube, mediaOf, type NoteMedia, readsAsTranscript, recordingName, sourceTypeOf } from '@/lib/file-types'
 import { entryOfSource, entryOriginOf, keptInNote, linkIn, noteSourceOf } from '@/lib/note-source'
 import { cannotWatch, youtubeParts } from '@/lib/generation/youtube-video'
-import { folderPlaceOf } from '@/lib/storage/place'
 import { downloadStoredSource, sourceExpired, storeSource } from '@/lib/storage/source-storage'
 import { keepLocalMedia, linkLocalMedia, listLocalMedia, readLocalMedia } from '@/lib/recording/media-library'
 import { transcribe } from '@/lib/transcription'
@@ -135,7 +134,7 @@ export interface SaveRecordingRequest {
   durationSeconds: number
   folderId: string | null
   storage: SourceStorage
-  /** Where the person wants the note and its media (App or Google Drive); it becomes the note's own place only when the folder is elsewhere. */
+  /** Where the person wants the note and its media (App or Google Drive): the note's own place, whatever the folder (a folder has no place, spec 005). */
   place?: Place
   litterboxTime: LitterboxTime
   marks: RecordingMark[]
@@ -988,7 +987,8 @@ export const useJobsStore = create<JobsState>((set, get) => {
       const { file } = request
       const origin: SourceMeta = { input: 'recording', name: file.name, sizeBytes: file.size, mime: file.type || 'application/octet-stream', durationSeconds: request.durationSeconds, storage: 'none' }
       // the recording is a media note (Vídeo or Áudio): the transcription and what is generated from it live under it
-      const own = request.place && request.place !== folderPlaceOf(request.folderId, library().folders, 'drive') ? { place: request.place } : {}
+      // the choice is kept as the note's own: without it, a note made now is born in the App with the structure on, even with "Google Drive" chosen
+      const own = request.place ? { place: request.place } : {}
       const meta = await library().createFile({ name: recordingName(file.name), kept: 'registro', type: sourceTypeOf(origin), description: '', folderId: request.folderId, status: 'ready', pendingExcerpt: null, origin, ...own }, '')
       if (request.marks.length) await library().updateSidecar(meta.id, sidecar => ({ ...sidecar, recording: { blocks: [], speakers: [], marks: request.marks } }))
       if (request.storedName)

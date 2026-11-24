@@ -134,7 +134,7 @@ function partsOf(sidecar: FileSidecar, content: string | undefined): Parts {
   return parts
 }
 
-function fileMetaOf(row: LibraryRow, source: string | undefined): FileMeta {
+export function fileMetaOf(row: LibraryRow, source: string | undefined): FileMeta {
   const meta = row.meta as unknown as FileMeta
   const kept = parse<{ sourceExcerpt: string | null; pendingExcerpt: string | null; sourceText: string | null }>(source, { sourceExcerpt: null, pendingExcerpt: null, sourceText: null })
   return {
@@ -145,7 +145,7 @@ function fileMetaOf(row: LibraryRow, source: string | undefined): FileMeta {
   }
 }
 
-function sidecarOf(row: LibraryRow, parts: Parts): FileSidecar {
+export function sidecarOf(row: LibraryRow, parts: Parts): FileSidecar {
   const exam = parse<{ questions: FileSidecar['questions']; attempts: FileSidecar['attempts'] }>(parts.exam, { questions: [], attempts: [] })
   const transcript = parse<{ recording: FileSidecar['recording'] | null; transcript: string | null } | null>(parts.transcript, null)
   const documents = parse<{ documents: FileSidecar['documents'] | null; cards: FileSidecar['cards'] | null; mindmap: FileSidecar['mindmap'] | null } | null>(parts.documents, null)
@@ -165,7 +165,7 @@ function sidecarOf(row: LibraryRow, parts: Parts): FileSidecar {
   }
 }
 
-function folderOf(row: LibraryRow, course: string | undefined): FolderMeta {
+export function folderOf(row: LibraryRow, course: string | undefined): FolderMeta {
   const kept = parse<{ courseDescription: string | null; courseMaterial: string | null }>(course, { courseDescription: null, courseMaterial: null })
   return { ...(row.meta as unknown as FolderMeta), courseDescription: kept.courseDescription ?? null, courseMaterial: kept.courseMaterial ?? null }
 }

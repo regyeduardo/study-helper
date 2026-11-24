@@ -91,6 +91,8 @@ export const usePlacesStore = create<PlacesState>((set, get) => {
     set({ running: true, failed: [], summary: null })
     const journal = new MoveJournal(accountId)
     try {
+      // only what this run takes up can fail in it: a failure of an older move stays in the journal, not in this move's answer
+      const ran = new Set((await journal.all()).filter(record => record.state !== 'feito' && record.state !== 'falhou').map(record => record.id))
       const { folders, files } = useLibraryStore.getState()
       const records = await runMoves(repo, journal, { folders, files }, {
         copies: new OriginalCopies(accountId),
@@ -121,7 +123,10 @@ export const usePlacesStore = create<PlacesState>((set, get) => {
       // cancelled: what did not start stays whole where it is, and says so as its own choice
       const stayed = records.filter(record => record.state === 'pendente')
       for (const record of stayed) await writeChoice(record.id, record.from)
-      const failed = records.filter(record => record.state === 'falhou')
+      // each with the name it has now: the journal keeps the name of when the move was chosen (a recording is titled later)
+      const failed = records
+        .filter(record => record.state === 'falhou' && ran.has(record.id))
+        .map(record => ({ ...record, name: (library.files.find(item => item.id === record.id) ?? library.folders.find(item => item.id === record.id))?.name ?? record.name }))
       set({ failed })
       await journal.clearDone()
       const went = records.filter(record => record.state === 'feito' && record.kind === 'file')

@@ -212,7 +212,8 @@ describe('abrir o link no app', () => {
     expect(deck).toMatchObject({ kind: 'cartoes', cards: [{ id: 'c1', front: 'Quando reajusta?', back: 'Em março.', box: 0 }] })
     expect(talk).toMatchObject({ kind: 'tutor', turns: TALK.turns })
     await expect(useLibraryStore.getState().saveArtifact('a', { ...MAP, name: 'mexi' })).rejects.toThrow('só leitura')
-    expect(calls.every(call => call.url.startsWith('https://files.test/'))).toBe(true)
+    // the App is asked first and does not know a link of the share-worker; the rest is read from the share-worker's files
+    expect(calls.filter(call => !call.url.includes('/v1/shared/')).every(call => call.url.startsWith('https://files.test/'))).toBe(true)
   })
 
   it('um link antigo, sem o campo, abre sem artefatos, mesmo se a nota de quem compartilhou tinha', () => {

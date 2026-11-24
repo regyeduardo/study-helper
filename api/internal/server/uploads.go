@@ -389,6 +389,11 @@ func (srv *Server) getMedia(w http.ResponseWriter, r *http.Request, s *Session) 
 		fail(w, http.StatusNotFound, "not_found", nil)
 		return
 	}
+	srv.streamMedia(w, r, s.User.ID, row)
+}
+
+// streamMedia answers the media of a note, whole or in parts (Range): the note's own page, or a live link of it (shares.go).
+func (srv *Server) streamMedia(w http.ResponseWriter, r *http.Request, userID string, row *libraryRow) {
 	switch row.Media.Status {
 	case "deleted":
 		fail(w, http.StatusGone, "media_deleted", nil)
@@ -418,7 +423,7 @@ func (srv *Server) getMedia(w http.ResponseWriter, r *http.Request, s *Session) 
 	}
 	if r.URL.Query().Get("download") == "1" {
 		name := row.Name
-		_ = srv.db.QueryRow(`SELECT file_name FROM uploads WHERE user_id = ? AND object_key = ? AND status = 'completed' ORDER BY updated_at DESC LIMIT 1`, s.User.ID, row.Media.Key).Scan(&name)
+		_ = srv.db.QueryRow(`SELECT file_name FROM uploads WHERE user_id = ? AND object_key = ? AND status = 'completed' ORDER BY updated_at DESC LIMIT 1`, userID, row.Media.Key).Scan(&name)
 		h.Set("Content-Disposition", "attachment; filename*=UTF-8''"+strings.ReplaceAll(url.QueryEscape(name), "+", "%20"))
 	}
 	var rng *blobs.Range

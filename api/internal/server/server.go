@@ -173,6 +173,12 @@ func (srv *Server) Handler() http.Handler {
 	app("DELETE /v1/uploads/{id}", srv.abandonUpload)
 	app("GET /v1/media/{item}/{media}", srv.getMedia)
 	app("DELETE /v1/media/{item}/{media}", srv.deleteMedia)
+	// história 7: the live link of an item in the App; reading it needs no session (shares.go)
+	route("GET /v1/shares", signedIn, false, srv.itemLink)
+	route("POST /v1/shares", appOn, false, srv.createLink)
+	route("DELETE /v1/shares/{id}", signedIn, false, srv.stopLink)
+	route("GET /v1/shared/{id}", public, false, srv.withBlobs(srv.sharedContent))
+	route("GET /v1/shared/{id}/media/{item}", public, false, srv.withBlobs(srv.sharedMedia))
 	adminRoute := func(pattern string, handle handlerFunc) { mux.Handle(pattern, srv.adminOnly(handle)) }
 	adminRoute("GET /v1/admin/codes", srv.adminCodes)
 	adminRoute("POST /v1/admin/codes", srv.adminCreateCode)

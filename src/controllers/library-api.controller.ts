@@ -55,7 +55,7 @@ export interface StoredPart {
   content: string
 }
 
-async function send(method: string, path: string, options: { json?: unknown; body?: BodyInit; headers?: Record<string, string>; signal?: AbortSignal } = {}): Promise<Response> {
+export async function send(method: string, path: string, options: { json?: unknown; body?: BodyInit; headers?: Record<string, string>; signal?: AbortSignal } = {}): Promise<Response> {
   const headers: Record<string, string> = { ...options.headers }
   if (method !== 'GET' && method !== 'HEAD') headers['X-Estudo'] = '1'
   if (options.json !== undefined) headers['Content-Type'] = 'application/json'

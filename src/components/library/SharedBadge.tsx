@@ -7,6 +7,7 @@ import { Dialog } from '@/components/ui/Dialog'
 import { Icon } from '@/components/ui/Icon'
 import { useNow } from '@/hooks/use-now'
 import { blocking } from '@/lib/blocking'
+import { sideForNew } from '@/lib/storage/combined-repository'
 import { paths } from '@/lib/paths'
 import { daysLeftText, importSharedEntry, importSharedItem, linkMediaState, prefetchEntryMedia, type MediaPlace, readSharedAttempts, sharedMediaFailure } from '@/lib/share'
 import { useAccountStore } from '@/stores/account'
@@ -18,7 +19,8 @@ import { formatBytes } from '@/utils/format'
 /** What the recipient is asked about the media: where to keep it (it is in the link), or whether to import without it (it is still going up). */
 type MediaChoice = { kind: 'place'; folderId: string | null; size: number } | { kind: 'pending'; folderId: string | null }
 
-function MediaChoiceDialog({ choice, drive, onPick, onClose }: { choice: MediaChoice; drive: boolean; onPick(place: MediaPlace | null): void; onClose(): void }) {
+/** `cloud`: where the imported note is born, and its media with it (the App with the structure on); null: only this browser. */
+function MediaChoiceDialog({ choice, cloud, onPick, onClose }: { choice: MediaChoice; cloud: 'app' | 'drive' | null; onPick(place: MediaPlace | null): void; onClose(): void }) {
   if (choice.kind === 'pending') {
     return (
       <Dialog
@@ -44,6 +46,8 @@ function MediaChoiceDialog({ choice, drive, onPick, onClose }: { choice: MediaCh
     )
   }
   const size = choice.size ? ` (${formatBytes(choice.size)})` : ''
+  const drive = cloud !== null
+  const where = cloud === 'app' ? 'No App' : 'No Google Drive'
   return (
     <Dialog
       title={drive ? 'Onde guardar a mídia?' : 'Baixar a mídia?'}
@@ -61,9 +65,9 @@ function MediaChoiceDialog({ choice, drive, onPick, onClose }: { choice: MediaCh
           <button className={`btn ${drive ? '' : 'primary'}`} onClick={() => onPick('browser')}>
             Neste navegador
           </button>
-          {drive && (
-            <button className="btn primary" onClick={() => onPick('drive')}>
-              No Google Drive
+          {cloud && (
+            <button className="btn primary" onClick={() => onPick(cloud)}>
+              {where}
             </button>
           )}
         </>
@@ -72,7 +76,7 @@ function MediaChoiceDialog({ choice, drive, onPick, onClose }: { choice: MediaCh
       <div className="db">
         <span className="muted">
           {drive
-            ? `A gravação${size} vem junto com a nota. No Google Drive ela abre em qualquer aparelho seu; neste navegador, só aqui. Dá para importar só o texto.`
+            ? `A gravação${size} vem junto com a nota. ${cloud === 'app' ? 'No App ela fica na sua conta e' : 'No Google Drive ela'} abre em qualquer aparelho seu; neste navegador, só aqui. Dá para importar só o texto.`
             : `A gravação${size} vem junto com a nota e fica guardada só neste navegador. Dá para importar só o texto.`}
         </span>
       </div>
@@ -86,6 +90,7 @@ export function SharedBadge({ label = false, button = false }: { label?: boolean
   const toast = useUiStore(state => state.toast)
   const open = useUiStore(state => state.open)
   const driveAvailable = useAccountStore(state => state.active().kind === 'google')
+  const repo = useLibraryStore(state => state.repo)
   const navigate = useNavigate()
   const [importing, setImporting] = useState(false)
   // the media of an entrada downloads while the link is still open, with its progress on the button
@@ -191,11 +196,14 @@ export function SharedBadge({ label = false, button = false }: { label?: boolean
     />
   )
 
-  const choose = choice && <MediaChoiceDialog choice={choice} drive={driveAvailable} onPick={pick} onClose={() => setChoice(null)} />
+  // the imported note is born where any new note is (the App with the structure on), and the media goes with it
+  const born = choice ? sideForNew(repo, choice.folderId) : null
+  const cloud = born === 'app' ? 'app' : born === 'drive' && driveAvailable ? 'drive' : null
+  const choose = choice && <MediaChoiceDialog choice={choice} cloud={cloud} onPick={pick} onClose={() => setChoice(null)} />
   const both = label === button
   const tag = (
     <span className="crs" aria-label="Compartilhado">
-      compartilhado · só leitura · faltam {daysLeftText(item.expiresAt, now)}
+      compartilhado · só leitura · {item.live ? 'ao vivo' : `faltam ${daysLeftText(item.expiresAt, now)}`}
     </span>
   )
   const action = (

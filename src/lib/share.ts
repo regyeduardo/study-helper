@@ -10,12 +10,15 @@ import { newFileMeta, newFolderMeta } from '@/lib/defaults'
 import { newId, nowIso } from '@/lib/ids'
 import { keepLocalMedia, type LocalMedia, readLocalMedia } from '@/lib/recording/media-library'
 import { makeSeekable } from '@/lib/recording/seekable'
-import type { EntryShareChoice } from '@/lib/share-entry'
+import { choiceOf, defaultChoice, type EntryShareChoice, entryShareTree } from '@/lib/share-entry'
+import { fileMetaOf, folderOf, sidecarOf } from '@/lib/storage/app-repository'
 import { bytesOf, type Repository, type StoredSize } from '@/lib/storage/repository'
 import { downloadStoredSource, sourceExpired, storeSource } from '@/lib/storage/source-storage'
 import { RECORDER, withRecorder } from '@/lib/transcription/turns'
 import { readingMinutes, wordCount } from '@/utils/format'
 import type { TrackedTask } from '@/stores/jobs'
+import { type LiveContent, liveMediaUrl } from '@/controllers/live-share.controller'
+import type { LibraryRow } from '@/controllers/library-api.controller'
 import type { OpenedFile } from '@/stores/library'
 
 const DAY_MS = 24 * 3600 * 1000
@@ -36,6 +39,19 @@ export function shareUrl(id: string, origin: string = window.location.origin): s
   return `${origin}${env.basePath.replace(/\/$/, '')}/shared/${id}`
 }
 
+/** A link of the App never expires (spec 003, FR-036): the far date keeps it valid wherever a link is checked for its days. */
+export const LIVE_EXPIRES = '9999-12-31T23:59:59.000Z'
+
+/** The link of the App opens the app itself: the item's page, read from the App as it is now (no share-worker). */
+export function appShareUrl(id: string, origin: string = window.location.origin): string {
+  return `${origin}${env.basePath.replace(/\/$/, '')}/shared/${id}`
+}
+
+/** The address of a link made or received: the app's own for a link of the App, else the one of the share-worker. */
+export function linkUrl(link: { id: string; live?: boolean }): string {
+  return link.live ? appShareUrl(link.id) : shareUrl(link.id)
+}
+
 export function isExpired(expiresAt: string, now = Date.now()): boolean {
   return Date.parse(expiresAt) <= now
 }
@@ -53,7 +69,8 @@ export function daysLeftText(expiresAt: string, now = Date.now()): string {
 /** The link of an item made before and still valid: a note shared as "arquivo" is the same item as when it is an entrada (the migration made the old media notes entradas), a folder is another thing. */
 export function findValidShare(shares: ShareRecord[], target: ShareKind, itemId: string, now = Date.now()): ShareRecord | null {
   const sameKind = (kind: ShareKind) => (kind === 'folder') === (target === 'folder')
-  const found = shares.filter(record => record.itemId === itemId && sameKind(record.kind) && !isExpired(record.expiresAt, now))
+  // a link of the App is not the share-worker's: its window asks the App (ShareDialog)
+  const found = shares.filter(record => record.itemId === itemId && !record.live && sameKind(record.kind) && !isExpired(record.expiresAt, now))
   return found.reduce<ShareRecord | null>((best, record) => (!best || Date.parse(record.expiresAt) > Date.parse(best.expiresAt) ? record : best), null)
 }
 
@@ -166,6 +183,44 @@ export async function buildShareContent(target: ShareTarget, folders: FolderMeta
   return { kind: target.kind, title, folders: sharedFolders, files: sharedFiles }
 }
 
+/**
+ * The link of the App as the app shows any link (spec 003, história 7): the same notes, meta and artifacts the link of before carries,
+ * built by the same code from what the App answers now; the media plays straight from the App. An entrada goes whole: every note born
+ * of it, with its maps, as the entrada's page shows it.
+ */
+export async function liveSharedItem(live: LiveContent): Promise<SharedItem> {
+  const asRow = (fields: object, parts: Record<string, string> = {}) => ({ ...fields, parts }) as unknown as LibraryRow
+  const files: FileMeta[] = live.files.map(row => ({ ...fileMetaOf(asRow(row), undefined), id: row.id, name: row.name, folderId: row.folderId, parentFileId: row.parentFileId, position: row.position, deletedAt: null }))
+  const folders: FolderMeta[] = live.folders.map(folder => ({ ...folderOf(asRow(folder), undefined), id: folder.id, name: folder.name, parentId: folder.parentId, position: folder.position, deletedAt: null }))
+  const open = async (id: string): Promise<OpenedFile> => {
+    const row = live.files.find(file => file.id === id)!
+    return { content: row.parts.text ?? '', sidecar: { ...sidecarOf(asRow(row, row.parts), row.parts), meta: files.find(file => file.id === id)! } }
+  }
+  const recorder = live.owner?.name ?? ''
+  let content: ShareContent
+  if (live.kind === 'entrada') {
+    const tree = entryShareTree(files, live.itemId)
+    const withMedia = Boolean(live.files.find(row => row.id === live.itemId)?.media)
+    content = await buildEntryShareContent(live.itemId, files, open, choiceOf(tree, defaultChoice(tree, withMedia)), recorder)
+  } else {
+    content = await buildShareContent({ kind: live.kind, id: live.itemId }, folders, files, open, live.withExams, recorder, live.artifacts)
+  }
+  const media = new Map(live.files.flatMap(row => (row.media ? [[row.id, row.media] as const] : [])))
+  return {
+    ...content,
+    title: live.title,
+    files: content.files.map(file => {
+      const found = media.get(file.id)
+      return found ? { ...file, media: { url: liveMediaUrl(live.id, file.id), mime: found.mime, size: found.bytes } } : file
+    }),
+    version: 3,
+    id: live.id,
+    createdAt: live.createdAt,
+    expiresAt: LIVE_EXPIRES,
+    live: true,
+  }
+}
+
 export interface ShareMedia {
   fileId: string
   name: string
@@ -246,7 +301,8 @@ function knownType(type: string): FileMeta['type'] {
   return [...FILE_TYPES, ...SOURCE_TYPES].find(item => item.id === type)?.id ?? 'reading'
 }
 
-export type MediaPlace = 'browser' | 'drive'
+/** 'app' and 'drive' keep the media with its note, where the note is born; the window says which one before. */
+export type MediaPlace = 'browser' | 'drive' | 'app'
 
 export interface MediaImport {
   place: MediaPlace
@@ -338,8 +394,8 @@ async function keepSharedMedia(file: SharedFile, media: SharedMedia, fileId: str
   const mime = media.mime || shared?.mime || blob.type
   const kept = new File([blob], shared?.name || file.name, { type: mime })
   const origin: SourceMeta = { input: shared?.input === 'file' ? 'file' : 'recording', name: kept.name, mime, sizeBytes: shared?.sizeBytes ?? kept.size, ...(shared?.durationSeconds ? { durationSeconds: shared.durationSeconds } : {}), storage: 'none' }
-  if (options.place === 'drive' && options.repo) {
-    task.update('Guardando no Google Drive', null)
+  if (options.place !== 'browser' && options.repo) {
+    task.update(options.place === 'app' ? 'Guardando no App' : 'Guardando no Google Drive', null)
     return { ...origin, ...(await storeSource(kept, 'drive', fileId, options.repo, '72h')) }
   }
   task.update('Guardando neste navegador', null)
@@ -412,7 +468,7 @@ export async function importSharedItem(item: SharedItem, attempts: SharedAttempt
   let mediaFailed: string | undefined
   for (const file of item.files) {
     const meta = await actions.createFile(
-      { name: file.name, type: knownType(file.type), folderId: file.folderId ? (folderIds.get(file.folderId) ?? null) : null, position: file.position, description: file.description, tags: file.tags, origin: { input: 'shared', name: item.title, url: shareUrl(item.id), storage: 'none' } },
+      { name: file.name, type: knownType(file.type), folderId: file.folderId ? (folderIds.get(file.folderId) ?? null) : null, position: file.position, description: file.description, tags: file.tags, origin: { input: 'shared', name: item.title, url: linkUrl(item), storage: 'none' } },
       file.content,
     )
     firstFileId ??= meta.id

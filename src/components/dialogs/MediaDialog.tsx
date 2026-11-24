@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { Fragment, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 
 import type { FileMeta } from '@/types/domain'
@@ -16,12 +16,14 @@ import { useUiStore } from '@/stores/ui'
 import { downloadBlob } from '@/utils/download'
 import { duration, formatBytes } from '@/utils/format'
 
-type Place = 'aqui' | 'drive' | 'dois'
+type Place = 'aqui' | 'drive' | 'app' | 'dois'
 
-// T136: where a media is. "Nos dois" is the Drive and this computer.
-const PLACES: Record<Place, string> = { aqui: 'Só neste computador', drive: 'No Google Drive', dois: 'Nos dois' }
+// T136: where a media is. "Nos dois" is the account (App or Google Drive) and this computer.
+const PLACES: Record<Place, string> = { aqui: 'Só neste computador', drive: 'No Google Drive', app: 'No App', dois: 'Nos dois' }
 
+/** Kept in the account: the Google Drive, or the App (the same "drive" storage, with an `app:` address, spec 003). */
 const inDrive = (file: FileMeta) => file.origin?.storage === 'drive' && Boolean(file.origin.storedFileId) && !file.origin.removedAt
+const cloudOf = (file: FileMeta): 'app' | 'drive' => (file.origin?.storedFileId?.startsWith('app:') ? 'app' : 'drive')
 
 function PlaceTag({ place }: { place: Place }) {
   return (
@@ -215,7 +217,7 @@ function DriveOnlyItem({ file }: { file: FileMeta }) {
         Na biblioteca: <ItemLink file={file} />
       </span>
       <div className="media-where">
-        <PlaceTag place="drive" />
+        <PlaceTag place={cloudOf(file)} />
         <button className="btn" disabled={busy} onClick={() => void keep()}>
           <Icon name="download" />
           {busy ? 'Guardando…' : 'Guardar neste computador'}
@@ -224,6 +226,11 @@ function DriveOnlyItem({ file }: { file: FileMeta }) {
     </li>
   )
 }
+
+const CLOUD_SECTIONS = [
+  { cloud: 'app', title: 'Só no App', text: 'Estas mídias estão no App, na sua conta do Estudo, e ainda não estão neste computador.' },
+  { cloud: 'drive', title: 'Só no Google Drive', text: 'Estas mídias estão no seu Drive e ainda não estão neste computador.' },
+] as const
 
 export function MediaDialog() {
   const ui = useUiStore()
@@ -259,19 +266,24 @@ export function MediaDialog() {
         ) : (
           !onlyInDrive.length && <span className="muted">Nenhuma gravação guardada ainda.</span>
         )}
-        {items !== null && onlyInDrive.length > 0 && (
-          <>
-            <b className="media-section">Só no Google Drive</b>
-            <span className="faint" style={{ fontSize: 12 }}>
-              Estas mídias estão no seu Drive e ainda não estão neste computador.
-            </span>
-            <ul className="media-list">
-              {onlyInDrive.map(file => (
-                <DriveOnlyItem key={file.id} file={file} />
-              ))}
-            </ul>
-          </>
-        )}
+        {items !== null &&
+          CLOUD_SECTIONS.map(section => {
+            const list = onlyInDrive.filter(file => cloudOf(file) === section.cloud)
+            if (!list.length) return null
+            return (
+              <Fragment key={section.cloud}>
+                <b className="media-section">{section.title}</b>
+                <span className="faint" style={{ fontSize: 12 }}>
+                  {section.text}
+                </span>
+                <ul className="media-list">
+                  {list.map(file => (
+                    <DriveOnlyItem key={file.id} file={file} />
+                  ))}
+                </ul>
+              </Fragment>
+            )
+          })}
       </div>
     </Dialog>
   )

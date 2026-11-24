@@ -52,7 +52,9 @@ export function useFilterSource(): FilterSource & { library: PlaceContext['libra
   // "Guardado › Só neste navegador" counts the notes kept in Local too, not only the media kept in this browser (spec 003, FR-055)
   return useMemo(() => {
     const local = repo instanceof CombinedRepository ? files.filter(file => repo.sideOf(file.id) === 'local').map(file => file.id) : []
-    return { files, folders, localMedia: [...media.flatMap(item => item.fileIds), ...local], library, timeZone, now: Date.now() }
+    // "Guardado › No App" apart from "No meu Drive"
+    const app = repo instanceof CombinedRepository ? files.filter(file => repo.sideOf(file.id) === 'app').map(file => file.id) : []
+    return { files, folders, localMedia: [...media.flatMap(item => item.fileIds), ...local], library, app, timeZone, now: Date.now() }
   }, [files, folders, media, library, timeZone, repo])
 }
 

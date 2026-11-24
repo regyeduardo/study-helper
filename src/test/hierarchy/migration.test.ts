@@ -142,7 +142,8 @@ describe('migração da hierarquia', () => {
     await repo.saveFolder(atas)
     const ata = newFileMeta({ name: 'Ata do kickoff', type: 'class', folderId: atas.id })
     await repo.saveFile(newSidecar(ata), 'decisões')
-    const plano = newFileMeta({ name: 'Plano 2027', type: 'class', folderId: null })
+    // in the Google Drive by choice: with the structure on, a note made without a place is born in the App
+    const plano = newFileMeta({ name: 'Plano 2027', type: 'class', folderId: null, place: 'drive' })
     await repo.saveFile(newSidecar(plano), 'plano')
     const snapshot = await repo.load()
     expect(repo.sideOf(ata.id)).toBe('app')

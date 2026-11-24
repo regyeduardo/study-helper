@@ -28,18 +28,29 @@ export interface StorageOption<Id extends string = SourceStorage> {
   thirdParty: boolean
 }
 
-export function storageOptions(sizeBytes: number, driveAvailable: boolean, driveRoomBytes: number | null): StorageOption[] {
+/** `app`: the note is born in the App (the structure on), and the file kept with it goes there too, so the option says App. */
+export function storageOptions(sizeBytes: number, driveAvailable: boolean, driveRoomBytes: number | null, app = false): StorageOption[] {
   const driveFits = driveRoomBytes === null || sizeBytes <= driveRoomBytes
   const options: StorageOption[] = [
-    {
-      id: 'drive',
-      name: 'Google Drive',
-      description: 'O único 100% confiável. Conta no seu limite de armazenamento.',
-      fits: true,
-      enabled: driveAvailable && driveFits,
-      reason: !driveAvailable ? 'Entre com o Google para guardar no Drive.' : !driveFits ? 'Não cabe no limite de armazenamento do app.' : undefined,
-      thirdParty: false,
-    },
+    app
+      ? {
+          id: 'drive',
+          name: 'App',
+          description: 'Fica na sua conta do Estudo, junto com a nota. Abre em qualquer aparelho.',
+          fits: true,
+          enabled: driveFits,
+          reason: !driveFits ? 'Não cabe no limite de armazenamento do app.' : undefined,
+          thirdParty: false,
+        }
+      : {
+          id: 'drive',
+          name: 'Google Drive',
+          description: 'O único 100% confiável. Conta no seu limite de armazenamento.',
+          fits: true,
+          enabled: driveAvailable && driveFits,
+          reason: !driveAvailable ? 'Entre com o Google para guardar no Drive.' : !driveFits ? 'Não cabe no limite de armazenamento do app.' : undefined,
+          thirdParty: false,
+        },
     { id: 'none', name: 'Não guardar', description: 'Usa o arquivo só para gerar. Depois, fica só o nome.', fits: true, enabled: true, thirdParty: false },
   ]
   return options
