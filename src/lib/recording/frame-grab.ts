@@ -29,6 +29,8 @@ const BEAT_MS = 1000
 
 export class ScreenCanvas {
   readonly track: MediaStreamTrack
+  /** The canvas's stream: Firefox has requestFrame here (CanvasCaptureMediaStream), not on the track. */
+  private readonly stream: MediaStream
   private readonly canvas = document.createElement('canvas')
   private readonly context: CanvasRenderingContext2D | null
   private readonly video = document.createElement('video')
@@ -57,7 +59,8 @@ export class ScreenCanvas {
     this.context = this.canvas.getContext('2d')
     this.video.muted = true
     this.video.playsInline = true
-    this.track = this.canvas.captureStream(onlyChanges ? 0 : fps).getVideoTracks()[0]
+    this.stream = this.canvas.captureStream(onlyChanges ? 0 : fps)
+    this.track = this.stream.getVideoTracks()[0]
     this.ticker = startTicker(1000 / fps, () => this.draw())
   }
 
@@ -91,7 +94,16 @@ export class ScreenCanvas {
     if (now - this.changedAt >= SETTLE_MS && now - this.sentAt < BEAT_MS) return
     this.paint()
     this.sentAt = now
-    if ('requestFrame' in this.track) (this.track as CanvasCaptureMediaStreamTrack).requestFrame()
+    this.requestFrame()
+  }
+
+  /**
+   * Chrome and Safari ask on the track (the spec), Firefox only on the stream. Asking only the track, in Firefox the one frame recorded
+   * was the black one painted before the screen came, and the optimized video came out all dark (T171, measured in Waterfox 153).
+   */
+  private requestFrame(): void {
+    const owner = 'requestFrame' in this.track ? this.track : 'requestFrame' in this.stream ? this.stream : null
+    ;(owner as { requestFrame(): void } | null)?.requestFrame()
   }
 
   private paint(): void {

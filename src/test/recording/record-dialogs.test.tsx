@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 
 const { startNewContent } = vi.hoisted(() => ({ startNewContent: vi.fn(async (..._args: unknown[]) => null) }))
@@ -223,6 +223,26 @@ describe('RecordingWindow', () => {
     expect(screen.getAllByRole('dialog')).toHaveLength(1)
     expect(screen.getByRole('button', { name: 'Descartar' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Salvar' })).toBeInTheDocument()
+  })
+
+  // T172 (mocks/gravar-reuniao, e-depois): the window of the end has its title and the X, as the dialog; closing keeps it in Mídias
+  it('the window of the end has its title and an X that closes it, keeping the recording in Mídias', async () => {
+    const removeEntry = vi.fn(async () => undefined)
+    Object.defineProperty(navigator, 'storage', { configurable: true, value: { getDirectory: async () => ({ removeEntry }) } })
+    useRecorderStore.setState({ active: false, result: recordingOf(5 * MB), resultPlace: 'window', floating: null })
+    render(
+      <MemoryRouter>
+        <RecordingWindow />
+      </MemoryRouter>,
+    )
+    const window = screen.getByRole('dialog', { name: 'Gravação pronta' })
+    expect(within(window).getByRole('heading', { name: 'Gravação pronta' })).toBeInTheDocument()
+    fireEvent.click(within(window).getByRole('button', { name: 'Fechar' }))
+    expect(useRecorderStore.getState().result).toBeNull()
+    expect(screen.queryByRole('dialog', { name: 'Gravação pronta' })).not.toBeInTheDocument()
+    await new Promise(resolve => setTimeout(resolve, 20))
+    expect(removeEntry).not.toHaveBeenCalled()
+    expect(startNewContent).not.toHaveBeenCalled()
   })
 
   it('draws the controls and then the choices inside the floating window', async () => {

@@ -142,6 +142,23 @@ describe('a gravação otimizada', () => {
     }
   })
 
+  // T171 ("gravações otimizadas ainda ficam 100% com tela escura", dono, 24/11, no Firefox): lá o requestFrame fica no stream do canvas
+  // (CanvasCaptureMediaStream), não na trilha; pedindo só à trilha, o único quadro gravado era o preto de antes da tela chegar
+  // (medido no Waterfox 153: brilho 16 de 255 no vídeo inteiro, contra a tela acompanhada na de 30 fps)
+  it('no Firefox, pede o quadro ao stream do canvas, onde fica o requestFrame', async () => {
+    const firefoxStream = Object.assign(new FakeMediaStream([new FakeTrack('video', 'canvas')]), { requestFrame: vi.fn() })
+    captureStream.mockImplementation(() => firefoxStream)
+    vi.useFakeTimers()
+    await new MeetingRecorder(callbacks()).start('tab', undefined, { video: { fps: 30, optimized: true } })
+    newScreenFrame()
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(firefoxStream.requestFrame.mock.calls.length).toBeGreaterThanOrEqual(28)
+    firefoxStream.requestFrame.mockClear()
+    await vi.advanceTimersByTimeAsync(3000)
+    expect(firefoxStream.requestFrame.mock.calls.length).toBeGreaterThanOrEqual(2)
+    expect(firefoxStream.requestFrame.mock.calls.length).toBeLessThanOrEqual(4)
+  })
+
   it('pede a tela a 30 fps e grava o canvas sem taxa fixa, com a dica de texto', async () => {
     await new MeetingRecorder(callbacks()).start('tab', undefined, { video: { fps: 30, optimized: true } })
     expect(env.getDisplayMedia).toHaveBeenCalledWith(expect.objectContaining({ video: { frameRate: 30 }, audio: true }))

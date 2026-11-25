@@ -6,7 +6,7 @@
 
 /* Choices side by side ("O que gravar", "Onde salvar"): the app's segmented look (filter panel), at the height of a field. */
 .rd-seg{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(0,1fr);gap:2px;padding:2px;background:var(--bg);border:1px solid var(--border);border-radius:7px}
-.rd-segb{min-height:30px;padding:0 6px;border-radius:5px;font-size:12.5px;color:var(--fg-muted);cursor:pointer;display:grid;place-items:center;text-align:center;line-height:1.25}
+.rd-segb{min-height:30px;padding:4px 8px;border-radius:5px;font-size:12.5px;color:var(--fg-muted);cursor:pointer;display:grid;place-items:center;text-align:center;line-height:1.25}
 .rd-segb b{font-weight:400}
 .rd-segb:hover{color:var(--fg);background:var(--bg-hover)}
 .rd-segb[aria-checked="true"]{background:var(--bg-muted);color:var(--fg)}
@@ -39,9 +39,19 @@
 .mini-rec .mr-head{display:flex;align-items:center;gap:10px;padding:8px 10px 8px 14px;background:var(--bg-subtle);border-bottom:1px solid var(--border-muted);min-height:44px;box-sizing:border-box}
 .mini-rec .mr-head .timer{font-size:22px;gap:8px}
 .mini-rec .mr-head .timer::before{width:10px;height:10px}
-.mini-rec .mr-head .timer .faint{font:400 12px/1 var(--sys)}
 .mini-rec .mr-what{flex:1;min-width:0;text-align:right;font-size:11.5px;font-weight:500;color:var(--fg-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.mini-rec .mr-detach{width:28px;height:28px;padding:0;justify-content:center}
+.mini-rec .mr-detach{width:30px;height:30px;padding:0;justify-content:center}
+@media (pointer:coarse){.mini-rec .mr-detach{width:36px;height:36px}}
+/* Paused, nothing is recorded: the head turns the color of a warning, says "pausado" (4.5:1 and 5.6:1), and Continuar wears the same
+   color, the way out of it (T172). */
+.mini-rec .mr-head .timer .mr-paused{font:600 12px/1 var(--sys);color:var(--warn)}
+.mini-rec.paused .mr-head{background:var(--warn-soft)}
+body .mini-rec.paused .tile.mr-resume{border-color:var(--warn);background:var(--warn-soft);color:var(--warn)}
+/* A control turned off shows the crossed picture; its name keeps the contrast of a text (it was --fg-faint, 3.5:1 and 4.2:1). */
+body .mini-rec .tile[aria-pressed="false"]{color:var(--fg-muted)}
+/* Pressing a control answers at once. */
+body .mini-rec .tile{transition:background-color .15s ease-out,border-color .15s ease-out,color .15s ease-out,transform .1s ease-out}
+body .mini-rec .tile:active:not(:disabled){background:var(--bg-muted);transform:scale(.98)}
 /* the window in the page has the width of the floating one, so the six names fit the same way */
 body .mini-rec:not(.done){width:340px}
 body .mini-rec .body{gap:8px}
@@ -56,6 +66,10 @@ body .mini-rec .body{gap:8px}
 .mini-rec .mr-panel-head{display:flex;align-items:center;justify-content:space-between}
 .mini-rec .mr-panel-head b{font-size:13px;font-weight:600}
 .mini-rec .mr-panel-head .btn{height:26px;padding:0 8px;font-size:12px}
+/* Fontes as in the mock (d-durante): the name over each list, so the lists have the whole width and the names of the inputs fit. */
+body .mini-rec .mr-panel .mini-panel{grid-template-columns:minmax(0,1fr);gap:4px}
+body .mini-rec .mr-panel .mini-panel .lab{font-size:12px;font-weight:600;color:var(--fg-muted)}
+body .mini-rec .mr-panel .mini-panel select+.lab{margin-top:6px}
 .mini-rec .mr-screen{display:grid;grid-template-columns:1fr 1fr;gap:6px}
 .mini-rec .mr-screen .btn{justify-content:center}
 .mini-rec .mr-screen .btn[aria-pressed="true"]{border-color:var(--accent);background:var(--accent-soft);color:var(--accent)}
@@ -63,6 +77,10 @@ body .mini-rec .mini-info{display:flex;gap:6px;white-space:nowrap;overflow:hidde
 .mini-rec .mini-info span{overflow:hidden;text-overflow:ellipsis}
 .mini-rec .mini-info span+span::before{content:"· "}
 .mini-rec .inline-confirm{display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:12.5px}
+/* The note: "Enter guarda" stays inside the field while typing (d-durante), not only as the placeholder. */
+.mini-rec .mr-note{position:relative}
+.mini-rec .mr-note .input{padding-right:96px}
+.mini-rec .mr-note-hint{position:absolute;right:10px;top:50%;transform:translateY(-50%);font-size:11.5px;color:var(--fg-muted);pointer-events:none;white-space:nowrap}
 
 /* ---------- After the recording (mocks/gravar-reuniao, e-depois): two columns, as "Gravar reunião" ---------- */
 .rd-meta{font-size:12.5px;font-weight:400;color:var(--fg-muted);margin-left:8px}
@@ -83,7 +101,13 @@ body .mini-rec .mini-info{display:flex;gap:6px;white-space:nowrap;overflow:hidde
 /* the corner window grows to the two columns; in the floating window it fills it (one column when narrow, the middle scrolling) */
 body .mini-rec.done{width:min(800px,calc(100vw - 36px))}
 body.floating-recorder .mini-rec.done{width:auto}
-.mini-rec.done .bar-top span:last-child{font-size:11.5px}
+/* In the floating window (800 x 620 after Terminar) the buttons sit at its foot, as in a dialog, not in the middle of it. */
+body.floating-recorder .mini-rec.done .body{flex:1;align-content:space-between}
+@media (pointer:coarse){.rd-more-toggle{min-height:40px}}
+/* The title and the X of the dialog (e-depois), lined up with the fields under them. */
+.mini-rec.done .rd-done-head{padding:12px 10px 4px 14px}
+.mini-rec.done .rd-done-head h2{flex:none}
+.mini-rec.done .rd-done-head .rd-meta{flex:1;min-width:0;margin-left:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .mini-rec.done .acts{justify-content:flex-end}
 .mini-rec.done .acts .btn{flex:none;min-width:96px}
 .mini-rec.done .acts .rd-media{margin-right:auto}

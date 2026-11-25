@@ -693,6 +693,14 @@ function useSwitchOptions(mode: CaptureMode | null) {
 
 const GLYPHS = {
   speaker: <path d="M4 9.5v5h3.5L12 18V6L7.5 9.5zM15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11" />,
+  // off: the same picture crossed, so the state does not rest on the color alone
+  speakerOff: <path d="M4 9.5v5h3.5L12 18V6L7.5 9.5zM15.5 9.5l5 5M20.5 9.5l-5 5" />,
+  micOff: (
+    <>
+      <rect x="9" y="3" width="6" height="11" rx="3" />
+      <path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21M4 4l16 16" />
+    </>
+  ),
   window: <path d="M4 6.5a1.5 1.5 0 0 1 1.5-1.5h13A1.5 1.5 0 0 1 20 6.5v11a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 17.5zM4 9.5h16M7 7.3h.01M9.5 7.3h.01" />,
   flag: <path d="M6 21V4.5M6 5h11l-2 3.5 2 3.5H6" />,
   play: <path d="M8 5.5v13l10.5-6.5z" />,
@@ -705,12 +713,13 @@ interface TileProps {
   pressed?: boolean
   expanded?: boolean
   disabled?: boolean
+  className?: string
   onClick(): void
 }
 
-function Tile({ label, name, icon, pressed, expanded, disabled, onClick }: TileProps) {
+function Tile({ label, name, icon, pressed, expanded, disabled, className, onClick }: TileProps) {
   return (
-    <button className="tile" aria-label={name} title={name} aria-pressed={pressed} aria-expanded={expanded} disabled={disabled} onClick={onClick}>
+    <button className={className ? `tile ${className}` : 'tile'} aria-label={name} title={name} aria-pressed={pressed} aria-expanded={expanded} disabled={disabled} onClick={onClick}>
       {icon}
       <span>{label}</span>
     </button>
@@ -783,9 +792,10 @@ function RecordingControls() {
       <div className="mr-head">
         <div className="timer">
           {clock(seconds)}
-          {live?.paused ? <span className="faint">pausado</span> : null}
+          {live?.paused ? <span className="mr-paused">pausado</span> : null}
         </div>
-        <span className="mr-what">Gravando {what}</span>
+        {/* paused, nothing is being recorded: the head says only "pausado" */}
+        <span className="mr-what">{live?.paused ? '' : `Gravando ${what}`}</span>
         {!floating && (
           <button className="btn mr-detach" aria-label="Abrir em janela própria" title="Destacar: abrir em janela própria" onClick={() => void openFloating().then(opened => setBlocked(!opened))}>
             <Icon name="monitor" />
@@ -863,9 +873,9 @@ function RecordingControls() {
               <Miniplayer live={waves} />
             </div>
             <div className="tiles mr-tiles">
-              <Tile label="Microfone" name={microphoneOn ? 'Desligar o microfone' : 'Ligar o microfone'} icon={<Icon name="mic" />} pressed={microphoneOn} onClick={() => setEnabled('microphone', !microphoneOn)} />
-              <Tile label="Som do PC" name={sourceOn ? 'Desligar o som do computador' : 'Ligar o som do computador'} icon={<Glyph name="speaker" />} pressed={sourceOn} disabled={!live?.hasSource} onClick={() => setEnabled('source', !sourceOn)} />
-              <Tile label={live?.paused ? 'Continuar' : 'Pausar'} name={live?.paused ? 'Continuar' : 'Pausar'} icon={live?.paused ? <Glyph name="play" /> : <Icon name="pause" />} onClick={() => (live?.paused ? resume() : pause())} />
+              <Tile label="Microfone" name={microphoneOn ? 'Desligar o microfone' : 'Ligar o microfone'} icon={microphoneOn ? <Icon name="mic" /> : <Glyph name="micOff" />} pressed={microphoneOn} onClick={() => setEnabled('microphone', !microphoneOn)} />
+              <Tile label="Som do PC" name={sourceOn ? 'Desligar o som do computador' : 'Ligar o som do computador'} icon={<Glyph name={sourceOn ? 'speaker' : 'speakerOff'} />} pressed={sourceOn} disabled={!live?.hasSource} onClick={() => setEnabled('source', !sourceOn)} />
+              <Tile label={live?.paused ? 'Continuar' : 'Pausar'} name={live?.paused ? 'Continuar' : 'Pausar'} icon={live?.paused ? <Glyph name="play" /> : <Icon name="pause" />} className="mr-resume" onClick={() => (live?.paused ? resume() : pause())} />
               <Tile label="Marcar" name="Marcar momento" icon={<Glyph name="flag" />} onClick={mark} />
               <Tile label="Anotar" name="Anotar" icon={<Icon name="pen" />} expanded={panel === 'note'} onClick={() => setPanel(panel === 'note' ? null : 'note')} />
               <Tile label="Fontes" name="Fontes" icon={<Glyph name="window" />} expanded={false} onClick={() => setPanel('sources')} />
@@ -873,18 +883,25 @@ function RecordingControls() {
           </>
         )}
         {panel === 'note' ? (
-          <input
-            className="input"
-            aria-label="Anotação"
-            placeholder="Anotação deste momento · Enter guarda"
-            autoFocus
-            value={note}
-            onChange={event => setNote(event.target.value)}
-            onKeyDown={event => {
-              if (event.key === 'Enter') keepNote()
-              if (event.key === 'Escape') setPanel(null)
-            }}
-          />
+          // "Enter guarda" stays in the field while typing (mocks/gravar-reuniao, d-durante), not only as the placeholder
+          <div className="mr-note">
+            <input
+              className="input"
+              aria-label="Anotação"
+              aria-describedby="mr-note-hint"
+              placeholder="Anotação deste momento"
+              autoFocus
+              value={note}
+              onChange={event => setNote(event.target.value)}
+              onKeyDown={event => {
+                if (event.key === 'Enter') keepNote()
+                if (event.key === 'Escape') setPanel(null)
+              }}
+            />
+            <span className="mr-note-hint" id="mr-note-hint">
+              Enter guarda
+            </span>
+          </div>
         ) : (
           (live?.computerAudio || marks.length > 0) && (
             <div className="mini-info">
@@ -1147,12 +1164,15 @@ function RecordingDoneOptions({ place }: { place: 'dialog' | 'window' }) {
       </Dialog>
     )
   }
+  // in the corner and in the floating window: the title and the X of the dialog (mocks/gravar-reuniao, e-depois); closing keeps it in Mídias
   return (
     <>
-      <div className="bar-top">
-        <Icon name="check" />
-        <span style={{ flex: 1 }}>Gravação pronta</span>
-        <span>{meta}</span>
+      <div className="dh rd-done-head">
+        <h2>Gravação pronta</h2>
+        <span className="rd-meta">{meta}</span>
+        <button className="ibtn" aria-label="Fechar" title="Fechar: a gravação fica em Mídias" onClick={later}>
+          <Icon name="x" />
+        </button>
       </div>
       <div className="body">
         {body}

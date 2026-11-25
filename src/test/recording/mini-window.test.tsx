@@ -125,6 +125,25 @@ describe('mini recording window', () => {
     ])
     expect(screen.getByText('1 marcação · 1 anotação')).toBeInTheDocument()
   })
+
+  // T172 (pedido do dono, 24/11: "melhore as modais de gravação"; mocks/gravar-reuniao, d-durante)
+  it('"Anotar": o campo diz, mesmo com o texto digitado, que Enter guarda', () => {
+    useRecorderStore.setState({ active: true, seconds: 65, mode: 'microphone', live: LIVE })
+    render(<RecordingWindow />)
+    fireEvent.click(button('Anotar'))
+    const field = screen.getByRole('textbox', { name: 'Anotação' })
+    fireEvent.change(field, { target: { value: 'conferir o preço' } })
+    expect(field).toHaveAccessibleDescription('Enter guarda')
+    expect(screen.getByText('Enter guarda')).toBeVisible()
+  })
+
+  it('pausada, a janela diz "pausado" e não diz mais "Gravando"', () => {
+    useRecorderStore.setState({ active: true, seconds: 5, mode: 'tab', live: { ...LIVE, paused: true } })
+    render(<RecordingWindow />)
+    expect(screen.getByText('pausado')).toBeInTheDocument()
+    expect(screen.queryByText(/^Gravando/)).not.toBeInTheDocument()
+    expect(button('Continuar')).toBeVisible()
+  })
 })
 
 describe('screen while recording', () => {
