@@ -41,6 +41,11 @@ export async function runWorker(jobId: string): Promise<void> {
     const result = await run(...unpackArgs(job.args))
     clearInterval(report)
     report = null
+    // the transcription and the generations close their own job with the failure and end without throwing: that is a failure here too,
+    // with its reason, never "done" with nothing made
+    const mine = useJobsStore.getState().jobs.find(item => !before.has(item.id))
+    if (mine?.status === 'error') throw new Error([mine.message, mine.error].filter(Boolean).join(' '))
+    if (mine?.status === 'cancelled') throw new Error(mine.message || 'Cancelado.')
     await reportFinish(jobId, result ?? null)
   } catch (error) {
     if (report) clearInterval(report)

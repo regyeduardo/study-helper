@@ -70,4 +70,30 @@ describe('a página de trabalho', () => {
     expect(job.error).toBe('A IA do app está fora do ar agora.')
     expect(job.errorCode).toBe('ai_unavailable')
   })
+
+  // "Não está gerando transcrição" (24/11): a transcrição e as gerações fecham o próprio trabalho com o erro e terminam sem lançar; o
+  // servidor dava o trabalho da conta como pronto, e no aparelho nada aparecia
+  it('a chamada que fecha o próprio trabalho com erro volta como falha, com o motivo', async () => {
+    useJobsStore.setState({
+      regenerate: async () => {
+        useJobsStore.setState({ jobs: [{ id: 'local-1', kind: 'transcription', title: 'Reunião', fileId: 'n1', status: 'error', message: 'A transcrição não saiu.', fraction: null, error: 'Nenhum modelo de transcrição escolhido.', startedAt: Date.now() }] })
+        return undefined as never
+      },
+    })
+    await runWorker('job-1')
+    const job = server.jobs.get('job-1')
+    expect(job.state).toBe('failed')
+    expect(job.error).toBe('A transcrição não saiu. Nenhum modelo de transcrição escolhido.')
+  })
+
+  it('cancelada lá dentro, também não volta como pronta', async () => {
+    useJobsStore.setState({
+      regenerate: async () => {
+        useJobsStore.setState({ jobs: [{ id: 'local-1', kind: 'transcription', title: 'Reunião', fileId: 'n1', status: 'cancelled', message: 'Cancelado.', fraction: null, error: null, startedAt: Date.now() }] })
+        return undefined as never
+      },
+    })
+    await runWorker('job-1')
+    expect(server.jobs.get('job-1').state).toBe('failed')
+  })
 })
