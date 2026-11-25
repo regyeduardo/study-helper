@@ -10,6 +10,13 @@ services:
       SECURE_COOKIES: "false"
       # a fixed key for local runs only; production has its own secret
       TOKEN_KEY: ${TOKEN_KEY:-ZXN0dWRvLWxvY2FsLWNoYXZlLWRlLTMyLWJ5dGVzISE=}
+      # spec 007, história 2: the Chromium of the jobs reaches the app and this API of the host with the same addresses
+      ESTUDO_CHROMIUM_HOSTS: "MAP localhost host.docker.internal"
+      # spec 007: the clock moved for the deadline tests (`ESTUDO_AGORA=+25h npm run api:dev`), only on this local service
+      ESTUDO_DEV: "1"
+      ESTUDO_AGORA: ${ESTUDO_AGORA:-}
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    shm_size: 512m
     volumes: [estudo-local:/data]
   # spec 004: the phoneme service, only on the internal network (the API calls http://phonemes:8779)
   phonemes:

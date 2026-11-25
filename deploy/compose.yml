@@ -8,6 +8,8 @@ services:
     volumes: [estudo-data:/data]
     restart: unless-stopped
     expose: ["8080"]
+    # spec 007, história 2: the jobs of generating run the app in a Chromium (ESTUDO_GERADORES at a time, ~300 to 500 MB each)
+    shm_size: 512m
     logging: { driver: json-file, options: { max-size: 10m, max-file: "5" } }
 
   # Backups of the database (FR-047): Litestream copies every change to R2 (litestream.yml) and does the WAL checkpoints; the

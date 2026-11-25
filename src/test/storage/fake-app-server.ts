@@ -65,6 +65,9 @@ export class FakeAppServer {
   /** Part numbers whose PUTs keep failing (the connection stays down) until taken out. */
   downParts = new Set<number>()
   calls: { method: string; path: string; query: string }[] = []
+  /** The jobs of generating in the account (spec 007, história 2), as the server keeps them. */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  jobs = new Map<string, any>()
   /** A session on the server (spec 005: the map needs only this). */
   signedIn = true
   /** "Usar a estrutura do app" on, for an account freed by a code: the App's content needs it. */
@@ -137,6 +140,35 @@ export class FakeAppServer {
     if (path === '/v1/auth/logout' && method === 'POST') {
       this.signedIn = false
       return json(200, { ok: true })
+    }
+
+    // spec 007, história 2: the jobs of generating in the account (the job page and the Chromium are the test's to play)
+    const jobPath = path.match(/^\/v1\/jobs(?:\/([^/]+))?(?:\/(cancel|retry|dismiss|progress|finish|fail))?$/)
+    if (jobPath) {
+      const [, id, action] = jobPath
+      if (!id && method === 'POST') {
+        if (!this.appEnabled) return json(403, { error: 'structure_off' })
+        const asked = (await body()) as { call: string; args: unknown[]; fileId: string | null; title: string }
+        const same = [...this.jobs.values()].find(job => job.call === asked.call && job.fileId === asked.fileId && asked.fileId && (job.state === 'queued' || job.state === 'running'))
+        if (same) return json(409, { error: 'already_running', job: same })
+        const job = { id: `job-${this.jobs.size + 1}`, call: asked.call, kind: asked.call, fileId: asked.fileId, title: asked.title, state: 'queued', queuePosition: 1, stage: null, fraction: null, etaAt: null,
+          etaBasis: null, lastProgress: null, lastProgressAt: null, stalledSince: null, args: asked.args, result: null, error: null, errorCode: null, attempt: 1, createdAt: new Date().toISOString(),
+          startedAt: null, finishedAt: null }
+        this.jobs.set(job.id, job)
+        return json(202, job)
+      }
+      if (!id) return json(200, { jobs: [...this.jobs.values()].filter(job => job.state !== 'dismissed') })
+      const job = this.jobs.get(id)
+      if (!job) return json(404, { error: 'not_found' })
+      if (!action) return json(200, job)
+      const fields = method === 'POST' && init.body ? await body() : {}
+      if (action === 'cancel') Object.assign(job, { state: 'cancelled' })
+      if (action === 'retry') Object.assign(job, { state: 'queued', attempt: job.attempt + 1, error: null, errorCode: null })
+      if (action === 'dismiss') Object.assign(job, { state: 'dismissed' })
+      if (action === 'progress') Object.assign(job, { state: 'running', stage: fields.message, lastProgress: fields.message, fraction: fields.fraction })
+      if (action === 'finish') Object.assign(job, { state: 'done', result: fields.result, fraction: 1 })
+      if (action === 'fail') Object.assign(job, { state: 'failed', error: fields.error, errorCode: fields.code })
+      return json(200, action === 'progress' || action === 'finish' || action === 'fail' ? { ok: true } : job)
     }
 
     if (path === '/v1/me') {

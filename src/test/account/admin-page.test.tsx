@@ -24,7 +24,7 @@ const CODES = [
 ]
 
 const ACCOUNTS = [
-  { id: 'a1', name: 'Ana Souza', email: 'ana@exemplo.com', status: 'enabled', appEnabled: true, enabledAt: '2026-11-21T11:00:00Z', deleteAt: null, code: 'K7QM3XRT9PWD', seenAt: '2026-11-21T11:30:00Z', space: { notes: 2 * 1024 * 1024, media: 1024 * 1024 * 1024, limit: 10737418240 } },
+  { id: 'a1', name: 'Ana Souza', email: 'ana@exemplo.com', status: 'enabled', appEnabled: true, enabledAt: '2026-11-21T11:00:00Z', deleteAt: null, code: 'K7QM3XRT9PWD', seenAt: '2026-11-21T11:30:00Z', space: { notes: 2 * 1024 * 1024, media: 1024 * 1024 * 1024, limit: 10737418240 }, jobs: { running: 1, queued: 2, done: 12, failed: 1 }, ai: { calls: 340, inputTokens: 1250000, outputTokens: 98000 } },
   { id: 'a3', name: 'Caio Prado', email: 'caio@exemplo.com', status: 'no-code', appEnabled: false, enabledAt: null, deleteAt: null, code: null, seenAt: null, space: { notes: 0, media: 0, limit: 10737418240 } },
 ]
 
@@ -187,6 +187,22 @@ describe('Administração › Contas', () => {
     await confirmOverlay('Retirar o acesso')
     await waitFor(() => expect(within(screen.getByText('ana@exemplo.com').closest('tr')!).getByText(/Acesso retirado/)).toBeTruthy())
     expect(within(screen.getByText('ana@exemplo.com').closest('tr')!).getByText(/21\/12\/2026/)).toBeTruthy()
+  })
+})
+
+describe('Administração › Contas: trabalhos e uso de IA (spec 007, FR-055)', () => {
+  it('cada conta mostra os trabalhos de agora e dos últimos 30 dias, e o uso de IA', async () => {
+    serve(true)
+    open()
+    await screen.findByText('K7QM 3XRT 9PWD')
+    fireEvent.click(screen.getByRole('tab', { name: 'Contas' }))
+    const row = (await screen.findByText('ana@exemplo.com')).closest('tr')!
+    expect(within(row).getByText('1 rodando, 2 na fila')).toBeTruthy()
+    expect(within(row).getByText('12 prontos e 1 com falha em 30 dias')).toBeTruthy()
+    expect(within(row).getByText('340 chamadas')).toBeTruthy()
+    expect(within(row).getByText('1.250.000 tokens de entrada e 98.000 de saída em 30 dias')).toBeTruthy()
+    const other = screen.getByText('caio@exemplo.com').closest('tr')!
+    expect(within(other).getAllByText('nenhum').length).toBeGreaterThan(0)
   })
 })
 

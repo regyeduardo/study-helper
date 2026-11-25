@@ -116,6 +116,17 @@ export class StorageLimitError extends Error {
   }
 }
 
+/**
+ * The App of the account is full (spec 007, FR-052): the file or media does not go to the App; the reason and the three ways out. The
+ * text written keeps being kept (only files and media count against the 10 GB).
+ */
+export class AppSpaceFullError extends StorageLimitError {
+  constructor(neededBytes: number, missingBytes: number) {
+    super(neededBytes, missingBytes)
+    this.message = `O App da sua conta está cheio: faltam ${formatBytes(missingBytes)} para este arquivo. Guarde no Google Drive ou em Local, ou libere espaço em Configurações › Armazenamento.`
+  }
+}
+
 export function bytesOf(text: string): number {
   return new Blob([text]).size
 }

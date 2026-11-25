@@ -32,6 +32,7 @@ import { nameArtifact, nameSource } from '@/lib/generation/artifact-name'
 import { GenerationSession } from '@/lib/generation/session'
 import { activeLinks, saveSharedAttempt, type SharedAttempts, sharedLibrary } from '@/lib/share'
 import { setSharedRoot } from '@/lib/paths'
+import { medirAcoes, type OpOf } from '@/lib/perf-actions'
 import { apiMessage, type ServerMe } from '@/controllers/api.controller'
 import { followAppAi } from '@/lib/ai/app-ai'
 import { env } from '@/lib/env'
@@ -93,6 +94,8 @@ interface LibraryState {
   enterShared(item: SharedItem, attempts: SharedAttempts): void
   leaveShared(): void
   connect(accountId: string, tokenProvider?: TokenProvider): Promise<void>
+  /** The library of a job page on the server (spec 007, R10b): only the account's App and hierarchy, no Google Drive nor Local. */
+  connectWorker(accountId: string): Promise<void>
   applySnapshot(snapshot: Snapshot, changedFileIds?: string[]): void
   openFile(id: string): Promise<OpenedFile>
   createFile(fields: Partial<FileMeta> & { name: string; type: FileType }, content: string): Promise<FileMeta>
@@ -415,7 +418,6 @@ export const useLibraryStore = create<LibraryState>((set, get) => {
           if (serverAppOn()) combined.setApp(new AppRepository(accountId))
           if (hierarchyOn(accountId)) combined.setHierarchy(new HierarchyRepository(accountId))
           set({ appOn: Boolean(combined.app) })
-          followLive(combined)
           watchHierarchy(combined)
           repo = combined
           set({ hiddenPending: library.hiddenPending, hiddenWarning: library.warning })
@@ -425,11 +427,20 @@ export const useLibraryStore = create<LibraryState>((set, get) => {
         return
       }
       set({ repo })
+      // spec 007 (T046): the live channel opens after the first load, with the seq it brought; opened before, its "hello" said 0, the
+      // server answered "map" and every opening of the app pulled the whole library again, alongside the load
+      let living = false
+      const live = () => {
+        if (living || !(repo instanceof CombinedRepository) || get().repo !== repo) return
+        living = true
+        followLive(repo)
+      }
       try {
         const snapshot = await repo.load()
         if (get().repo !== repo) return
         get().applySnapshot(snapshot)
         set({ ready: true })
+        live()
         if (offlineOpening) void import('@/stores/ui').then(({ useUiStore }) => useUiStore.getState().toast('Sem internet: a biblioteca abriu com o que está neste aparelho. O que está no Google Drive abre quando a conexão voltar.'))
         await migrateOnLoad(repo, snapshot)
         migrateHierarchyWhenReady()
@@ -439,6 +450,27 @@ export const useLibraryStore = create<LibraryState>((set, get) => {
         if (repo instanceof CombinedRepository) void import('@/stores/places').then(({ usePlacesStore }) => usePlacesStore.getState().resume()).catch(() => undefined)
       } catch (error) {
         if (get().repo === repo) set({ loadError: error instanceof Error ? error.message : 'Não consegui abrir a biblioteca.', ready: true })
+        // the load failed: the channel (or its polling every 15 s) still brings the library when the server answers
+        live()
+      }
+    },
+
+    connectWorker: async accountId => {
+      followLive(null)
+      set({ repo: null, accountId, appOn: false, hierarchySync: null, ready: false, loadError: null, folders: [], files: [], opened: {}, openedAt: {}, sizes: {} })
+      // the job page has no Drive nor Local of its own: empty stores in its own profile stand in for them, and every note it touches is in the App
+      const combined = new CombinedRepository(new LocalRepository(`study-helper-worker-drive-${accountId}`, accountId), new LocalRepository(`study-helper-worker-local-${accountId}`, accountId))
+      combined.setApp(new AppRepository(accountId))
+      combined.setHierarchy(new HierarchyRepository(accountId))
+      set({ repo: combined, appOn: true })
+      followAppAi(true)
+      try {
+        const snapshot = await combined.load()
+        get().applySnapshot(snapshot)
+        set({ ready: true })
+      } catch (error) {
+        set({ loadError: error instanceof Error ? error.message : 'Não consegui abrir a biblioteca.', ready: true })
+        throw error
       }
     },
 
@@ -475,7 +507,9 @@ export const useLibraryStore = create<LibraryState>((set, get) => {
     openFile: async id => {
       const cached = get().opened[id]
       if (cached) return cached
-      const [content, sidecar] = await Promise.all([repository().readContent(id), repository().readSidecar(id)])
+      // the sidecar first: in the App, the text comes in the same request as the other parts (spec 007, R4)
+      const sidecarRead = repository().readSidecar(id)
+      const [content, sidecar] = await Promise.all([repository().readContent(id), sidecarRead])
       const opened = { content, sidecar }
       set(state => ({ opened: { ...state.opened, [id]: opened } }))
       if (hasOldFields(sidecar) || artifactsOf(sidecar).some(item => item.provisionalName)) void tidyArtifacts(id)
@@ -793,6 +827,25 @@ export const useLibraryStore = create<LibraryState>((set, get) => {
   }
 })
 
+/** The library's operations of the Lista de operações (spec 007, T015), measured from the start of the action to the frame after it. */
+export const LIBRARY_OPS: Partial<Record<keyof LibraryState, OpOf>> = {
+  createFile: 'criar',
+  createFolder: 'criar',
+  createOwnFolder: 'criar',
+  moveFiles: 'mover',
+  trashFiles: 'apagar',
+  trashFamily: 'apagar',
+  trashOnly: 'apagar',
+  trashFolder: 'apagar',
+  restoreFile: 'restaurar',
+  restoreFolder: 'restaurar',
+  saveContent: 'guardar-texto',
+  updateFile: { args: (_id: string, patch: Partial<FileMeta>) => ('name' in patch ? 'renomear' : 'folderId' in patch ? 'mover' : null) },
+  updateFolder: { args: (_id: string, patch: Partial<FolderMeta>) => ('name' in patch ? 'renomear' : 'parentId' in patch ? 'mover' : null) },
+  openFile: { result: (opened?: OpenedFile) => (!opened ? null : opened.sidecar.meta.type === 'pdf' ? 'abrir-nota-pdf' : mediaOf(opened.sidecar.meta) !== 'text' ? 'abrir-nota-midia' : 'abrir-nota-texto') },
+}
+medirAcoes(useLibraryStore, LIBRARY_OPS)
+
 export function liveFolders(folders: FolderMeta[]): FolderMeta[] {
   const trashed = new Set(folders.filter(folder => folder.deletedAt).map(folder => folder.id))
   const byId = new Map(folders.map(folder => [folder.id, folder]))
@@ -823,7 +876,12 @@ function followLive(repo: CombinedRepository | null): void {
   const app = repo?.app
   const seq = hierarchy ? () => hierarchy.currentSeq : app instanceof AppRepository ? () => app.currentSeq : null
   if (!seq || typeof WebSocket === 'undefined') return
-  stopLive = openLive({ seq, onMap: () => void import('@/stores/sync').then(({ useSyncStore }) => useSyncStore.getState().syncNow()).catch(() => undefined) })
+  stopLive = openLive({
+    seq,
+    onMap: () => void import('@/stores/sync').then(({ useSyncStore }) => useSyncStore.getState().syncNow()).catch(() => undefined),
+    // spec 007, história 2: the jobs of generating in the account, in Gerações of every device
+    onJob: job => void import('@/stores/account-jobs').then(({ useAccountJobsStore }) => useAccountJobsStore.getState().apply(job as never)).catch(() => undefined),
+  })
 }
 
 /**

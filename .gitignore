@@ -20,6 +20,8 @@ skills-lock.json
 docs/*
 /backend/
 /e2e/
+# the perf guard runs e2e/perf/run.mjs, which stays out of the repository
+/.github/workflows/perf.yml
 /scripts/
 /compose.test.yml
 /Docker/Api.Dockerfile

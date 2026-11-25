@@ -8,7 +8,7 @@ import (
 )
 
 // hierarchy_backups: spec 005 (migration 0003)
-var tables = []string{"app_settings", "auth_google", "devices", "hierarchy_backups", "lang_answers", "lang_card_items", "lang_card_schedule", "lang_cards", "lang_equivalences", "lang_item_needs", "lang_items", "lang_languages", "lang_progress", "lang_text_cards", "lang_text_items", "lang_texts", "library_index", "library_items", "orphans", "promo_code_uses", "promo_codes", "schema_migrations", "shared_links", "shared_links_used", "upload_parts", "uploads", "user"}
+var tables = []string{"ai_usage", "app_settings", "auth_google", "devices", "hierarchy_backups", "jobs", "lang_answers", "lang_card_items", "lang_card_schedule", "lang_cards", "lang_equivalences", "lang_item_needs", "lang_items", "lang_languages", "lang_progress", "lang_text_cards", "lang_text_items", "lang_texts", "library_index", "library_items", "orphans", "promo_code_uses", "promo_codes", "schema_migrations", "shared_links", "shared_links_used", "upload_parts", "uploads", "user"}
 
 func list(t *testing.T, path string) []string {
 	t.Helper()

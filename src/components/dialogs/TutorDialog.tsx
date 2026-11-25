@@ -7,6 +7,7 @@ import GithubMarkdownView from '@/components/reader/GithubMarkdownView'
 import { MediaPlayer, useMeetingMedia } from '@/components/reader/MediaPlayer'
 import { momentIn } from '@/components/reader/MinutesTab'
 import { usePlayback } from '@/components/reader/use-playback'
+import { OpeningWait } from '@/components/ui/OpeningWait'
 import { Dialog } from '@/components/ui/Dialog'
 import { Icon } from '@/components/ui/Icon'
 import { artifactsOf } from '@/lib/artifacts'
@@ -301,8 +302,9 @@ export function TutorDialog({ fileId, conversationId, chat = false }: { fileId: 
                 </li>
               ))}
               {busy && (
-                <li className="from-tutor" role="status">
-                  <Icon name="sync" className="spinning" /> pensando…
+                <li className="from-tutor">
+                  {/* spec 007 (FR-060): what happens, when it should end by the last answers, and that it did not freeze */}
+                  <OpeningWait kind="conversa" what="Pensando na resposta" history="respostas" />
                 </li>
               )}
             </ol>

@@ -294,6 +294,20 @@ describe('share worker', () => {
     expect(local.headers.get('Access-Control-Allow-Origin')).toBe('http://localhost:5184')
   })
 
+  // spec 007 (história 4, FR-039): the copy lasts what the person chose, 1, 3 or 7 days; anything else stays at 3
+  it('the copy lasts 1, 3 or 7 days, as chosen, and the update keeps the choice asked', async () => {
+    const day = 24 * 3600 * 1000
+    for (const [days, expected] of [[1, 1], [3, 3], [7, 7], [30, 3], [undefined, 3]]) {
+      const body = { turnstileToken: 'XXXX.DUMMY.TOKEN.XXXX', share: share(), ...(days === undefined ? {} : { days }) }
+      const made = await (await call('POST', '/shares', { token: 'token-ana', body })).json()
+      expect(Date.parse(made.expiresAt) - Date.parse(made.createdAt)).toBe(expected * day)
+      expect(Date.parse(made.mediaExpiresAt) - Date.parse(made.createdAt)).toBe(expected * day)
+    }
+    const { id } = await (await post()).json()
+    const updated = await (await call('PUT', `/shares/${id}`, { token: 'token-ana', body: { turnstileToken: 'XXXX.DUMMY.TOKEN.XXXX', share: share(), days: 7 } })).json()
+    expect(Date.parse(updated.expiresAt) - Date.now()).toBeGreaterThan(7 * day - 60_000)
+  })
+
   it('serves shared files only when the dev flag is on, and not after expiry', async () => {
     const { id } = await (await post()).json()
     expect((await call('GET', `/shared/${id}/share.json`)).status).toBe(404)

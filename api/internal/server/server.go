@@ -3,6 +3,7 @@
 package server
 
 import (
+	"context"
 	"database/sql"
 	"net/http"
 	"strings"
@@ -56,6 +57,18 @@ type Config struct {
 	// PartTimeout bounds the sending of one upload part to the storage (2 minutes when zero); the tests use a few milliseconds.
 	PartTimeout time.Duration
 	// LanguagesAI, Voice and LeadIn replace, in the tests, the AI that writes the cards, the model voice and the silence before it (spec 004).
+	// JobRunner runs a job of generating in the account (spec 007, R10b); nil opens the app in a headless Chromium. The tests give a fake.
+	JobRunner func(ctx context.Context, start JobStart) error
+	// Generators is how many jobs run at the same time on the server (ESTUDO_GERADORES, 2 when zero).
+	Generators int
+	// ChromiumPath is the Chromium of the jobs ("chromium" when empty); WorkerAppURL, where the app's job page is (the app's address when empty).
+	ChromiumPath string
+	WorkerAppURL string
+	// ChromiumHosts maps names for the jobs' Chromium (dev in Docker: "MAP localhost host.docker.internal" reaches the app and the API of
+	// the host machine with the same addresses, so the cookie and the origin stay the app's)
+	ChromiumHosts string
+	// ReadDB is the read-only pool of the same database (spec 007, research R5); nil reads from the writing connection, as before.
+	ReadDB      *sql.DB
 	LanguagesAI langs.Chatter
 	Voice       speech.Speaker
 	LeadIn      func([]byte) []byte
@@ -77,7 +90,11 @@ func DefaultGoogle(clientID, clientSecret string) GoogleConfig {
 
 // Server holds the database and the settings; Handler gives the routes.
 type Server struct {
-	db   *sql.DB
+	db *sql.DB
+	// read answers the reads that change nothing (spec 007, R5): the read-only pool, or db itself
+	read *sql.DB
+	// jobs: the generating in the account that runs here (spec 007, história 2)
+	jobs *jobsState
 	cfg  Config
 	keys *jwksCache
 	mu   sync.Mutex
@@ -97,8 +114,16 @@ func New(db *sql.DB, cfg Config) *Server {
 	if cfg.PartSize == 0 {
 		cfg.PartSize = 10 << 20
 	}
-	srv := &Server{db: db, cfg: cfg, keys: &jwksCache{}, live: newHub()}
+	// spec 007: the storage's time goes in the Server-Timing of each answer
+	if cfg.Blobs != nil {
+		cfg.Blobs = timedBlobs{inner: cfg.Blobs}
+	}
+	srv := &Server{db: db, read: db, cfg: cfg, keys: &jwksCache{}, live: newHub(), jobs: newJobsState()}
+	if cfg.ReadDB != nil {
+		srv.read = cfg.ReadDB
+	}
 	srv.startLanguages()
+	go srv.jobLoop()
 	return srv
 }
 
@@ -172,13 +197,30 @@ func (srv *Server) Handler() http.Handler {
 	app("POST /v1/uploads/{id}/complete", srv.completeUpload)
 	app("DELETE /v1/uploads/{id}", srv.abandonUpload)
 	app("GET /v1/media/{item}/{media}", srv.getMedia)
+	// spec 007, história 5: the space used, and what takes the most
+	route("GET /v1/space", appOn, false, srv.getSpace)
+	route("GET /v1/space/largest", appOn, false, srv.largestItems)
 	app("DELETE /v1/media/{item}/{media}", srv.deleteMedia)
 	// história 7: the live link of an item in the App; reading it needs no session (shares.go)
 	route("GET /v1/shares", signedIn, false, srv.itemLink)
 	route("POST /v1/shares", appOn, false, srv.createLink)
 	route("DELETE /v1/shares/{id}", signedIn, false, srv.stopLink)
+	route("PATCH /v1/shares/{id}", signedIn, false, srv.patchLink)
 	route("GET /v1/shared/{id}", public, false, srv.withBlobs(srv.sharedContent))
 	route("GET /v1/shared/{id}/media/{item}", public, false, srv.withBlobs(srv.sharedMedia))
+	// spec 007 (FR-038): the address people copy and agents read: a page made here, .md and .json
+	route("GET /s/{ref}", public, false, srv.withBlobs(srv.sharedPage))
+	// spec 007, história 2: generating in the account; the job page enters with a ticket and reports with the job's own session
+	route("POST /v1/jobs", appOn, false, srv.createJob)
+	route("GET /v1/jobs", signedIn, false, srv.listJobs)
+	route("GET /v1/jobs/{id}", signedIn, false, srv.getJob)
+	route("POST /v1/jobs/{id}/cancel", signedIn, false, srv.cancelJob)
+	route("POST /v1/jobs/{id}/retry", appOn, false, srv.retryJob)
+	route("POST /v1/jobs/{id}/dismiss", signedIn, false, srv.dismissJob)
+	route("GET /v1/jobs/{id}/entrar", public, false, srv.enterJob)
+	route("POST /v1/jobs/{id}/progress", signedIn, false, srv.progressJob)
+	route("POST /v1/jobs/{id}/finish", signedIn, false, srv.finishJob)
+	route("POST /v1/jobs/{id}/fail", signedIn, false, srv.failJob)
 	adminRoute := func(pattern string, handle handlerFunc) { mux.Handle(pattern, srv.adminOnly(handle)) }
 	adminRoute("GET /v1/admin/codes", srv.adminCodes)
 	adminRoute("POST /v1/admin/codes", srv.adminCreateCode)
@@ -190,7 +232,7 @@ func (srv *Server) Handler() http.Handler {
 	adminRoute("GET /v1/admin/ai", srv.adminAI)
 	adminRoute("PUT /v1/admin/ai", srv.adminSetAI)
 	mux.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { fail(w, http.StatusNotFound, "not_found", nil) }))
-	return srv.cors(mux)
+	return srv.timed(srv.cors(mux))
 }
 
 // cors lets only the app call with its cookie; a preflight is answered here.

@@ -6,11 +6,12 @@ import { MemoryRouter, Route, Routes, useParams } from 'react-router-dom'
 
 import type { FileSidecar } from '@/types/domain'
 import { ShareDialog } from '@/components/dialogs/ShareDialog'
+import { SharingView } from '@/components/library/SharingLists'
 import { EntryPage } from '@/components/reader/EntryPage'
 import { defaultIndex } from '@/lib/defaults'
 import { env } from '@/lib/env'
 import { mapMeta } from '@/lib/storage/app-repository'
-import { useSharedRoute } from '@/pages/shared'
+import { SharedStatus, useSharedRoute } from '@/pages/shared'
 import { type Account, LOCAL_ACCOUNT, useAccountStore } from '@/stores/account'
 import { useLibraryStore } from '@/stores/library'
 import { useUiStore } from '@/stores/ui'
@@ -110,9 +111,10 @@ describe('compartilhar uma entrada guardada no App', () => {
     fireEvent.click(share)
     const link = (await screen.findByLabelText('Link público, só para leitura')) as HTMLInputElement
     expect(link.value).toBe(`${window.location.origin}${env.basePath.replace(/\/$/, '')}/shared/${LINK_ID}`)
-    expect(calls.find(call => call.method === 'POST')).toEqual({ url: `${API}/v1/shares`, method: 'POST', body: { item: 'e', kind: 'entrada', withExams: true, artifacts: ['mapa'] } })
+    expect(calls.find(call => call.method === 'POST')).toEqual({ url: `${API}/v1/shares`, method: 'POST', body: { item: 'e', kind: 'entrada', withExams: true, artifacts: ['mapa'], expiresIn: 'never' } })
     expect(workerCalls()).toEqual([])
-    expect(screen.getByText(/não vence/)).toBeInTheDocument()
+    // spec 007 (FR-032): Permanente comes chosen, and the dialog says it
+    expect(screen.getByText(/Permanente: vale até você parar/)).toBeInTheDocument()
     await waitFor(() => expect(useLibraryStore.getState().index.shares).toEqual([expect.objectContaining({ id: LINK_ID, itemId: 'e', kind: 'entrada', live: true })]))
   })
 
@@ -194,5 +196,83 @@ describe('quem tem o link vê a entrada', () => {
     renderLink()
     expect(await screen.findByText('indisponível')).toBeInTheDocument()
     expect(workerCalls()).toEqual([])
+  })
+})
+
+// spec 007, história 4 (T109, T113, T115): o prazo do link (1, 3, 7 dias ou Permanente), "Mudar prazo" no mesmo endereço, o endereço
+// que agentes leem, a cópia sem Permanente e o link vencido dizendo que venceu
+describe('o prazo do link', () => {
+  const url = `${API}/s/${LINK_ID}`
+
+  it('Permanente vem marcado; escolher 1 dia manda o prazo, e o link copiado é o endereço que agentes leem', async () => {
+    const tomorrow = new Date(Date.now() + 24 * 3600_000).toISOString()
+    replies[`POST ${API}/v1/shares`] = () => json({ ...madeLink, expiresIn: '1d', expiresAt: tomorrow, expired: false, url }, 201)
+    openDialog()
+    await screen.findByRole('button', { name: 'Compartilhar' })
+    const row = screen.getByRole('radiogroup', { name: 'Prazo do link' })
+    expect(within(row).getByRole('radio', { name: 'Permanente' })).toHaveAttribute('aria-checked', 'true')
+    fireEvent.click(within(row).getByRole('radio', { name: '1 dia' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Compartilhar' }))
+    const link = (await screen.findByLabelText('Link público, só para leitura')) as HTMLInputElement
+    expect(calls.find(call => call.method === 'POST')?.body).toMatchObject({ expiresIn: '1d' })
+    expect(link.value).toBe(url)
+    expect(screen.getByText(/vence amanhã às/)).toBeInTheDocument()
+  })
+
+  it('já compartilhado: "Mudar prazo" vale na hora, no mesmo endereço', async () => {
+    replies[`GET ${API}/v1/shares?item=e`] = () => json({ ...madeLink, expiresIn: 'never', expiresAt: null, expired: false, url })
+    const inAWeek = new Date(Date.now() + 7 * 24 * 3600_000).toISOString()
+    replies[`PATCH ${API}/v1/shares/${LINK_ID}`] = () => json({ ...madeLink, expiresIn: '7d', expiresAt: inAWeek, expired: false, url })
+    openDialog()
+    expect(await screen.findByText(/Permanente: vale até você parar/)).toBeInTheDocument()
+    fireEvent.click(within(screen.getByRole('radiogroup', { name: 'Prazo do link' })).getByRole('radio', { name: '7 dias' }))
+    await waitFor(() => expect(calls.find(call => call.method === 'PATCH')?.body).toEqual({ expiresIn: '7d' }))
+    expect(await screen.findByText(/vence em/)).toBeInTheDocument()
+    expect((screen.getByLabelText('Link público, só para leitura') as HTMLInputElement).value).toBe(url)
+  })
+
+  it('o link vencido diz que venceu, sem nada do item', async () => {
+    replies[`GET ${API}/v1/shared/${LINK_ID}`] = () => json({ error: 'link_expired' }, 410)
+    function Page() {
+      const { shareId = '' } = useParams()
+      const route = useSharedRoute(shareId)
+      return route.view === 'shared' && route.unavailable ? <SharedStatus unavailable /> : <p>abrindo</p>
+    }
+    render(
+      <MemoryRouter initialEntries={[`/shared/${LINK_ID}`]}>
+        <Routes>
+          <Route path="/shared/:shareId" element={<Page />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+    expect(await screen.findByText('Este link venceu')).toBeInTheDocument()
+    expect(screen.getByText('Peça um link novo a quem compartilhou.')).toBeInTheDocument()
+  })
+})
+
+describe('a lista de compartilhamentos (T111)', () => {
+  it('traz os links da conta com o prazo, "Mudar prazo" e o vencido dizendo que venceu', async () => {
+    const tomorrow = new Date(Date.now() + 24 * 3600_000).toISOString()
+    const yesterday = new Date(Date.now() - 24 * 3600_000).toISOString()
+    replies[`GET ${API}/v1/shares`] = () =>
+      json({
+        links: [
+          { ...madeLink, id: 'L1', title: 'Reunião de planejamento', expiresIn: '1d', expiresAt: tomorrow, expired: false, url: `${API}/s/L1` },
+          { ...madeLink, id: 'L2', itemId: 'f', kind: 'file', title: 'Nota velha', expiresIn: '1d', expiresAt: yesterday, expired: true, url: `${API}/s/L2` },
+        ],
+      })
+    render(
+      <MemoryRouter>
+        <SharingView view="shares" />
+      </MemoryRouter>,
+    )
+    const first = await screen.findByRole('generic', { name: 'Compartilhamento: Reunião de planejamento' })
+    expect(within(first).getByText(/ao vivo · vence amanhã às/)).toBeInTheDocument()
+    expect(within(first).getByRole('link', { name: `${API}/s/L1` })).toBeInTheDocument()
+    fireEvent.click(within(first).getByRole('button', { name: 'Mudar prazo' }))
+    expect(useUiStore.getState().overlay).toMatchObject({ kind: 'share', id: 'e' })
+    const old = await screen.findByRole('generic', { name: 'Compartilhamento: Nota velha' })
+    expect(within(old).getByText('Link expirado')).toBeInTheDocument()
+    expect(within(old).getByRole('button', { name: 'Mudar prazo' })).toBeInTheDocument()
   })
 })

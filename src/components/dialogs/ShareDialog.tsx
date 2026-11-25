@@ -3,12 +3,14 @@ import { useNavigate } from 'react-router-dom'
 
 import type { ArtifactKind, ShareContent, ShareKind, ShareRecord } from '@/types/domain'
 import { EntryShareTree } from '@/components/dialogs/EntryShareTree'
-import { LiveShareDialog, sharesFromApp } from '@/components/dialogs/LiveShareDialog'
+import { DeadlinePicker, LiveShareDialog, sharesFromApp } from '@/components/dialogs/LiveShareDialog'
 import { entryKind } from '@/components/library/EntryList'
+import { WaitStatus } from '@/components/ui/WaitStatus'
 import { Dialog } from '@/components/ui/Dialog'
 import { Icon } from '@/components/ui/Icon'
 import { type CreatedShare as CreatedResult, createShareController, forgetShareMediaController, isShareConfigured, type PlannedMedia, ShareError, type ShareStatus, shareStatusController, type UpdatedShare, updateShareController, uploadShareMediaController } from '@/controllers/share.controller'
 import { filesInside } from '@/hooks/use-library-view'
+import { advance, startWait, type Wait } from '@/lib/wait'
 import { blocking } from '@/lib/blocking'
 import { env } from '@/lib/env'
 import { paths } from '@/lib/paths'
@@ -103,7 +105,7 @@ function CreatedShare({ share, mediaFailed, already = false, updated = false, no
           ? '“Atualizar o link” põe a versão de agora neste mesmo link, por mais 3 dias. A mídia que já está lá não sobe de novo.'
           : updated
             ? 'Para mudar de novo, abra Compartilhar e atualize o link outra vez.'
-            : `Vale por 3 dias, até ${dateTime(share.expiresAt, timeZone)}, e mostra a versão de agora. Se mudar alguma coisa, abra Compartilhar de novo e atualize o link.`}
+            : `Vale até ${dateTime(share.expiresAt, timeZone)} e mostra a versão de agora. Se mudar alguma coisa, abra Compartilhar de novo e atualize o link.`}
       </span>
       {already && mediaThere === true && (
         <span className="muted" style={{ fontSize: 13 }}>
@@ -158,6 +160,10 @@ function WorkerShareDialog({ target, id }: { target: ShareKind; id: string }) {
   const openFile = useLibraryStore(state => state.openFile)
   const saveShare = useLibraryStore(state => state.saveShare)
   const dropShare = useLibraryStore(state => state.dropShare)
+  // spec 007 (FR-039): who uses the structure chooses how long the copy lasts, 1, 3 or 7 days (no Permanente: it is a copy)
+  const appOn = useLibraryStore(state => state.appOn)
+  const [copyDays, setCopyDays] = useState<'1d' | '3d' | '7d'>('3d')
+  const days = appOn ? (Number(copyDays[0]) as 1 | 3 | 7) : undefined
   const localMedia = useLibraryStore(state => state.localMedia)
   const repo = useLibraryStore(state => state.repo)
   const [withExams, setWithExams] = useState(false)
@@ -165,6 +171,8 @@ function WorkerShareDialog({ target, id }: { target: ShareKind; id: string }) {
   const [content, setContent] = useState<ShareContent | null>(null)
   const [questions, setQuestions] = useState(0)
   const [progress, setProgress] = useState<MediaProgress | null>(null)
+  // spec 007 (FR-060): the sending of the media with the clock time and "sem travar"
+  const [sending, setSending] = useState<Wait | null>(null)
   const [mediaFailed, setMediaFailed] = useState<string[]>([])
   const [error, setError] = useState<string | null>(null)
   const [captcha, setCaptcha] = useState('')
@@ -272,7 +280,11 @@ function WorkerShareDialog({ target, id }: { target: ShareKind; id: string }) {
     let sent = 0
     const failed: string[] = []
     for (const item of todo) {
-      const show = (bytesSent: number) => setProgress({ name: item.name, percent: total ? Math.min(100, Math.round(((sent + bytesSent) / total) * 100)) : 0 })
+      const show = (bytesSent: number) => {
+        const percent = total ? Math.min(100, Math.round(((sent + bytesSent) / total) * 100)) : 0
+        setProgress({ name: item.name, percent })
+        setSending(before => advance(before ?? startWait('Enviando a mídia', { unit: '%', total: 100, normalStepMs: 60_000 }), { done: percent, total: 100, label: item.name }))
+      }
       try {
         show(0)
         const blob = await item.read()
@@ -300,7 +312,7 @@ function WorkerShareDialog({ target, id }: { target: ShareKind; id: string }) {
       let why: string | null = null
       if (mode === 'update' && valid) {
         try {
-          const changed = await updateShareController(token, valid.id, captcha, content, planned)
+          const changed = await updateShareController(token, valid.id, captcha, content, planned, days)
           result = changed
           kept = changed.media
         } catch (failure) {
@@ -309,7 +321,7 @@ function WorkerShareDialog({ target, id }: { target: ShareKind; id: string }) {
           if (failure instanceof ShareError && failure.code === 'share_gone') await dropShare(valid.id).catch(() => undefined)
         }
       }
-      result ??= await createShareController(token, captcha, content, planned)
+      result ??= await createShareController(token, captcha, content, planned, days)
       const keptBytes = kept.reduce((sum, item) => sum + item.size, 0)
       const base: ShareRecord = {
         id: result.id,
@@ -339,6 +351,7 @@ function WorkerShareDialog({ target, id }: { target: ShareKind; id: string }) {
     } finally {
       setBusy(false)
       setProgress(null)
+      setSending(null)
     }
   }
 
@@ -440,8 +453,25 @@ function WorkerShareDialog({ target, id }: { target: ShareKind; id: string }) {
               </div>
             )}
             <span className="muted" style={{ fontSize: 13 }}>
-              {updating ? 'Quem tiver o link continua com ele e passa a ver a versão de agora, por mais 3 dias a partir de hoje.' : 'Quem tiver o link pode ler, sem entrar em conta. O link vale por 3 dias e mostra a versão de agora.'}
+              {updating
+                ? `Quem tiver o link continua com ele e passa a ver a versão de agora, por mais ${days ?? 3} ${(days ?? 3) === 1 ? 'dia' : 'dias'} a partir de hoje.`
+                : `Quem tiver o link pode ler, sem entrar em conta. O link vale por ${days ?? 3} ${(days ?? 3) === 1 ? 'dia' : 'dias'} e mostra a versão de agora.`}
             </span>
+            {appOn && (
+              <>
+                <div className="banner info" role="status">
+                  <Icon name="warn" />
+                  <span>
+                    Parte do que vai no link não está no App (está no Google Drive ou só neste navegador), então o link é uma cópia e vence. Leve para o App para o link ficar ao vivo e
+                    poder ser Permanente.{' '}
+                    <button className="link" onClick={() => ui.open({ kind: 'settings', tab: 'storage', focusId: id })}>
+                      Levar para o App
+                    </button>
+                  </span>
+                </div>
+                <DeadlinePicker value={copyDays} onChange={value => value !== 'never' && setCopyDays(value)} withPermanent={false} />
+              </>
+            )}
             {entrada && <EntryShareTree tree={tree} chosen={chosen} onToggle={key => setChosen(current => toggleChoice(tree, current, key))} media={mediaRow} transcribed={transcribed} />}
             {!entrada && (
               <button className="opt" role="checkbox" aria-checked={withExams} onClick={() => setWithExams(value => !value)}>
@@ -481,14 +511,9 @@ function WorkerShareDialog({ target, id }: { target: ShareKind; id: string }) {
                 A gravação vai junto: quem abrir o link pode tocar e pular para cada fala. A mídia fica disponível por 3 dias.
               </span>
             )}
-            {progress && (
-              <div className="db" role="status" aria-label="Envio da mídia">
-                <div className="bar" role="progressbar" aria-label="Enviando a mídia" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress.percent}>
-                  <i style={{ '--v': `${progress.percent}%` } as React.CSSProperties} />
-                </div>
-                <span className="muted" style={{ fontSize: 13 }}>
-                  Enviando a mídia ({progress.name}): {progress.percent}%
-                </span>
+            {progress && sending && (
+              <div className="db" aria-label="Envio da mídia">
+                <WaitStatus wait={sending} />
               </div>
             )}
             {empty && (

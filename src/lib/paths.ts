@@ -4,6 +4,9 @@ export function setSharedRoot(shareId: string | null) {
   sharedRoot = shareId ? `/shared/${shareId}` : null
 }
 
+/** Where the Administração lives; the account menu links here only for the admin account (here, so the routes need not load the page). */
+export const ADMIN_PATH = '/administracao'
+
 export const paths = {
   home: '/',
   library: '/biblioteca',

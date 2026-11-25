@@ -295,3 +295,39 @@ func xmlEscape(text string) string {
 	_ = xml.EscapeText(&b, []byte(text))
 	return b.String()
 }
+
+// List gives the objects under a prefix through ListObjectsV2, page by page (spec 007, história 5: the check of the space).
+func (s *S3) List(ctx context.Context, prefix string) ([]Object, error) {
+	out := []Object{}
+	token := ""
+	for {
+		query := url.Values{"list-type": {"2"}, "prefix": {prefix}}
+		if token != "" {
+			query.Set("continuation-token", token)
+		}
+		response, err := s.do(ctx, http.MethodGet, "", query, nil, nil)
+		if err != nil {
+			return nil, err
+		}
+		var page struct {
+			IsTruncated           bool   `xml:"IsTruncated"`
+			NextContinuationToken string `xml:"NextContinuationToken"`
+			Contents              []struct {
+				Key  string `xml:"Key"`
+				Size int64  `xml:"Size"`
+			} `xml:"Contents"`
+		}
+		err = xml.NewDecoder(response.Body).Decode(&page)
+		response.Body.Close()
+		if err != nil {
+			return nil, fmt.Errorf("storage: list: %w", err)
+		}
+		for _, item := range page.Contents {
+			out = append(out, Object{Key: item.Key, Size: item.Size})
+		}
+		if !page.IsTruncated || page.NextContinuationToken == "" {
+			return out, nil
+		}
+		token = page.NextContinuationToken
+	}
+}

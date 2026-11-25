@@ -1,6 +1,7 @@
 // O explorador (FR-036 a FR-045): a pasta com as notas de todos os tipos, uma por linha (003, história 10); a busca, na biblioteca toda (FR-074, FR-075).
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { useShallow } from 'zustand/react/shallow'
 
 import type { FileMeta, FolderMeta } from '@/types/domain'
 import { FileTableRow, FolderTableRow, SortHead, TableCheck } from '@/components/library/FileRows'
@@ -47,6 +48,9 @@ const byPosition = (a: FolderMeta, b: FolderMeta) => a.position - b.position || 
 export const SEARCH_PAUSE_MS = 150
 /** Results drawn at once; the rest comes with "Mostrar mais". */
 const RESULTS_AT_ONCE = 50
+// spec 007 (T042, research R7): a folder longer than this draws FOLDER_AT_ONCE rows and more as the end comes near
+const LONG_FOLDER = 200
+const FOLDER_AT_ONCE = 120
 
 export const plural = (count: number, one: string, many: string) => `${count.toLocaleString('pt-BR')} ${count === 1 ? one : many}`
 
@@ -111,8 +115,11 @@ function useOpenResult() {
 }
 
 export function Explorer({ view, folderId }: { view: View; folderId: string | null }) {
-  const ui = useUiStore()
-  const { filters, tag, lowMastery, query, selection } = ui
+  // spec 007 (research R7): only the fields drawn here; the actions are read at the click (a toast or a drag must not draw the list)
+  const { filters, tag, lowMastery, query, selection, filtersCollapsed } = useUiStore(
+    useShallow(state => ({ filters: state.filters, tag: state.tag, lowMastery: state.lowMastery, query: state.query, selection: state.selection, filtersCollapsed: state.filtersCollapsed })),
+  )
+  const ui = useUiStore.getState()
   const { files, folders } = useLiveLibrary()
   const actions = useFileActions()
   const shared = useLibraryStore(state => Boolean(state.sharedView))
@@ -125,6 +132,8 @@ export function Explorer({ view, folderId }: { view: View; folderId: string | nu
   const [sort, setSort] = useState<SortState>({ column: 'name', ascending: true })
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [shownResults, setShownResults] = useState(RESULTS_AT_ONCE)
+  const [shownRows, setShownRows] = useState(FOLDER_AT_ONCE)
+  const moreRows = useRef<HTMLButtonElement>(null)
   const hits = useSearchHits(query)
   const pending = useSearchPending()
   // without internet the search looks only at what this device has (FR-040)
@@ -134,6 +143,7 @@ export function Explorer({ view, folderId }: { view: View; folderId: string | nu
   const notesFilters = useMemo<LibraryFilters>(() => ({ ...filters, scope: 'notas' }), [filters])
 
   useEffect(() => setShownResults(RESULTS_AT_ONCE), [query])
+  useEffect(() => setShownRows(FOLDER_AT_ONCE), [view, folderId])
 
   const result = useMemo(() => {
     const low = (file: FileMeta) => !lowMastery || (file.mastery !== null && file.mastery < LOW_MASTERY_BELOW)
@@ -145,14 +155,27 @@ export function Explorer({ view, folderId }: { view: View; folderId: string | nu
 
   const hasFilters = result.active.length > 0 || lowMastery
   const sorted = useMemo(() => sortFiles(result.items, sort), [result.items, sort])
-  const rows = searching ? sorted.slice(0, shownResults) : sorted
+  const long = !searching && sorted.length > LONG_FOLDER
+  const rows = searching ? sorted.slice(0, shownResults) : long ? sorted.slice(0, shownRows) : sorted
+  const hiddenRows = long ? sorted.length - rows.length : 0
   const subfolders = useMemo(() => (view === 'folder' && !hasFilters && !searching ? folders.filter(folder => folder.parentId === folderId).sort(byPosition) : []), [view, hasFilters, searching, folders, folderId])
   const childCounts = useMemo(() => {
     const counts = new Map<string, number>()
     for (const parent of [...files.map(file => file.folderId), ...folders.map(folder => folder.parentId)]) if (parent) counts.set(parent, (counts.get(parent) ?? 0) + 1)
     return counts
   }, [files, folders])
-  const visible = useMemo(() => new Set([...subfolders.map(folder => folder.id), ...rows.map(file => file.id)]), [subfolders, rows])
+  // "Marcar todos" and the selection go by the whole folder, not by what is drawn yet
+  const listed = searching ? rows : sorted
+  const visible = useMemo(() => new Set([...subfolders.map(folder => folder.id), ...listed.map(file => file.id)]), [subfolders, listed])
+
+  // the next rows come before the person gets to the end (the button stays for the keyboard and the screen reader)
+  useEffect(() => {
+    const button = moreRows.current
+    if (!button || typeof IntersectionObserver === 'undefined') return
+    const watcher = new IntersectionObserver(entries => entries.some(entry => entry.isIntersecting) && setShownRows(count => count + FOLDER_AT_ONCE), { rootMargin: '800px 0px' })
+    watcher.observe(button)
+    return () => watcher.disconnect()
+  }, [hiddenRows > 0])
 
   // What leaves the table leaves the selection: "Apagar" never acts on what is out of sight.
   useEffect(() => {
@@ -186,7 +209,7 @@ export function Explorer({ view, folderId }: { view: View; folderId: string | nu
 
   return (
     <section className="explorer ex-browser">
-      <FilterPanel filters={notesFilters} facets={result.facets} onChange={next => ui.setFilters({ ...next, scope: filters.scope })} collapsed={ui.filtersCollapsed} onCollapsedChange={filtersCollapsed => ui.set({ filtersCollapsed })} drawer={narrow} open={drawerOpen} onClose={() => setDrawerOpen(false)} />
+      <FilterPanel filters={notesFilters} facets={result.facets} onChange={next => ui.setFilters({ ...next, scope: filters.scope })} collapsed={filtersCollapsed} onCollapsedChange={filtersCollapsed => ui.set({ filtersCollapsed })} drawer={narrow} open={drawerOpen} onClose={() => setDrawerOpen(false)} />
       <div className="ex-main">
         <div className="ex-tools">
           {narrow && (
@@ -258,6 +281,11 @@ export function Explorer({ view, folderId }: { view: View; folderId: string | nu
               })}
             </tbody>
           </table>
+        )}
+        {hiddenRows > 0 && (
+          <button ref={moreRows} className="btn ex-more" onClick={() => setShownRows(count => count + FOLDER_AT_ONCE)}>
+            {`Mostrar mais ${Math.min(FOLDER_AT_ONCE, hiddenRows)} de ${hiddenRows.toLocaleString('pt-BR')}`}
+          </button>
         )}
         {searching && sorted.length > rows.length && (
           <button className="btn ex-more" onClick={() => setShownResults(count => count + RESULTS_AT_ONCE)}>

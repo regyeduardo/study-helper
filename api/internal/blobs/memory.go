@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -149,4 +150,18 @@ func (m *Memory) OpenUploads() int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return len(m.uploads)
+}
+
+// List gives the objects under a prefix, in key order (spec 007, história 5).
+func (m *Memory) List(_ context.Context, prefix string) ([]Object, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := []Object{}
+	for key, object := range m.objects {
+		if strings.HasPrefix(key, prefix) {
+			out = append(out, Object{Key: key, Size: int64(len(object.body))})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Key < out[j].Key })
+	return out, nil
 }

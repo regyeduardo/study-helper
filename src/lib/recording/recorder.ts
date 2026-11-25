@@ -4,6 +4,7 @@ import { integrationSourceKey, type IntegrationSourceChoice } from '@/lib/record
 import type { Meters } from '@/lib/recording/miniplayer'
 import { ScreenCanvas } from '@/lib/recording/frame-grab'
 import { makeSeekable } from '@/lib/recording/seekable'
+import { CHOSEN, recorderOptions, VARIANTS } from '@/lib/recording/variants'
 
 export type CaptureMode = 'tab' | 'screen' | 'microphone' | 'integration'
 
@@ -65,12 +66,11 @@ export interface RecorderCallbacks {
 }
 
 const MIME_OPTIONS = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4;codecs=opus']
-const VIDEO_MIME_OPTIONS = ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm', 'video/mp4']
-const VIDEO_BITS_PER_SECOND: Record<VideoFps, number> = { 5: 600_000, 30: 2_500_000 }
+// the video settings come from the variant chosen by the measure (spec 007, história 3, medidas-gravacao.md)
+const VARIANT = VARIANTS[CHOSEN]
 const RECORDING_TITLE = '● Gravando — '
 const COMPUTER_INPUT = /monitor|stereo mix|mixagem|what u hear|loopback|blackhole|soundflower|vb-audio|cable output/i
 const CHUNK_MS = 1000
-const AUDIO_BITS_PER_SECOND = 32000
 
 interface PictureInPictureApi {
   requestWindow(options: { width: number; height: number }): Promise<Window>
@@ -99,7 +99,7 @@ export async function listAudioInputs(askPermission = false): Promise<AudioInput
 }
 
 function supportedMime(video: boolean): string {
-  return (video ? VIDEO_MIME_OPTIONS : MIME_OPTIONS).find(mime => MediaRecorder.isTypeSupported(mime)) ?? ''
+  return (video ? VARIANT.videoMimes : MIME_OPTIONS).find(mime => MediaRecorder.isTypeSupported(mime)) ?? ''
 }
 
 function extensionOf(mime: string): string {
@@ -486,7 +486,9 @@ export class MeetingRecorder {
     this.writable = await this.handle.createWritable()
 
     const tracks = [...(this.canvas ? [this.canvas.track] : []), ...mix.stream.getAudioTracks()]
-    this.recorder = new MediaRecorder(new MediaStream(tracks), { ...(this.mime ? { mimeType: this.mime } : {}), audioBitsPerSecond: AUDIO_BITS_PER_SECOND, ...(this.fps ? { videoBitsPerSecond: VIDEO_BITS_PER_SECOND[this.fps] } : {}) })
+    if (this.canvas && VARIANT.contentHint) this.canvas.track.contentHint = VARIANT.contentHint
+    const { mimeType: _chosen, ...settings } = recorderOptions(VARIANT, this.fps, mime => MediaRecorder.isTypeSupported(mime))
+    this.recorder = new MediaRecorder(new MediaStream(tracks), { ...(this.mime ? { mimeType: this.mime } : {}), ...settings })
     this.recorder.ondataavailable = event => {
       if (!event.data.size || !this.writable) return
       const writable = this.writable

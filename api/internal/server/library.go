@@ -326,11 +326,11 @@ func (srv *Server) libraryMap(w http.ResponseWriter, r *http.Request, s *Session
 		limit = 1000
 	}
 	var seq int64
-	if err := srv.db.QueryRow(`SELECT seq FROM user WHERE id = ?`, s.User.ID).Scan(&seq); err != nil {
+	if err := srv.read.QueryRow(`SELECT seq FROM user WHERE id = ?`, s.User.ID).Scan(&seq); err != nil {
 		fail(w, http.StatusInternalServerError, "internal_error", nil)
 		return
 	}
-	rows, err := srv.db.Query(`SELECT `+rowColumns+` FROM library_items WHERE user_id = ? AND seq > ? ORDER BY seq, id LIMIT ?`, s.User.ID, since, limit+1)
+	rows, err := srv.read.Query(`SELECT `+rowColumns+` FROM library_items WHERE user_id = ? AND seq > ? ORDER BY seq, id LIMIT ?`, s.User.ID, since, limit+1)
 	if err != nil {
 		fail(w, http.StatusInternalServerError, "internal_error", nil)
 		return
@@ -353,7 +353,7 @@ func (srv *Server) libraryMap(w http.ResponseWriter, r *http.Request, s *Session
 }
 
 func (srv *Server) getLibraryItem(w http.ResponseWriter, r *http.Request, s *Session) {
-	row, err := findRow(srv.db, s.User.ID, r.PathValue("id"))
+	row, err := findRow(srv.read, s.User.ID, r.PathValue("id"))
 	if err != nil {
 		fail(w, http.StatusInternalServerError, "internal_error", nil)
 		return

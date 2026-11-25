@@ -47,10 +47,18 @@ export function appShareUrl(id: string, origin: string = window.location.origin)
   return `${origin}${env.basePath.replace(/\/$/, '')}/shared/${id}`
 }
 
-/** The address of a link made or received: the app's own for a link of the App, else the one of the share-worker. */
-export function linkUrl(link: { id: string; live?: boolean }): string {
-  return link.live ? appShareUrl(link.id) : shareUrl(link.id)
+/** The address of a link of the App that people copy and agents read (spec 007, FR-038): the service's page, which takes people to the app. */
+export function liveShareUrl(id: string): string {
+  return env.apiUrl ? `${env.apiUrl.replace(/\/$/, '')}/s/${id}` : appShareUrl(id)
 }
+
+/** The address of a link made or received: the service's page for a link of the App, else the one of the share-worker. */
+export function linkUrl(link: { id: string; live?: boolean }): string {
+  return link.live ? liveShareUrl(link.id) : shareUrl(link.id)
+}
+
+/** A link of the App without a deadline (the far date of before, or none). */
+export const permanent = (expiresAt: string | null | undefined) => !expiresAt || expiresAt === LIVE_EXPIRES
 
 export function isExpired(expiresAt: string, now = Date.now()): boolean {
   return Date.parse(expiresAt) <= now

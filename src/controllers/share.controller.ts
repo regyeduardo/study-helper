@@ -95,13 +95,14 @@ async function call<T>(token: TokenProvider, path: string, init: RequestInit = {
   throw new ShareError(response.status, code, ERROR_MESSAGES[code] ?? 'O compartilhamento falhou. Tente de novo.')
 }
 
-export function createShareController(token: TokenProvider, turnstileToken: string, share: ShareContent, media: PlannedMedia[] = []): Promise<CreatedShare> {
-  return call<CreatedShare>(token, '/shares', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ turnstileToken, share, ...(media.length ? { media } : {}) }) })
+/** `days`: how long the copy lasts, 1, 3 or 7 (spec 007, FR-039); absent, the 3 days of before. */
+export function createShareController(token: TokenProvider, turnstileToken: string, share: ShareContent, media: PlannedMedia[] = [], days?: 1 | 3 | 7): Promise<CreatedShare> {
+  return call<CreatedShare>(token, '/shares', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ turnstileToken, share, ...(media.length ? { media } : {}), ...(days ? { days } : {}) }) })
 }
 
 /** The same link with the current content and 3 more days; the media already in it stays. A Worker without this route answers 404 `not_found`, a link that is gone 404 `share_gone`. */
-export function updateShareController(token: TokenProvider, id: string, turnstileToken: string, share: ShareContent, media: PlannedMedia[] = []): Promise<UpdatedShare> {
-  return call<UpdatedShare>(token, `/shares/${encodeURIComponent(id)}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ turnstileToken, share, ...(media.length ? { media } : {}) }) })
+export function updateShareController(token: TokenProvider, id: string, turnstileToken: string, share: ShareContent, media: PlannedMedia[] = [], days?: 1 | 3 | 7): Promise<UpdatedShare> {
+  return call<UpdatedShare>(token, `/shares/${encodeURIComponent(id)}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ turnstileToken, share, ...(media.length ? { media } : {}), ...(days ? { days } : {}) }) })
 }
 
 export function shareStatusController(token: TokenProvider, id: string): Promise<ShareStatus> {

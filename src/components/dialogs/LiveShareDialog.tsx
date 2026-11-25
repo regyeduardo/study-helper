@@ -5,10 +5,11 @@ import type { ArtifactKind, FileMeta, FolderMeta, ShareKind } from '@/types/doma
 import { Dialog } from '@/components/ui/Dialog'
 import { Icon } from '@/components/ui/Icon'
 import { apiMessage } from '@/controllers/api.controller'
-import { createLiveLink, itemLiveLink, type LiveLink, stopLiveLink } from '@/controllers/live-share.controller'
+import { changeLiveDeadline, createLiveLink, itemLiveLink, type LinkDeadline, type LiveLink, stopLiveLink } from '@/controllers/live-share.controller'
 import { filesInside } from '@/hooks/use-library-view'
 import { descendantsOf } from '@/lib/family'
 import { mediaOf } from '@/lib/file-types'
+import { DEADLINES, deadlineText } from '@/lib/link-deadline'
 import { paths } from '@/lib/paths'
 import { appShareUrl, LIVE_EXPIRES } from '@/lib/share'
 import { filePlaceOf } from '@/lib/storage/place'
@@ -55,6 +56,24 @@ function Box({ on, title, text, onToggle }: { on: boolean; title: string; text: 
   )
 }
 
+/** The row of deadlines (owner's choice A, 2026-11-24): the four side by side, one tap chooses. A copy has no Permanente. */
+export function DeadlinePicker({ value, onChange, disabled, withPermanent = true }: { value: LinkDeadline; onChange(value: LinkDeadline): void; disabled?: boolean; withPermanent?: boolean }) {
+  return (
+    <div className="field">
+      <span className="lab" id="share-deadline">
+        Prazo do link
+      </span>
+      <div className="seg share-deadline" role="radiogroup" aria-labelledby="share-deadline">
+        {DEADLINES.filter(option => withPermanent || option.id !== 'never').map(option => (
+          <button key={option.id} type="button" role="radio" aria-checked={value === option.id} className={value === option.id ? 'on' : ''} disabled={disabled} onClick={() => onChange(option.id)}>
+            {option.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 /** The link of the App: nothing goes through the share-worker, nothing is copied nor sent again; the link opens the item's page in the app. */
 export function LiveShareDialog({ target, id }: { target: ShareKind; id: string }) {
   const ui = useUiStore()
@@ -72,6 +91,8 @@ export function LiveShareDialog({ target, id }: { target: ShareKind; id: string 
   const [error, setError] = useState<string | null>(null)
   const [withExams, setWithExams] = useState(false)
   const [kinds, setKinds] = useState<ArtifactKind[]>(['mapa'])
+  // spec 007 (FR-032): Permanente comes chosen
+  const [deadline, setDeadline] = useState<LinkDeadline>('never')
   const entrada = target === 'entrada'
   const item = target === 'folder' ? folders.find(folder => folder.id === id) : files.find(file => file.id === id)
   const entry = entrada ? (files.find(file => file.id === id) ?? null) : null
@@ -80,7 +101,7 @@ export function LiveShareDialog({ target, id }: { target: ShareKind; id: string 
 
   const keep = (found: LiveLink) => {
     if (shares.some(share => share.id === found.id)) return Promise.resolve()
-    return saveShare({ id: found.id, kind: target, itemId: id, title: found.title || item?.name || '', bytes: 0, withExams: found.withExams, createdAt: found.createdAt, expiresAt: LIVE_EXPIRES, live: true })
+    return saveShare({ id: found.id, kind: target, itemId: id, title: found.title || item?.name || '', bytes: 0, withExams: found.withExams, createdAt: found.createdAt, expiresAt: found.expiresAt ?? LIVE_EXPIRES, live: true })
   }
 
   useEffect(() => {
@@ -107,7 +128,7 @@ export function LiveShareDialog({ target, id }: { target: ShareKind; id: string 
     setBusy(true)
     setError(null)
     try {
-      const found = await createLiveLink({ item: id, kind: target, withExams: entrada || withExams, artifacts: entrada ? ['mapa'] : kinds })
+      const found = await createLiveLink({ item: id, kind: target, withExams: entrada || withExams, artifacts: entrada ? ['mapa'] : kinds, expiresIn: deadline })
       await keep(found).catch(() => undefined)
       setLink(found)
       setMade(true)
@@ -135,7 +156,25 @@ export function LiveShareDialog({ target, id }: { target: ShareKind; id: string 
     }
   }
 
-  const url = link ? appShareUrl(link.id) : ''
+  // "Mudar prazo" (FR-033): on the same address, it counts from now and holds at once
+  const changeDeadline = async (next: LinkDeadline) => {
+    if (!link || next === (link.expiresIn ?? 'never')) return
+    setBusy(true)
+    setError(null)
+    try {
+      const changed = await changeLiveDeadline(link.id, next)
+      setLink(changed)
+      await saveShare({ id: changed.id, kind: target, itemId: id, title: changed.title || item?.name || '', bytes: 0, withExams: changed.withExams, createdAt: changed.createdAt, expiresAt: changed.expiresAt ?? LIVE_EXPIRES, live: true }).catch(() => undefined)
+      ui.toast('Prazo mudado')
+    } catch (failure) {
+      setError(apiMessage(failure))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  // the address people copy and agents read (spec 007, FR-038); a server of before gives none, and the app's own goes
+  const url = link ? (link.url ?? appShareUrl(link.id)) : ''
   const copy = async () => {
     await navigator.clipboard?.writeText(url).catch(() => undefined)
     ui.toast('Link copiado')
@@ -183,7 +222,7 @@ export function LiveShareDialog({ target, id }: { target: ShareKind; id: string 
           <>
             <p className="share-state">
               <b>{made ? 'Link criado' : 'Já compartilhado'}</b>
-              {`${made ? '' : ` em ${dateTime(link.createdAt, timeZone)}`}. Ao vivo: mostra sempre a versão de agora e não vence.`}
+              {`${made ? '' : ` em ${dateTime(link.createdAt, timeZone)}`} · ${deadlineText(link.expiresAt, Date.now(), timeZone)}. Ao vivo: mostra sempre a versão de agora.`}
             </p>
             <div className="field">
               <label htmlFor="share-link">Link público, só para leitura</label>
@@ -198,12 +237,14 @@ export function LiveShareDialog({ target, id }: { target: ShareKind; id: string 
             <span className="muted" style={{ fontSize: 13 }}>
               Quem abrir vê {WHAT[target]}. O que mudar aqui aparece no link sozinho.
             </span>
+            <DeadlinePicker value={link.expiresIn ?? 'never'} onChange={next => void changeDeadline(next)} disabled={busy} />
           </>
         ) : (
           <>
             <span className="muted" style={{ fontSize: 13 }}>
-              Quem tiver o link vê {WHAT[target]}. O que mudar aqui aparece no link sozinho. Abre sem entrar em conta e não vence.
+              Quem tiver o link vê {WHAT[target]}. O que mudar aqui aparece no link sozinho. Abre sem entrar em conta.
             </span>
+            <DeadlinePicker value={deadline} onChange={setDeadline} disabled={busy} />
             {mediaAway && (
               <div className="banner info" role="status">
                 <Icon name="warn" />

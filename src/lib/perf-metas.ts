@@ -1,0 +1,30 @@
+import type { OpId } from '@/lib/perf'
+
+/** The targets of each operation, in ms (spec 007, SC-001 and contracts/ui.md, "Lista de operações"); e2e/perf/run.mjs has the same list. */
+export const METAS: Partial<Record<OpId, number>> = {
+  'abrir-app-cache': 2000,
+  'abrir-app-novo': 10000,
+  entrar: 3000,
+  'tela-biblioteca': 500,
+  'tela-gravacoes': 500,
+  'tela-geracoes': 500,
+  'tela-idiomas': 500,
+  'tela-config': 500,
+  'tela-admin': 500,
+  'abrir-pasta': 500,
+  'abrir-nota-texto': 1000,
+  'abrir-nota-midia': 1000,
+  'abrir-nota-pdf': 1000,
+  digitar: 50,
+  'guardar-texto': 1000,
+  criar: 1000,
+  renomear: 1000,
+  mover: 1000,
+  apagar: 1000,
+  restaurar: 1000,
+  buscar: 1000,
+  'abrir-locais': 2000,
+  'tocar-midia': 3000,
+  'pular-minuto': 2000,
+  'mudanca-outro-aparelho': 10000,
+}

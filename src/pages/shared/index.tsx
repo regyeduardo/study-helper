@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
-import { useLocation } from 'react-router-dom'
+import { useLocation, useParams } from 'react-router-dom'
 
 import type { SharedItem } from '@/types/domain'
 import { Icon } from '@/components/ui/Icon'
+import { OpeningWait } from '@/components/ui/OpeningWait'
 import { fetchLiveContent } from '@/controllers/live-share.controller'
 import { fetchSharedItemController } from '@/controllers/share.controller'
 import type { ViewRoute } from '@/hooks/use-view-route'
@@ -15,10 +16,16 @@ export const sharedPoll = { ms: 5000 }
 
 type LoadState = { kind: 'loading' } | { kind: 'unavailable' } | { kind: 'ready'; item: SharedItem }
 
+/** Why the last link of each address did not open (spec 007): the page says it in words. */
+const refusals = new Map<string, string>()
+
 /** A link of the App first (read as it is now, spec 003, história 7); one the App does not know is a link of the share-worker, as before. */
 async function openLink(shareId: string): Promise<SharedItem | null> {
   const live = await fetchLiveContent(shareId)
-  if (live === 'gone') return null
+  if (live && 'gone' in live) {
+    refusals.set(shareId, live.gone)
+    return null
+  }
   if (live) return liveSharedItem(live).catch(() => null)
   return fetchSharedItemController(shareId)
 }
@@ -86,11 +93,18 @@ export function useSharedRoute(shareId: string): ViewRoute {
   return sharedRoute(state.item, pathname)
 }
 
+const REFUSALS: Record<string, { title: string; text: string }> = {
+  link_expired: { title: 'Este link venceu', text: 'Peça um link novo a quem compartilhou.' },
+  share_stopped: { title: 'Este item deixou de ser compartilhado', text: 'Quem compartilhou parou de compartilhar. Peça um link novo.' },
+  item_removed: { title: 'O item foi removido', text: 'Quem compartilhou tirou este item da biblioteca.' },
+}
+
 export function SharedStatus({ unavailable }: { unavailable: boolean }) {
+  const { shareId = '' } = useParams()
   if (!unavailable) {
     return (
-      <div className="empty" role="status">
-        Abrindo o compartilhamento…
+      <div className="empty">
+        <OpeningWait kind="abrir-link" what="Abrindo o compartilhamento" history="aberturas de link" />
       </div>
     )
   }
@@ -98,8 +112,8 @@ export function SharedStatus({ unavailable }: { unavailable: boolean }) {
     <div className="empty" role="alert">
       <Icon name="warn" />
       <div>
-        <b>Item indisponível</b>
-        <div className="muted">O link expirou ou quem compartilhou apagou.</div>
+        <b>{REFUSALS[refusals.get(shareId) ?? '']?.title ?? 'Item indisponível'}</b>
+        <div className="muted">{REFUSALS[refusals.get(shareId) ?? '']?.text ?? 'O link expirou ou quem compartilhou apagou.'}</div>
       </div>
     </div>
   )

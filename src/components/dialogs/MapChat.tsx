@@ -5,6 +5,7 @@ import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react'
 import type { MapArtifact, MapChatTurn } from '@/types/domain'
 import { noteText } from '@/components/dialogs/CardsDialog'
 import { ModelPick, useModelChoice } from '@/components/dialogs/ModelPick'
+import { OpeningWait } from '@/components/ui/OpeningWait'
 import { Icon } from '@/components/ui/Icon'
 import { aiConfigOf, modelByUid, targetFor } from '@/lib/ai/config'
 import { applyChange, askMap, clearHighlight, undo } from '@/lib/generation/map-chat'
@@ -158,7 +159,8 @@ export function MapChat({ fileId, map, layout, open, onToggle, onBusy, actions }
         )}
         {asking !== null && (
           <li className="from-ia map-thinking">
-            <Icon name="sync" className="spinning" /> pensando…
+            {/* spec 007 (FR-060): what happens, when it should end by the last answers, and that it did not freeze */}
+            <OpeningWait kind="conversa" what="Pensando na resposta" history="respostas" />
           </li>
         )}
       </ol>

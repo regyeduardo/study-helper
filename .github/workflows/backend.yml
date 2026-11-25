@@ -43,6 +43,12 @@ jobs:
       # includes the sign-in with Google against a fake Google, and with e-mail and password, and restoring yesterday's backup
       - name: Tests
         run: go test -race -count=1 ./...
+      # spec 007 (research R5): the nginx in front of the service, with gzip, still reads
+      - name: Nginx
+        working-directory: .
+        run: |
+          docker run --rm --memory 256m --cpus 1 --add-host api:127.0.0.1 -v "$PWD/deploy/nginx/https.conf":/etc/nginx/conf.d/https.conf:ro -v "$PWD/deploy/nginx/http.conf":/etc/nginx/conf.d/http.conf:ro nginx:1.29-alpine \
+            sh -c 'mkdir -p /etc/letsencrypt/live/api.study.ryns.me /var/www/certbot && apk add -q openssl >/dev/null && openssl req -x509 -newkey rsa:2048 -nodes -subj /CN=t -keyout /etc/letsencrypt/live/api.study.ryns.me/privkey.pem -out /etc/letsencrypt/live/api.study.ryns.me/fullchain.pem 2>/dev/null && nginx -t'
 
   image:
     needs: test

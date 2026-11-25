@@ -1,6 +1,7 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 
+import { comeca, termina } from '@/lib/perf'
 import { Icon, type IconName } from '@/components/ui/Icon'
 import { searchTextOf, useLiveLibrary, usePathName } from '@/hooks/use-library-view'
 import { useViewRoute } from '@/hooks/use-view-route'
@@ -72,6 +73,8 @@ export function CommandPalette() {
     ).filter(action => matches(action.title))
     return [...docs, ...places, ...actions]
   }, [query, files, folders, contents, openedAt, route, pathName])
+  // spec 007: the results of the last key are on screen
+  useEffect(() => termina('buscar'), [items])
 
   const run = (item: Item | undefined) => {
     if (!item) return
@@ -89,6 +92,8 @@ export function CommandPalette() {
           value={query}
           autoComplete="off"
           onChange={event => {
+            // spec 007: "buscar" is measured from the key to the results on screen
+            comeca('buscar')
             setQuery(event.target.value)
             setIndex(0)
           }}

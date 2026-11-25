@@ -95,3 +95,6 @@ a.ep-node-name:hover span{text-decoration:underline;text-underline-offset:3px}
   .ep-node-name{padding-block:8px}
   .ep-art{min-height:32px}
 }
+
+/* spec 007 (T042, research R7): a transcript of 1 hour (~600 turns) draws only the turns near the screen; the size is kept so the scroll does not jump */
+.tr-block{content-visibility:auto;contain-intrinsic-size:auto 64px}

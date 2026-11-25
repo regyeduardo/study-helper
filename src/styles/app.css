@@ -70,6 +70,8 @@ input,select,textarea{font:inherit;color:inherit}
 .btn.danger{color:var(--bad)}
 .btn.quiet{border-color:transparent;background:transparent;color:var(--fg-muted)}
 .btn.quiet:hover{color:var(--fg);background:var(--bg-hover)}
+/* a quiet button that destroys keeps the colour of danger (revisão de design da spec 007: "Apagar" em Liberar espaço) */
+.btn.quiet.danger,.btn.quiet.danger:hover{color:var(--bad)}
 .btn[disabled]{opacity:.45;pointer-events:none}
 .kbd{white-space:nowrap;font:500 11px/1 var(--mono);padding:3px 5px;border-radius:5px;border:1px solid var(--border);color:var(--fg-muted);background:var(--bg-subtle)}
 .tdot{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--fg-muted);white-space:nowrap}
@@ -917,6 +919,13 @@ body.floating-recorder .mini-rec.done{height:100vh;height:100dvh}
 .share-size .faint{font-size:12px}
 .share-size b{font-size:16px;font-weight:600;font-variant-numeric:tabular-nums}
 .share-copy{display:flex;gap:6px}
+/* spec 007 (história 4): the row of deadlines, the four side by side (owner's choice A); the same look as .seg with aria-pressed */
+.share-deadline{width:100%}
+.share-deadline button{flex:1;justify-content:center;min-height:36px}
+/* the deadline chosen reads at a glance, not only by a lighter grey: weight and a ring (revisão de design da spec 007) */
+.seg button[aria-checked="true"]{background:var(--bg-muted);color:var(--fg);font-weight:600;box-shadow:inset 0 0 0 1.5px var(--accent)}
+@media (pointer:coarse){.share-deadline button{min-height:44px}}
+
 .share-copy .input{min-width:0;flex:1}
 /* the link is read-only: a quieter field than the ones that take typing (the same tone as .ias) */
 .share-copy .input[readonly]{background:var(--bg-subtle)}

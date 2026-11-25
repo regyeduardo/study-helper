@@ -225,7 +225,9 @@ describe('diálogo de compartilhar', () => {
     fireEvent.click(share)
     const bar = await screen.findByRole('progressbar', { name: 'Enviando a mídia' })
     await waitFor(() => expect(bar).toHaveAttribute('aria-valuenow', '48'))
-    expect(screen.getByText('Enviando a mídia (Reunião.webm): 48%')).toBeInTheDocument()
+    // spec 007 (FR-060): what is happening and how much, in the WaitStatus
+    expect(screen.getByRole('progressbar', { name: 'Enviando a mídia' })).toBeInTheDocument()
+    expect(screen.getByText('48%')).toBeInTheDocument()
     release()
     await screen.findByDisplayValue(new RegExp(`/s/${id}$`))
     const puts = calls.filter(call => call.method === 'PUT')

@@ -2,8 +2,13 @@ const LOCAL_ORIGIN = /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/
 const GOOGLE_API_BASE = 'https://www.googleapis.com'
 const TURNSTILE_URL = 'https://challenges.cloudflare.com/turnstile/v0/siteverify'
 const SHARE_DAYS = 3
-const MEDIA_DAYS = 3
 const DAY_MS = 24 * 3600 * 1000
+
+/** How long a copy lasts (spec 007, história 4, FR-039): what the person chose, 1, 3 or 7 days; anything else, the 3 days of before. */
+export function shareDays(input) {
+  const days = Number(input?.days)
+  return [1, 3, 7].includes(days) ? days : SHARE_DAYS
+}
 const CAS_ATTEMPTS = 10
 const SHARED_PREFIX = 'shared/'
 const MEDIA_PREFIX = 'shared-media/'
@@ -26,7 +31,7 @@ const ARTIFACT_LABELS = { mapa: 'Mapa mental', cartoes: 'Cartões', tutor: 'Conv
 const TURN_LABELS = { você: 'Você', tutor: 'Tutor' }
 const NOTICES = {
   404: { title: 'Link não encontrado', text: 'Esse compartilhamento não existe ou já foi apagado.' },
-  410: { title: 'O link expirou', text: `Os links do Estudo valem ${SHARE_DAYS} dias. Peça um novo a quem compartilhou.` },
+  410: { title: 'O link expirou', text: 'Este link venceu. Peça um novo a quem compartilhou.' },
 }
 const RIGHT_ANSWERS = {
   unica: question => `${question.correta}) ${question.alternativas?.[question.correta] ?? ''}`,
@@ -266,8 +271,9 @@ async function createShare(request, env, headers) {
   const now = Date.now()
   const id = newShareId()
   const createdAt = new Date(now).toISOString()
-  const expiresAt = new Date(now + SHARE_DAYS * DAY_MS).toISOString()
-  const mediaExpiresAt = new Date(now + MEDIA_DAYS * DAY_MS).toISOString()
+  const days = shareDays(input)
+  const expiresAt = new Date(now + days * DAY_MS).toISOString()
+  const mediaExpiresAt = new Date(now + days * DAY_MS).toISOString()
   const objects = shareTree(share, id, createdAt, expiresAt, mediaExpiresAt, { pending: pendingMediaOf(input.media, share) })
   const bytes = objects.reduce((sum, object) => sum + bytesOf(object.body), 0)
   try {
@@ -352,8 +358,9 @@ async function updateShare(request, env, headers, id) {
   if (!share) return json({ error: 'text_only' }, 415, headers)
   const now = Date.now()
   const updatedAt = new Date(now).toISOString()
-  const expiresAt = new Date(now + SHARE_DAYS * DAY_MS).toISOString()
-  const mediaExpiresAt = new Date(now + MEDIA_DAYS * DAY_MS).toISOString()
+  const days = shareDays(input)
+  const expiresAt = new Date(now + days * DAY_MS).toISOString()
+  const mediaExpiresAt = new Date(now + days * DAY_MS).toISOString()
   let current = owned
   for (let attempt = 0; attempt < CAS_ATTEMPTS; attempt++) {
     const found = await mediaInLink(env.BUCKET, id, current.manifest)

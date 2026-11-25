@@ -79,6 +79,17 @@ describe('Canal ao vivo da hierarquia', () => {
     await waitFor(() => expect(FakeSocket.opened.at(-1)?.sent[0]).toMatch(/"type":"hello"/))
   })
 
+  it('spec 007 (T046): o canal se apresenta com o seq da biblioteca já aberta, e abrir não puxa tudo de novo', async () => {
+    // a conta já tem o que mostrar: com o seq 0 no "hello", o servidor responderia "map" e o app sincronizaria tudo logo depois de abrir
+    const other = new HierarchyRepository(account, new MapCache(`${account}-antes`))
+    await other.load()
+    await other.saveFolder(newFolderMeta({ name: 'Pasta de antes' }))
+    expect(server.seq).toBeGreaterThan(0)
+    await library().connect(account, token)
+    await waitFor(() => expect(FakeSocket.opened.at(-1)?.sent[0]).toMatch(/"type":"hello"/))
+    expect(JSON.parse(FakeSocket.opened.at(-1)!.sent[0]).seq).toBe(server.seq)
+  })
+
   it('outro aparelho cria uma pasta: o aviso do servidor traz a pasta para esta biblioteca', async () => {
     await library().connect(account, token)
     await waitFor(() => expect(FakeSocket.opened.length).toBeGreaterThan(0))

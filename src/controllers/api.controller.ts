@@ -53,6 +53,9 @@ export interface AdminAccount {
   code: string | null
   seenAt: string | null
   space: { notes: number; media: number; limit: number }
+  /** Spec 007 (FR-055): the jobs of generating now and ended in the last 30 days, and the use of the app's AI in the last 30 days. */
+  jobs?: { running: number; queued: number; done: number; failed: number }
+  ai?: { calls: number; inputTokens: number; outputTokens: number }
 }
 
 /** A refusal of the backend: the code and its data; the app writes the sentence (`apiMessage`). */
@@ -84,6 +87,9 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   }
   return answer as T
 }
+
+/** A call to the API with the session (spec 007: the jobs of the account use it too). */
+export const apiCall = <T>(method: string, path: string, body?: unknown): Promise<T> => request<T>(method, path, body)
 
 /** Who is signed in; null when nobody is. */
 export async function getMe(): Promise<ServerMe | null> {

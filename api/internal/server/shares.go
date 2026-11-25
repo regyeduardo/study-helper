@@ -1,12 +1,14 @@
 package server
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
 	"strings"
+	"time"
 )
 
 // The live link of who uses the app structure (spec 003, história 7, FR-034 to FR-036, FR-063; contracts/api-compartilhar.md):
@@ -35,16 +37,26 @@ type sharedLink struct {
 	Artifacts []string
 	CreatedAt string
 	Stopped   bool
+	// spec 007 (história 4): nil = Permanente; UpdatedAt is when the deadline was last chosen
+	ExpiresAt *string
+	UpdatedAt string
 }
 
-const linkColumns = `id, user_id, item_id, item_kind, with_exams, artifacts, created_at, stopped_at IS NOT NULL`
+const linkColumns = `id, user_id, item_id, item_kind, with_exams, artifacts, created_at, stopped_at IS NOT NULL, expires_at, updated_at`
+
+// linkDeadlines are the deadlines a link may have (spec 007, FR-032): 1, 3 or 7 days, or Permanente.
+var linkDeadlines = map[string]time.Duration{"1d": 24 * time.Hour, "3d": 3 * 24 * time.Hour, "7d": 7 * 24 * time.Hour, "never": 0}
 
 func scanLink(row scanner) (*sharedLink, error) {
 	var link sharedLink
 	var withExams int
 	var artifacts string
-	if err := row.Scan(&link.ID, &link.UserID, &link.ItemID, &link.ItemKind, &withExams, &artifacts, &link.CreatedAt, &link.Stopped); err != nil {
+	var expires sql.NullString
+	if err := row.Scan(&link.ID, &link.UserID, &link.ItemID, &link.ItemKind, &withExams, &artifacts, &link.CreatedAt, &link.Stopped, &expires, &link.UpdatedAt); err != nil {
 		return nil, err
+	}
+	if expires.Valid {
+		link.ExpiresAt = &expires.String
 	}
 	link.WithExams = withExams == 1
 	_ = json.Unmarshal([]byte(artifacts), &link.Artifacts)
@@ -74,17 +86,70 @@ func kindOf(itemKind string, root *libraryRow) string {
 	return "file"
 }
 
-func linkOut(link *sharedLink, kind, title string) map[string]any {
+func (srv *Server) linkOut(link *sharedLink, kind, title string) map[string]any {
 	artifacts := link.Artifacts
 	if artifacts == nil {
 		artifacts = []string{}
 	}
-	return map[string]any{"id": link.ID, "itemId": link.ItemID, "kind": kind, "title": title, "live": true, "withExams": link.WithExams, "artifacts": artifacts, "createdAt": link.CreatedAt}
+	return map[string]any{"id": link.ID, "itemId": link.ItemID, "kind": kind, "title": title, "live": true, "withExams": link.WithExams, "artifacts": artifacts, "createdAt": link.CreatedAt,
+		"updatedAt": link.UpdatedAt, "expiresIn": deadlineOf(link), "expiresAt": link.ExpiresAt, "expired": srv.expired(link), "url": strings.TrimRight(srv.cfg.PublicURL, "/") + "/s/" + link.ID}
+}
+
+// deadlineOf is the deadline chosen: the time from when it was chosen to when it ends, in days.
+func deadlineOf(link *sharedLink) string {
+	if link.ExpiresAt == nil {
+		return "never"
+	}
+	end, err1 := time.Parse(time.RFC3339, *link.ExpiresAt)
+	from, err2 := time.Parse(time.RFC3339, link.UpdatedAt)
+	if err1 != nil || err2 != nil {
+		return "1d"
+	}
+	switch days := int(end.Sub(from).Round(time.Hour).Hours() / 24); {
+	case days >= 7:
+		return "7d"
+	case days >= 3:
+		return "3d"
+	default:
+		return "1d"
+	}
+}
+
+func (srv *Server) expired(link *sharedLink) bool {
+	if link.ExpiresAt == nil {
+		return false
+	}
+	end, err := time.Parse(time.RFC3339, *link.ExpiresAt)
+	return err == nil && !end.After(srv.now())
+}
+
+// expiryFrom is when a deadline chosen now ends (nil: Permanente); false when it is not one of the four.
+func (srv *Server) expiryFrom(deadline string) (any, bool) {
+	if deadline == "" {
+		deadline = "never"
+	}
+	span, ok := linkDeadlines[deadline]
+	if !ok {
+		return nil, false
+	}
+	if span == 0 {
+		return nil, true
+	}
+	return ts(srv.now().Add(span)), true
+}
+
+func (srv *Server) notifyShare(userID string, link *sharedLink) {
+	srv.live.send(userID, map[string]any{"type": "share", "id": link.ID, "expiresAt": link.ExpiresAt, "expired": srv.expired(link), "stopped": link.Stopped})
 }
 
 // itemLink: the live link of an item that is still on, from any device of the person (FR-035).
 func (srv *Server) itemLink(w http.ResponseWriter, r *http.Request, s *Session) {
 	item := r.URL.Query().Get("item")
+	// without an item: every link of the person, with its deadline, the expired ones last (spec 007, FR-041)
+	if item == "" {
+		srv.allLinks(w, s)
+		return
+	}
 	link, err := scanLink(srv.db.QueryRow(`SELECT `+linkColumns+` FROM shared_links WHERE user_id = ? AND item_id = ? AND live = 1 AND stopped_at IS NULL ORDER BY created_at DESC LIMIT 1`, s.User.ID, item))
 	if errors.Is(err, sql.ErrNoRows) {
 		fail(w, http.StatusNotFound, "no_link", nil)
@@ -99,7 +164,7 @@ func (srv *Server) itemLink(w http.ResponseWriter, r *http.Request, s *Session) 
 	if root != nil {
 		title = root.Name
 	}
-	writeJSON(w, http.StatusOK, linkOut(link, kindOf(link.ItemKind, root), title))
+	writeJSON(w, http.StatusOK, srv.linkOut(link, kindOf(link.ItemKind, root), title))
 }
 
 // createLink: the link of an item kept in the App, made in an instant; sharing it again gives the same link while it is on.
@@ -109,9 +174,15 @@ func (srv *Server) createLink(w http.ResponseWriter, r *http.Request, s *Session
 		Kind      string   `json:"kind"`
 		WithExams bool     `json:"withExams"`
 		Artifacts []string `json:"artifacts"`
+		ExpiresIn string   `json:"expiresIn"`
 	}
 	if !readJSON(r, &body) || (body.Kind != "entrada" && body.Kind != "file" && body.Kind != "folder") {
 		fail(w, http.StatusBadRequest, "invalid_body", nil)
+		return
+	}
+	expiresAt, ok := srv.expiryFrom(body.ExpiresIn)
+	if !ok {
+		fail(w, http.StatusBadRequest, "invalid_expires", nil)
 		return
 	}
 	root, err := findRow(srv.db, s.User.ID, body.Item)
@@ -134,7 +205,7 @@ func (srv *Server) createLink(w http.ResponseWriter, r *http.Request, s *Session
 	kind := kindOf(root.ItemKind, root)
 	link, err := scanLink(srv.db.QueryRow(`SELECT `+linkColumns+` FROM shared_links WHERE user_id = ? AND item_id = ? AND live = 1 AND stopped_at IS NULL ORDER BY created_at DESC LIMIT 1`, s.User.ID, root.ID))
 	if err == nil {
-		writeJSON(w, http.StatusOK, linkOut(link, kind, root.Name))
+		writeJSON(w, http.StatusOK, srv.linkOut(link, kind, root.Name))
 		return
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
@@ -153,13 +224,17 @@ func (srv *Server) createLink(w http.ResponseWriter, r *http.Request, s *Session
 	}
 	chosen, _ := json.Marshal(artifacts)
 	now := ts(srv.now())
-	link = &sharedLink{ID: newID(), UserID: s.User.ID, ItemID: root.ID, ItemKind: root.ItemKind, WithExams: withExams, Artifacts: artifacts, CreatedAt: now}
-	if _, err := srv.db.Exec(`INSERT INTO shared_links (id, user_id, item_id, item_kind, title, live, with_exams, artifacts, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?)`,
-		link.ID, s.User.ID, root.ID, root.ItemKind, root.Name, boolInt(withExams), string(chosen), now, now); err != nil {
+	link = &sharedLink{ID: newID(), UserID: s.User.ID, ItemID: root.ID, ItemKind: root.ItemKind, WithExams: withExams, Artifacts: artifacts, CreatedAt: now, UpdatedAt: now}
+	if value, ok := expiresAt.(string); ok {
+		link.ExpiresAt = &value
+	}
+	if _, err := srv.db.Exec(`INSERT INTO shared_links (id, user_id, item_id, item_kind, title, live, with_exams, artifacts, expires_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)`,
+		link.ID, s.User.ID, root.ID, root.ItemKind, root.Name, boolInt(withExams), string(chosen), expiresAt, now, now); err != nil {
 		fail(w, http.StatusInternalServerError, "internal_error", nil)
 		return
 	}
-	writeJSON(w, http.StatusCreated, linkOut(link, kind, root.Name))
+	srv.notifyShare(s.User.ID, link)
+	writeJSON(w, http.StatusCreated, srv.linkOut(link, kind, root.Name))
 }
 
 // stopLink: "Parar de compartilhar" (FR-063); the link then says the item stopped being shared.
@@ -174,7 +249,97 @@ func (srv *Server) stopLink(w http.ResponseWriter, r *http.Request, s *Session) 
 		fail(w, http.StatusNotFound, "not_found", nil)
 		return
 	}
+	srv.live.send(s.User.ID, map[string]any{"type": "share", "id": r.PathValue("id"), "stopped": true})
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// patchLink: "Mudar prazo" (spec 007, FR-033), counting from now, on the same address; an expired link opens again.
+func (srv *Server) patchLink(w http.ResponseWriter, r *http.Request, s *Session) {
+	var body struct {
+		ExpiresIn string `json:"expiresIn"`
+	}
+	if !readJSON(r, &body) {
+		fail(w, http.StatusBadRequest, "invalid_body", nil)
+		return
+	}
+	expiresAt, ok := srv.expiryFrom(body.ExpiresIn)
+	if !ok || body.ExpiresIn == "" {
+		fail(w, http.StatusBadRequest, "invalid_expires", nil)
+		return
+	}
+	link, err := scanLink(srv.db.QueryRow(`SELECT `+linkColumns+` FROM shared_links WHERE id = ? AND user_id = ? AND live = 1`, r.PathValue("id"), s.User.ID))
+	if errors.Is(err, sql.ErrNoRows) {
+		fail(w, http.StatusNotFound, "not_found", nil)
+		return
+	}
+	if err != nil {
+		fail(w, http.StatusInternalServerError, "internal_error", nil)
+		return
+	}
+	if link.Stopped {
+		fail(w, http.StatusConflict, "stopped", nil)
+		return
+	}
+	now := ts(srv.now())
+	if _, err := srv.db.Exec(`UPDATE shared_links SET expires_at = ?, updated_at = ? WHERE id = ?`, expiresAt, now, link.ID); err != nil {
+		fail(w, http.StatusInternalServerError, "internal_error", nil)
+		return
+	}
+	link.UpdatedAt, link.ExpiresAt = now, nil
+	if value, ok := expiresAt.(string); ok {
+		link.ExpiresAt = &value
+	}
+	srv.notifyShare(s.User.ID, link)
+	root, _ := findRow(srv.db, s.User.ID, link.ItemID)
+	title := ""
+	if root != nil {
+		title = root.Name
+	}
+	writeJSON(w, http.StatusOK, srv.linkOut(link, kindOf(link.ItemKind, root), title))
+}
+
+// allLinks: every link of the person (not the stopped ones), the ones still on first, the newest first.
+func (srv *Server) allLinks(w http.ResponseWriter, s *Session) {
+	rows, err := srv.db.Query(`SELECT `+linkColumns+`, title FROM shared_links WHERE user_id = ? AND live = 1 AND stopped_at IS NULL ORDER BY created_at DESC`, s.User.ID)
+	if err != nil {
+		fail(w, http.StatusInternalServerError, "internal_error", nil)
+		return
+	}
+	type entry struct {
+		link  *sharedLink
+		title string
+	}
+	var on, off []entry
+	for rows.Next() {
+		var link sharedLink
+		var withExams int
+		var artifacts, title string
+		var expires sql.NullString
+		if rows.Scan(&link.ID, &link.UserID, &link.ItemID, &link.ItemKind, &withExams, &artifacts, &link.CreatedAt, &link.Stopped, &expires, &link.UpdatedAt, &title) != nil {
+			continue
+		}
+		link.WithExams = withExams == 1
+		_ = json.Unmarshal([]byte(artifacts), &link.Artifacts)
+		if expires.Valid {
+			link.ExpiresAt = &expires.String
+		}
+		if srv.expired(&link) {
+			off = append(off, entry{&link, title})
+		} else {
+			on = append(on, entry{&link, title})
+		}
+	}
+	rows.Close()
+	out := []map[string]any{}
+	for _, item := range append(on, off...) {
+		root, _ := findRow(srv.db, s.User.ID, item.link.ItemID)
+		title := item.title
+		if root != nil {
+			title = root.Name
+		}
+		out = append(out, srv.linkOut(item.link, kindOf(item.link.ItemKind, root), title))
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"links": out})
 }
 
 // openLink is the link that is still on, or the refusal to answer.
@@ -187,6 +352,9 @@ func (srv *Server) openLink(w http.ResponseWriter, id string) *sharedLink {
 		fail(w, http.StatusInternalServerError, "internal_error", nil)
 	case link.Stopped:
 		fail(w, http.StatusGone, "share_stopped", nil)
+	case srv.expired(link):
+		// spec 007 (FR-035): an expired link shows nothing of the item, to people nor to agents, the media included
+		fail(w, http.StatusGone, "link_expired", nil)
 	default:
 		return link
 	}
@@ -392,10 +560,20 @@ func (srv *Server) sharedContent(w http.ResponseWriter, r *http.Request, _ *Sess
 	if link == nil {
 		return
 	}
-	root, folders, files, err := srv.family(link)
+	body, err := srv.sharedBody(r.Context(), link)
 	if err != nil {
 		srv.familyRefusal(w, err)
 		return
+	}
+	writeJSON(w, http.StatusOK, body)
+}
+
+// sharedBody is the content of a link as it is now: the link, its owner, its folders and notes with their parts and media (spec 007: the
+// JSON, the Markdown and the page for agents are made of it).
+func (srv *Server) sharedBody(ctx context.Context, link *sharedLink) (map[string]any, error) {
+	root, folders, files, err := srv.family(link)
+	if err != nil {
+		return nil, err
 	}
 	var owner sql.NullString
 	_ = srv.db.QueryRow(`SELECT name FROM user WHERE id = ?`, link.UserID).Scan(&owner)
@@ -411,7 +589,7 @@ func (srv *Server) sharedContent(w http.ResponseWriter, r *http.Request, _ *Sess
 	for _, file := range files {
 		parts := map[string]string{}
 		for part, version := range file.Parts {
-			reader, _, err := srv.cfg.Blobs.Get(r.Context(), partKey(link.UserID, file.ID, part, version), nil)
+			reader, _, err := srv.cfg.Blobs.Get(ctx, partKey(link.UserID, file.ID, part, version), nil)
 			if err != nil {
 				continue
 			}
@@ -434,11 +612,11 @@ func (srv *Server) sharedContent(w http.ResponseWriter, r *http.Request, _ *Sess
 		}
 		outFiles = append(outFiles, out)
 	}
-	body := linkOut(link, kindOf(link.ItemKind, root), root.Name)
+	body := srv.linkOut(link, kindOf(link.ItemKind, root), root.Name)
 	body["owner"] = map[string]any{"name": owner.String}
 	body["folders"] = outFolders
 	body["files"] = outFiles
-	writeJSON(w, http.StatusOK, body)
+	return body, nil
 }
 
 // sharedMedia: the media of a note of the link, streamed from the App in parts, without a session; nothing is copied (FR-034).

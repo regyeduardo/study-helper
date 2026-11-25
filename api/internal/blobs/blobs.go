@@ -31,6 +31,12 @@ type Part struct {
 	ETag string
 }
 
+// Object is a stored object as a listing gives it (spec 007, história 5: the check of the space).
+type Object struct {
+	Key  string
+	Size int64
+}
+
 // Store is the storage the server needs.
 type Store interface {
 	Put(ctx context.Context, key string, body []byte, contentType string, meta map[string]string) error
@@ -42,4 +48,6 @@ type Store interface {
 	UploadPart(ctx context.Context, key, uploadID string, n int, body []byte) (string, error)
 	CompleteMultipart(ctx context.Context, key, uploadID string, parts []Part) error
 	AbortMultipart(ctx context.Context, key, uploadID string) error
+	// List gives every object under a prefix, with its size, in key order.
+	List(ctx context.Context, prefix string) ([]Object, error)
 }

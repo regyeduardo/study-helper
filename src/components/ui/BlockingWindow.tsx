@@ -2,7 +2,8 @@ import { Fragment, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 
 import { Icon } from '@/components/ui/Icon'
-import { timeLeft, useBlockingStore } from '@/stores/blocking'
+import { agoShort, clockOf, durationShort } from '@/lib/wait'
+import { BLOCKING_NORMAL_MS, endsAt, useBlockingStore } from '@/stores/blocking'
 import { useSyncStore } from '@/stores/sync'
 import { formatBytes } from '@/utils/format'
 
@@ -106,7 +107,11 @@ export function BlockingWindow() {
   const count = top.total ? `${(top.done ?? 0).toLocaleString('pt-BR')} de ${top.total.toLocaleString('pt-BR')}` : null
   const size = byBytes ? `${formatBytes(top.doneBytes ?? 0)} de ${formatBytes(top.totalBytes!)}` : null
   // each piece stays whole: on a narrow phone the line breaks after a "·", never inside "1,1 GB de 3,2 GB"
-  const parts = [count, size, timeLeft(top, now)].filter((part): part is string => Boolean(part))
+  // spec 007 (FR-060): when it should end, as a clock time, and that it did not freeze
+  const end = endsAt(top, now)
+  const parts = [count, size, end ? `deve terminar por volta de ${clockOf(end)}` : null].filter((part): part is string => Boolean(part))
+  const movedAt = top.movedAt ?? top.startedAt
+  const stalled = now - movedAt > 2 * BLOCKING_NORMAL_MS
   const described = top.failure ? 'blk-reason' : [top.phase && 'blk-phase', top.cancelling && 'blk-note'].filter(Boolean).join(' ') || undefined
 
   return createPortal(
@@ -160,7 +165,7 @@ export function BlockingWindow() {
                 >
                   <i style={{ '--p': determinate ? percent / 100 : 1 } as React.CSSProperties} />
                 </div>
-                {(parts.length > 0 || top.current) && (
+                {(parts.length > 0 || top.current || now - top.startedAt >= 2000) && (
                   <div className="blk-meta">
                     {parts.length > 0 && (
                       <p className="blk-count">
@@ -177,7 +182,14 @@ export function BlockingWindow() {
                         {top.current}
                       </p>
                     )}
+                    {!stalled && now - top.startedAt >= 2000 && <p className="blk-alive">{`sem travar: ${movedAt > top.startedAt ? 'última parte' : 'começou'} ${agoShort(now - movedAt)}`}</p>}
                   </div>
+                )}
+                {stalled && (
+                  <p className="blk-stalled" role="alert">
+                    <Icon name="warn" />
+                    <span>{`Nada andou desde ${clockOf(movedAt)}. Normal para esta etapa é até ${durationShort(BLOCKING_NORMAL_MS)}.${top.cancellable ? ' Você pode esperar ou cancelar.' : ' Você pode esperar.'}`}</span>
+                  </p>
                 )}
               </div>
               {waiting && (

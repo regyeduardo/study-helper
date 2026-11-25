@@ -14,11 +14,11 @@ const (
 // me is who is signed in, whether a promo code is required, this device and the space.
 func (srv *Server) me(w http.ResponseWriter, _ *http.Request, s *Session) {
 	required := "1"
-	_ = srv.db.QueryRow(`SELECT value FROM app_settings WHERE key = 'require_code'`).Scan(&required)
+	_ = srv.read.QueryRow(`SELECT value FROM app_settings WHERE key = 'require_code'`).Scan(&required)
 	user := s.User
 	// spec 005: when the hierarchy was taken to the account (null = still the way of before)
 	var hierarchyAt sql.NullString
-	_ = srv.db.QueryRow(`SELECT hierarchy_at FROM user WHERE id = ?`, user.ID).Scan(&hierarchyAt)
+	_ = srv.read.QueryRow(`SELECT hierarchy_at FROM user WHERE id = ?`, user.ID).Scan(&hierarchyAt)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"user": map[string]any{
 			"id": user.ID, "email": user.Email, "name": nullable(user.Name.String, user.Name.Valid), "photoUrl": nullable(user.PhotoURL.String, user.PhotoURL.Valid),

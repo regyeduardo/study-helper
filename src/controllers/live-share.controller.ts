@@ -17,7 +17,17 @@ export interface LiveLink {
   withExams: boolean
   artifacts: ArtifactKind[]
   createdAt: string
+  /** spec 007 (história 4): the deadline chosen; `expiresAt` null = Permanente */
+  expiresIn?: LinkDeadline
+  expiresAt?: string | null
+  expired?: boolean
+  /** The address people copy and agents read (api…/s/<id>) */
+  url?: string
+  updatedAt?: string
 }
+
+/** The deadlines of a link (spec 007, FR-032): 1, 3 or 7 days, or Permanente. */
+export type LinkDeadline = '1d' | '3d' | '7d' | 'never'
 
 /** A note of the link as the App answers it: the row of the map and the parts that go in the link, already without what stays home. */
 export interface LiveRow {
@@ -58,8 +68,18 @@ export async function itemLiveLink(itemId: string): Promise<LiveLink | null> {
   }
 }
 
-export async function createLiveLink(request: { item: string; kind: ShareKind; withExams: boolean; artifacts: ArtifactKind[] }): Promise<LiveLink> {
+export async function createLiveLink(request: { item: string; kind: ShareKind; withExams: boolean; artifacts: ArtifactKind[]; expiresIn?: LinkDeadline }): Promise<LiveLink> {
   return (await (await send('POST', '/v1/shares', { json: request })).json()) as LiveLink
+}
+
+/** "Mudar prazo" (spec 007, FR-033): counting from now, on the same address; an expired link opens again. */
+export async function changeLiveDeadline(id: string, expiresIn: LinkDeadline): Promise<LiveLink> {
+  return (await (await send('PATCH', `/v1/shares/${encodeURIComponent(id)}`, { json: { expiresIn } })).json()) as LiveLink
+}
+
+/** Every link of the person, with its deadline, the expired ones last (spec 007, FR-041). */
+export async function myLiveLinks(): Promise<LiveLink[]> {
+  return ((await (await send('GET', '/v1/shares')).json()) as { links: LiveLink[] }).links
 }
 
 /** "Parar de compartilhar" (FR-063): the link then says the item stopped being shared. */
@@ -71,11 +91,16 @@ export function liveMediaUrl(shareId: string, fileId: string): string {
   return `${env.apiUrl}/v1/shared/${encodeURIComponent(shareId)}/media/${encodeURIComponent(fileId)}`
 }
 
-/** The link read from the App, without a session; 'gone' when it was stopped or the item left; null when the App does not know it (a link of the share-worker). */
-export async function fetchLiveContent(id: string): Promise<LiveContent | 'gone' | null> {
+/** Why a link of the App does not open (spec 007): expired, stopped, the item removed or out of the App. */
+export interface LiveRefusal {
+  gone: string
+}
+
+/** The link read from the App, without a session; `{ gone }` with the reason when it expired, was stopped or the item left; null when the App does not know it (a link of the share-worker). */
+export async function fetchLiveContent(id: string): Promise<LiveContent | LiveRefusal | null> {
   try {
     const response = await fetch(`${env.apiUrl}/v1/shared/${encodeURIComponent(id)}`)
-    if (response.status === 410) return 'gone'
+    if (response.status === 410) return { gone: String(((await response.json().catch(() => ({}))) as { error?: string }).error ?? 'gone') }
     if (!response.ok) return null
     return (await response.json()) as LiveContent
   } catch {

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 
 import type { Settings } from '@/types/domain'
+import { AccountSpace } from '@/components/dialogs/AccountSpace'
 import { AiSettings } from '@/components/dialogs/AiSettings'
 import { AppStructureSection, useStructureOn } from '@/components/dialogs/AppStructure'
 import { IntegrationStatus } from '@/components/dialogs/IntegrationStatus'
@@ -83,10 +84,14 @@ function StorageTab({ focusId }: { focusId?: string }) {
   const [draft, setDraft] = useState(limit ?? DEFAULT_STORAGE_LIMIT_BYTES)
   useEffect(() => void refreshUsage(), [refreshUsage])
   const percent = usage && limit ? Math.min(100, (usage.appBytes / limit) * 100) : 0
+  // spec 007 (história 5): with the structure on, the space of the account in the App comes first
+  const appOn = useLibraryStore(state => state.appOn)
   return (
     <>
+      {appOn && <AccountSpace onMove={id => useUiStore.getState().open({ kind: 'settings', tab: 'storage', focusId: id })} />}
       <div className="field">
-        <span className="lab">Uso do app</span>
+        {/* with the App's space above, these two are about the app's files in the Google Drive (revisão de design da spec 007) */}
+        <span className="lab">{appOn ? 'Arquivos do app no Google Drive' : 'Uso do app'}</span>
         <div className="usebar">
           <i style={{ width: `${Math.max(percent, 1.2)}%`, background: 'var(--acc1)' }} />
         </div>
@@ -95,7 +100,9 @@ function StorageTab({ focusId }: { focusId?: string }) {
         </span>
       </div>
       <div className="field">
-        <label htmlFor="lim">Limite do app: {formatBytes(draft)}</label>
+        <label htmlFor="lim">
+          {appOn ? 'Limite no Google Drive' : 'Limite do app'}: {formatBytes(draft)}
+        </label>
         <input type="range" id="lim" min={256 * MB} max={10240 * MB} step={256 * MB} value={draft} onChange={event => setDraft(Number(event.target.value))} onMouseUp={() => void updateSettings({ storageLimitBytes: draft })} onKeyUp={() => void updateSettings({ storageLimitBytes: draft })} />
         <span className="faint" style={{ fontSize: 12 }}>
           O app confere antes de cada gravação e bloqueia o que passar do limite, dizendo quanto falta.

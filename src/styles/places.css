@@ -88,3 +88,6 @@
   .pl-banner{flex-wrap:wrap}
   .pl-banner>.btn{height:36px}
 }
+
+/* spec 007 (T042, research R7): a long hierarchy draws only the rows near the screen; the size is kept so the scroll does not jump */
+.pl-row{content-visibility:auto;contain-intrinsic-size:auto 40px}

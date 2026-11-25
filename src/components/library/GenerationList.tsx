@@ -2,6 +2,7 @@
 import type { CSSProperties } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 
+import { WaitStatus } from '@/components/ui/WaitStatus'
 import { Icon } from '@/components/ui/Icon'
 import { useIsNarrow } from '@/hooks/use-is-narrow'
 import { paths } from '@/lib/paths'
@@ -33,7 +34,16 @@ const BY_PREFIX: Record<string, string> = {
   'Guardar a mídia': 'Mídia',
   Mapa: 'Mapa',
   Cartões: 'Cartões',
+  // the jobs of the account (spec 007, `routeOf`): "Etiquetas · Nota"
+  Etiquetas: 'Etiquetas',
+  Transcrição: 'Transcrição',
+  'Refazendo a transcrição': 'Transcrição',
+  'Mapa ou cartões': 'Mapa ou cartões',
+  'Aulas do curso': 'Curso',
 }
+
+/** "Gerando · Nota" does not say what: the note's type says it, as before. */
+const SAYS_NOTHING = new Set(['Gerando', 'Gerando de novo'])
 
 const BY_TYPE: Partial<Record<FileType, string>> = { class: 'Aula', explanation: 'Explicação', meeting: 'Ata', reading: 'Leitura' }
 
@@ -41,11 +51,14 @@ const BY_KIND: Record<Generation['kind'], string> = { generation: 'Nota', transc
 
 /** What is being made, and the name of the note when the note itself is not at hand. */
 function describe(item: Generation, file: FileMeta | undefined): { what: string; note: string } {
-  const at = item.title.indexOf(': ')
+  // "Ata: Reunião" on this device, "Etiquetas · Reunião" from the account
+  // the first separator wins: the note's own name may have the other one ("Etiquetas · Explicação: Nota")
+  const [at, size] =
+    [[item.title.indexOf(': '), 2] as const, [item.title.indexOf(' · '), 3] as const].filter(([index]) => index > 0).sort((a, b) => a[0] - b[0])[0] ?? ([-1, 0] as const)
   const prefix = at > 0 ? item.title.slice(0, at) : ''
-  if (BY_PREFIX[prefix]) return { what: BY_PREFIX[prefix], note: item.title.slice(at + 2) }
+  if (BY_PREFIX[prefix]) return { what: BY_PREFIX[prefix], note: item.title.slice(at + size) }
   const byType = item.kind === 'generation' && file ? BY_TYPE[file.type] : undefined
-  return { what: byType ?? BY_KIND[item.kind], note: item.title }
+  return { what: byType ?? BY_KIND[item.kind], note: SAYS_NOTHING.has(prefix) ? item.title.slice(at + size) : item.title }
 }
 
 const newestFirst = (state: GenerationState) => (a: Generation, b: Generation) => (state === 'running' ? b.startedAt - a.startedAt : (b.endedAt ?? 0) - (a.endedAt ?? 0))
@@ -62,6 +75,8 @@ function Status({ item }: { item: Generation }) {
   const timeZone = useLibraryStore(state => state.index.settings.timezone)
   if (item.state === 'failed') return <span className="gen-reason">{item.error || item.message}</span>
   if (item.state === 'ready') return <span className="gen-when">{when(item.endedAt ?? item.startedAt, timeZone)}</span>
+  // spec 007 (FR-060): what happens, how much, when it ends and that it did not freeze, the same as every wait of the app
+  if (item.wait) return <WaitStatus wait={item.wait} />
   const percent = item.fraction === null ? null : Math.round(item.fraction * 100)
   return (
     <div className="gen-progress">

@@ -1,6 +1,6 @@
 import { ApiError } from '@/controllers/api.controller'
 import { completeUpload, putUploadPart, startUpload } from '@/controllers/library-api.controller'
-import { StorageLimitError } from '@/lib/storage/repository'
+import { AppSpaceFullError } from '@/lib/storage/repository'
 
 /**
  * Sending a file or media to the App (spec 003, FR-019, FR-044): in parts of the size the server says (10 MiB), so a dropped
@@ -63,9 +63,11 @@ export async function uploadMedia(job: { item: string; media: string; file: Blob
   try {
     start = await startUpload({ item: job.item, media: job.media, name: job.name, mime, bytes: totalBytes })
   } catch (error) {
-    if (error instanceof ApiError && error.code === 'no_space') throw new StorageLimitError(totalBytes, Number(error.data.missing) || totalBytes)
+    if (error instanceof ApiError && error.code === 'no_space') throw new AppSpaceFullError(totalBytes, Number(error.data.missing) || totalBytes)
     throw error
   }
+  // spec 007 (FR-051): from 9 GB, sending to the App says how much is left
+  void warnNearLimit()
   const size = start.partSize
   const count = Math.max(1, Math.ceil(totalBytes / size))
   const done = new Set(start.parts.map(part => part.n))
@@ -173,5 +175,19 @@ export class UploadQueue {
       this.drop(job)
       throw error
     }
+  }
+}
+
+/** "O App está quase cheio: faltam …", once per sending, when the account passed 9 GB (spec 007, FR-051). */
+export async function warnNearLimit(): Promise<void> {
+  try {
+    const { getSpace } = await import('@/controllers/space.controller')
+    const space = await getSpace()
+    if (space.used < space.warnAt) return
+    const { useUiStore } = await import('@/stores/ui')
+    const { formatBytes } = await import('@/utils/format')
+    useUiStore.getState().toast(space.free > 0 ? `O App da sua conta está quase cheio: faltam ${formatBytes(space.free)}.` : 'O App da sua conta está cheio.')
+  } catch {
+    // the warning never stops the sending
   }
 }

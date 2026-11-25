@@ -1,3 +1,4 @@
+import { useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 
 import type { FileMeta, FolderMeta } from '@/types/domain'
@@ -59,86 +60,91 @@ export async function moveItems(blocker: Blocker, fileIds: string[], folderIds: 
 
 export function useFileActions() {
   const navigate = useNavigate()
-  const ui = useUiStore()
-  const library = useLibraryStore()
-  const jobs = useJobsStore()
+  // the same object between draws: the rows of a list are memoized on it
+  return useMemo(() => {
+    // spec 007 (research R7): every row of a list uses these actions; reading the stores at the click, instead of subscribing to them,
+    // keeps a change anywhere in the library from drawing every row again (1,000 rows in a big folder)
+    const ui = useUiStore.getState
+    const library = useLibraryStore.getState
+    const jobs = useJobsStore.getState
 
-  /** `found`: the words of the search that led to it, marked in the note (FR-074). */
-  const openFile = (file: FileMeta, found?: string) => {
-    // a lesson still to write: who writes it is chosen first, then it opens
-    if (file.status === 'pending' && courseOfFolders(library.folders, file.folderId) && !library.sharedView && !jobs.jobs.some(job => job.fileId === file.id && job.status === 'running')) {
-      ui.open({ kind: 'pending', fileId: file.id, go: true })
-      return
+    /** `found`: the words of the search that led to it, marked in the note (FR-074). */
+    const openFile = (file: FileMeta, found?: string) => {
+      // a lesson still to write: who writes it is chosen first, then it opens
+      if (file.status === 'pending' && courseOfFolders(library().folders, file.folderId) && !library().sharedView && !jobs().jobs.some(job => job.fileId === file.id && job.status === 'running')) {
+        ui().open({ kind: 'pending', fileId: file.id, go: true })
+        return
+      }
+      library().markOpened(file.id)
+      ui().set({ peekId: null, columnsPane: 'doc', columnsSheet: false, focusPop: null })
+      navigate(found ? `${paths.file(file.id)}?busca=${encodeURIComponent(found)}` : paths.file(file.id))
     }
-    library.markOpened(file.id)
-    ui.set({ peekId: null, columnsPane: 'doc', columnsSheet: false, focusPop: null })
-    navigate(found ? `${paths.file(file.id)}?busca=${encodeURIComponent(found)}` : paths.file(file.id))
-  }
 
-  const toggleFavorite = async (file: FileMeta) => {
-    await library.updateFile(file.id, { favorite: !file.favorite })
-    ui.toast(file.favorite ? 'Tirado dos favoritos' : 'Adicionado aos favoritos')
-  }
-
-  const dropOn = async (event: React.DragEvent, folderId: string | null) => {
-    event.preventDefault()
-    ui.set({ drag: null })
-    const fileId = event.dataTransfer.getData(DRAG_FILE)
-    const folderDragged = event.dataTransfer.getData(DRAG_FOLDER)
-    const dragged = fileId || folderDragged
-    if (!dragged || folderDragged === folderId) return
-    const { fileIds, folderIds } = carried(dragged, !fileId)
-    if (!canEnter(folderIds, folderId)) {
-      ui.toast('Uma pasta não pode entrar nela mesma.')
-      return
+    const toggleFavorite = async (file: FileMeta) => {
+      await library().updateFile(file.id, { favorite: !file.favorite })
+      ui().toast(file.favorite ? 'Tirado dos favoritos' : 'Adicionado aos favoritos')
     }
-    // what is already there stays untouched, or its "Atualizado" would change for nothing
-    const files = fileIds.filter(id => library.files.find(file => file.id === id)?.folderId !== folderId)
-    const moving = folderIds.filter(id => library.folders.find(folder => folder.id === id)?.parentId !== folderId)
-    if (!files.length && !moving.length) return
-    const wasChecked = useUiStore.getState().selection.has(dragged)
-    const name = library.folders.find(folder => folder.id === folderId)?.name ?? 'Biblioteca'
-    const total = files.length + moving.length
-    const only = library.files.find(file => file.id === files[0])?.name ?? library.folders.find(folder => folder.id === moving[0])?.name
-    // one Drive write per item: the window holds the app and counts them, from the drop until the last one
-    try {
-      const moved = await blocking(total === 1 ? `Movendo "${only}"…` : `Movendo ${itemsOf(total)}…`, blocker => moveItems(blocker, files, moving, folderId), { phase: `Levando para ${name}`, cancellable: true })
-      if (wasChecked) ui.clearSelection()
-      if (moved < total) return ui.toast(`${moved} de ${total} movidos para ${name}`)
-      ui.toast(`${!fileIds.length && folderIds.length === 1 ? 'Pasta movida' : 'Movido'} para ${name}`)
-    } catch (error) {
-      ui.toast(`Não deu para mover: ${error instanceof Error ? error.message : 'tente de novo.'}`)
-    }
-  }
 
-  const dropTarget = (folderId: string | null) => ({
-    onDragOver: (event: React.DragEvent) => {
-      const { drag, set } = useUiStore.getState()
-      if (drag && !canEnter(drag.folderIds, folderId)) return
+    const dropOn = async (event: React.DragEvent, folderId: string | null) => {
       event.preventDefault()
-      event.currentTarget.classList.add('drop-on')
-      if (drag && drag.over !== folderId) set({ drag: { ...drag, over: folderId } })
-    },
-    onDragLeave: (event: React.DragEvent) => {
-      if (event.currentTarget.contains(event.relatedTarget as Node | null)) return
-      event.currentTarget.classList.remove('drop-on')
-      const { drag, set } = useUiStore.getState()
-      if (drag && drag.over === folderId) set({ drag: { fileIds: drag.fileIds, folderIds: drag.folderIds } })
-    },
-    onDrop: (event: React.DragEvent) => {
-      event.currentTarget.classList.remove('drop-on')
-      void dropOn(event, folderId)
-    },
-  })
+      ui().set({ drag: null })
+      const fileId = event.dataTransfer.getData(DRAG_FILE)
+      const folderDragged = event.dataTransfer.getData(DRAG_FOLDER)
+      const dragged = fileId || folderDragged
+      if (!dragged || folderDragged === folderId) return
+      const { fileIds, folderIds } = carried(dragged, !fileId)
+      if (!canEnter(folderIds, folderId)) {
+        ui().toast('Uma pasta não pode entrar nela mesma.')
+        return
+      }
+      // what is already there stays untouched, or its "Atualizado" would change for nothing
+      const files = fileIds.filter(id => library().files.find(file => file.id === id)?.folderId !== folderId)
+      const moving = folderIds.filter(id => library().folders.find(folder => folder.id === id)?.parentId !== folderId)
+      if (!files.length && !moving.length) return
+      const wasChecked = useUiStore.getState().selection.has(dragged)
+      const name = library().folders.find(folder => folder.id === folderId)?.name ?? 'Biblioteca'
+      const total = files.length + moving.length
+      const only = library().files.find(file => file.id === files[0])?.name ?? library().folders.find(folder => folder.id === moving[0])?.name
+      // one Drive write per item: the window holds the app and counts them, from the drop until the last one
+      try {
+        const moved = await blocking(total === 1 ? `Movendo "${only}"…` : `Movendo ${itemsOf(total)}…`, blocker => moveItems(blocker, files, moving, folderId), { phase: `Levando para ${name}`, cancellable: true })
+        if (wasChecked) ui().clearSelection()
+        if (moved < total) return ui().toast(`${moved} de ${total} movidos para ${name}`)
+        ui().toast(`${!fileIds.length && folderIds.length === 1 ? 'Pasta movida' : 'Movido'} para ${name}`)
+      } catch (error) {
+        ui().toast(`Não deu para mover: ${error instanceof Error ? error.message : 'tente de novo.'}`)
+      }
+    }
 
-  const startDrag = (type: string, id: string) => (event: React.DragEvent) => {
-    event.dataTransfer.setData(type, id)
-    useUiStore.getState().set({ drag: carried(id, type === DRAG_FOLDER) })
-  }
-  const endDrag = () => useUiStore.getState().set({ drag: null })
+    const dropTarget = (folderId: string | null) => ({
+      onDragOver: (event: React.DragEvent) => {
+        const { drag, set } = useUiStore.getState()
+        if (drag && !canEnter(drag.folderIds, folderId)) return
+        event.preventDefault()
+        event.currentTarget.classList.add('drop-on')
+        if (drag && drag.over !== folderId) set({ drag: { ...drag, over: folderId } })
+      },
+      onDragLeave: (event: React.DragEvent) => {
+        if (event.currentTarget.contains(event.relatedTarget as Node | null)) return
+        event.currentTarget.classList.remove('drop-on')
+        const { drag, set } = useUiStore.getState()
+        if (drag && drag.over === folderId) set({ drag: { fileIds: drag.fileIds, folderIds: drag.folderIds } })
+      },
+      onDrop: (event: React.DragEvent) => {
+        event.currentTarget.classList.remove('drop-on')
+        void dropOn(event, folderId)
+      },
+    })
 
-  const dragFile = (file: FileMeta) => ({ draggable: true, onDragStart: startDrag(DRAG_FILE, file.id), onDragEnd: endDrag })
-  const dragFolder = (folder: FolderMeta) => ({ draggable: true, onDragStart: startDrag(DRAG_FOLDER, folder.id), onDragEnd: endDrag })
+    const startDrag = (type: string, id: string) => (event: React.DragEvent) => {
+      event.dataTransfer.setData(type, id)
+      useUiStore.getState().set({ drag: carried(id, type === DRAG_FOLDER) })
+    }
+    const endDrag = () => useUiStore.getState().set({ drag: null })
 
-  return { openFile, toggleFavorite, dropTarget, dragFile, dragFolder }
+    const dragFile = (file: FileMeta) => ({ draggable: true, onDragStart: startDrag(DRAG_FILE, file.id), onDragEnd: endDrag })
+    const dragFolder = (folder: FolderMeta) => ({ draggable: true, onDragStart: startDrag(DRAG_FOLDER, folder.id), onDragEnd: endDrag })
+
+    return { openFile, toggleFavorite, dropTarget, dragFile, dragFolder }
+  }, [navigate])
 }

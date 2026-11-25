@@ -19,9 +19,20 @@ import (
 type hub struct {
 	mu    sync.Mutex
 	conns map[string]map[*websocket.Conn]bool
+	// watchers hear what goes to an account besides its devices (the tests of spec 007)
+	watchers map[string][]func(any)
 }
 
-func newHub() *hub { return &hub{conns: map[string]map[*websocket.Conn]bool{}} }
+func newHub() *hub {
+	return &hub{conns: map[string]map[*websocket.Conn]bool{}, watchers: map[string][]func(any){}}
+}
+
+// watch hears every message sent to an account.
+func (h *hub) watch(userID string, fn func(any)) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.watchers[userID] = append(h.watchers[userID], fn)
+}
 
 func (h *hub) add(userID string, conn *websocket.Conn) {
 	h.mu.Lock()
@@ -51,7 +62,11 @@ func (h *hub) send(userID string, message any) {
 	for conn := range h.conns[userID] {
 		targets = append(targets, conn)
 	}
+	watchers := append([]func(any){}, h.watchers[userID]...)
 	h.mu.Unlock()
+	for _, fn := range watchers {
+		fn(message)
+	}
 	for _, conn := range targets {
 		go func(conn *websocket.Conn) {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -66,11 +81,13 @@ func (srv *Server) notifyMap(userID string, seq int64) {
 }
 
 func (srv *Server) notifySpace(userID string) {
-	notes, media, reserved, err := srv.space(srv.db, userID)
+	// spec 007 (história 5): the same breakdown as GET /v1/space, the Lixeira included
+	out, err := srv.spaceOut(srv.db, userID)
 	if err != nil {
 		return
 	}
-	srv.live.send(userID, map[string]any{"type": "space", "notes": notes, "media": media, "reserved": reserved})
+	out["type"] = "space"
+	srv.live.send(userID, out)
 }
 
 // notifyAccess tells every device of the account that its access was taken away.

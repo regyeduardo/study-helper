@@ -3,13 +3,14 @@ import { useNavigate } from 'react-router-dom'
 
 import type { ShareRecord } from '@/types/domain'
 import { Icon } from '@/components/ui/Icon'
-import { stopLiveLink } from '@/controllers/live-share.controller'
+import { myLiveLinks, stopLiveLink } from '@/controllers/live-share.controller'
 import { deleteShareController, ShareError } from '@/controllers/share.controller'
 import { ApiError, apiMessage } from '@/controllers/api.controller'
 import { useNow } from '@/hooks/use-now'
 import { blocking } from '@/lib/blocking'
 import { paths } from '@/lib/paths'
-import { activeLinks, daysLeftText, isExpired, linkUrl } from '@/lib/share'
+import { deadlineText } from '@/lib/link-deadline'
+import { activeLinks, daysLeftText, isExpired, LIVE_EXPIRES, linkUrl, permanent } from '@/lib/share'
 import { useAccountStore } from '@/stores/account'
 import { useLibraryStore } from '@/stores/library'
 import { useUiStore } from '@/stores/ui'
@@ -79,13 +80,20 @@ function ShareRow({ share }: { share: ShareRecord }) {
         )}
         <div className="sub">
           <span>
-            <Icon name="clock" /> {share.live ? 'ao vivo · não vence' : expired ? 'expirado' : `faltam ${daysLeftText(share.expiresAt)}`}
+            <Icon name="clock" /> {share.live ? `ao vivo · ${deadlineText(permanent(share.expiresAt) ? null : share.expiresAt)}` : expired ? 'expirado' : `faltam ${daysLeftText(share.expiresAt)}`}
           </span>
           {!share.live && <span>{formatBytes(share.bytes)}</span>}
           {share.withExams && <span>com as provas</span>}
         </div>
       </div>
       <div className="share-actions">
+        {share.live && (
+          // spec 007 (FR-033, FR-041): the deadline changes on the same address, even after it expired
+          <button className="btn quiet" onClick={() => ui.open({ kind: 'share', target: share.kind, id: share.itemId })}>
+            <Icon name="clock" />
+            <span className="lbl">Mudar prazo</span>
+          </button>
+        )}
         {!expired && (
           <button className="btn quiet" onClick={() => void copy()}>
             <Icon name="link" />
@@ -115,7 +123,29 @@ function ShareRow({ share }: { share: ShareRecord }) {
 
 function MyShares() {
   const shares = useLibraryStore(state => state.index.shares)
+  const appOn = useLibraryStore(state => state.appOn)
   useNow()
+  // spec 007 (FR-041): the links of the App made on any device, with the deadline of now
+  useEffect(() => {
+    if (!appOn) return
+    let alive = true
+    void myLiveLinks().then(
+      links => {
+        if (!alive) return
+        const { saveShare, index } = useLibraryStore.getState()
+        for (const link of links) {
+          const known = index.shares.find(share => share.id === link.id)
+          const expiresAt = link.expiresAt ?? LIVE_EXPIRES
+          if (known && known.expiresAt === expiresAt) continue
+          void saveShare({ id: link.id, kind: link.kind, itemId: link.itemId, title: link.title, bytes: 0, withExams: link.withExams, createdAt: link.createdAt, expiresAt, live: true }).catch(() => undefined)
+        }
+      },
+      () => undefined,
+    )
+    return () => {
+      alive = false
+    }
+  }, [appOn])
   if (!shares.length) return <p className="muted share-empty">Você ainda não compartilhou nada. Abra o menu ⋯ de uma nota ou pasta e escolha Compartilhar.</p>
   return (
     <div className="share-list">

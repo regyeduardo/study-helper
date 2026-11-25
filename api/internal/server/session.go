@@ -64,7 +64,7 @@ func (srv *Server) sessionOf(r *http.Request) (*Session, error) {
 	now := srv.cfg.Now().UTC()
 	var session Session
 	var seen string
-	user, err := scanUser(srv.db.QueryRow(`SELECT `+userColumns+`, d.id, COALESCE(d.name, ''), d.seen_at FROM devices d JOIN user u ON u.id = d.user_id WHERE d.session_hash = ? AND d.signed_out_at IS NULL AND d.expires_at > ?`, sha256Hex(cookie.Value), stamp(now)), &session.DeviceID, &session.Device, &seen)
+	user, err := scanUser(srv.read.QueryRow(`SELECT `+userColumns+`, d.id, COALESCE(d.name, ''), d.seen_at FROM devices d JOIN user u ON u.id = d.user_id WHERE d.session_hash = ? AND d.signed_out_at IS NULL AND d.expires_at > ?`, sha256Hex(cookie.Value), stamp(now)), &session.DeviceID, &session.Device, &seen)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}

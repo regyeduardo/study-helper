@@ -11,6 +11,8 @@ export interface LiveHandlers {
   onMap: () => void
   onSpace?: (space: { notes: number; media: number; reserved: number }) => void
   onAccess?: (access: { status: string; deleteAt?: string }) => void
+  /** A job of generating in the account changed (spec 007, história 2). */
+  onJob?: (job: unknown) => void
 }
 
 const POLL_MS = 15_000
@@ -56,6 +58,7 @@ export function openLive(handlers: LiveHandlers): () => void {
       if (message.type === 'map') handlers.onMap()
       else if (message.type === 'space') handlers.onSpace?.({ notes: Number(message.notes) || 0, media: Number(message.media) || 0, reserved: Number(message.reserved) || 0 })
       else if (message.type === 'access') handlers.onAccess?.({ status: String(message.status), ...(message.deleteAt ? { deleteAt: String(message.deleteAt) } : {}) })
+      else if (message.type === 'job' && message.job) handlers.onJob?.(message.job)
     }
     socket.onclose = () => {
       socket = null

@@ -1,0 +1,12 @@
+/* The measures panel (spec 007, T023): a development tool, only with ?medidas; out of the way in a corner, above the content. */
+.perf-panel{position:fixed;right:max(8px,env(safe-area-inset-right));bottom:max(8px,env(safe-area-inset-bottom));z-index:80;width:min(320px,calc(100vw - 16px));max-height:40vh;max-height:40dvh;overflow:auto;background:var(--bg);border:1px solid var(--border);border-radius:10px;box-shadow:var(--shadow);font-size:12.5px}
+.perf-panel header{position:sticky;top:0;display:flex;align-items:center;gap:4px;padding:6px 8px;background:var(--bg);border-bottom:1px solid var(--border)}
+.perf-panel header b{flex:1}
+.perf-panel ol{list-style:none;margin:0;padding:4px 8px}
+.perf-panel li{display:grid;grid-template-columns:1fr auto;gap:2px 8px;padding:4px 0;border-bottom:1px solid var(--border)}
+.perf-panel li:last-child{border-bottom:0}
+.perf-panel .op{overflow-wrap:anywhere}
+.perf-panel .ms{font-variant-numeric:tabular-nums;font-weight:600}
+.perf-panel .meta{grid-column:1/-1;color:var(--fg-muted)}
+.perf-panel li.out .ms{color:var(--bad)}
+@media (pointer:coarse){.perf-panel header .btn{min-height:44px}}

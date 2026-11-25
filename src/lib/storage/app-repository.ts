@@ -286,6 +286,9 @@ export class AppRepository implements Repository {
     if (held?.content !== undefined) return held.content
     const row = this.rows.get(fileId) ?? (await this.fetchRow(fileId))
     if (!row?.parts.text) return ''
+    // the note being opened: the text comes in the same request as the other parts
+    const opening = [...this.reading.keys()].find(key => key.startsWith(`${fileId}:`))
+    if (opening) return (await this.reading.get(opening)!)?.text ?? ''
     return (await this.part(fileId, 'text', row.parts.text)) ?? ''
   }
 
@@ -565,13 +568,41 @@ export class AppRepository implements Repository {
     }
   }
 
-  private async allParts(row: LibraryRow): Promise<Parts> {
-    const out: Parts = {}
-    for (const [part, version] of Object.entries(row.parts)) {
-      const content = await this.part(row.id, part, version)
-      if (content !== undefined) out[part] = content
-    }
-    return out
+  /** The parts of a note being read now: the text and the rest of the same note share one request (spec 007, R4). */
+  private reading = new Map<string, Promise<Parts>>()
+
+  /**
+   * Every part of a note: what this device has (memory, then this browser) first, the rest in one request (spec 007, T030). It was one
+   * round trip per part, one after the other.
+   */
+  private allParts(row: LibraryRow): Promise<Parts> {
+    const key = `${row.id}:${Object.entries(row.parts).map(([part, version]) => `${part}=${version}`).join(',')}`
+    const going = this.reading.get(key)
+    if (going) return going
+    const run = (async () => {
+      const entries = Object.entries(row.parts)
+      const found = new Map<string, string>()
+      const held = await Promise.all(entries.map(([part, version]) => (this.cached(row.id, part, version) !== undefined ? this.cached(row.id, part, version) : this.kept(row.id, part, version))))
+      const missing: { item: string; part: string; version: string }[] = []
+      entries.forEach(([part, version], index) => {
+        if (held[index] !== undefined) found.set(part, held[index]!)
+        else missing.push({ item: row.id, part, version })
+      })
+      if (missing.length) {
+        for (const got of await getParts(missing)) {
+          if (got.content === undefined) continue
+          await this.keep(got.item, got.part, got.version, got.content)
+          found.set(got.part, got.content)
+        }
+      }
+      // in the order of the row, as before
+      const out: Parts = {}
+      for (const [part] of entries) if (found.has(part)) out[part] = found.get(part)!
+      return out
+    })()
+    this.reading.set(key, run)
+    void run.finally(() => this.reading.delete(key)).catch(() => undefined)
+    return run
   }
 
   /** The content of a part at an exact (old) version, without touching the base this device keeps. */
@@ -594,17 +625,30 @@ export class AppRepository implements Repository {
     const seen = this.rows.get(id)
     let row: LibraryRow = !seen || seen.removedAt ? await this.createRow(id, fields, seen?.rev ?? 0) : seen
     const wanted = partsOf(sidecar, content)
-    for (const [part, value] of Object.entries(wanted)) {
+    // spec 007 (T032): the parts that changed go at the same time; each has its own base version, so none waits for another
+    const changed = Object.entries(wanted).filter(([part, value]) => {
       const base = this.parts.get(`${id}/${part}`)
       const current: string | undefined = row.parts[part]
-      if (current && base && base.version === current && base.content === value) continue
-      const baseVersion = base?.version ?? current ?? null
-      const stored = await stale(() => putPart(id, part, value, baseVersion))
-      await this.keep(id, part, stored.version, value)
-      row = { ...row, parts: { ...row.parts, [part]: stored.version }, seq: stored.seq }
-      this.rows.set(id, row)
+      return !(current && base && base.version === current && base.content === value)
+    })
+    const written = await Promise.allSettled(
+      changed.map(async ([part, value]) => {
+        const baseVersion = this.parts.get(`${id}/${part}`)?.version ?? row.parts[part] ?? null
+        const stored = await stale(() => putPart(id, part, value, baseVersion))
+        await this.keep(id, part, stored.version, value)
+        return { part, stored }
+      }),
+    )
+    // what went is recorded even when another part must be joined first: the next try does not send it again
+    for (const result of written) {
+      if (result.status !== 'fulfilled') continue
+      const { part, stored } = result.value
+      row = { ...row, parts: { ...row.parts, [part]: stored.version }, seq: Math.max(row.seq, stored.seq) }
       this.seq = Math.max(this.seq, stored.seq)
     }
+    this.rows.set(id, row)
+    const failed = written.find(result => result.status === 'rejected')
+    if (failed) throw (failed as PromiseRejectedResult).reason
     for (const part of Object.keys(row.parts)) {
       if (part in wanted || part === 'course' || (part === 'text' && content === undefined)) continue
       const baseVersion = this.parts.get(`${id}/${part}`)?.version ?? row.parts[part]

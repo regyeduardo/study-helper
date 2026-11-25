@@ -1,5 +1,7 @@
 import { create } from 'zustand'
 
+import { ROUTED_CALLS, routeOf } from '@/lib/generation/account-routing'
+import { runOnAccount } from '@/stores/account-jobs'
 import type { AiSettings, AiStep, AiUse, Artifact, AtaModelId, AtaPart, AtaStepModels, CourseAnalysis, FileMeta, FileType, FolderMeta, GenerationChoice, GenerationMeta, MediaAnalysis, MeetingDocument, Place, RecordingData, RecordingMark, SourceMeta, SourceStorage, StageTime, StoredQuestion } from '@/types/domain'
 import { Cancelled } from '@/controllers/ai.controller'
 import type { LitterboxTime } from '@/controllers/hosting.controller'
@@ -996,20 +998,43 @@ export const useJobsStore = create<JobsState>((set, get) => {
           () => library().updateFile(meta.id, { kept: 'arquivo' }),
           () => undefined,
         )
-      if (request.storage !== 'none') {
+      const { write } = request
+      // spec 007 (FR-027, FR-031): the media goes up to the App with the structure on, so what was asked goes to the account once it is
+      // there, without the file in hand (the account reads the media it has); there the Ata runs after the transcription of the note
+      const repo = library().repo as { sideOf?: (id: string) => string | undefined } | null
+      const toAccount = request.storage === 'drive' && library().appOn && repo?.sideOf?.(meta.id) === 'app' && Boolean(request.transcribe || write)
+      let uploaded: Promise<boolean> = Promise.resolve(true)
+      if (toAccount) {
+        uploaded = blocking(
+          'Guardando a mídia no App…',
+          async blocker => {
+            const stored = await library().repo!.putSource(meta.id, file, file.name, { onProgress: (doneBytes, totalBytes) => blocker.progress({ doneBytes, totalBytes }) })
+            await library().updateFile(meta.id, { origin: { ...origin, storage: 'drive', storedFileId: stored.ref, expiresAt: null } as SourceMeta, kept: 'arquivo' })
+          },
+          { phase: 'O que você pediu começa na conta depois do envio; depois, pode fechar a aba', doneBytes: 0, totalBytes: file.size },
+        ).then(
+          () => true,
+          error => {
+            get().trackTask(`Guardar a mídia: ${meta.name}`).fail(failureText(error))
+            return false
+          },
+        )
+      } else if (request.storage !== 'none') {
         // the upload has no progress to tell: the window holds the app with a bar without a number until it ends
         void blocking(request.storage !== 'drive' ? 'Guardando a mídia…' : request.place === 'app' ? 'Guardando a mídia no App…' : 'Guardando a mídia no Drive…', () =>
           storeSource(file, request.storage, meta.id, library().repo!, request.litterboxTime).then(stored => library().updateFile(meta.id, { origin: { ...origin, ...stored } as SourceMeta, kept: 'arquivo' })),
         ).catch(error => get().trackTask(`Guardar a mídia: ${meta.name}`).fail(failureText(error)))
       }
-      if (request.transcribe) void get().transcribeNote(meta.id, file, request.transcriptionModel)
-      const { write } = request
+      // the upload failed: the work runs here with the file in hand, as before, and nothing asked is lost
+      const sourceOf = (ok: boolean) => (toAccount && ok ? undefined : file)
+      if (request.transcribe) void uploaded.then(ok => get().transcribeNote(meta.id, sourceOf(ok), request.transcriptionModel))
       if (write) {
         const place = { folderId: request.folderId }
         void (async () => {
+          const source = sourceOf(await uploaded)
           // the media just linked has to be known as kept here before the note asks for it
           useLibraryStore.setState({ localMedia: await listLocalMedia().catch(() => library().localMedia) })
-          if (write.agent === 'meeting') return get().generateAta(meta.id, write.ataModel ? [] : (write.parts ?? []), write.ataModel, { model: write.model }, place, write.instruction, file, write.analyze)
+          if (write.agent === 'meeting') return get().generateAta(meta.id, write.ataModel ? [] : (write.parts ?? []), write.ataModel, { model: write.model }, place, write.instruction, source, write.analyze)
           return get().generateFromNote(meta.id, write.agent, write.model, place, write.instruction, write.analyze)
         })().catch(error => get().trackTask(`${AGENT_LABEL[write.agent]}: ${meta.name}`).fail(failureText(error)))
       }
@@ -1552,3 +1577,19 @@ export const useJobsStore = create<JobsState>((set, get) => {
     dismiss: jobId => set(state => ({ jobs: state.jobs.filter(job => job.id !== jobId) })),
   }
 })
+
+// spec 007, história 2 (research R10b): with the structure on and the note in the App, these calls run in the account (the app itself in
+// a Chromium on the server); whoever called gets the same value back. Otherwise they run here, as before.
+{
+  const here = useJobsStore.getState() as unknown as Record<string, (...args: unknown[]) => Promise<unknown>>
+  const routed: Record<string, (...args: unknown[]) => Promise<unknown>> = {}
+  for (const call of Object.keys(ROUTED_CALLS)) {
+    const original = here[call]
+    if (typeof original !== 'function') continue
+    routed[call] = (...args: unknown[]) => {
+      const route = routeOf(call, args)
+      return route ? runOnAccount(call, args, route.fileId, route.title) : original(...args)
+    }
+  }
+  useJobsStore.setState(routed as unknown as Partial<JobsState>)
+}

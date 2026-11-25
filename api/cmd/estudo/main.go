@@ -9,11 +9,13 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
 	"github.com/regyeduardo/study-helper/api/internal/blobs"
+	"github.com/regyeduardo/study-helper/api/internal/seedcli"
 	"github.com/regyeduardo/study-helper/api/internal/server"
 	"github.com/regyeduardo/study-helper/api/internal/store"
 )
@@ -38,6 +40,12 @@ func main() {
 		log.Fatalf("database: %v", err)
 	}
 	defer db.Close()
+	// spec 007 (research R5): reads go to a read-only pool of the same file, so they do not wait behind a write
+	readDB, err := store.OpenRead(env("ESTUDO_DB", "/data/estudo.db"))
+	if err != nil {
+		log.Fatalf("database (read): %v", err)
+	}
+	defer readDB.Close()
 	var admins []string
 	for _, email := range strings.Split(os.Getenv("ADMIN_EMAILS"), ",") {
 		if email = strings.TrimSpace(email); email != "" {
@@ -54,10 +62,33 @@ func main() {
 		SecureCookies: env("SECURE_COOKIES", "true") != "false",
 		Version:       version,
 		Blobs:         storage,
+		ReadDB:        readDB,
 		AI:            aiConfig(),
+		// spec 007, história 2: the jobs of generating in the account, in a headless Chromium (R10b)
+		Generators:    generators(),
+		ChromiumPath:  env("ESTUDO_CHROMIUM", "chromium"),
+		WorkerAppURL:  env("ESTUDO_APP_TRABALHO", env("APP_ORIGIN", "https://study.ryns.me")),
+		ChromiumHosts: os.Getenv("ESTUDO_CHROMIUM_HOSTS"),
+		// spec 007: ESTUDO_AGORA moves the clock, only with ESTUDO_DEV=1
+		Now: server.ClockFromEnv(os.Getenv("ESTUDO_DEV"), os.Getenv("ESTUDO_AGORA")),
 	})
+	// spec 007: the test library of the measures, seeded inside this process (the only way with BLOBS=memory); dev only
+	if os.Getenv("ESTUDO_DEV") == "1" && strings.TrimSpace(os.Getenv("ESTUDO_SEMEAR")) != "" {
+		options, err := seedcli.FromEnv(os.Getenv("ESTUDO_SEMEAR"))
+		if err != nil {
+			log.Fatalf("ESTUDO_SEMEAR: %v", err)
+		}
+		started := time.Now()
+		report, err := api.Seed(context.Background(), options)
+		if err != nil {
+			log.Fatalf("semear: %v", err)
+		}
+		log.Printf("biblioteca de teste semeada em %s: %+v", time.Since(started).Round(time.Second), report)
+	}
 	// spec 004: texts left generating when the server stopped go back to the queue
 	api.ResumeLanguages()
+	// spec 007: the jobs left running when the service stopped run again (their Chromium died with it)
+	api.ResumeJobs()
 	// once a day: recount the space and clean the storage (orphans after 31 days, uploads forgotten for 7, tombstones after 60)
 	if storage != nil {
 		go func() {
@@ -132,4 +163,12 @@ func aiConfig() server.AIConfig {
 		}
 	}
 	return server.AIConfig{Keys: keys, Origins: origins}
+}
+
+// generators is how many jobs of generating run at the same time (ESTUDO_GERADORES); each is a Chromium of ~300 to 500 MB.
+func generators() int {
+	if value, err := strconv.Atoi(env("ESTUDO_GERADORES", "2")); err == nil && value > 0 {
+		return value
+	}
+	return 2
 }

@@ -197,10 +197,31 @@ func (srv *Server) adminAccounts(w http.ResponseWriter, _ *http.Request, _ *Sess
 			"id": id, "name": name, "email": email, "status": status, "appEnabled": appEnabled == 1,
 			"enabledAt": nullable(enabledAt.String, enabledAt.Valid), "deleteAt": nullable(deleteAt.String, deleteAt.Valid),
 			"code": nullable(code.String, code.Valid), "seenAt": nullable(seenAt.String, seenAt.Valid),
-			"space": map[string]any{"notes": notes, "media": media, "limit": spaceLimit},
+			"space": srv.adminSpace(id, notes, media),
+			"jobs":  srv.adminJobs(id),
+			"ai":    srv.adminAIUse(id),
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"accounts": accounts})
+}
+
+// adminJobs: the account's jobs of generating now, and how many ended in the last 30 days (FR-055). Read by the read pool: the
+// accounts' rows are open on the writing connection.
+func (srv *Server) adminJobs(userID string) map[string]any {
+	since := ts(srv.now().Add(-30 * 24 * time.Hour))
+	var running, queued, done, failed int
+	_ = srv.read.QueryRow(`SELECT COALESCE(SUM(state = 'running'), 0), COALESCE(SUM(state = 'queued'), 0),
+		COALESCE(SUM(state = 'done' AND finished_at >= ?), 0), COALESCE(SUM(state IN ('failed', 'dismissed') AND finished_at >= ?), 0)
+		FROM jobs WHERE user_id = ?`, since, since, userID).Scan(&running, &queued, &done, &failed)
+	return map[string]any{"running": running, "queued": queued, "done": done, "failed": failed}
+}
+
+// adminAIUse: the account's use of the app's AI in the last 30 days (FR-055).
+func (srv *Server) adminAIUse(userID string) map[string]any {
+	since := srv.now().UTC().Add(-30 * 24 * time.Hour).Format("2006-01-02")
+	var calls, input, output int64
+	_ = srv.read.QueryRow(`SELECT COALESCE(SUM(calls), 0), COALESCE(SUM(input_tokens), 0), COALESCE(SUM(output_tokens), 0) FROM ai_usage WHERE user_id = ? AND day >= ?`, userID, since).Scan(&calls, &input, &output)
+	return map[string]any{"calls": calls, "inputTokens": input, "outputTokens": output}
 }
 
 // adminRevoke takes the access away: the account reaches only its "me" and its data is deleted 30 days later (FR-006).
@@ -223,6 +244,8 @@ func (srv *Server) adminRevoke(w http.ResponseWriter, r *http.Request, s *Sessio
 	}
 	// every open device of that account hears it now (live channel, entrega 4)
 	srv.notifyAccess(id, deleteAt)
+	// spec 007: the jobs of the account stop, with the reason
+	srv.failJobsOf(id, "access_revoked", "O acesso desta conta foi retirado.")
 	writeJSON(w, http.StatusOK, map[string]any{"deleteAt": deleteAt})
 }
 
@@ -248,4 +271,12 @@ func (srv *Server) adminSetSettings(w http.ResponseWriter, r *http.Request, _ *S
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"requireCode": *body.RequireCode})
+}
+
+// adminSpace is the space of an account as the person sees it (spec 007, FR-055); the counts of the list when it cannot be read.
+func (srv *Server) adminSpace(id string, notes, media int64) map[string]any {
+	if out, err := srv.spaceOut(srv.read, id); err == nil {
+		return out
+	}
+	return map[string]any{"notes": notes, "media": media, "limit": spaceLimit}
 }

@@ -43,7 +43,8 @@ type harness struct {
 
 func newHarness(t *testing.T) *harness {
 	t.Helper()
-	db, err := store.Open(filepath.Join(t.TempDir(), "estudo.db"))
+	dbPath := filepath.Join(t.TempDir(), "estudo.db")
+	db, err := store.Open(dbPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,6 +59,13 @@ func newHarness(t *testing.T) *harness {
 		Version: "teste", HTTPClient: google.Client(),
 		Blobs: h.blobs, PartSize: 4, Now: func() time.Time { return h.now },
 	}
+	// spec 007: the read-only pool of the same file, as the service opens it
+	read, err := store.OpenRead(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { read.Close() })
+	cfg.ReadDB = read
 	h.srv = New(db, cfg)
 	h.api.Config.Handler = h.srv.Handler()
 	t.Cleanup(h.api.Close)

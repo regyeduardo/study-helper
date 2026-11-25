@@ -38,6 +38,24 @@ const FOLDER_META_NAME = '.folder.json'
 const DEVICES_NAME = 'devices'
 const SOURCES_NAME = 'sources'
 const NOTES_NAME = 'notes'
+/** Spec 007 (T045, research R8): a new device reads the notes' files at most this many at once, inside the Drive's request limit. */
+const READS_AT_ONCE = 6
+
+/** Runs the tasks given to it with at most `size` of them at the same time, in the order they came. */
+function limiter(size: number): <T>(task: () => Promise<T>) => Promise<T> {
+  let running = 0
+  const waiting: Array<() => void> = []
+  return async task => {
+    if (running >= size) await new Promise<void>(go => waiting.push(go))
+    running++
+    try {
+      return await task()
+    } finally {
+      running--
+      waiting.shift()?.()
+    }
+  }
+}
 
 type Kind = 'root' | 'folder' | 'folder-meta' | 'md' | 'sidecar' | 'index' | 'devices' | 'device' | 'sources' | 'source' | 'notes' | 'course' | 'idiomas'
 
@@ -98,6 +116,7 @@ export class DriveRepository implements Repository {
   private sources = new Map<string, DriveFile>()
   private courses = new Map<string, DriveFile>()
   private listing: DriveFile[] = []
+  private readonly reads = limiter(READS_AT_ONCE)
   unlimited = false
   /**
    * Spec 005 (R5): after the account's hierarchy migrated, the Drive keeps only the content of its notes. A new note goes to one flat
@@ -507,7 +526,8 @@ export class DriveRepository implements Repository {
     }
     const cached = await this.db.get<Cached<LibraryIndex>>('cache', 'index')
     if (cached && cached.md5 === this.indexFile.md5Checksum) return cached.value
-    const index = { ...defaultIndex(), ...(JSON.parse(await downloadDriveTextController(this.token, this.indexFile.id)) as LibraryIndex) }
+    const indexFile = this.indexFile
+    const index = { ...defaultIndex(), ...(JSON.parse(await this.reads(() => downloadDriveTextController(this.token, indexFile.id))) as LibraryIndex) }
     await this.db.put('cache', 'index', { md5: this.indexFile.md5Checksum ?? '', value: index })
     return index
   }
@@ -564,7 +584,7 @@ export class DriveRepository implements Repository {
   private async cachedJson<T>(key: string, file: DriveFile): Promise<T> {
     const cached = await this.db.get<Cached<T>>('cache', key)
     if (cached && cached.md5 === file.md5Checksum) return cached.value
-    const value = JSON.parse(await downloadDriveTextController(this.token, file.id)) as T
+    const value = JSON.parse(await this.reads(() => downloadDriveTextController(this.token, file.id))) as T
     await this.db.put('cache', key, { md5: file.md5Checksum ?? '', value })
     return value
   }

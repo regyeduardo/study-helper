@@ -1,3 +1,4 @@
+import { memo } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 
 import type { FileMeta, FolderMeta } from '@/types/domain'
@@ -190,16 +191,18 @@ export function ColumnsCard({ file, showWhere, currentId, excerpt, siblings }: R
 }
 
 export function CommandsRow({ file, showWhere, inCourse, siblings }: RowProps & { siblings?: FileMeta[] }) {
-  const { selection, toggleSelected, peekId, set } = useUiStore()
+  // spec 007 (research R7): only what this row draws, so a change elsewhere does not draw every row
+  const selected = useUiStore(state => state.selection.has(file.id))
+  const peeked = useUiStore(state => state.peekId === file.id)
+  const { toggleSelected, set } = useUiStore.getState()
   const { openFile } = useFileActions()
   const pathName = usePathName()
   const timeZone = useLibraryStore(state => state.index.settings.timezone)
-  const selected = selection.has(file.id)
   const bytes = useFileBytes(file)
-  const handlers = useRowHandlers(file, () => set({ peekId: peekId === file.id ? null : file.id }))
+  const handlers = useRowHandlers(file, () => set({ peekId: peeked ? null : file.id }))
   const updated = new Date(file.updated.at).toLocaleString('pt-BR', { timeZone, day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
   return (
-    <div className={`tr ${selected || peekId === file.id ? 'sel' : ''}`} {...handlers} data-file-id={file.id}>
+    <div className={`tr ${selected || peeked ? 'sel' : ''}`} {...handlers} data-file-id={file.id}>
       <Check on={selected} label={`Marcar ${file.name}`} onToggle={() => toggleSelected(file.id)} />
       <div className="title">
         <FileIcon type={file.type} />
@@ -469,7 +472,8 @@ interface FileTableRowProps extends TableRowProps {
   grouped?: { under: string | null }
 }
 
-export function FileTableRow({ file, hit, onOpen, born = false, place, to, kindText, folderName, grouped, narrow, selectable, draggable, actions }: FileTableRowProps) {
+// spec 007 (research R7): memoized; with the same props (the file object only changes when the file does) a change elsewhere draws no row
+export const FileTableRow = memo(function FileTableRow({ file, hit, onOpen, born = false, place, to, kindText, folderName, grouped, narrow, selectable, draggable, actions }: FileTableRowProps) {
   const navigate = useNavigate()
   const selected = useUiStore(state => state.selection.has(file.id))
   const local = useIsLocal(file.id)
@@ -528,7 +532,7 @@ export function FileTableRow({ file, hit, onOpen, born = false, place, to, kindT
       </td>
     </tr>
   )
-}
+})
 
 interface FolderTableRowProps extends TableRowProps {
   folder: FolderMeta
@@ -536,7 +540,7 @@ interface FolderTableRowProps extends TableRowProps {
   items: number
 }
 
-export function FolderTableRow({ folder, items, narrow, selectable, draggable, actions }: FolderTableRowProps) {
+export const FolderTableRow = memo(function FolderTableRow({ folder, items, narrow, selectable, draggable, actions }: FolderTableRowProps) {
   const navigate = useNavigate()
   const selected = useUiStore(state => state.selection.has(folder.id))
   const open = () => navigate(paths.folder(folder.id))
@@ -565,7 +569,7 @@ export function FolderTableRow({ folder, items, narrow, selectable, draggable, a
       <td className="ex-act">{selectable && <OptionsButton kind="folder" id={folder.id} name={folder.name} />}</td>
     </tr>
   )
-}
+})
 
 export function excerptOf(content: string | undefined): string {
   return content ? plainText(content).slice(0, 180) : ''

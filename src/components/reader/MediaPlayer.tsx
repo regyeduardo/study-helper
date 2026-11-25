@@ -1,6 +1,7 @@
 import { type ComponentProps, type CSSProperties, type ReactNode, type RefObject, type SyntheticEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import type { FileMeta } from '@/types/domain'
+import { comeca, termina } from '@/lib/perf'
 import { blocking } from '@/lib/blocking'
 import { readLocalMedia } from '@/lib/recording/media-library'
 import { sharedMediaState } from '@/lib/share'
@@ -499,6 +500,8 @@ export function MediaPlayer({ player, media, onTime, onPlayFrom, onMark, docked 
     preload: media.remote ? 'auto' : 'metadata',
     src: media.url ?? undefined,
     onPlay: (event: SyntheticEvent<HTMLMediaElement>) => {
+      // spec 007: "tocar a mídia" is measured from the play until it really plays
+      comeca('tocar-midia')
       bothEars(event.currentTarget)
       setPlaying(true)
     },
@@ -509,12 +512,19 @@ export function MediaPlayer({ player, media, onTime, onPlayFrom, onMark, docked 
       setWaiting(false)
     },
     onPlaying: () => {
+      termina('tocar-midia')
       setReady(true)
       setWaiting(false)
     },
     onWaiting: () => setWaiting(true),
-    onSeeking: () => setWaiting(true),
-    onSeeked: () => setWaiting(false),
+    onSeeking: () => {
+      comeca('pular-minuto')
+      setWaiting(true)
+    },
+    onSeeked: () => {
+      termina('pular-minuto')
+      setWaiting(false)
+    },
     onStalled: (event: SyntheticEvent<HTMLMediaElement>) => void (!event.currentTarget.paused && setWaiting(true)),
     // preload "metadata" stops after the start on purpose: that is not loading
     onSuspend: (event: SyntheticEvent<HTMLMediaElement>) => void (event.currentTarget.readyState >= 1 && setWaiting(false)),

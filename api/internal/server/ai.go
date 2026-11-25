@@ -3,7 +3,9 @@ package server
 import (
 	"encoding/json"
 	"net/http"
+	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -132,12 +134,18 @@ func (srv *Server) aiProxy(w http.ResponseWriter, r *http.Request, s *Session) {
 		}
 	}
 	w.WriteHeader(res.StatusCode)
+	// the use of the account (FR-055): an answer given, with the tokens the provider says it counted
+	tokens := &aiTokens{}
+	if res.StatusCode < 400 {
+		defer func() { srv.countAIUse(s.User.ID, tokens) }()
+	}
 	// the answer goes as it comes (the AI writes in parts)
 	flusher, _ := w.(http.Flusher)
 	buffer := make([]byte, 16<<10)
 	for {
 		n, readErr := res.Body.Read(buffer)
 		if n > 0 {
+			tokens.read(buffer[:n])
 			if _, err := w.Write(buffer[:n]); err != nil {
 				return
 			}
@@ -188,4 +196,35 @@ func (srv *Server) adminSetAI(w http.ResponseWriter, r *http.Request, s *Session
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"uses": json.RawMessage(uses)})
+}
+
+// aiTokens reads the provider's own count of tokens in its answer as it passes: the names of OpenAI and the like, of Anthropic and of
+// Gemini. The streams send the count again as it grows and the total at the end, so the last number of each kind wins.
+type aiTokens struct {
+	tail          []byte
+	input, output int64
+}
+
+var (
+	aiInputTokens  = regexp.MustCompile(`"(?:prompt_tokens|input_tokens|promptTokenCount)"\s*:\s*(\d+)`)
+	aiOutputTokens = regexp.MustCompile(`"(?:completion_tokens|output_tokens|candidatesTokenCount)"\s*:\s*(\d+)`)
+)
+
+func (t *aiTokens) read(chunk []byte) {
+	// the end of the last piece goes along, for a name cut between two pieces
+	window := append(t.tail, chunk...)
+	for _, match := range aiInputTokens.FindAllSubmatch(window, -1) {
+		t.input, _ = strconv.ParseInt(string(match[1]), 10, 64)
+	}
+	for _, match := range aiOutputTokens.FindAllSubmatch(window, -1) {
+		t.output, _ = strconv.ParseInt(string(match[1]), 10, 64)
+	}
+	t.tail = append([]byte(nil), window[max(0, len(window)-64):]...)
+}
+
+func (srv *Server) countAIUse(userID string, tokens *aiTokens) {
+	day := srv.now().UTC().Format("2006-01-02")
+	_, _ = srv.db.Exec(`INSERT INTO ai_usage (user_id, day, calls, input_tokens, output_tokens) VALUES (?, ?, 1, ?, ?)
+		ON CONFLICT (user_id, day) DO UPDATE SET calls = calls + 1, input_tokens = input_tokens + excluded.input_tokens, output_tokens = output_tokens + excluded.output_tokens`,
+		userID, day, tokens.input, tokens.output)
 }

@@ -3,6 +3,9 @@
 import { create } from 'zustand'
 
 import { useAccountStore } from '@/stores/account'
+import { type AccountJob } from '@/controllers/jobs.controller'
+import { advance, startWait, type Wait } from '@/lib/wait'
+import { useAccountJobsStore } from '@/stores/account-jobs'
 import { type Job, useJobsStore } from '@/stores/jobs'
 import { useLibraryStore } from '@/stores/library'
 import { type Overlay, useUiStore } from '@/stores/ui'
@@ -27,6 +30,10 @@ export interface Generation {
   retry?: Overlay
   /** What "Abrir" opens besides the note: the map or the deck made. */
   open?: Overlay
+  /** What the line shows while it runs (spec 007, FR-060): what happens, how much, when it ends, that it did not freeze. */
+  wait?: Wait
+  /** A job of the account (spec 007, história 2): its id on the server; the line comes from the server, not from this device. */
+  accountJob?: string
 }
 
 interface GenerationsState {
@@ -74,6 +81,53 @@ function pruned(items: Generation[], now = Date.now()): Generation[] {
   return items.filter(item => item.state !== 'ready' || kept.has(item.id))
 }
 
+/** The wait of a job of this device, moved at each change of its message or fraction. */
+function waitOf(job: Job, before: Wait | undefined): Wait {
+  const percent = job.fraction === null ? undefined : Math.round(job.fraction * 100)
+  const start = before ?? startWait(job.message || job.title, { unit: '%', total: percent === undefined ? undefined : 100, normalStepMs: NORMAL_STEP_MS, now: job.startedAt })
+  return advance(start, { done: percent, ...(percent !== undefined ? { total: 100 } : {}), label: job.message, ...(job.message && job.message !== start.what ? { what: job.message, done: percent } : {}) })
+}
+
+const NORMAL_STEP_MS = 3 * 60_000
+const ACCOUNT = 'conta:'
+
+/** A job of the account as a line of Gerações (spec 007, história 2). */
+function fromAccountJob(job: AccountJob): Generation | null {
+  if (job.state === 'cancelled' || job.state === 'dismissed') return null
+  const state: GenerationState = job.state === 'queued' || job.state === 'running' ? 'running' : job.state === 'failed' ? 'failed' : 'ready'
+  const at = (value: string | null) => (value ? Date.parse(value) : undefined)
+  const startedAt = at(job.startedAt) ?? at(job.createdAt) ?? Date.now()
+  const percent = job.fraction === null ? undefined : Math.round(job.fraction * 100)
+  const queued = job.state === 'queued'
+  const wait: Wait = {
+    what: queued ? `Na fila da conta: ${job.queuePosition ?? 1}º` : (job.stage ?? job.title),
+    unit: queued ? undefined : '%',
+    ...(queued || percent === undefined ? {} : { total: 100, done: percent }),
+    startedAt,
+    lastProgressAt: at(job.lastProgressAt) ?? startedAt,
+    lastProgress: job.lastProgress ?? undefined,
+    normalStepMs: queued ? undefined : NORMAL_STEP_MS,
+    paces: [],
+    ...(job.etaAt ? { etaAt: Date.parse(job.etaAt), etaBasis: job.etaBasis ?? 'parts' } : {}),
+    ...(job.stalledSince ? { stalledSince: Date.parse(job.stalledSince) } : {}),
+  }
+  return {
+    id: `${ACCOUNT}${job.id}`,
+    accountJob: job.id,
+    kind: 'generation',
+    title: job.title,
+    // what came out opens: the new note the call gave back, or the note it started from
+    fileId: typeof job.result === 'string' ? job.result : job.fileId,
+    state,
+    message: queued ? wait.what : (job.stage ?? ''),
+    fraction: job.fraction,
+    error: job.error,
+    startedAt,
+    endedAt: at(job.finishedAt) ?? null,
+    wait,
+  }
+}
+
 function fromJob(job: Job, before: Generation | undefined): Generation | null {
   // a map or a deck keeps its note apart from `fileId`
   const fileId = job.fileId ?? job.noteId ?? null
@@ -93,6 +147,7 @@ function fromJob(job: Job, before: Generation | undefined): Generation | null {
     error: job.error,
     startedAt: job.startedAt,
     endedAt: state === 'running' ? null : before && before.state === state ? before.endedAt : Date.now(),
+    ...(state === 'running' ? { wait: waitOf(job, before?.wait) } : {}),
     ...(retry ? { retry } : {}),
     ...(open ? { open } : {}),
   }
@@ -123,7 +178,7 @@ function load(accountId: string): Generation[] {
 /** What goes to the device: a running line without its passing progress (no write at every percent), and the window only when it is plain data. */
 function stored(items: Generation[]): string {
   return JSON.stringify(
-    items.map(({ retry, ...item }) => ({
+    items.filter(item => !item.accountJob).map(({ retry, wait: _wait, ...item }) => ({
       ...item,
       ...(item.state === 'running' ? { message: '', fraction: null } : {}),
       ...(retry && plain(retry) ? { retry } : {}),
@@ -148,10 +203,16 @@ export const useGenerationsStore = create<GenerationsState>((set, get) => ({
   accountId: useAccountStore.getState().activeId,
   items: load(useAccountStore.getState().activeId),
 
-  cancel: id => useJobsStore.getState().cancel(id),
+  cancel: id => {
+    const account = get().items.find(entry => entry.id === id)?.accountJob
+    if (account) return void useAccountJobsStore.getState().cancel(account).catch(() => undefined)
+    useJobsStore.getState().cancel(id)
+  },
 
   retry: id => {
     const item = get().items.find(entry => entry.id === id)
+    // a job of the account runs again there, with what was asked
+    if (item?.accountJob) return void useAccountJobsStore.getState().retry(item.accountJob).catch(() => undefined)
     const overlay = item && retryOf(item, useLibraryStore.getState().files)
     if (!overlay) return
     get().dismiss(id)
@@ -159,6 +220,8 @@ export const useGenerationsStore = create<GenerationsState>((set, get) => ({
   },
 
   dismiss: id => {
+    const account = get().items.find(entry => entry.id === id)?.accountJob
+    if (account) void useAccountJobsStore.getState().dismiss(account).catch(() => undefined)
     set(state => ({ items: state.items.filter(item => item.id !== id) }))
     if (useJobsStore.getState().jobs.some(job => job.id === id)) useJobsStore.getState().dismiss(id)
   },
@@ -185,6 +248,24 @@ save(useGenerationsStore.getState().accountId, useGenerationsStore.getState().it
 
 useJobsStore.subscribe((state, previous) => {
   if (state.jobs !== previous.jobs) follow(state.jobs, previous.jobs)
+})
+
+/** The jobs of the account (spec 007, história 2): their lines come and go with the server's list, on every device. */
+function followAccount(jobs: AccountJob[]) {
+  useGenerationsStore.setState(state => {
+    const mine = state.items.filter(item => !item.accountJob)
+    const account = jobs.map(fromAccountJob).filter((line): line is Generation => line !== null)
+    return { items: pruned([...account, ...mine]) }
+  })
+}
+
+useAccountJobsStore.subscribe((state, previous) => {
+  if (state.jobs !== previous.jobs) followAccount(state.jobs)
+})
+
+// with the structure on, the list of the account comes when the library opens (and the live channel keeps it)
+useLibraryStore.subscribe((state, previous) => {
+  if (state.appOn && state.ready && !(previous.appOn && previous.ready)) void useAccountJobsStore.getState().load().catch(() => undefined)
 })
 
 useGenerationsStore.subscribe((state, previous) => {

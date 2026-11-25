@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useSyncExternalStore } from 'react'
+import { useShallow } from 'zustand/react/shallow'
 
 import type { FileMeta, FolderMeta } from '@/types/domain'
 import { ApiError } from '@/controllers/api.controller'
@@ -251,7 +252,9 @@ export function useLibraryView(view: View, folderId: string | null) {
   const contents = useLibraryStore(state => state.opened)
   const sizes = useLibraryStore(state => state.sizes)
   const media = useLibraryStore(state => state.localMedia)
-  const { query, types, lowMastery, tag, sort, filters } = useUiStore()
+  const { query, types, lowMastery, tag, sort, filters } = useUiStore(
+    useShallow(state => ({ query: state.query, types: state.types, lowMastery: state.lowMastery, tag: state.tag, sort: state.sort, filters: state.filters })),
+  )
   const source = useFilterSource()
   const trimmed = query.trim().toLowerCase()
 

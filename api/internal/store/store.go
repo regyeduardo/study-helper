@@ -30,6 +30,23 @@ func Open(path string) (*sql.DB, error) {
 	return db, nil
 }
 
+// OpenRead opens the same database for reading only (spec 007, research R5): up to 4 connections that never write, so reads do not wait
+// in line behind the one writing connection. SQLite in WAL lets them read while a writer writes; what was committed is what they see.
+func OpenRead(path string) (*sql.DB, error) {
+	dsn := fmt.Sprintf("file:%s?mode=ro&_pragma=busy_timeout(5000)&_pragma=query_only(1)", path)
+	db, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		return nil, err
+	}
+	db.SetMaxOpenConns(4)
+	db.SetMaxIdleConns(4)
+	if err := db.Ping(); err != nil {
+		db.Close()
+		return nil, err
+	}
+	return db, nil
+}
+
 // Migrate applies, in name order, each file of migrations/ not yet in schema_migrations, each in its own transaction.
 // Applying again changes nothing.
 func Migrate(db *sql.DB) error {

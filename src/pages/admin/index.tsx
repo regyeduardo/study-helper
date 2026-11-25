@@ -25,8 +25,7 @@ import { useUiStore } from '@/stores/ui'
 import { agoText, formatBytes } from '@/utils/format'
 import '@/styles/admin.css'
 
-/** Where the Administração lives; the account menu links here only for the admin account. */
-export const ADMIN_PATH = '/administracao'
+export { ADMIN_PATH } from '@/lib/paths'
 
 type Tab = 'codes' | 'accounts' | 'ai' | 'settings'
 const TABS: [Tab, string][] = [
@@ -57,6 +56,7 @@ const ACCOUNT_STATUS: Record<AdminAccount['status'], [string, string]> = {
 
 /** A code read in groups of four, as people copy it: "K7QM 3XRT 9PWD". */
 const grouped = (code: string) => code.match(/.{1,4}/g)?.join(' ') ?? code
+const count = (value: number) => value.toLocaleString('pt-BR')
 /** Validity is a day: read in UTC, so it never slips to the day before. */
 const utcDay = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString('pt-BR', { timeZone: 'UTC' }) : 'sem data')
 const localDay = (iso: string | null) => (iso ? new Date(iso).toLocaleDateString('pt-BR') : 'sem data')
@@ -293,6 +293,8 @@ function AccountsTab({ selfId }: { selfId: string }) {
                 <th scope="col">Situação</th>
                 <th scope="col">Código</th>
                 <th scope="col">Espaço</th>
+                <th scope="col">Trabalhos</th>
+                <th scope="col">IA</th>
                 <th scope="col">Visto</th>
                 <th scope="col">
                   <span className="sr-only">Ação</span>
@@ -315,6 +317,14 @@ function AccountsTab({ selfId }: { selfId: string }) {
                     </td>
                     <td data-label="Código">{account.code ? <code>{grouped(account.code)}</code> : <span className="faint">nenhum</span>}</td>
                     <td data-label="Espaço" className="num">{`${formatBytes(account.space.notes + account.space.media)} de ${formatBytes(account.space.limit)}`}</td>
+                    <td data-label="Trabalhos">
+                      {account.jobs && account.jobs.running + account.jobs.queued > 0 ? `${account.jobs.running} rodando, ${account.jobs.queued} na fila` : <span className="faint">nenhum</span>}
+                      {account.jobs && account.jobs.done + account.jobs.failed > 0 && <small className="faint">{`${count(account.jobs.done)} prontos e ${count(account.jobs.failed)} com falha em 30 dias`}</small>}
+                    </td>
+                    <td data-label="IA" className="num">
+                      {account.ai?.calls ? `${count(account.ai.calls)} ${account.ai.calls === 1 ? 'chamada' : 'chamadas'}` : <span className="faint">nenhum</span>}
+                      {Boolean(account.ai?.calls) && <small className="faint">{`${count(account.ai!.inputTokens)} tokens de entrada e ${count(account.ai!.outputTokens)} de saída em 30 dias`}</small>}
+                    </td>
                     <td data-label="Visto">{agoText(account.seenAt)}</td>
                     <td className="adm-act">
                       {account.status !== 'revoked' && account.id !== selfId && (

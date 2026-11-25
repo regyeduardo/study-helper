@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Outlet, useNavigate } from 'react-router-dom'
+import { useShallow } from 'zustand/react/shallow'
 
 import { ServerAccountGate } from '@/components/account/RevokedScreen'
 import { Overlays } from '@/components/dialogs/Overlays'
@@ -9,6 +10,9 @@ import { Icon } from '@/components/ui/Icon'
 import { Toasts } from '@/components/ui/Toasts'
 import { blocking } from '@/lib/blocking'
 import { paths } from '@/lib/paths'
+import { useFimDaRota } from '@/lib/perf-routes'
+import { OpeningWait } from '@/components/ui/OpeningWait'
+import { PerfPanel } from '@/components/ui/PerfPanel'
 import { useAccountStore } from '@/stores/account'
 import { useLibraryStore } from '@/stores/library'
 import { useSyncStore } from '@/stores/sync'
@@ -45,7 +49,10 @@ export function useShortcuts() {
 export default function App() {
   const account = useAccountStore(state => state.active())
   const tokenFor = useAccountStore(state => state.tokenFor)
-  const { ready, loadError, connect, hiddenPending, hiddenWarning } = useLibraryStore()
+  // spec 007 (research R7): only these fields; subscribing to the whole library drew the whole app at every change of any note
+  const { ready, loadError, connect, hiddenPending, hiddenWarning } = useLibraryStore(
+    useShallow(state => ({ ready: state.ready, loadError: state.loadError, connect: state.connect, hiddenPending: state.hiddenPending, hiddenWarning: state.hiddenWarning })),
+  )
   const reauthorize = useAccountStore(state => state.reauthorize)
   const reconnectId = useAccountStore(state => state.reconnectId)
   const reconnectMessage = useAccountStore(state => state.reconnectMessage)
@@ -55,6 +62,8 @@ export default function App() {
   const startSync = useSyncStore(state => state.start)
   const stopSync = useSyncStore(state => state.stop)
   useShortcuts()
+  // spec 007: the measure of a screen change ends here, at the frame after the new screen
+  useFimDaRota()
 
   const tokenProvider = account.kind === 'google' ? (options?: { force?: boolean }) => tokenFor(account.id, options) : undefined
   const needsReconnect = account.kind === 'google' && reconnectId === account.id
@@ -163,8 +172,8 @@ export default function App() {
           </>
         )
       ) : (
-        <div className="welcome" role="status">
-          <span className="muted">Abrindo a sua biblioteca…</span>
+        <div className="welcome">
+          <OpeningWait kind="abrir-biblioteca" what="Abrindo a sua biblioteca" history="aberturas" />
         </div>
       )}
       <ServerAccountGate />
@@ -172,6 +181,7 @@ export default function App() {
       <ItemMenu />
       <Toasts />
       <BlockingWindow />
+      <PerfPanel />
     </div>
   )
 }
