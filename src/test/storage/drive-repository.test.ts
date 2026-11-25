@@ -181,7 +181,8 @@ describe('DriveRepository: estrutura no Google Drive', () => {
     expect(file.appProperties).toEqual({ shKind: 'source', shId: 'file-1' })
     expect(await readBlob(await repo.getSource(stored.ref))).toBe('bytes do audio')
     await repo.removeSource(stored.ref)
-    expect(drive.files.has(stored.ref)).toBe(false)
+    // T181 (25/11): to the Drive's trash, recoverable, never gone for good
+    expect(drive.inTrash(drive.files.get(stored.ref)!)).toBe(true)
   })
 
   it('a fonte guardada no Drive toca aos pedaços pelo service worker do app, também depois de abrir de novo; outra referência não', async () => {

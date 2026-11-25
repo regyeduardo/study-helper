@@ -67,7 +67,8 @@ describe('the model selector at generation time', () => {
     expect(screen.queryByLabelText(/também escreve o documento/)).not.toBeInTheDocument()
     expect(screen.getByRole('group', { name: 'Modelos por passo' })).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Gerar' }))
-    expect(generateAta).toHaveBeenCalledWith(meta.id, ['resumo'], undefined, { model: A.uid }, 'home', '', undefined, 'transcricao')
+    // T177: the step by step is "quadros" now ("transcricao" is "Só a transcrição")
+    expect(generateAta).toHaveBeenCalledWith(meta.id, ['resumo'], undefined, { model: A.uid }, 'home', '', undefined, 'quadros')
   })
 
   it('for an Aula of a recording, the dialog offers that the video model also writes the document, as it did', async () => {
@@ -148,7 +149,8 @@ describe('the model selector at generation time', () => {
     expect(step('Contexto')).toHaveValue(A.uid)
     expect(step('Escrita')).toHaveValue(B.uid)
     fireEvent.click(screen.getByRole('button', { name: 'Gerar' }))
-    expect(generateAta).toHaveBeenCalledWith(meta.id, ['resumo'], undefined, { model: B.uid, write: B.uid, video: OMNI.uid, context: A.uid }, { replace: before.id }, '', undefined, 'transcricao')
+    // made before T177, when "transcricao" was the step by step (it kept its steps): it comes back step by step, as "quadros"
+    expect(generateAta).toHaveBeenCalledWith(meta.id, ['resumo'], undefined, { model: B.uid, write: B.uid, video: OMNI.uid, context: A.uid }, { replace: before.id }, '', undefined, 'quadros')
   })
 
   it('in the Ata, a step with its own model keeps it, unless the person picked a model for that step', () => {

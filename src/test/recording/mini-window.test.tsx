@@ -10,7 +10,8 @@ import { RecordingWindow } from '@/components/dialogs/RecordDialogs'
 import type { LiveCapture } from '@/lib/recording/recorder'
 import { useRecorderStore } from '@/stores/recorder'
 import { installIntegration } from '@/test/recording/integration-fakes'
-import { COMPUTER_INPUT, FakeMediaRecorder, installMediaEnvironment, type MediaEnvironment } from '@/test/recording/media-fakes'
+import { COMPUTER_INPUT, FakeMediaRecorder, FakeMediaStream, FakeTrack, installMediaEnvironment, type MediaEnvironment } from '@/test/recording/media-fakes'
+import { readFileSync } from 'node:fs'
 
 const LIVE: LiveCapture = {
   preview: null,
@@ -173,3 +174,47 @@ describe('screen while recording', () => {
     expect(useRecorderStore.getState().live?.screenOn).toBe(false)
   })
 })
+
+// T175 (dono, 25/11: "não deixe o visualizador do vídeo do lado das ondas de som"; mocks/gravar-reuniao, opção I): a tela em cima, na
+// largura toda, e as ondas numa faixa fina embaixo dela, lado a lado; sem a tela, só as ondas, uma embaixo da outra
+describe('a tela e as ondas na janelinha', () => {
+  const screenStream = () => new FakeMediaStream([new FakeTrack('video', 'screen')]) as unknown as MediaStream
+  const parts = (container: HTMLElement) => [...container.querySelector('.mr-media')!.children].map(child => (child.classList.contains('mr-thumb') ? 'tela' : child.classList.contains('player') ? 'ondas' : child.className))
+
+  it('com a tela, a tela vem primeiro e as ondas numa faixa embaixo, lado a lado', () => {
+    useRecorderStore.setState({ active: true, seconds: 5, mode: 'tab', live: { ...LIVE, preview: screenStream() } })
+    const { container } = render(<RecordingWindow />)
+    expect(parts(container)).toEqual(['tela', 'ondas'])
+    expect(container.querySelector('.mr-media .player')).toHaveAttribute('data-lanes', 'side')
+  })
+
+  it('sem a tela, só as ondas, uma embaixo da outra', () => {
+    useRecorderStore.setState({ active: true, seconds: 5, mode: 'microphone', live: { ...LIVE, preview: null, screenOn: false } })
+    const { container } = render(<RecordingWindow />)
+    expect(parts(container)).toEqual(['ondas'])
+    expect(container.querySelector('.mr-media .player')).toHaveAttribute('data-lanes', 'stacked')
+  })
+
+  // na janela flutuante de 340 × 360, com a linha do resumo embaixo dos botões: 100 px de tela e 30 de faixa davam 375 px e a janela
+  // rolava (medido no Chromium); com 90, 4 e 26, dá 359
+  // revisão /ui-ux-pro-max (aria-labels): os nomes da faixa são só pixels no desenho; o leitor de tela não ouvia nada
+  it('a faixa de ondas diz ao leitor de tela de onde vem o som', () => {
+    const meter = {} as AnalyserNode
+    useRecorderStore.setState({ active: true, seconds: 5, mode: 'tab', live: { ...LIVE, preview: screenStream(), meters: { microphone: meter, computer: meter } } })
+    const { container, unmount } = render(<RecordingWindow />)
+    expect(container.querySelector('.mr-media .player')).toHaveAttribute('role', 'img')
+    expect(container.querySelector('.mr-media .player')).toHaveAttribute('aria-label', 'Ondas do som: microfone, som do PC')
+    unmount()
+    useRecorderStore.setState({ live: { ...LIVE, preview: null, meters: { microphone: meter, computer: null } } })
+    const again = render(<RecordingWindow />)
+    expect(again.container.querySelector('.mr-media .player')).toHaveAttribute('aria-label', 'Ondas do som: microfone, sem som do computador')
+  })
+
+  it('o estilo põe a tela na largura toda, com 90 px, e a faixa de 26 px embaixo (mais nada ao lado), cabendo em 360 px', () => {
+    const css = readFileSync('src/styles/record-dialog.css', 'utf8').replace(/\s+/g, '')
+    expect(css).toContain('.mini-rec.mr-media.screen{grid-template-columns:minmax(0,1fr);gap:4px}')
+    expect(css).toContain('.mini-rec.mr-media.screen.player{height:26px}')
+    expect(css).toMatch(/\.mini-rec\.mr-thumb\{width:100%;height:90px;/)
+  })
+})
+

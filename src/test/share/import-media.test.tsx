@@ -196,7 +196,7 @@ describe('importar com a mídia e a Ata', () => {
     const result = await importSharedItem(sharedItem(), {}, actions(), { place: 'drive', repo: memory.repo, track: task.track })
     const note = useLibraryStore.getState().files.find(file => file.id === result.fileId)!
     expect((await useLibraryStore.getState().openFile(note.id)).sidecar.documents).toEqual([ATA])
-    expect(memory.putSource).toHaveBeenCalledWith(note.id, expect.any(File), 'Reunião.mp4')
+    expect(memory.putSource).toHaveBeenCalledWith(note.id, expect.any(File), 'Reunião.mp4', expect.objectContaining({ onProgress: expect.any(Function) }))
     const sent = (memory.putSource.mock.calls[0] as unknown as [string, File])[1]
     expect(sent.size).toBe(SIZE)
     expect(sent.type).toBe('video/mp4')
@@ -218,7 +218,7 @@ describe('onde guardar a mídia', () => {
     fireEvent.click(screen.getByRole('button', { name: 'No Google Drive' }))
     expect(await screen.findByText('biblioteca')).toBeInTheDocument()
     const [note] = useLibraryStore.getState().files
-    expect(memory.putSource).toHaveBeenCalledWith(note.id, expect.any(File), 'Reunião.mp4')
+    expect(memory.putSource).toHaveBeenCalledWith(note.id, expect.any(File), 'Reunião.mp4', expect.objectContaining({ onProgress: expect.any(Function) }))
     expect(note.origin).toMatchObject({ storage: 'drive', storedFileId: 'drive-nova', mime: 'video/mp4' })
     expect(useJobsStore.getState().jobs[0]).toMatchObject({ title: 'Guardar a mídia: Reunião', status: 'done' })
   })

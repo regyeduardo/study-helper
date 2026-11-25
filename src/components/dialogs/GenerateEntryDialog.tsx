@@ -5,7 +5,7 @@ import { AtaPartsFields, toggledPart } from '@/components/dialogs/AtaPartsDialog
 import { AtaStepsField, useAtaSteps } from '@/components/dialogs/AtaSteps'
 import { FolderField } from '@/components/dialogs/FolderChooser'
 import { lastModel, lastSteps, MoreOptions } from '@/components/dialogs/FromNoteFields'
-import { MediaAnalysisField, useMediaAnalysis } from '@/components/dialogs/MediaAnalysisField'
+import { analyzedBefore, MediaAnalysisField, useMediaAnalysis } from '@/components/dialogs/MediaAnalysisField'
 import { type ModelChoice, ModelPick, useModelChoice } from '@/components/dialogs/ModelPick'
 import { Dialog } from '@/components/ui/Dialog'
 import { Icon } from '@/components/ui/Icon'
@@ -97,9 +97,12 @@ export function GenerateEntryDialog({ fileId, prefill }: { fileId: string; prefi
   // a video chooses what the AI analyzes (a YouTube one by its link); an audio always goes by its transcription
   const youtube = Boolean(entry) && isYoutube(entry!)
   const isVideo = Boolean(entry) && (mediaOf(entry!) === 'video' || youtube)
-  const analysis = useMediaAnalysis(choice, writes && isVideo, canHear || youtube || !entry ? null : `${missingFile(entry)}.`, { ata: ataOfVideo, initial: prefill ? prefill.analyze : ataOfVideo ? ata.note?.made?.analyze : undefined, youtube })
-  const steps = useAtaSteps(choices.meeting, ataOfVideo, prefill?.steps ?? lastSteps(ata.note ?? undefined, settings), ata.model ? ATA_MODELS[ata.model].name : undefined)
-  const stepByStep = ataOfVideo && analysis.value === 'transcricao'
+  // an Ata written from the transcription in text (no speech to follow) does not look at the video
+  const analyzes = writes && isVideo && (goal !== 'meeting' || ataOfMedia || youtube)
+  const analysis = useMediaAnalysis(choice, analyzes, canHear || youtube || !entry ? null : `${missingFile(entry)}.`, { ata: ataOfVideo, initial: prefill ? prefill.analyze : ataOfVideo ? analyzedBefore(ata.note?.made) : undefined, youtube })
+  // every note of a video goes step by step with the models of its steps (T177): the Ata, the Aula and the Explicação
+  const stepByStep = analyzes && !youtube && analysis.value === 'quadros'
+  const steps = useAtaSteps(choice, stepByStep, prefill?.steps ?? lastSteps(ata.note ?? undefined, settings), goal === 'meeting' && ata.model ? ATA_MODELS[ata.model].name : undefined, goal === 'lesson' ? 'aula' : goal === 'explanation' ? 'explicacao' : undefined)
   // an instruction that comes back (after a failure) is in sight
   const [inSight] = useState(Boolean(instruction))
 
@@ -132,7 +135,7 @@ export function GenerateEntryDialog({ fileId, prefill }: { fileId: string; prefi
     if (goal === 'transcribe') return void asking([fileId], retry, () => transcribeNote(fileId, undefined, choice.model || null, instruction))
     const place = { folderId: destination }
     if (ataOfMedia) return void asking([fileId], retry, () => generateAta(fileId, ata.model ? [] : PART_ORDER.filter(part => ata.parts.includes(part)), ata.model ?? undefined, { model: choice.model || null, ...(stepByStep ? steps.sent : {}) }, place, instruction, undefined, analysis.sent))
-    void asking([fileId], retry, () => generateFromNote(fileId, goal, choice.model || null, place, instruction, analysis.sent))
+    void asking([fileId], retry, () => generateFromNote(fileId, goal, choice.model || null, place, instruction, analysis.sent, ...(stepByStep ? [steps.sent] : [])))
   }
 
   return (
@@ -180,7 +183,7 @@ export function GenerateEntryDialog({ fileId, prefill }: { fileId: string; prefi
             </div>
             {ataOfMedia && <AtaPartsFields parts={ata.parts} onToggle={part => setAta(current => ({ ...current, parts: toggledPart(current.parts, part) }))} model={ata.model} onModel={model => setAta(current => ({ ...current, model }))} />}
             <ModelPick choice={choice} />
-            {writes && isVideo && <MediaAnalysisField analysis={analysis} />}
+            {analyzes && <MediaAnalysisField analysis={analysis} />}
             {stepByStep && <AtaStepsField steps={steps} />}
             {writes && (
               <div className="field">

@@ -49,6 +49,7 @@ export const router = createBrowserRouter(
         { path: '/shared/:shareId/arquivo/:fileId', element: <WorkspacePage /> },
         { path: '/idiomas', element: later(<LanguagesPage />) },
         { path: '/idiomas/:code', element: later(<LanguagePage />) },
+        { path: '/idiomas/:code/area/:area', element: later(<StudyPage />) },
         { path: '/idiomas/:code/:textId', element: later(<StudyPage />) },
         { path: ADMIN_PATH, element: later(<AdminPage />) },
         { path: '*', element: <WorkspacePage /> },

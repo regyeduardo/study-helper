@@ -3,10 +3,12 @@ import { isDue, type Schedule } from '@/lib/langs/fsrs'
 import { newSlot, type Slot } from '@/lib/langs/listen'
 
 /**
- * The study of a text (spec 004), as in the prototype the owner validated (prototipo/web/app.js), with the order he chose on 24/11
- * ("A"): the text's sentences → test and teach → practice (read and listen) → context. Nobody says what they know: the app tests each
- * item of the text; a wrong answer goes down to what the item needs and was not proven, teaches it (the learn card) and tests again
- * another way, up to 3 times. What the base already proved, with no review due, is skipped; what is due comes as a review.
+ * The study of a text (spec 004), as in the prototype the owner validated (prototipo/web/app.js), in three parts (25/11, FR-041):
+ * Vocabulário (test and teach) → Prática (read and listen) → Contexto. Nobody says what they know: the app tests each item of the
+ * text; a wrong answer goes down to what the item needs and was not proven, teaches it (the learn card) and tests again another way,
+ * up to 3 times. What the base already proved, with no review due, is skipped; what is due comes as a review. In each part, what the
+ * person needs first comes first, as in Anki (due reviews, then learning, then new), drawn at random inside each group (FR-042); the
+ * parts can be switched at any time and each one keeps where it stopped (FR-043).
  */
 
 /** The base of the language as the server gives it (`GET …/knowledge`): each item's skills and whether a review is due. */
@@ -28,6 +30,8 @@ export interface TestEntry extends Entry {
   id: string
   /** Which try (0, 1, 2): each one uses another test card of the item. */
   n: number
+  /** The item's card the first try uses (drawn, or the one due); the next tries take the next ones. */
+  k?: number
   review?: boolean
 }
 export interface CardEntry extends Entry {
@@ -42,9 +46,12 @@ export interface Outcome {
   lang?: PromptLang
 }
 
+export type Part = 'test' | 'practice' | 'context'
+export const PARTS: Part[] = ['test', 'practice', 'context']
+
 export interface StudyState {
   v: 2
-  step: 'lines' | 'test' | 'practice' | 'context' | 'done'
+  step: Part | 'done'
   pq: TestEntry[]
   pp: number
   proven: Record<string, boolean>
@@ -61,7 +68,6 @@ export interface StudyState {
 }
 
 export type Current =
-  | { kind: 'lines' }
   | { kind: 'done' }
   | { kind: 'teach'; id: string; item: Item; position: number; total: number }
   | { kind: 'card'; stage: 'test' | 'practice' | 'context'; card: Card; entry: TestEntry | CardEntry; position: number; total: number; review?: boolean; again?: boolean }
@@ -77,34 +83,76 @@ const itemOf = (text: LanguageText, id: string): Item | undefined => text.items[
 const testCards = (text: LanguageText, id: string) => (itemOf(text, id)?.test ?? []).filter(shown)
 const proven = (state: StudyState, knowledge: Knowledge, id: string) => Boolean(state.proven[id]) || fromBase(knowledge, id)
 
-function testEntry(text: LanguageText, id: string, n: number, review = false): TestEntry {
+/** The card of a try: the item's cards in turn, from the one the first try drew. */
+const cardOf = (cards: Card[], entry: TestEntry) => cards[((entry.k ?? 0) + entry.n) % cards.length]
+
+function testEntry(text: LanguageText, id: string, n: number, review = false, k = 0): TestEntry {
   const cards = testCards(text, id)
-  return { t: 'test', id, n, ...(review ? { review } : {}), slot: cards.length ? newSlot(cards[n % cards.length]) : {} }
+  const entry: TestEntry = { t: 'test', id, n, ...(k ? { k } : {}), ...(review ? { review } : {}), slot: {} }
+  if (cards.length) entry.slot = newSlot(cardOf(cards, entry))
+  return entry
 }
 
 /** FR-039: a card reused from another text that is already in review and not due waits for its day (it comes back as a review). */
 const waiting = (schedule: Schedule | undefined, now: Date) => schedule?.state === 'review' && !isDue(schedule, now)
 
-export function startStudy(text: LanguageText, knowledge: Knowledge, now = new Date()): StudyState {
-  const pq = Object.keys(text.items)
-    .filter(id => testCards(text, id).length && !fromBase(knowledge, id))
-    .map(id => testEntry(text, id, 0, Boolean(knowledge[id]?.due)))
+/** FR-042, what the person needs first, as in Anki: 0 a due review, 1 learning (the short steps), 2 new (or not due). */
+const NEW = 2
+function need(schedule: Schedule | undefined, now: Date): number {
+  if (schedule?.state === 'review') return isDue(schedule, now) ? 0 : NEW
+  return schedule?.state === 'learning' || schedule?.state === 'relearning' ? 1 : NEW
+}
+
+/** Shuffled with the given draw; a draw of 0 keeps the order (the tests use it). */
+function shuffled<T>(list: T[], random: () => number): T[] {
+  const out = [...list]
+  for (let i = 0; i < out.length - 1; i++) {
+    const j = i + Math.floor(random() * (out.length - i))
+    ;[out[i], out[j]] = [out[j], out[i]]
+  }
+  return out
+}
+
+/** By need, each group drawn at random: the card type never decides the sequence (owner, 25/11). */
+function byNeed<T>(list: T[], needOf: (value: T) => number, random: () => number): T[] {
+  const groups: T[][] = [[], [], []]
+  for (const value of list) groups[needOf(value)].push(value)
+  return groups.flatMap(group => shuffled(group, random))
+}
+
+export function startStudy(text: LanguageText, knowledge: Knowledge, now = new Date(), random: () => number = Math.random): StudyState {
+  const items = Object.keys(text.items).filter(id => testCards(text, id).length && !fromBase(knowledge, id))
+  // an item's need is its neediest card's; seen in the base with a review due by a card of another text, it is a review
+  const needs = Object.fromEntries(
+    items.map(id => {
+      const own = testCards(text, id).map(card => need(text.schedules?.[card.id], now))
+      const best = Math.min(...own)
+      return [id, { need: best === NEW && knowledge[id]?.due ? 0 : best, own, best }]
+    }),
+  )
+  const pq = byNeed(items, id => needs[id].need, random).map(id => {
+    // the first try takes the card that is due (or learning); a new item, any of its cards
+    const { own, best } = needs[id]
+    return testEntry(text, id, 0, Boolean(knowledge[id]?.due), best < NEW ? own.indexOf(best) : Math.floor(random() * own.length))
+  })
   const entry = (card: Card): CardEntry => ({ id: card.id, slot: newSlot(card) })
-  return {
+  const practice = text.practice.filter(card => shown(card) && !waiting(text.schedules?.[card.id], now))
+  return settle({
     v: 2,
-    step: 'lines',
+    step: 'test',
     pq,
     pp: 0,
     proven: {},
-    queue: text.practice.filter(card => shown(card) && !waiting(text.schedules?.[card.id], now)).map(entry),
+    queue: byNeed(practice, card => need(text.schedules?.[card.id], now), random).map(entry),
     pos: 0,
+    // the comprehension questions keep their order (literal first)
     ctx: text.context.filter(shown).map(entry),
     cpos: 0,
     results: [],
     enWrong: 0,
     ptMode: false,
     ptRight: 0,
-  }
+  })
 }
 
 /** A progress kept before still is this study (the one of delivery 1, only listening, starts again). */
@@ -113,21 +161,31 @@ export function fitsStudy(state: unknown): state is StudyState {
   return Boolean(s && s.v === 2 && Array.isArray(s.pq) && Array.isArray(s.queue) && Array.isArray(s.ctx) && typeof s.pp === 'number')
 }
 
+/** How many cards are left in a part. */
+export function partLeft(state: StudyState, part: Part): number {
+  if (part === 'test') return Math.max(0, state.pq.length - state.pp)
+  if (part === 'practice') return Math.max(0, state.queue.length - state.pos)
+  return Math.max(0, state.ctx.length - state.cpos)
+}
+
+/** A finished part hands over to the next one with something left (going round); the study ends when all are finished. */
 function settle(state: StudyState): StudyState {
-  if (state.step === 'test' && state.pp >= state.pq.length) state.step = state.queue.length ? 'practice' : state.ctx.length ? 'context' : 'done'
-  if (state.step === 'practice' && state.pos >= state.queue.length) state.step = state.ctx.length ? 'context' : 'done'
-  if (state.step === 'context' && state.cpos >= state.ctx.length) state.step = 'done'
+  // kept before 25/11, in the part of the sentences: it goes on in the Vocabulário
+  if ((state.step as string) === 'lines') state.step = 'test'
+  if (state.step !== 'done' && !partLeft(state, state.step)) {
+    const at = PARTS.indexOf(state.step)
+    state.step = [...PARTS.slice(at + 1), ...PARTS.slice(0, at)].find(part => partLeft(state, part) > 0) ?? 'done'
+  }
   if (state.step === 'done') state.done = true
   return state
 }
 
-/** After the sentences: the first part that has something. */
-export function begin(state: StudyState): StudyState {
-  return settle({ ...state, step: 'test' })
+/** FR-043: the person switches part at any time; each one goes on where it stopped. A finished part does not open again. */
+export function goTo(state: StudyState, part: Part): StudyState {
+  return partLeft(state, part) > 0 ? { ...state, step: part } : state
 }
 
 export function currentOf(state: StudyState, text: LanguageText): Current {
-  if (state.step === 'lines') return { kind: 'lines' }
   if (state.step === 'test') {
     const entry = state.pq[state.pp]
     const item = entry && itemOf(text, entry.id)
@@ -135,7 +193,7 @@ export function currentOf(state: StudyState, text: LanguageText): Current {
     const position = state.pp + 1
     if (entry.t === 'teach') return { kind: 'teach', id: entry.id, item, position, total: state.pq.length }
     const cards = testCards(text, entry.id)
-    return { kind: 'card', stage: 'test', card: cards[entry.n % cards.length], entry, position, total: state.pq.length, review: entry.review, again: entry.n > 0 }
+    return { kind: 'card', stage: 'test', card: cardOf(cards, entry), entry, position, total: state.pq.length, review: entry.review, again: entry.n > 0 }
   }
   if (state.step === 'practice') {
     const entry = state.queue[state.pos]
@@ -204,7 +262,7 @@ export function answer(before: StudyState, text: LanguageText, knowledge: Knowle
         if (later >= 0) deps.push(...state.pq.splice(later, 1))
         else if (!state.pq.slice(0, state.pp).some(item => item.t === 'test' && item.id === id)) deps.push(testEntry(text, id, 0))
       }
-      state.pq.splice(state.pp + 1, 0, ...deps, { t: 'teach', id: entry.id, n: entry.n, slot: {} }, testEntry(text, entry.id, entry.n + 1))
+      state.pq.splice(state.pp + 1, 0, ...deps, { t: 'teach', id: entry.id, n: entry.n, slot: {} }, testEntry(text, entry.id, entry.n + 1, false, entry.k))
     }
     state.pp++
   } else if (now.stage === 'practice') {

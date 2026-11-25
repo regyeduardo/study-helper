@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, type Mock, vi } from 'vitest'
 
 import type { FileSidecar, SharedFile, SharedItem } from '@/types/domain'
 import { defaultIndex, newFolderMeta } from '@/lib/defaults'
@@ -222,7 +222,31 @@ describe('importar o link de uma entrada', () => {
     const track = vi.fn(() => ({ update: vi.fn(), done: vi.fn(), fail: vi.fn() }))
     const result = await importSharedEntry(shared, {}, actions(), { folderId: null, existing: [], media: { place: 'drive', repo: memory.repo, track } })
     const entry = useLibraryStore.getState().files.find(file => file.id === result.fileId)!
-    expect(memory.putSource).toHaveBeenCalledWith(entry.id, expect.any(File), 'planejamento.mp4')
+    expect(memory.putSource).toHaveBeenCalledWith(entry.id, expect.any(File), 'planejamento.mp4', expect.objectContaining({ onProgress: expect.any(Function) }))
     expect(entry).toMatchObject({ folderId: null, kept: 'arquivo', origin: { storage: 'drive', storedFileId: 'drive-nova' } })
+  })
+
+  // T178 (dono, 25/11, com a janela parada em "Guardando no App": "O usuário vai ficar esperando igual trouxa?"): guardar a mídia diz
+  // quanto já foi; e a entrada só diz que guarda o arquivo quando ele chegou, para uma interrupção (aba fechada, página recarregada)
+  // nunca deixar a nota apontando para um vídeo que não existe.
+  it('guardando no App: diz quanto já foi enviado; a entrada só guarda o arquivo quando ele chegou', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(new Uint8Array(SIZE), { headers: { 'Content-Length': String(SIZE) } })))
+    let finish: (stored: { ref: string }) => void = () => {}
+    ;(memory.putSource as Mock).mockImplementation(async (_id: string, _file: File, _name: string, transfer?: { onProgress?: (done: number, total: number) => void }) => {
+      transfer?.onProgress?.(SIZE / 2, SIZE)
+      return new Promise(resolve => (finish = resolve))
+    })
+    const update = vi.fn()
+    const track = vi.fn(() => ({ update, done: vi.fn(), fail: vi.fn() }))
+    const tree = entryShareTree(metas(), 'e')
+    const shared = sharedItem(await buildEntryShareContent('e', metas(), open, choiceOf(tree, defaultChoice(tree, true))), true)
+    const importing = importSharedEntry(shared, {}, actions(), { folderId: null, existing: [], media: { place: 'app', repo: memory.repo, track } })
+    await vi.waitFor(() => expect(update).toHaveBeenCalledWith('Guardando no App', 0.5, { done: SIZE / 2, total: SIZE }))
+    // while the media goes up, the entrada is only the record
+    expect(useLibraryStore.getState().files.find(file => file.sharedFrom === SHARE_ID)?.kept).toBe('registro')
+    finish({ ref: 'app-nova' })
+    const result = await importing
+    const entry = useLibraryStore.getState().files.find(file => file.id === result.fileId)!
+    expect(entry).toMatchObject({ kept: 'arquivo', origin: { storage: 'drive', storedFileId: 'app-nova' } })
   })
 })

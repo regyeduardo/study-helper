@@ -6,6 +6,7 @@ import { Dialog } from '@/components/ui/Dialog'
 import { Icon } from '@/components/ui/Icon'
 import { IntegrationStatus } from '@/components/dialogs/IntegrationStatus'
 import { goToNew } from '@/components/dialogs/go-to-new'
+import { AtaModelField } from '@/components/dialogs/AtaPartsDialog'
 import { lastAta } from '@/components/dialogs/GenerateEntryDialog'
 import { MediaAnalysisField, useMediaAnalysis } from '@/components/dialogs/MediaAnalysisField'
 import { ModelPick, useModelChoice } from '@/components/dialogs/ModelPick'
@@ -23,7 +24,7 @@ import { MEDIA_LABEL, recordingName } from '@/lib/file-types'
 import { PART_ORDER } from '@/lib/generation/ata'
 import { paths } from '@/lib/paths'
 import { removeLocalMedia } from '@/lib/recording/media-library'
-import { mountMiniplayer } from '@/lib/recording/miniplayer'
+import { type Lanes, mountMiniplayer } from '@/lib/recording/miniplayer'
 import { type AudioInput, CaptureCheck, type RecordingDestination, type CaptureMode, type CheckStatus, COMPUTER_AUDIO_AUTO, COMPUTER_AUDIO_NONE, hears, listAudioInputs, type LiveCapture, playTestSound, SOUND_LEVEL, type StartOptions, systemAudioNotice, type VideoFps, VOICE_LEVEL } from '@/lib/recording/recorder'
 import { AUDIO_BITS_PER_SECOND, CHOSEN, OPTIMIZED, VARIANTS } from '@/lib/recording/variants'
 import { defaultStorage, storageOptions } from '@/lib/storage/source-storage'
@@ -648,10 +649,12 @@ export function RecordDialog() {
   )
 }
 
-function Miniplayer({ live }: { live: LiveCapture | null }) {
+function Miniplayer({ live, lanes }: { live: LiveCapture | null; lanes: Lanes }) {
   const container = useRef<HTMLDivElement>(null)
-  useEffect(() => (live && container.current ? mountMiniplayer(container.current, live) : undefined), [live])
-  return <div className={live?.preview ? 'player screen' : 'player'} ref={container} />
+  useEffect(() => (live && container.current ? mountMiniplayer(container.current, live, lanes) : undefined), [live, lanes])
+  // the names are drawn on the canvas: the screen reader hears them here
+  const name = live ? `Ondas do som: microfone, ${live.meters.computer ? 'som do PC' : 'sem som do computador'}` : undefined
+  return <div className={live?.preview ? 'player screen' : 'player'} ref={container} data-lanes={lanes} role="img" aria-label={name} />
 }
 
 function useSwitchOptions(mode: CaptureMode | null) {
@@ -768,7 +771,7 @@ function RecordingControls() {
   const screenOn = Boolean(live?.screenOn)
   const flags = marks.filter(item => item.kind === 'mark').length
   const notes = marks.length - flags
-  // the waves only: the screen goes beside them, in its own picture
+  // the waves only: the screen goes above them, in its own picture (mocks/gravar-reuniao, option I)
   const waves = useMemo(() => (live ? { ...live, preview: null } : null), [live])
   const keepNote = () => {
     if (note.trim()) annotate(note.trim())
@@ -870,7 +873,7 @@ function RecordingControls() {
           <>
             <div className={`mr-media${live?.preview ? ' screen' : ''}`}>
               {live?.preview && <ScreenThumb stream={live.preview} />}
-              <Miniplayer live={waves} />
+              <Miniplayer live={waves} lanes={live?.preview ? 'side' : 'stacked'} />
             </div>
             <div className="tiles mr-tiles">
               <Tile label="Microfone" name={microphoneOn ? 'Desligar o microfone' : 'Ligar o microfone'} icon={microphoneOn ? <Icon name="mic" /> : <Glyph name="micOff" />} pressed={microphoneOn} onClick={() => setEnabled('microphone', !microphoneOn)} />
@@ -973,8 +976,9 @@ function RecordingDoneOptions({ place }: { place: 'dialog' | 'window' }) {
   const heardBy = useModelChoice('transcricao')
   // who writes each note, as in "Gerar desta entrada"
   const writers: Record<Writer, ReturnType<typeof useModelChoice>> = { meeting: useModelChoice('ata'), lesson: useModelChoice('aula', true), explanation: useModelChoice('explicacao', true) }
-  // the Ata comes out as "Gerar desta nota" makes it: the "Modelo da ata" and parts of the last Ata, else Padrão with the Resumo
-  const [ata] = useState(() => lastAta(files, ''))
+  // the Ata comes with the "Modelo da ata" of the last Ata, which the person changes (25/11); the parts stay those of the last Ata, else
+  // the Resumo (24/11: "partes da ata sai")
+  const [ata, setAta] = useState(() => lastAta(files, ''))
   const [instruction, setInstruction] = useState('')
   const defaultName = result ? recordingName(result.file.name) : ''
   const [name, setName] = useState(defaultName)
@@ -1107,6 +1111,7 @@ function RecordingDoneOptions({ place }: { place: 'dialog' | 'window' }) {
           </div>
           <span className="rd-about">Pode marcar vários. Nada marcado: só guarda.</span>
         </div>
+        {has('meeting') && <AtaModelField model={ata.model} onModel={model => setAta(current => ({ ...current, model }))} />}
         {inside.length > 0 && (
           <div className="rd-more">
             <button className="rd-more-toggle" aria-expanded={showMore} onClick={() => setMoreOpen(!showMore)}>

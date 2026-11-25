@@ -222,7 +222,7 @@ describe('importar o link de uma entrada', () => {
     await waitFor(() => expect(screen.getByText(/^aberto \/arquivo\//)).toBeInTheDocument())
     const { entry } = imported()
     expect(entry.folderId).toBeNull()
-    expect(memory.putSource).toHaveBeenCalledWith(entry.id, expect.any(File), 'planejamento.mp4')
+    expect(memory.putSource).toHaveBeenCalledWith(entry.id, expect.any(File), 'planejamento.mp4', expect.objectContaining({ onProgress: expect.any(Function) }))
   })
 
   it('cria uma pasta no lugar, na biblioteca de quem importa, e a família vai para ela', async () => {

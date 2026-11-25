@@ -124,7 +124,8 @@ export function SharedBadge({ label = false, button = false }: { label?: boolean
         const track = (title: string) => {
           const task = useJobsStore.getState().trackTask(title)
           blocker.progress({ phase: 'Guardando a mídia' })
-          return { ...task, update: (message: string, fraction: number | null) => (task.update(message, fraction), blocker.progress({ phase: message })) }
+          // the bytes of the send (none: the bar of the download before does not stay at 100%), so the window counts it as moving
+          return { ...task, update: (message: string, fraction: number | null, bytes?: { done: number; total: number }) => (task.update(message, fraction), blocker.progress({ phase: message, doneBytes: bytes?.done, totalBytes: bytes?.total })) }
         }
         const media = place ? { place, repo: library.repo, track, ...fetched } : undefined
         let copied = 0

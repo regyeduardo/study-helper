@@ -1,9 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+const { makeSeekable } = vi.hoisted(() => ({ makeSeekable: vi.fn(async (blob: Blob) => new Blob([blob], { type: blob.type })) }))
+vi.mock('@/lib/recording/seekable', () => ({ makeSeekable }))
+
 import { openVideoFrames, signatureDifference } from '@/lib/generation/video-source'
+import { SEEK_LIMIT_MS } from '@/lib/recording/video-wait'
 
 class FakeVideo extends EventTarget {
   static failOnLoad = false
   static startDuration = 1500
+  /** After this many seeks the decoder breaks (25/11: PIPELINE_ERROR_DECODE in the server's Chromium) and nothing answers again. */
+  static breakAfter: number | null = null
+  /** No seek is ever answered. */
+  static silent = false
   static instances: FakeVideo[] = []
 
   muted = false
@@ -14,6 +22,7 @@ class FakeVideo extends EventTarget {
   seeks: number[] = []
   pending = 0
   maxPending = 0
+  error: { code: number } | null = null
   private source = ''
   private time = 0
 
@@ -42,6 +51,7 @@ class FakeVideo extends EventTarget {
   set currentTime(value: number) {
     this.time = value
     this.seeks.push(value)
+    if (FakeVideo.silent || this.error) return
     this.pending += 1
     this.maxPending = Math.max(this.maxPending, this.pending)
     if (value >= 1e9 && !Number.isFinite(this.duration)) {
@@ -51,6 +61,10 @@ class FakeVideo extends EventTarget {
     setTimeout(() => {
       this.pending -= 1
       this.dispatchEvent(new Event('seeked'))
+      if (FakeVideo.breakAfter !== null && this.seeks.length >= FakeVideo.breakAfter) {
+        this.error = { code: 3 }
+        this.dispatchEvent(new Event('error'))
+      }
     }, 0)
   }
 }
@@ -79,6 +93,8 @@ function drawsOn(width: number, height: number) {
 
 beforeEach(() => {
   FakeVideo.failOnLoad = false
+  FakeVideo.breakAfter = null
+  FakeVideo.silent = false
   FakeVideo.startDuration = 1500
   FakeVideo.instances = []
   contexts.clear()
@@ -101,9 +117,37 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  vi.useRealTimers()
   vi.restoreAllMocks()
   urlApi.createObjectURL = savedCreateUrl
   urlApi.revokeObjectURL = savedRevokeUrl
+})
+
+// T180 (25/11): a Ata da Natália parou 80 minutos em "Vendo quem fala pelos quadros da chamada": o vídeo deu erro de decodificação no
+// Chromium do servidor entre dois quadros, o aviso de erro já tinha passado, e o quadro seguinte esperava o "seeked" para sempre.
+describe('a leitura dos quadros nunca espera para sempre', () => {
+  it('um WebM de antes tem o índice refeito antes de pular', async () => {
+    const video = new Blob(['x'], { type: 'video/webm;codecs=vp9' })
+    await openVideoFrames(video)
+    expect(makeSeekable).toHaveBeenCalledWith(video, { redo: true })
+  })
+
+  it('o vídeo que quebrou entre dois quadros: o próximo quadro falha na hora, dizendo por quê', async () => {
+    FakeVideo.breakAfter = 1
+    const source = await openVideoFrames(new Blob(['x']))
+    await source.full(10)
+    await expect(source.full(20)).rejects.toThrow('O vídeo da gravação não abriu.')
+  })
+
+  it('um quadro que não vem: falha depois do limite, em vez de prender o trabalho', async () => {
+    const source = await openVideoFrames(new Blob(['x']))
+    FakeVideo.silent = true
+    vi.useFakeTimers()
+    const shot = source.full(10)
+    const failed = expect(shot).rejects.toThrow(/não veio/)
+    await vi.advanceTimersByTimeAsync(SEEK_LIMIT_MS + 1)
+    await failed
+  })
 })
 
 describe('openVideoFrames', () => {

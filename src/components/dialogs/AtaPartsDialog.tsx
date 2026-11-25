@@ -3,7 +3,7 @@ import { useId, useState } from 'react'
 import type { AtaModelId, AtaPart } from '@/types/domain'
 import { AtaStepsField, useAtaSteps } from '@/components/dialogs/AtaSteps'
 import { FolderWindow, lastModel, lastSteps, madeLine, MoreOptions, ReplaceOrNew, SaveIn, useNoteFolder } from '@/components/dialogs/FromNoteFields'
-import { MediaAnalysisField, useMediaAnalysis } from '@/components/dialogs/MediaAnalysisField'
+import { analyzedBefore, MediaAnalysisField, useMediaAnalysis } from '@/components/dialogs/MediaAnalysisField'
 import { ModelPick, useModelChoice } from '@/components/dialogs/ModelPick'
 import { Dialog } from '@/components/ui/Dialog'
 import { mediaOf } from '@/lib/file-types'
@@ -31,7 +31,7 @@ export function AtaPartsDialog({ fileId, again, prefill }: { fileId: string; aga
   const choice = useModelChoice('ata', false, prefill ? (prefill.model ? { pick: prefill.model } : {}) : lastModel(before, settings))
   // the Ata of a video goes step by step, each step with its model, or all in one call (FR-072)
   const isVideo = Boolean(file) && mediaOf(file!) === 'video'
-  const analysis = useMediaAnalysis(choice, isVideo, null, { ata: true, initial: prefill?.analyze ?? before?.made?.analyze })
+  const analysis = useMediaAnalysis(choice, isVideo, null, { ata: true, initial: prefill?.analyze ?? analyzedBefore(before?.made) })
   const steps = useAtaSteps(choice, isVideo, prefill?.steps ?? lastSteps(before, settings), model ? ATA_MODELS[model].name : undefined)
   const folder = useNoteFolder(fileId, prefill?.folderId)
   const [replace, setReplace] = useState(prefill?.replace ?? Boolean(before))
@@ -43,7 +43,7 @@ export function AtaPartsDialog({ fileId, again, prefill }: { fileId: string; aga
   const start = () => {
     if (!ready) return
     close()
-    const ai = { model: choice.model || null, ...(isVideo && analysis.value === 'transcricao' ? steps.sent : {}) }
+    const ai = { model: choice.model || null, ...(isVideo && analysis.value === 'quadros' ? steps.sent : {}) }
     const place = replace && before ? { replace: before.id } : folder.place
     // the instruction goes only when there is one; a video always says what the AI analyzes
     const said = isVideo ? ([instruction.trim(), undefined, analysis.sent] as const) : instruction.trim() ? ([instruction] as const) : []
@@ -87,7 +87,7 @@ export function AtaPartsDialog({ fileId, again, prefill }: { fileId: string; aga
           <AtaPartsFields parts={parts} onToggle={toggle} model={model} onModel={setModel} />
           <ModelPick choice={choice} />
           {isVideo && <MediaAnalysisField analysis={analysis} />}
-          {isVideo && analysis.value === 'transcricao' && <AtaStepsField steps={steps} />}
+          {isVideo && analysis.value === 'quadros' && <AtaStepsField steps={steps} />}
           {before && <ReplaceOrNew replace={replace} onReplace={choice => (setReplace(choice), choice || folder.setOpen(true))} />}
           {!replace && <SaveIn folder={folder} />}
           <MoreOptions instruction={instruction} onInstruction={setInstruction} placeholder="Ex.: foque nas decisões e nas tarefas" open={inSight} />
@@ -99,23 +99,30 @@ export function AtaPartsDialog({ fileId, again, prefill }: { fileId: string; aga
 }
 
 /** A model hides the parts: the Ata comes out in that model's skeleton. */
-export function AtaPartsFields({ parts, onToggle, model, onModel }: { parts: AtaPart[]; onToggle(part: AtaPart): void; model: AtaModelId | null; onModel(model: AtaModelId | null): void }) {
+/** "Modelo da ata": Padrão (the parts) or one of the models, which makes ONE document in its skeleton. */
+export function AtaModelField({ model, onModel }: { model: AtaModelId | null; onModel(model: AtaModelId | null): void }) {
   const id = useId()
   return (
+    <div className="field">
+      <label className="lab" htmlFor={id}>
+        Modelo da ata
+      </label>
+      <select className="input" id={id} value={model ?? ''} onChange={event => onModel((event.target.value || null) as AtaModelId | null)}>
+        <option value="">Padrão</option>
+        {(Object.keys(ATA_MODELS) as AtaModelId[]).map(key => (
+          <option key={key} value={key}>
+            {ATA_MODELS[key].name}
+          </option>
+        ))}
+      </select>
+    </div>
+  )
+}
+
+export function AtaPartsFields({ parts, onToggle, model, onModel }: { parts: AtaPart[]; onToggle(part: AtaPart): void; model: AtaModelId | null; onModel(model: AtaModelId | null): void }) {
+  return (
     <>
-      <div className="field">
-        <label className="lab" htmlFor={id}>
-          Modelo da ata
-        </label>
-        <select className="input" id={id} value={model ?? ''} onChange={event => onModel((event.target.value || null) as AtaModelId | null)}>
-          <option value="">Padrão</option>
-          {(Object.keys(ATA_MODELS) as AtaModelId[]).map(key => (
-            <option key={key} value={key}>
-              {ATA_MODELS[key].name}
-            </option>
-          ))}
-        </select>
-      </div>
+      <AtaModelField model={model} onModel={onModel} />
       {!model && (
         <fieldset style={{ border: 0, padding: 0, margin: 0, display: 'grid', gap: 8 }}>
           <legend className="lab">Partes da ata</legend>

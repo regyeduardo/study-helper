@@ -24,6 +24,8 @@ export interface StepRow {
   name: string
   options: { uid: string; label: string }[]
   score: StepScore
+  /** The score was measured for this note: false in the Contexto and the Escrita of an Aula or an Explicação (measured on an Ata). */
+  measured: boolean
   pick(uid: string): void
 }
 
@@ -43,7 +45,9 @@ export interface AtaSteps {
 }
 
 /** State of "Modelos por passo". `writer`: the "Modelo da IA" of the window, which is the Escrita; `last`: what comes chosen instead of the default ("Gerar de novo"); `format`: the "Modelo da ata" in the hint of the Escrita. */
-export function useAtaSteps(writer: ModelChoice, on: boolean, last: AtaStepModels = {}, format?: string): AtaSteps {
+/** `note`: an Aula or an Explicação of a video, step by step (T177): the steps say what they do there; only the Vídeo has a score measured
+ * for it (the screen is read the same way). */
+export function useAtaSteps(writer: ModelChoice, on: boolean, last: AtaStepModels = {}, format?: string, note?: 'aula' | 'explicacao'): AtaSteps {
   const settings = useLibraryStore(state => state.index.settings)
   const live = useModelsStore(state => state.live)
   const probes = useModelsStore(state => state.probes)
@@ -70,11 +74,15 @@ export function useAtaSteps(writer: ModelChoice, on: boolean, last: AtaStepModel
     const pair = recommendedPair(id)
     return config.models.find(model => model.mid === pair.model && providerById(config, model.pid)?.type === pair.provider)?.uid
   }
-  const hints: Record<AtaStepId, string> = {
-    video: 'Lê a tela e diz quem fala, pelos quadros do vídeo.',
-    context: 'O que mudou na reunião, como o prazo que caiu.',
-    write: `Escreve a ata${format ? ` no formato ${format}` : ''}. Igual ao Modelo da IA.`,
-  }
+  const hints: Record<AtaStepId, string> = note
+    ? { video: 'Lê a tela pelos quadros do vídeo.', context: 'Acha onde a fala aponta para a tela.', write: `Escreve a ${note === 'aula' ? 'aula' : 'explicação'}. Igual ao Modelo da IA.` }
+    : {
+        video: 'Lê a tela e diz quem fala, pelos quadros do vídeo.',
+        context: 'O que mudou na reunião, como o prazo que caiu.',
+        write: `Escreve a ata${format ? ` no formato ${format}` : ''}. Igual ao Modelo da IA.`,
+      }
+  const measured = (id: AtaStepId) => !note || id === 'video'
+  const unmeasured: StepScore = { score: null, recommended: false, low: false, why: null }
   const setters: Record<AtaStepId, (uid: string) => void> = {
     video: uid => setPicked(now => ({ ...now, video: uid || undefined })),
     context: uid => setPicked(now => ({ ...now, context: uid || undefined })),
@@ -85,7 +93,8 @@ export function useAtaSteps(writer: ModelChoice, on: boolean, last: AtaStepModel
     const model = modelByUid(config, uid)
     const type = providerById(config, model?.pid)?.type
     const uids = id === 'write' ? writer.options : config.models.filter(item => item.uid === uid || compatible(mediaOfModel(config, live, probes, item.uid), NEEDS[id])).map(item => item.uid)
-    return { id, label: LABEL[id], hint: hints[id], uid, name: model?.name ?? '', options: uids.map(item => ({ uid: item, label: label(item) })), score: scoreOfStep(id, model && type ? { provider: type, model: model.mid } : null), pick: setters[id] }
+    const score = measured(id) ? scoreOfStep(id, model && type ? { provider: type, model: model.mid } : null) : unmeasured
+    return { id, label: LABEL[id], hint: hints[id], uid, name: model?.name ?? '', options: uids.map(item => ({ uid: item, label: label(item) })), score, measured: measured(id), pick: setters[id] }
   })
   const atRecommended = ATA_STEP_IDS.every(id => !recommendedUid(id) || current[id] === recommendedUid(id))
   // a step that starts below the line opens the section: the warning is not hidden
@@ -151,7 +160,7 @@ function Row({ row }: { row: StepRow }) {
           </span>
         </div>
       )}
-      {row.uid && row.score.score === null && <p className="ata-step-none">Sem nota medida neste passo.</p>}
+      {row.uid && row.measured && row.score.score === null && <p className="ata-step-none">Sem nota medida neste passo.</p>}
     </div>
   )
 }

@@ -61,6 +61,8 @@ const checked = () =>
     .getAllByRole('radio')
     .filter(item => item.getAttribute('aria-checked') === 'true')
     .map(item => item.querySelector('b')!.textContent)
+const labels = () => within(field()).getAllByRole('radio').map(item => item.querySelector('b')!.textContent)
+const VIDEO_CHOICES = ['Transcrição + quadros do vídeo', 'Só a transcrição', 'Tudo numa chamada']
 const pickModel = (uid: string) => fireEvent.change(screen.getByLabelText('Modelo da IA'), { target: { value: uid } })
 const generateFromNote = vi.fn(async (..._args: unknown[]) => 'nota')
 const generateAta = vi.fn(async (..._args: unknown[]) => undefined)
@@ -95,56 +97,78 @@ describe('"Gerar desta nota"', () => {
   const goal = (name: string) => fireEvent.click(screen.getByRole('radio', { name: new RegExp(`^${name}`) }))
   const go = () => fireEvent.click(screen.getByRole('button', { name: 'Gerar' }))
 
-  // in the Ata of a video the two ways are others (FR-072, entry-page.test.tsx); Aula and Explicação keep these three
-  it('numa Aula de um vídeo pergunta, e com um modelo que ouve vem "Só o vídeo", como hoje', async () => {
+  // T177 (o dono escolheu B em 25/11): de um vídeo, a Ata, a Aula e a Explicação têm as mesmas três escolhas, na mesma ordem; o passo a
+  // passo lê a tela pelos quadros do vídeo e funciona com um modelo que só lê texto; "Tudo numa chamada" manda o áudio do vídeo (T176)
+  it.each(['Ata', 'Aula', 'Explicação'])('numa %s de um vídeo vêm as mesmas três escolhas, com o passo a passo marcado e recomendado', async name => {
     await open(entrada(VIDEO))
-    goal('Aula')
-    expect(within(field()).getAllByRole('radio').map(item => item.querySelector('b')!.textContent)).toEqual(['Só o vídeo', 'Só a transcrição', 'Transcrição + vídeo'])
-    expect(checked()).toEqual(['Só o vídeo'])
-    expect(radio('Só o vídeo')).toHaveAttribute('aria-disabled', 'false')
+    goal(name)
+    expect(labels()).toEqual(VIDEO_CHOICES)
+    expect(checked()).toEqual(['Transcrição + quadros do vídeo'])
+    expect(radio('Transcrição + quadros do vídeo')).toHaveTextContent('passo a passo')
+    expect(radio('Transcrição + quadros do vídeo')).toHaveTextContent('recomendado')
+    expect(radio('Só a transcrição')).toHaveTextContent('Só o texto, sem ler a tela: sai mais rápido.')
+    expect(radio('Tudo numa chamada')).toHaveTextContent('O modelo da escrita ouve o áudio do vídeo, sem passos.')
+    for (const choice of VIDEO_CHOICES) expect(radio(choice)).toHaveAttribute('aria-disabled', 'false')
   })
 
-  it('o modelo que não ouve: vem "Só a transcrição", e as outras ficam visíveis, desligadas, dizendo por quê', async () => {
+  it.each(['Ata', 'Aula', 'Explicação'])('numa %s, com um modelo que não ouve, só "Tudo numa chamada" fica desligado, dizendo por quê', async name => {
     await open(entrada(VIDEO), DEAF.uid)
-    goal('Aula')
-    expect(checked()).toEqual(['Só a transcrição'])
-    for (const name of ['Só o vídeo', 'Transcrição + vídeo']) {
-      expect(radio(name)).toHaveAttribute('aria-disabled', 'true')
-      expect(radio(name)).toHaveTextContent('não ouve a mídia')
-      fireEvent.click(radio(name))
-    }
-    expect(checked()).toEqual(['Só a transcrição'])
+    goal(name)
+    expect(checked()).toEqual(['Transcrição + quadros do vídeo'])
+    expect(radio('Transcrição + quadros do vídeo')).toHaveAttribute('aria-disabled', 'false')
+    expect(radio('Só a transcrição')).toHaveAttribute('aria-disabled', 'false')
+    expect(radio('Tudo numa chamada')).toHaveAttribute('aria-disabled', 'true')
+    expect(radio('Tudo numa chamada')).toHaveTextContent('O Só texto não ouve áudio.')
+    fireEvent.click(radio('Tudo numa chamada'))
+    expect(checked()).toEqual(['Transcrição + quadros do vídeo'])
   })
 
-  it('trocar para um modelo que não ouve tira a escolha da mídia', async () => {
+  it('trocar para um modelo que não ouve tira "Tudo numa chamada" e volta ao passo a passo', async () => {
     await open(entrada(VIDEO))
     goal('Aula')
-    fireEvent.click(radio('Transcrição + vídeo'))
-    expect(checked()).toEqual(['Transcrição + vídeo'])
+    fireEvent.click(radio('Tudo numa chamada'))
+    expect(checked()).toEqual(['Tudo numa chamada'])
     pickModel(DEAF.uid)
-    expect(checked()).toEqual(['Só a transcrição'])
+    expect(checked()).toEqual(['Transcrição + quadros do vídeo'])
     go()
-    expect(generateFromNote.mock.calls[0][5]).toBeUndefined()
+    expect(generateFromNote.mock.calls[0][5]).toBe('quadros')
   })
 
-  it('sem a mídia guardada, só a transcrição, dizendo por quê', async () => {
+  it('sem a mídia guardada, o passo a passo e "Tudo numa chamada" ficam desligados dizendo por quê, e vai "Só a transcrição"', async () => {
     await open(entrada({ ...VIDEO, storage: 'none', storedFileId: undefined }, { kept: 'registro' }))
-    goal('Aula')
-    expect(checked()).toEqual(['Só a transcrição'])
-    expect(radio('Só o vídeo')).toHaveAttribute('aria-disabled', 'true')
-    expect(radio('Só o vídeo')).toHaveTextContent('Guardado só como registro')
+    for (const name of ['Ata', 'Aula']) {
+      goal(name)
+      expect(checked()).toEqual(['Só a transcrição'])
+      for (const choice of ['Transcrição + quadros do vídeo', 'Tudo numa chamada']) {
+        expect(radio(choice)).toHaveAttribute('aria-disabled', 'true')
+        expect(radio(choice)).toHaveTextContent('Guardado só como registro')
+      }
+    }
+    go()
+    expect(generateFromNote.mock.calls[0][5]).toBe('transcricao')
   })
 
-  it('o que foi marcado vai na Ata e nas notas; na Ata vai sempre o que a janela mostra', async () => {
+  it('vai sempre o que a janela mostra; os modelos por passo só no passo a passo', async () => {
     await open(entrada(VIDEO))
+    go()
+    expect(generateAta.mock.calls[0][7]).toBe('quadros')
+    generateAta.mockClear()
+    fireEvent.click(radio('Só a transcrição'))
+    expect(screen.queryByRole('group', { name: 'Modelos por passo' })).not.toBeInTheDocument()
     go()
     expect(generateAta.mock.calls[0][7]).toBe('transcricao')
+    expect(generateAta.mock.calls[0][3]).toEqual({ model: HEARS.uid })
     generateAta.mockClear()
     fireEvent.click(radio('Tudo numa chamada'))
     go()
     expect(generateAta.mock.calls[0][7]).toBe('video')
     goal('Aula')
+    fireEvent.click(radio('Transcrição + quadros do vídeo'))
+    expect(screen.getByRole('group', { name: 'Modelos por passo' })).toBeInTheDocument()
+    go()
+    expect(generateFromNote).toHaveBeenLastCalledWith('e', 'lesson', HEARS.uid, { folderId: null }, '', 'quadros', {})
     fireEvent.click(radio('Só a transcrição'))
+    expect(screen.queryByRole('group', { name: 'Modelos por passo' })).not.toBeInTheDocument()
     go()
     expect(generateFromNote).toHaveBeenLastCalledWith('e', 'lesson', HEARS.uid, { folderId: null }, '', 'transcricao')
   })
@@ -179,47 +203,54 @@ describe('Novo conteúdo', () => {
   const video = () => new File(['x'], 'aula.mp4', { type: 'video/mp4' })
   const start = () => fireEvent.click(screen.getByRole('button', { name: 'Gerar aula' }))
 
-  it('um vídeo pergunta, e o modelo que ouve vem com "Só o vídeo"; sem marcar, o pedido vai como hoje', async () => {
+  it('um vídeo pergunta as três escolhas, com o passo a passo marcado, e o pedido diz o que a janela mostra', async () => {
     await open(video())
-    await waitFor(() => expect(checked()).toEqual(['Só o vídeo']))
+    await waitFor(() => expect(checked()).toEqual(['Transcrição + quadros do vídeo']))
+    expect(labels()).toEqual(VIDEO_CHOICES)
+    expect(screen.getByRole('group', { name: 'Modelos por passo' })).toBeInTheDocument()
     start()
     await waitFor(() => expect(startNewContent).toHaveBeenCalled())
-    expect(startNewContent.mock.calls[0][0]).not.toHaveProperty('analyze')
+    expect(startNewContent.mock.calls[0][0]).toMatchObject({ agent: 'lesson', analyze: 'quadros', models: { write: HEARS.uid, steps: {} } })
   })
 
-  it('o que foi marcado vai no pedido', async () => {
+  it('o que foi marcado vai no pedido, e os modelos por passo só no passo a passo', async () => {
     await open(video())
-    await waitFor(() => expect(checked()).toEqual(['Só o vídeo']))
-    fireEvent.click(radio('Transcrição + vídeo'))
-    start()
-    await waitFor(() => expect(startNewContent).toHaveBeenCalled())
-    expect(startNewContent.mock.calls[0][0]).toMatchObject({ analyze: 'ambos' })
-  })
-
-  it('o modelo que não ouve: "Só a transcrição", e as outras desligadas, dizendo por quê', async () => {
-    await open(video(), DEAF.uid)
-    await waitFor(() => expect(checked()).toEqual(['Só a transcrição']))
-    expect(radio('Só o vídeo')).toHaveAttribute('aria-disabled', 'true')
-    expect(radio('Só o vídeo')).toHaveTextContent('não ouve a mídia')
-  })
-
-  it('a Ata de um vídeo tem as duas formas (passo a passo e tudo numa chamada) e os modelos por passo; Aula e Explicação seguem como antes', async () => {
-    await open(video())
-    await waitFor(() => expect(checked()).toEqual(['Só o vídeo']))
+    await waitFor(() => expect(checked()).toEqual(['Transcrição + quadros do vídeo']))
+    fireEvent.click(radio('Tudo numa chamada'))
     expect(screen.queryByRole('group', { name: 'Modelos por passo' })).not.toBeInTheDocument()
+    start()
+    await waitFor(() => expect(startNewContent).toHaveBeenCalled())
+    expect(startNewContent.mock.calls[0][0]).toMatchObject({ analyze: 'video' })
+    expect(startNewContent.mock.calls[0][0]).not.toHaveProperty('models.steps')
+  })
+
+  it('o modelo que não ouve: o passo a passo continua marcado e só "Tudo numa chamada" fica desligado, dizendo por quê', async () => {
+    await open(video(), DEAF.uid)
+    await waitFor(() => expect(checked()).toEqual(['Transcrição + quadros do vídeo']))
+    expect(radio('Tudo numa chamada')).toHaveAttribute('aria-disabled', 'true')
+    expect(radio('Tudo numa chamada')).toHaveTextContent('O Só texto não ouve áudio.')
+  })
+
+  it('a Ata de um vídeo tem as mesmas três escolhas; "Só a transcrição" vai sem os modelos por passo', async () => {
+    await open(video())
+    // the file is read before the choices come (as in the test below)
+    await waitFor(() => expect(checked()).toEqual(['Transcrição + quadros do vídeo']))
     fireEvent.click(screen.getByRole('radio', { name: /^Ata/ }))
-    expect(within(field()).getAllByRole('radio').map(item => item.querySelector('b')!.textContent)).toEqual(['Transcrição + quadros do vídeo', 'Tudo numa chamada'])
+    expect(labels()).toEqual(VIDEO_CHOICES)
     expect(checked()).toEqual(['Transcrição + quadros do vídeo'])
     expect(screen.getByRole('group', { name: 'Modelos por passo' })).toBeInTheDocument()
+    fireEvent.click(radio('Só a transcrição'))
+    expect(screen.queryByRole('group', { name: 'Modelos por passo' })).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Gerar ata' }))
     await waitFor(() => expect(startNewContent).toHaveBeenCalled())
     expect(startNewContent.mock.calls[0][0]).toMatchObject({ agent: 'meeting', analyze: 'transcricao', models: { write: HEARS.uid } })
+    expect(startNewContent.mock.calls[0][0]).not.toHaveProperty('models.steps')
     expect(startNewContent.mock.calls[0][0]).not.toHaveProperty('models.everyStep')
   })
 
   it('"Tudo numa chamada" na Ata vai no pedido e some os modelos por passo', async () => {
     await open(video())
-    await waitFor(() => expect(checked()).toEqual(['Só o vídeo']))
+    await waitFor(() => expect(checked()).toEqual(['Transcrição + quadros do vídeo']))
     fireEvent.click(screen.getByRole('radio', { name: /^Ata/ }))
     fireEvent.click(radio('Tudo numa chamada'))
     expect(screen.queryByRole('group', { name: 'Modelos por passo' })).not.toBeInTheDocument()
@@ -233,12 +264,13 @@ describe('Novo conteúdo', () => {
 
     it('numa Aula de um vídeo volta como era: marcada, o modelo de vídeo escreve e o pedido diz isso', async () => {
       await open(video(), DEAF.uid)
-      await waitFor(() => expect(checked()).toEqual(['Só a transcrição']))
+      await waitFor(() => expect(checked()).toEqual(['Transcrição + quadros do vídeo']))
+      expect(radio('Tudo numa chamada')).toHaveAttribute('aria-disabled', 'true')
       expect(screen.getByLabelText('Modelo da IA')).toHaveValue(DEAF.uid)
       fireEvent.click(screen.getByLabelText(BOX))
       expect(screen.getByLabelText('Modelo da IA')).toBeDisabled()
-      // the video model hears the media: "Só o vídeo" opens
-      await waitFor(() => expect(checked()).toEqual(['Só o vídeo']))
+      // the video model hears the media: "Tudo numa chamada" opens
+      await waitFor(() => expect(radio('Tudo numa chamada')).toHaveAttribute('aria-disabled', 'false'))
       start()
       await waitFor(() => expect(startNewContent).toHaveBeenCalled())
       expect(startNewContent.mock.calls[0][0]).toMatchObject({ agent: 'lesson', models: { write: HEARS.uid, everyStep: true } })
@@ -247,7 +279,7 @@ describe('Novo conteúdo', () => {
     it('sem marcar, o pedido vai com o "Modelo da IA" e sem a marca', async () => {
       await open(video(), DEAF.uid)
       // as in the test above: the box comes once the dialog has read the video and the models
-      await waitFor(() => expect(checked()).toEqual(['Só a transcrição']))
+      await waitFor(() => expect(checked()).toEqual(['Transcrição + quadros do vídeo']))
       expect(await screen.findByLabelText(BOX)).not.toBeChecked()
       fireEvent.click(screen.getByLabelText(BOX))
       fireEvent.click(screen.getByLabelText(BOX))
@@ -267,7 +299,7 @@ describe('Novo conteúdo', () => {
 
   it('"Só guardar para ler" não pergunta', async () => {
     await open(video())
-    await waitFor(() => expect(checked()).toEqual(['Só o vídeo']))
+    await waitFor(() => expect(checked()).toEqual(['Transcrição + quadros do vídeo']))
     fireEvent.click(screen.getByRole('radio', { name: /Só guardar para ler/ }))
     noField()
   })
@@ -317,5 +349,19 @@ describe('"Gerar de novo"', () => {
     )
     fireEvent.click(screen.getByRole('button', { name: 'Gerar' }))
     expect(generateFromNote.mock.calls[0][5]).toBe('ambos')
+  })
+
+  it('uma Aula feita passo a passo volta passo a passo, com os modelos de cada passo', async () => {
+    const source = entrada(VIDEO)
+    const before = newSidecar(newFileMeta({ id: 'a', name: 'Aula: x', type: 'class', parentFileId: 'e', origin: { input: 'text', name: 'x', storage: 'none' }, made: { at: stamp.at, analyze: 'quadros', steps: { video: HEARS.uid, context: DEAF.uid } }, created: stamp, updated: stamp }))
+    seed([source, before])
+    render(
+      <MemoryRouter>
+        <GenerateDialog fileId="e" agent="lesson" again="a" />
+      </MemoryRouter>,
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Gerar' }))
+    expect(generateFromNote.mock.calls[0][5]).toBe('quadros')
+    expect(generateFromNote.mock.calls[0][6]).toEqual({ video: HEARS.uid, context: DEAF.uid })
   })
 })

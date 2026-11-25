@@ -265,7 +265,7 @@ describe('a entrada importada com mídia toca a mídia', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'No Google Drive' }))
     expect(await screen.findByText('midia disponivel')).toBeInTheDocument()
     const entry = imported()
-    expect(putSource).toHaveBeenCalledWith(entry.id, expect.any(File), 'planejamento.mp4')
+    expect(putSource).toHaveBeenCalledWith(entry.id, expect.any(File), 'planejamento.mp4', expect.objectContaining({ onProgress: expect.any(Function) }))
     expect(entry.origin).toMatchObject({ input: 'file', mime: 'video/mp4', storage: 'drive', storedFileId: 'drive-nova' })
     expect(entry.kept).toBe('arquivo')
     expect(useLibraryStore.getState().localMedia).toEqual([])

@@ -15,6 +15,7 @@ import { type NoteAgent, remainingIn, type Target, useJobsStore } from '@/stores
 import { useLibraryStore } from '@/stores/library'
 import { asking } from '@/stores/retry'
 import { type GenerationPrefill, type Overlay, useUiStore } from '@/stores/ui'
+import { analyzedBefore } from '@/components/dialogs/MediaAnalysisField'
 
 const LABEL: Record<NoteAgent, string> = { meeting: 'Ata', lesson: 'Aula', explanation: 'Explicação' }
 const USE: Record<NoteAgent, AiUse> = { meeting: 'ata', lesson: 'aula', explanation: 'explicacao' }
@@ -53,14 +54,16 @@ export function GenerateDialog({ fileId, agent, redo = false, again, prefill }: 
     const model = choice.model || null
     const over = replace && before ? before : null
     const place: Target = over ? { replace: over.id } : folder.place
-    const analyze = prefill?.analyze ?? before?.made?.analyze
+    const analyze = prefill?.analyze ?? analyzedBefore(before?.made)
+    // a note made step by step comes back step by step, with the models of each step (T177)
+    const steps = analyze === 'quadros' ? (prefill?.steps ?? before?.made?.steps ?? {}) : undefined
     const retry: Overlay = {
       kind: 'generate',
       fileId,
       agent,
       ...(redo ? { redo } : {}),
       ...(again ? { again } : {}),
-      prefill: { ...pickedOf(choice), instruction, ...(analyze ? { analyze } : {}), ...(before ? { replace } : {}), ...(typeof folder.place === 'object' ? { folderId: folder.place.folderId } : {}) },
+      prefill: { ...pickedOf(choice), instruction, ...(analyze ? { analyze } : {}), ...(steps ? { steps } : {}), ...(before ? { replace } : {}), ...(typeof folder.place === 'object' ? { folderId: folder.place.folderId } : {}) },
     }
     const ids = over ? [fileId, over.id] : [fileId]
     const open = (id: string | null | undefined) => id && goToNew(paths.file(id), `Gerando a ${label}`)
@@ -69,7 +72,7 @@ export function GenerateDialog({ fileId, agent, redo = false, again, prefill }: 
     // Until its job opens (the note read, the explanation made in the Drive) the app is held in the window.
     if (excerpt && before)
       return void asking(ids, retry, () => blocking(`${label}: ${file?.name ?? ''}`, () => explainSelection(fileId, excerpt, instruction, before.folderId === null ? 'concept' : 'context', model, place), { phase: 'Preparando' })).then(open)
-    void asking(ids, retry, () => generateFromNote(fileId, agent, model, place, instruction, analyze)).then(open)
+    void asking(ids, retry, () => generateFromNote(fileId, agent, model, place, instruction, analyze, ...(steps ? [steps] : []))).then(open)
   }
   return (
     <>

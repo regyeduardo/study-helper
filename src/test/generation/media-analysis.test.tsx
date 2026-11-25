@@ -4,6 +4,10 @@ import { waitFor } from '@testing-library/react'
 // FR-046: from a video, the person chooses what the AI analyzes ("Só o vídeo", "Só a transcrição", "Transcrição + vídeo");
 // from an audio there is no choice: always the transcription, made first when missing and kept in the entrada.
 
+const ocr = vi.hoisted(() => ({ reader: null as unknown as { read: ReturnType<typeof vi.fn>; close?: () => void } }))
+// the app's OCR (none in jsdom): a fake one reads each distinct screen of the fake video
+vi.mock('@/lib/generation/screen-ocr', () => ({ browserOcr: () => ocr.reader }))
+
 const { SAID, heard, kept } = vi.hoisted(() => {
   const SAID = 'A fotossíntese transforma a luz do sol em açúcar.'
   return {
@@ -47,6 +51,8 @@ import { meeting, textAnswer } from '@/test/generation/ata-fixture'
 import { installBlobShim } from '@/test/imports/blob-shim'
 import type { FileSidecar, MediaAnalysis } from '@/types/domain'
 import { isSourceNote } from '@/lib/file-types'
+import { openVideoFrames } from '@/lib/generation/video-source'
+import { fakeOcr, recordedCall } from '@/test/generation/screen-fixture'
 
 const UID = 'openrouter::google/gemini-2.5-flash-lite'
 const LESSON = JSON.stringify({ markdown: { elements: [{ type: 'heading', level: 1, text: 'Fotossíntese' }, { type: 'paragraph', text: 'A planta faz açúcar com a luz.' }], diagrams: [] } })
@@ -145,6 +151,8 @@ beforeEach(() => {
   useJobsStore.setState({ jobs: [], live: {}, proposals: [] })
   hears(true)
   calls = installFetch(provider).calls
+  ocr.reader = fakeOcr()
+  vi.mocked(openVideoFrames).mockClear()
 })
 
 afterEach(() => {
@@ -193,6 +201,36 @@ describe('Novo conteúdo de um vídeo: a pessoa escolhe o que a IA analisa', () 
     expect(textOf(writing(calls)[0])).toContain(SAID)
   })
 
+  // T177 (o dono escolheu B em 25/11): o passo a passo também na Aula e na Explicação
+  it('"Transcrição + quadros do vídeo" transcreve, lê a tela do arquivo em mãos e manda as duas coisas como texto', async () => {
+    vi.mocked(openVideoFrames).mockResolvedValueOnce(recordedCall())
+    const id = await written(await useJobsStore.getState().startNewContent(request(VIDEO, 'quadros')))
+    expect(openVideoFrames).toHaveBeenCalledTimes(1)
+    expect(calls.some(hasMedia)).toBe(false)
+    expect(writing(calls)).toHaveLength(1)
+    const material = textOf(writing(calls)[0])
+    expect(material).toContain(SAID)
+    expect(material).toContain('Leitura da tela')
+    expect(material).toContain('Painel de Controle')
+    expect(fileOf(id)).toMatchObject({ made: { analyze: 'quadros' } })
+  })
+
+  it('"Transcrição + quadros do vídeo" numa Explicação (a nota sai depois da transcrição) também lê a tela', async () => {
+    vi.mocked(openVideoFrames).mockResolvedValueOnce(recordedCall())
+    await useJobsStore.getState().startNewContent(request(VIDEO, 'quadros', { agent: 'explanation' }))
+    await waitFor(() => expect(files().find(file => file.type === 'explanation')?.status).toBe('ready'))
+    expect(openVideoFrames).toHaveBeenCalledTimes(1)
+    expect(writing(calls)).toHaveLength(1)
+    expect(textOf(writing(calls)[0])).toContain(SAID)
+    expect(textOf(writing(calls)[0])).toContain('Painel de Controle')
+  })
+
+  it('"Só a transcrição" não abre o vídeo', async () => {
+    await written(await useJobsStore.getState().startNewContent(request(VIDEO, 'transcricao')))
+    expect(openVideoFrames).not.toHaveBeenCalled()
+    expect(textOf(writing(calls)[0])).not.toContain('Leitura da tela')
+  })
+
   it('"Só o vídeo" com um modelo que não ouve a mídia falha dizendo por quê, sem mandar nada nem criar notas', async () => {
     hears(false)
     const id = await useJobsStore.getState().startNewContent(request(VIDEO, 'video'))
@@ -225,6 +263,20 @@ describe('Novo conteúdo de um vídeo: a Ata com as partes', () => {
     expect(calls.some(hasMedia)).toBe(false)
     expect(calls.some(call => systemPromptOf(call) === P.ENTENDER)).toBe(true)
     expect(ata(id)).toMatchObject({ made: { analyze: 'transcricao' } })
+    // T177: "Só a transcrição" is only the text, in the Ata too: the video is not opened, no steps are kept
+    expect(openVideoFrames).not.toHaveBeenCalled()
+    expect(ata(id)?.made).not.toHaveProperty('steps')
+  })
+
+  it('o passo a passo lê a tela do arquivo em mãos e guarda os modelos de cada passo', async () => {
+    vi.mocked(transcribe).mockResolvedValueOnce({ text: 'reunião', engine: 'groq', language: 'pt', durationSeconds: 300, speakers: 3, recording: meeting } as never)
+    vi.mocked(openVideoFrames).mockResolvedValueOnce(recordedCall())
+    const id = (await useJobsStore.getState().startNewContent(request(VIDEO, 'quadros', { agent: 'meeting', ataParts: ['resumo'] })))!
+    await waitFor(() => expect(ata(id)).toBeDefined())
+    expect(openVideoFrames).toHaveBeenCalledTimes(1)
+    expect(calls.some(hasMedia)).toBe(false)
+    expect(calls.some(call => textOf(call).includes('Painel de Controle'))).toBe(true)
+    expect(ata(id)).toMatchObject({ made: { analyze: 'quadros', steps: expect.any(Object) } })
   })
 
   it('"Só o vídeo" manda só a mídia e guarda a escolha', async () => {
@@ -274,6 +326,34 @@ describe('Gerar de uma entrada de vídeo', () => {
     expect(calls.some(hasMedia)).toBe(false)
     expect(textOf(writing(calls)[0])).toContain(SAID)
     expect(fileOf(id)).toMatchObject({ parentFileId: source, made: { analyze: 'transcricao' } })
+    expect(openVideoFrames).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['lesson', 'Aula'],
+    ['explanation', 'Explicação'],
+  ] as const)('"Transcrição + quadros do vídeo" numa %s lê a tela do vídeo guardado e manda a leitura com a transcrição', async (agent, _name) => {
+    vi.mocked(openVideoFrames).mockResolvedValueOnce(recordedCall())
+    const source = await entrada(VIDEO, true)
+    const id = await written(await useJobsStore.getState().generateFromNote(source, agent, null, 'home', '', 'quadros'))
+    expect(openVideoFrames).toHaveBeenCalledTimes(1)
+    expect(ocr.reader.read).toHaveBeenCalled()
+    expect(calls.some(hasMedia)).toBe(false)
+    expect(writing(calls)).toHaveLength(1)
+    const material = textOf(writing(calls)[0])
+    expect(material).toContain(SAID)
+    expect(material).toContain('Leitura da tela')
+    expect(material).toContain('Painel de Controle')
+    expect(fileOf(id)).toMatchObject({ parentFileId: source, made: { analyze: 'quadros', steps: expect.any(Object) } })
+  })
+
+  it('"Transcrição + quadros do vídeo" sem o vídeo à mão escreve da transcrição, sem a leitura da tela', async () => {
+    vi.mocked(openVideoFrames).mockRejectedValueOnce(new Error('não abre'))
+    const source = await entrada(VIDEO, true)
+    const id = await written(await useJobsStore.getState().generateFromNote(source, 'lesson', null, 'home', '', 'quadros'))
+    expect(textOf(writing(calls)[0])).toContain(SAID)
+    expect(textOf(writing(calls)[0])).not.toContain('Leitura da tela')
+    expect(fileOf(id).status).toBe('ready')
   })
 
   it('"Transcrição + vídeo" sem transcrição: transcreve antes e manda os dois na mesma chamada', async () => {
@@ -306,6 +386,8 @@ describe('Gerar de uma entrada de vídeo', () => {
     expect(calls.some(hasMedia)).toBe(false)
     expect(calls.some(call => systemPromptOf(call) === P.ENTENDER)).toBe(true)
     expect(fileOf(ata)).toMatchObject({ type: 'meeting', parentFileId: source })
+    // T177: "Só a transcrição" does not open the video, in the Ata too
+    expect(openVideoFrames).not.toHaveBeenCalled()
   })
 })
 

@@ -14,7 +14,7 @@ import {
 import { recordingName, sourceTypeOf } from '@/lib/file-types'
 import { keepLocalMedia, linkLocalMedia, type LocalMedia, readLocalMedia } from '@/lib/recording/media-library'
 import { CombinedRepository } from '@/lib/storage/combined-repository'
-import type { Repository } from '@/lib/storage/repository'
+import type { Repository, Transfer } from '@/lib/storage/repository'
 import { useLibraryStore } from '@/stores/library'
 
 /** `Id` is a media place; the recording also offers the App. */
@@ -67,10 +67,12 @@ export async function storeSource(
   fileId: string,
   repo: Repository,
   litterboxTime: LitterboxTime,
+  /** How much went, while it goes (the window says it, and a stop is told apart from a slow send). */
+  transfer?: Transfer,
 ): Promise<Pick<SourceMeta, 'storage' | 'storedUrl' | 'storedFileId' | 'expiresAt'>> {
   if (choice === 'none') return { storage: 'none' }
   if (choice === 'drive') {
-    const stored = await repo.putSource(fileId, file, file.name)
+    const stored = await (transfer ? repo.putSource(fileId, file, file.name, transfer) : repo.putSource(fileId, file, file.name))
     return { storage: 'drive', storedFileId: stored.ref, expiresAt: null }
   }
   const host = HOSTS.find(item => item.id === choice)!

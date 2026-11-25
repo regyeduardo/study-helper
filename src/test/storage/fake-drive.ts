@@ -13,6 +13,8 @@ export interface FakeFile {
   appProperties?: Record<string, string>
   content?: string
   space?: 'drive' | 'appDataFolder'
+  /** In the Drive's trash (recoverable for 30 days): a list with "trashed=false" leaves it, and what is inside it, out. */
+  trashed?: boolean
 }
 
 export const HIDDEN_ROOT = 'appdata-root'
@@ -103,16 +105,27 @@ export class FakeDrive {
     file.modifiedTime = this.tick()
   }
 
+  /** The file or a folder above it is in the trash. */
+  inTrash(file: FakeFile): boolean {
+    for (let current: FakeFile | undefined = file; current; current = this.files.get(current.parents[0] ?? '')) if (current.trashed) return true
+    return false
+  }
+
   hiddenFiles(): FakeFile[] {
-    return [...this.files.values()].filter(file => file.space === 'appDataFolder')
+    return [...this.files.values()].filter(file => file.space === 'appDataFolder' && !this.inTrash(file))
   }
 
   visibleFiles(): FakeFile[] {
-    return [...this.files.values()].filter(file => file.space !== 'appDataFolder')
+    return [...this.files.values()].filter(file => file.space !== 'appDataFolder' && !this.inTrash(file))
+  }
+
+  /** What went to the trash instead of being deleted for good. */
+  trashedFiles(): FakeFile[] {
+    return [...this.files.values()].filter(file => this.inTrash(file))
   }
 
   root(): FakeFile | undefined {
-    return [...this.files.values()].find(file => file.name === '.sync-study-helper' && file.mimeType === FOLDER && file.parents.length === 0)
+    return [...this.files.values()].find(file => file.name === '.sync-study-helper' && file.mimeType === FOLDER && file.parents.length === 0 && !this.inTrash(file))
   }
 
   byApp(kind: string, shId?: string): FakeFile[] {
@@ -174,7 +187,7 @@ export class FakeDrive {
       const space = search.get('spaces') ?? 'drive'
       if (space === 'appDataFolder' && !this.appDataGranted) return denied()
       if (space === 'drive' && !this.driveFileGranted) return denied()
-      return json({ files: [...this.files.values()].filter(file => (file.space ?? 'drive') === space).map(file => this.meta(file)) })
+      return json({ files: [...this.files.values()].filter(file => (file.space ?? 'drive') === space && !this.inTrash(file)).map(file => this.meta(file)) })
     }
 
     const fileMatch = /^\/(upload\/)?drive\/v3\/files\/([^/]+)$/.exec(path)
@@ -236,8 +249,9 @@ export class FakeDrive {
         if (typeof metadata.name === 'string') file.name = metadata.name
         file.content = media
       } else {
-        const metadata = JSON.parse(String(init.body ?? '{}')) as { name?: string }
+        const metadata = JSON.parse(String(init.body ?? '{}')) as { name?: string; trashed?: boolean }
         if (typeof metadata.name === 'string') file.name = metadata.name
+        if (typeof metadata.trashed === 'boolean') file.trashed = metadata.trashed
       }
       this.applyParents(file, search)
       file.modifiedTime = this.tick()

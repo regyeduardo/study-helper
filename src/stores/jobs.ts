@@ -13,7 +13,7 @@ import { aiConfigOf, modelByUid, providerById, targetFor, targetOf, transcriptio
 import { modelOf } from '@/lib/ai/providers'
 import { generateCards } from '@/lib/generation/cards'
 import { analyzeCourse } from '@/lib/generation/course'
-import { ATA_MODELS, buildAta, chosenParts } from '@/lib/generation/ata'
+import { ATA_MODELS, buildAta, chosenParts, readVideoScreen } from '@/lib/generation/ata'
 import { ataDocument, ataPrompt, type MediaParts, mediaParts, withTranscript } from '@/lib/generation/from-media'
 import { type AtaModels, appAi } from '@/lib/generation/ata-ai'
 import type { FrameSource } from '@/lib/generation/ata-types'
@@ -187,7 +187,8 @@ interface JobsState {
   generateSecondTab(fileId: string, agent: SecondTabAgent, model?: string | null, instruction?: string): Promise<void>
   redoTranscript(fileId: string, instruction: string, model?: string | null): Promise<void>
   /** `analyze`: of a video entrada, what the AI analyzes (FR-046); an audio entrada always goes by its transcription, made first when missing. */
-  generateFromNote(fileId: string, agent: NoteAgent, model?: string | null, place?: Target, instruction?: string, analyze?: MediaAnalysis): Promise<string | null>
+  /** `steps`: the models of the Vídeo and the Contexto when the note of a video goes step by step (`analyze` "quadros", T177). */
+  generateFromNote(fileId: string, agent: NoteAgent, model?: string | null, place?: Target, instruction?: string, analyze?: MediaAnalysis, steps?: AtaStepModels): Promise<string | null>
   /** `file`: the media in hand (Novo conteúdo), heard straight even when the entrada does not keep it. `analyze`: as in `generateFromNote`. */
   generateAta(fileId: string, parts: AtaPart[], model?: AtaModelId, ai?: AtaModels, place?: Target, instruction?: string, file?: File, analyze?: MediaAnalysis): Promise<string | undefined>
   suggestTags(fileId: string): Promise<void>
@@ -215,7 +216,8 @@ interface JobsState {
 }
 
 export interface TrackedTask {
-  update(message: string, fraction: number | null): void
+  /** `bytes`: how much of a file went (a window that holds the app shows it, with the time left). */
+  update(message: string, fraction: number | null, bytes?: { done: number; total: number }): void
   done(message: string): void
   fail(error: string): void
   /** The line leaves the panel without a trace: whoever started it says the end another way (a toast). */
@@ -335,6 +337,31 @@ function stepsOf(chosen: AtaModels | undefined): AtaStepModels {
   return { ...(video ? { video } : {}), ...(context ? { context } : {}) }
 }
 
+/**
+ * T177: an Aula or an Explicação of a video, step by step: the screen read by the frames of the video, the way the Ata reads it (the
+ * Vídeo model looks, the Contexto model finds where the speech points at the screen), as text the writer gets with the transcription.
+ * A video that does not open, or a reading that fails, leaves the note written from the transcription alone.
+ */
+function lookAtVideo(video: () => Promise<Blob | null>, recording: RecordingData | undefined, chosen: AtaModels, startedAt: Date) {
+  return async (progress: (message: string) => void, signal: AbortSignal): Promise<string> => {
+    if (!recording?.blocks.length) return ''
+    progress('Abrindo o vídeo da gravação')
+    const blob = await video().catch(() => null)
+    const frames = blob ? await openVideoFrames(blob).catch(() => null) : null
+    if (!frames) return ''
+    try {
+      const ai = appAi(library().index.settings, signal, undefined, chosen)
+      const screen = await readVideoScreen(recording, { ai, frames, difference: signatureDifference }, progress, startedAt)
+      return screen ? `Leitura da tela (o que aparecia na tela do vídeo, lido pelos quadros):\n${screen}` : ''
+    } catch (error) {
+      if (error instanceof Cancelled || signal.aborted) throw error
+      return ''
+    } finally {
+      frames.close?.()
+    }
+  }
+}
+
 /** The use's model hears audio: the provider's list says so, or "Testar" saw it (unknown is not enough). */
 /** The provider of the use's model when that model hears audio; null when it does not. */
 async function hearsAudio(use: AiUse, pick?: string | null): Promise<string | null> {
@@ -399,7 +426,7 @@ const mediaOfFile = (file: File): NoteMedia => (file.type.startsWith('video/') ?
 
 /** The media of an entrada for the call, by what the AI analyzes; a choice that cannot be met fails saying why. `inHand`: without a choice, the media is only tried when it is there. */
 const entryMedia = (use: AiUse, pick: string | null | undefined, asked: MediaAnalysis | undefined, inHand: boolean, open: () => Promise<File>): Promise<MediaParts | null> =>
-  asked === 'transcricao' || (!asked && !inHand) ? Promise.resolve(null) : directMedia(use, pick, open, Boolean(asked))
+  asked === 'transcricao' || asked === 'quadros' || (!asked && !inHand) ? Promise.resolve(null) : directMedia(use, pick, open, Boolean(asked))
 
 /** "Transcrição + vídeo": the one call with the media and the material already read; without the media chosen, nothing. */
 const withMaterial = (both: MediaParts | null, material: string): MediaParts | undefined => (both ? withTranscript(both, material.replace(CONTENT_HEADER, '')) : undefined)
@@ -596,6 +623,8 @@ export const useJobsStore = create<JobsState>((set, get) => {
     keepName = false,
     media?: MediaParts,
     instruction = '',
+    /** T177: the screen of the video read step by step, added to the text before writing (empty: nothing read). */
+    look?: (progress: (message: string) => void, signal: AbortSignal) => Promise<string>,
   ): Promise<void> => {
     const { job, controller } = openJob('generation', meta.name, meta.id)
     const activityId = await library().startActivity({ kind: agent, label: `${label}: ${meta.name}`, origin, destination: destinationName(meta.folderId), fileId: meta.id })
@@ -605,7 +634,9 @@ export const useJobsStore = create<JobsState>((set, get) => {
       const recording = heard ?? resolved?.transcription?.recording ?? (await library().openFile(meta.id).catch(() => null))?.sidecar.recording
       const clock = new StageClock()
       clock.add(resolved?.transcription?.stages)
-      const { markdown, name } = await clock.run(media ? 'Escrever direto da mídia' : 'Escrever', () => writeDocument(meta.id, agent, content, session, job.id, systemPrompt, recording, media, instruction))
+      const seen = look ? await clock.run('Ler a tela do vídeo', () => look(message => patchJob(job.id, { message }), controller.signal)) : ''
+      const material = seen ? `${content}\n\n${seen}` : content
+      const { markdown, name } = await clock.run(media ? 'Escrever direto da mídia' : 'Escrever', () => writeDocument(meta.id, agent, material, session, job.id, systemPrompt, recording, media, instruction))
       patchJob(job.id, { message: 'Salvando' })
       await library().saveContent(meta.id, markdown, { status: 'ready', pendingExcerpt: null, generation: generationMeta(session, resolved, clock.stages), ...(name && !keepName ? { name } : {}) })
       closeJob(job.id, 'done', 'Pronta e salva na Biblioteca.')
@@ -788,6 +819,12 @@ export const useJobsStore = create<JobsState>((set, get) => {
       const ataParts = agent === 'meeting' ? chosenParts(request.ataParts ?? []) : []
       const ataModel = agent === 'meeting' ? request.ataModel : undefined
       const makesAta = Boolean(ataModel) || ataParts.length > 0
+      // T177: a video in hand, step by step: the screen read by its frames goes with the transcription to the writer
+      const inHand = request.input.kind === 'file' || request.input.kind === 'recording' ? request.input.file : null
+      const stepped =
+        inHand && inHand.type.startsWith('video/') && request.analyze === 'quadros' && !makesAta && agent !== 'reading'
+          ? lookAtVideo(async () => inHand, resolved.transcription?.recording, { model: request.models?.write || uidFor(aiConfigOf(library().index.settings), AGENT_USE[agent]) || null, ...request.models?.steps }, new Date())
+          : undefined
       if (agent === 'reading' || makesAta || entry) {
         const polishing = polishSessions.get(resolved.transcription!)
         await library().saveContent(meta.id, resolved.content.replace(/^# Conteúdo\n\n/, ''), { name, description, pendingExcerpt: null, ...(makesAta || entry ? { ...(entry ? {} : { type: 'reading' as const }), status: 'ready' as const } : {}), ...(polishing ? { generation: generationMeta(polishing, resolved, resolved.transcription?.stages) } : {}) })
@@ -795,7 +832,7 @@ export const useJobsStore = create<JobsState>((set, get) => {
         if (entry && !makesAta && agent !== 'reading') {
           // the text written of the transcription is a note of its own, under the entrada
           const note = await createChild(request, { ...resolved, title: name, description }, agent, { ...entry, name })
-          await runOnFile(note, agent, resolved.content, resolved, AGENT_LABEL[agent], resolved.origin.url ?? resolved.origin.name, undefined, undefined, request.models?.write, false, withMaterial(both, resolved.content), request.prompt)
+          await runOnFile(note, agent, resolved.content, resolved, AGENT_LABEL[agent], resolved.origin.url ?? resolved.origin.name, undefined, undefined, request.models?.write, false, withMaterial(both, resolved.content), request.prompt, stepped)
           return
         }
         const picked = request.models?.write
@@ -811,7 +848,7 @@ export const useJobsStore = create<JobsState>((set, get) => {
       await library().updateFile(meta.id, { name, description, pendingExcerpt: resolved.content })
       closeJob(job.id, 'done', 'Material lido.')
       const fresh = library().files.find(file => file.id === meta.id) ?? { ...meta, name, description }
-      await runOnFile(fresh, agent, resolved.content, resolved, AGENT_LABEL[agent], resolved.origin.url ?? resolved.origin.name, undefined, undefined, request.models?.write, false, withMaterial(both, resolved.content), request.prompt)
+      await runOnFile(fresh, agent, resolved.content, resolved, AGENT_LABEL[agent], resolved.origin.url ?? resolved.origin.name, undefined, undefined, request.models?.write, false, withMaterial(both, resolved.content), request.prompt, stepped)
     } catch (error) {
       const cancelled = signal.aborted
       await library().updateFile(meta.id, { status: 'pending' }).catch(() => undefined)
@@ -930,7 +967,7 @@ export const useJobsStore = create<JobsState>((set, get) => {
         if (file && agent !== 'reading' && /^(audio|video)\//.test(file.type)) {
           const makesAta = agent === 'meeting' && (Boolean(request.ataModel) || chosenParts(request.ataParts ?? []).length > 0)
           const asked = analysisOf(mediaOfFile(file), request.analyze)
-          const media = asked === 'transcricao' ? null : await directMedia(makesAta ? 'ata' : AGENT_USE[agent], request.models?.write, async () => file, Boolean(asked))
+          const media = asked === 'transcricao' || asked === 'quadros' ? null : await directMedia(makesAta ? 'ata' : AGENT_USE[agent], request.models?.write, async () => file, Boolean(asked))
           if (asked === 'ambos') both = media
           else if (media) return await startFromMedia(request, agent, file, media, makesAta, job)
         }
@@ -986,7 +1023,13 @@ export const useJobsStore = create<JobsState>((set, get) => {
         if (polishing) await library().updateFile(meta.id, { generation: generationMeta(polishing, resolved, resolved.transcription?.stages) })
         return meta.id
       }
-      void runOnFile(meta, agent, resolved.content, resolved, AGENT_LABEL[agent], resolved.origin.url ?? resolved.origin.name, undefined, undefined, request.models?.write, false, watched ?? withMaterial(both, resolved.content), request.prompt)
+      // T177: a video in hand, step by step (the Aula comes here): the screen read by its frames goes with the transcription
+      const inHand = request.input.kind === 'file' || request.input.kind === 'recording' ? request.input.file : null
+      const stepped =
+        inHand && inHand.type.startsWith('video/') && request.analyze === 'quadros'
+          ? lookAtVideo(async () => inHand, resolved.transcription?.recording, { model: request.models?.write || uidFor(aiConfigOf(library().index.settings), AGENT_USE[agent]) || null, ...request.models?.steps }, new Date())
+          : undefined
+      void runOnFile(meta, agent, resolved.content, resolved, AGENT_LABEL[agent], resolved.origin.url ?? resolved.origin.name, undefined, undefined, request.models?.write, false, watched ?? withMaterial(both, resolved.content), request.prompt, stepped)
       return meta.id
     },
 
@@ -998,11 +1041,15 @@ export const useJobsStore = create<JobsState>((set, get) => {
       const own = request.place ? { place: request.place } : {}
       const meta = await library().createFile({ name: request.name?.trim() || recordingName(file.name), kept: 'registro', type: sourceTypeOf(origin), description: '', folderId: request.folderId, status: 'ready', pendingExcerpt: null, origin, ...own }, '')
       if (request.marks.length) await library().updateSidecar(meta.id, sidecar => ({ ...sidecar, recording: { blocks: [], speakers: [], marks: request.marks } }))
+      // T181: the recording kept in this browser (Mídias) is the copy that stays if the upload fails
+      let keptHere = false
       if (request.storedName)
         await linkLocalMedia(request.storedName, meta.id).then(
-          () => library().updateFile(meta.id, { kept: 'arquivo' }),
+          () => ((keptHere = true), library().updateFile(meta.id, { kept: 'arquivo' })),
           () => undefined,
         )
+      const failed = (error: unknown, place: 'app' | 'drive') =>
+        keptHere ? `${failureText(error).replace(/\.?$/, '.')} A gravação continua salva neste navegador, em Mídias: abra a nota e use "${place === 'app' ? 'Salvar no App' : 'Salvar no meu Drive'}" para enviar de novo.` : failureText(error)
       const writes = [...(request.write ? [request.write] : []), ...(request.writes ?? [])]
       // spec 007 (FR-027, FR-031): the media goes up to the App with the structure on, so what was asked goes to the account once it is
       // there, without the file in hand (the account reads the media it has); there the Ata runs after the transcription of the note
@@ -1020,15 +1067,17 @@ export const useJobsStore = create<JobsState>((set, get) => {
         ).then(
           () => true,
           error => {
-            get().trackTask(`Guardar a mídia: ${meta.name}`).fail(failureText(error))
+            get().trackTask(`Guardar a mídia: ${meta.name}`).fail(failed(error, 'app'))
             return false
           },
         )
       } else if (request.storage !== 'none') {
-        // the upload has no progress to tell: the window holds the app with a bar without a number until it ends
-        void blocking(request.storage !== 'drive' ? 'Guardando a mídia…' : request.place === 'app' ? 'Guardando a mídia no App…' : 'Guardando a mídia no Drive…', () =>
-          storeSource(file, request.storage, meta.id, library().repo!, request.litterboxTime).then(stored => library().updateFile(meta.id, { origin: { ...origin, ...stored } as SourceMeta, kept: 'arquivo' })),
-        ).catch(error => get().trackTask(`Guardar a mídia: ${meta.name}`).fail(failureText(error)))
+        // the window holds the app until the upload ends, saying how much went (to the App and the Drive; a host says nothing)
+        void blocking(request.storage !== 'drive' ? 'Guardando a mídia…' : request.place === 'app' ? 'Guardando a mídia no App…' : 'Guardando a mídia no Drive…', blocker =>
+          storeSource(file, request.storage, meta.id, library().repo!, request.litterboxTime, { onProgress: (done, total) => blocker.progress({ phase: 'Enviando a mídia', doneBytes: done, totalBytes: total }) }).then(stored =>
+            library().updateFile(meta.id, { origin: { ...origin, ...stored } as SourceMeta, kept: 'arquivo' }),
+          ),
+        ).catch(error => get().trackTask(`Guardar a mídia: ${meta.name}`).fail(failed(error, request.storage === 'drive' && request.place === 'app' ? 'app' : 'drive')))
       }
       // the upload failed: the work runs here with the file in hand, as before, and nothing asked is lost
       const sourceOf = (ok: boolean) => (toAccount && ok ? undefined : file)
@@ -1157,7 +1206,7 @@ export const useJobsStore = create<JobsState>((set, get) => {
       await started?.generation
     },
 
-    generateFromNote: async (fileId, agent, model, place = 'home', instruction, analyze) => {
+    generateFromNote: async (fileId, agent, model, place = 'home', instruction, analyze, steps) => {
       const source = library().files.find(file => file.id === fileId)
       if (!source) return null
       // from here to the real job, a "Preparando" line shows that the click worked
@@ -1185,19 +1234,22 @@ export const useJobsStore = create<JobsState>((set, get) => {
         const material = needsText && !held.trim() ? await prep.around(() => readEntrySource(source, `${AGENT_LABEL[agent]}: ${source.name}`)) : `${CONTENT_HEADER}${held}`
         if (material === null || prep.stopped()) return null
         const parts = asked === 'ambos' ? withMaterial(media, material) : (media ?? undefined)
-        const made = choiceOf(AGENT_USE[agent], model, { ...instructionOf(instruction), ...analyzedOf(kind, asked) })
+        // step by step (T177): the screen of the video read with the models of the steps; the Escrita is the note's model
+        const chosen: AtaModels = { model: model || uidFor(aiConfigOf(library().index.settings), AGENT_USE[agent]) || null, ...steps }
+        const look = kind === 'video' && asked === 'quadros' && !isYoutube(source) ? lookAtVideo(() => mediaFileOf(source), recording, chosen, meetingStart(source)) : undefined
+        const made = choiceOf(AGENT_USE[agent], model, { ...instructionOf(instruction), ...analyzedOf(kind, asked), ...(look ? { steps: stepsOf(chosen) } : {}) })
         if (typeof place === 'object' && 'replace' in place) {
           const meta = library().files.find(file => file.id === place.replace)
           if (!meta || get().jobs.some(job => job.fileId === meta.id && job.status === 'running')) return null
           await library().updateFile(meta.id, { made })
-          void runOnFile(meta, agent, material, null, AGENT_LABEL[agent], source.name, undefined, recording, model, true, parts, instruction)
+          void runOnFile(meta, agent, material, null, AGENT_LABEL[agent], source.name, undefined, recording, model, true, parts, instruction, look)
           return meta.id
         }
         const meta = await library().createFile(
           { name: `${AGENT_LABEL[agent]}: ${source.name}`, type: FILE_TYPE[agent], description: `gerado de ${source.name}`, folderId: await folderFor(source, place), parentFileId: source.id, status: 'generating', pendingExcerpt: material, origin: { input: 'text', name: source.name, storage: 'none' }, made },
           '',
         )
-        void runOnFile(meta, agent, material, null, AGENT_LABEL[agent], source.name, undefined, recording, model, false, parts, instruction)
+        void runOnFile(meta, agent, material, null, AGENT_LABEL[agent], source.name, undefined, recording, model, false, parts, instruction, look)
         return meta.id
       } catch (error) {
         prep.refuse('A geração não começou.', error)
@@ -1256,7 +1308,7 @@ export const useJobsStore = create<JobsState>((set, get) => {
           return await saveAta({ markdown: ataDocument(raw, model), images: [], models: { write: modelOf(session.settings) }, stages: clock.stages })
         }
         // A video opens even without a vision model: the local OCR still reads the exact terms on screen
-        if (mediaOf(source) === 'video') {
+        if (mediaOf(source) === 'video' && asked !== 'transcricao') {
           progress('Abrindo o vídeo da gravação')
           const video = file ?? (await mediaFileOf(source).catch(() => null))
           frames = video ? await openVideoFrames(video).catch(() => null) : null
@@ -1278,7 +1330,7 @@ export const useJobsStore = create<JobsState>((set, get) => {
       async function saveAta(done: Pick<MeetingDocument, 'markdown' | 'images' | 'models' | 'costUsd' | 'stages'>): Promise<string> {
         progress('Salvando')
         const document: MeetingDocument = { id: newId(), kind: 'ata', parts: model ? [] : chosenParts(parts), ...(model ? { ataModel: { id: model, name: ATA_MODELS[model].name } } : {}), markdown: done.markdown, images: done.images, createdAt: new Date().toISOString(), models: done.models, ...(done.costUsd !== undefined ? { costUsd: done.costUsd } : {}), stages: done.stages }
-        const made = choiceOf('ata', chosen?.model, { ...(!media && mediaOf(source!) === 'video' ? { steps: stepsOf(chosen) } : {}), ...(model ? { ataModel: model } : { parts: chosenParts(parts) }), ...instructionOf(instruction), ...analyzedOf(mediaOf(source!), asked) })
+        const made = choiceOf('ata', chosen?.model, { ...(!media && mediaOf(source!) === 'video' && asked !== 'transcricao' ? { steps: stepsOf(chosen) } : {}), ...(model ? { ataModel: model } : { parts: chosenParts(parts) }), ...instructionOf(instruction), ...analyzedOf(mediaOf(source!), asked) })
         const fresh = library().files.find(file => file.id === fileId) ?? source!
         const note =
           replaced ??

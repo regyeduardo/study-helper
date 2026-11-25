@@ -403,8 +403,11 @@ async function keepSharedMedia(file: SharedFile, media: SharedMedia, fileId: str
   const kept = new File([blob], shared?.name || file.name, { type: mime })
   const origin: SourceMeta = { input: shared?.input === 'file' ? 'file' : 'recording', name: kept.name, mime, sizeBytes: shared?.sizeBytes ?? kept.size, ...(shared?.durationSeconds ? { durationSeconds: shared.durationSeconds } : {}), storage: 'none' }
   if (options.place !== 'browser' && options.repo) {
-    task.update(options.place === 'app' ? 'Guardando no App' : 'Guardando no Google Drive', null)
-    return { ...origin, ...(await storeSource(kept, 'drive', fileId, options.repo, '72h')) }
+    const where = options.place === 'app' ? 'Guardando no App' : 'Guardando no Google Drive'
+    task.update(where, null)
+    // how much went, while it goes: a big video takes minutes, and a window that says nothing looks stuck (25/11)
+    const onProgress = (sent: number, total: number) => task.update(where, total ? sent / total : null, { done: sent, total })
+    return { ...origin, ...(await storeSource(kept, 'drive', fileId, options.repo, '72h', { onProgress })) }
   }
   task.update('Guardando neste navegador', null)
   await keepLocalMedia(kept, fileId, shared?.durationSeconds ?? 0)
@@ -441,12 +444,16 @@ async function fillImported(actions: ImportActions, id: string, file: SharedFile
   }))
 }
 
-/** Stores the media of an imported note; the reason it did not go is returned, so the person is told and the note is not left pointing at a file that is not there. */
-async function keepImportedMedia(actions: ImportActions, meta: FileMeta, file: SharedFile, media: SharedMedia, options: MediaImport): Promise<string | null> {
+/**
+ * Stores the media of an imported note; the reason it did not go is returned, so the person is told and the note is not left pointing at a
+ * file that is not there. An entrada says it keeps the file (`kept`) only here, when the file arrived: a send cut in the middle (a tab
+ * closed, 25/11) leaves it as "Só o registro".
+ */
+async function keepImportedMedia(actions: ImportActions, meta: FileMeta, file: SharedFile, media: SharedMedia, options: MediaImport, entry = false): Promise<string | null> {
   const task = options.track(`Guardar a mídia: ${meta.name}`)
   try {
     const origin = await keepSharedMedia(file, media, meta.id, options, task)
-    await actions.updateSidecar(meta.id, sidecar => ({ ...sidecar, meta: { ...sidecar.meta, origin } }))
+    await actions.updateSidecar(meta.id, sidecar => ({ ...sidecar, meta: { ...sidecar.meta, origin, ...(entry ? { kept: 'arquivo' as const } : {}) } }))
     task.done('Mídia guardada.')
     return null
   } catch (error) {
@@ -510,7 +517,8 @@ export async function importSharedEntry(item: SharedItem, attempts: SharedAttemp
   const failedBefore = options.media?.failed?.get(entry.id)
   const withMedia = options.media && entry.media && hasSharedMedia(item) && !failedBefore ? options.media : null
   const base = (file: SharedFile) => ({ type: knownType(file.type), folderId: options.folderId, position: file.position, description: file.description, tags: file.tags, origin: file.meta?.origin ?? null })
-  const created = await actions.createFile({ ...base(entry), name: copyName(entry.name, options.existing, item.id), type: sourceTypeOf(entry.meta?.origin), kept: withMedia ? 'arquivo' : 'registro', parentFileId: null, sharedFrom: item.id }, entry.content)
+  // "Só o registro" until the media arrives (keepImportedMedia), never a note pointing at a file that is not there
+  const created = await actions.createFile({ ...base(entry), name: copyName(entry.name, options.existing, item.id), type: sourceTypeOf(entry.meta?.origin), kept: 'registro', parentFileId: null, sharedFrom: item.id }, entry.content)
   await fillImported(actions, created.id, entry, attempts, item.createdAt)
   const ids = new Map([[entry.id, created.id]])
   // mothers first: a note whose mother did not come hangs from the entrada
@@ -522,10 +530,8 @@ export async function importSharedEntry(item: SharedItem, attempts: SharedAttemp
     ids.set(file.id, meta.id)
     await fillImported(actions, meta.id, file, attempts, item.createdAt)
   }
-  const failedNow = withMedia && entry.media ? await keepImportedMedia(actions, created, entry, entry.media, withMedia) : null
+  const failedNow = withMedia && entry.media ? await keepImportedMedia(actions, created, entry, entry.media, withMedia, true) : null
   const mediaFailed = failedBefore ?? failedNow ?? undefined
-  // the media did not come: the entrada stays as "Só o registro", never pointing at a file that is not there
-  if (failedNow) await actions.updateSidecar(created.id, sidecar => ({ ...sidecar, meta: { ...sidecar.meta, kept: 'registro' } }))
   return mediaFailed ? { fileId: created.id, mediaFailed } : { fileId: created.id }
 }
 

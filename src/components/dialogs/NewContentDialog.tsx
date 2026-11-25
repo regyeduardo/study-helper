@@ -318,13 +318,15 @@ export function NewContentDialog({
     youtube: watchesLink,
     initial: prefill?.analyze,
   });
+  // every note of a video goes step by step with the models of its steps (T177): the Ata, the Aula and the Explicação
+  const stepByStep = analyzes && !watchesLink && analysis.value === "quadros";
   const steps = useAtaSteps(
-    choices.ata,
-    ataOfVideo,
+    writer ?? choices.ata,
+    stepByStep,
     prefill?.steps ?? {},
-    ataModel ? ATA_MODELS[ataModel].name : undefined,
+    agent === "meeting" && ataModel ? ATA_MODELS[ataModel].name : undefined,
+    agent === "lesson" ? "aula" : agent === "explanation" ? "explicacao" : undefined,
   );
-  const stepByStep = ataOfVideo && analysis.value === "transcricao";
 
   const pickFile = async (picked: File | null) => {
     setFile(picked);

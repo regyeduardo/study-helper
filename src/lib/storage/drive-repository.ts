@@ -3,6 +3,7 @@ import {
   createDriveFileController,
   createDriveFolderController,
   deleteDriveFileController,
+  trashDriveFileController,
   downloadDriveBlobController,
   downloadDriveTextController,
   type DriveFile,
@@ -138,11 +139,20 @@ export class DriveRepository implements Repository {
     return Boolean(this.findRoot(listing))
   }
 
-  async removeEverything(): Promise<void> {
+  /** The whole folder goes to the Drive's trash after it moved (T181, 25/11): a copy to come back to, never gone for good. */
+  async trashEverything(): Promise<void> {
     if (!this.rootId) await this.ensureRoot()
-    await deleteDriveFileController(this.token, this.rootId)
+    await trashDriveFileController(this.token, this.rootId)
     this.rootId = ''
     if (this.space === 'drive') retiredVisibleFolders.add(this.accountId)
+  }
+
+  /** Every media kept in the folder, with the note it was for (`fileId`) and its own name, even when no note points at it any more. */
+  sourceFiles(): { ref: string; fileId: string; name: string; md5: string | null }[] {
+    return [...this.sources.values()].map(file => {
+      const fileId = file.appProperties?.shId ?? ''
+      return { ref: file.id, fileId, name: fileId && file.name.startsWith(`${fileId}-`) ? file.name.slice(fileId.length + 1) : file.name, md5: file.md5Checksum ?? null }
+    })
   }
 
   sourceRefFor(fileId: string): string | null {
@@ -346,8 +356,9 @@ export class DriveRepository implements Repository {
     return this.sources.has(ref) ? driveStreamUrl(ref, this.token) : null
   }
 
+  /** To the Drive's trash, not gone for good (T181, 25/11): a media that moved or was removed can still come back for 30 days. */
   async removeSource(ref: string): Promise<void> {
-    await deleteDriveFileController(this.token, ref)
+    await trashDriveFileController(this.token, ref)
     this.sources.delete(ref)
   }
 

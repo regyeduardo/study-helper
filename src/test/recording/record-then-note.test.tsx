@@ -220,18 +220,31 @@ describe('Gravação pronta: o que gerar', () => {
     expect(sent.writes?.map(write => write.agent)).toEqual(['meeting', 'explanation'])
   })
 
-  it('a Ata não tem partes para escolher: sai com o padrão de "Gerar desta nota" (o Resumo, sem modelo da ata)', async () => {
+  it('a Ata não tem partes para escolher (24/11: "partes da ata sai"): no Padrão sai com o Resumo, sem modelo da ata', async () => {
     const saveRecording = spyOnSave()
     open()
     toggle('Ata')
     moreOptions()
     expect(within(dialog()).queryByRole('group', { name: 'Partes da ata' })).not.toBeInTheDocument()
-    expect(within(dialog()).queryByLabelText('Modelo da ata')).not.toBeInTheDocument()
+    expect(within(dialog()).getByLabelText('Modelo da ata')).toHaveValue('')
     save()
     await waitFor(() => expect(saveRecording).toHaveBeenCalled())
     const write = sentOf(saveRecording).writes![0] as { agent: string; parts: string[]; ataModel?: string; model: string }
     expect(write).toMatchObject({ agent: 'meeting', parts: ['resumo'], model: 'custom::geral' })
     expect(write.ataModel).toBeUndefined()
+  })
+
+  // T179 (dono, 25/11: "Quando seleciono ata após gravação não aparece o modelo de ata pra gerar"): marcar a Ata mostra o "Modelo da
+  // ata" na hora, fora de "Mais opções", e o escolhido vai no pedido no lugar das partes
+  it('marcar a Ata mostra o "Modelo da ata"; o escolhido vai no pedido', async () => {
+    const saveRecording = spyOnSave()
+    open()
+    expect(within(dialog()).queryByLabelText('Modelo da ata')).not.toBeInTheDocument()
+    toggle('Ata')
+    fireEvent.change(within(dialog()).getByLabelText('Modelo da ata'), { target: { value: 'cornell' } })
+    save()
+    await waitFor(() => expect(saveRecording).toHaveBeenCalled())
+    expect(sentOf(saveRecording).writes![0]).toMatchObject({ agent: 'meeting', ataModel: 'cornell', parts: [] })
   })
 
   it('"Mais opções" tem o modelo de cada uma marcada e a instrução, que vai para as escritas', async () => {
@@ -313,6 +326,31 @@ describe('Gravação pronta: vídeo', () => {
     moreOptions()
     const analysis = within(dialog()).getByRole('radiogroup', { name: 'O que a IA analisa' })
     expect(within(analysis).getByRole('radio', { name: /Transcrição \+ quadros do vídeo/ })).toHaveAttribute('aria-checked', 'true')
+    save()
+    await waitFor(() => expect(saveRecording).toHaveBeenCalled())
+    expect(sentOf(saveRecording)).toMatchObject({ writes: [{ agent: 'meeting', analyze: 'quadros' }] })
+  })
+
+  // T177 (o dono escolheu B em 25/11): a Ata, a Aula e a Explicação de um vídeo têm as mesmas três escolhas
+  it.each(['Ata', 'Aula'])('na %s de um vídeo vêm as mesmas três escolhas, e sem abrir nada vai o passo a passo', async name => {
+    const saveRecording = spyOnSave()
+    open()
+    toggle(name)
+    moreOptions()
+    const analysis = within(dialog()).getByRole('radiogroup', { name: 'O que a IA analisa' })
+    expect(within(analysis).getAllByRole('radio').map(radio => radio.textContent)).toEqual(['Transcrição + quadros do vídeo', 'Só a transcrição', 'Tudo numa chamada'])
+    save()
+    await waitFor(() => expect(saveRecording).toHaveBeenCalled())
+    expect(sentOf(saveRecording)).toMatchObject({ writes: [{ agent: name === 'Ata' ? 'meeting' : 'lesson', analyze: 'quadros' }] })
+  })
+
+  it('a Ata com "Só a transcrição" vai sem ler a tela', async () => {
+    const saveRecording = spyOnSave()
+    open()
+    toggle('Ata')
+    moreOptions()
+    const analysis = within(dialog()).getByRole('radiogroup', { name: 'O que a IA analisa' })
+    fireEvent.click(within(analysis).getByRole('radio', { name: /Só a transcrição/ }))
     save()
     await waitFor(() => expect(saveRecording).toHaveBeenCalled())
     expect(sentOf(saveRecording)).toMatchObject({ writes: [{ agent: 'meeting', analyze: 'transcricao' }] })

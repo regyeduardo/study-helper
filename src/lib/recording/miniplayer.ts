@@ -17,19 +17,19 @@ const WAVES: { key: keyof Meters; color: string; fill: string; label: string }[]
 
 const QUIET_BOOST = 0.4
 
-function drawWave(context: CanvasRenderingContext2D, analyser: AnalyserNode | null, samples: Uint8Array<ArrayBuffer>, width: number, top: number, height: number, color: string, fill: string): void {
+function drawWave(context: CanvasRenderingContext2D, analyser: AnalyserNode | null, samples: Uint8Array<ArrayBuffer>, left: number, width: number, top: number, height: number, color: string, fill: string): void {
   const reach = height / 2
   const middle = top + reach
   if (analyser) analyser.getByteTimeDomainData(samples)
   else samples.fill(128)
   const step = Math.max(1, Math.floor(samples.length / width))
   context.beginPath()
-  context.moveTo(0, middle)
+  context.moveTo(left, middle)
   for (let x = 0; x < width; x++) {
     const value = (samples[Math.min(samples.length - 1, x * step)] - 128) / 128
-    context.lineTo(x, middle + Math.sign(value) * Math.abs(value) ** QUIET_BOOST * reach * 0.9)
+    context.lineTo(left + x, middle + Math.sign(value) * Math.abs(value) ** QUIET_BOOST * reach * 0.9)
   }
-  context.lineTo(width, middle)
+  context.lineTo(left + width, middle)
   context.closePath()
   context.fillStyle = fill
   context.fill()
@@ -55,11 +55,60 @@ function drawLegend(context: CanvasRenderingContext2D, source: MiniplayerSource,
   }
 }
 
-export function mountMiniplayer(container: HTMLElement, source: MiniplayerSource): () => void {
+/**
+ * The strip of the recording window (T175, mocks/gravar-reuniao, option I): each wave after its name, never under it; side by side
+ * below the screen ('side'), one under the other when there is no screen ('stacked').
+ */
+export type Lanes = 'side' | 'stacked'
+
+const LANES: { key: keyof Meters; color: string; fill: string; label: string; missing?: string }[] = [
+  { key: 'microphone', color: '#60a5fa', fill: 'rgba(96, 165, 250, 0.16)', label: 'Microfone' },
+  { key: 'computer', color: '#34d399', fill: 'rgba(52, 211, 153, 0.16)', label: 'Som do PC', missing: 'Sem som do computador' },
+]
+/** The names take at least this much, so the two waves start at the same place when both names are short. */
+const NAME_COLUMN = 60
+
+function drawLanes(context: CanvasRenderingContext2D, source: MiniplayerSource, samples: Uint8Array<ArrayBuffer>, width: number, height: number, lanes: Lanes): void {
+  // the size of the names of the buttons below (11.5 px)
+  context.font = '500 11.5px system-ui, sans-serif'
+  context.textBaseline = 'middle'
+  const boxes =
+    lanes === 'side'
+      ? [
+          { left: 0, top: 0, width: width / 2, height },
+          { left: width / 2, top: 0, width: width / 2, height },
+        ]
+      : [
+          { left: 0, top: 0, width, height: height / 2 },
+          { left: 0, top: height / 2, width, height: height / 2 },
+        ]
+  for (const [index, lane] of LANES.entries()) {
+    const box = boxes[index]
+    const meter = source.meters[lane.key]
+    const text = !meter && lane.missing ? lane.missing : lane.label
+    const middle = box.top + box.height / 2
+    context.fillStyle = meter ? lane.color : '#6b7280'
+    context.beginPath()
+    context.arc(box.left + 11, middle, 3, 0, Math.PI * 2)
+    context.fill()
+    context.fillStyle = '#e5e7eb'
+    context.fillText(text, box.left + 19, middle)
+    const start = box.left + 19 + Math.max(NAME_COLUMN, context.measureText(text).width) + 10
+    const end = box.left + box.width - 10
+    if (end > start) drawWave(context, meter, samples, start, end - start, box.top + box.height * 0.15, box.height * 0.7, lane.color, lane.fill)
+  }
+  if (lanes === 'side') {
+    context.fillStyle = 'rgba(255, 255, 255, 0.08)'
+    context.fillRect(Math.round(width / 2), 5, 1, Math.max(0, height - 10))
+  }
+}
+
+export function mountMiniplayer(container: HTMLElement, source: MiniplayerSource, lanes?: Lanes): () => void {
   const doc = container.ownerDocument
   const view = doc.defaultView ?? window
   const frame = doc.createElement('div')
-  frame.style.cssText = `position:relative;width:100%;height:100%;min-height:44px;background:${BACKGROUND};overflow:hidden`
+  // the strip of the recording window is shorter than the waves of before (26 px): no minimum there, or its middle falls outside it
+  frame.style.cssText = `position:relative;width:100%;height:100%;min-height:${lanes ? 0 : 44}px;background:${BACKGROUND};overflow:hidden`
   frame.dataset.miniplayer = ''
   const canvas = doc.createElement('canvas')
   canvas.style.cssText = 'position:absolute;inset:0;width:100%;height:100%'
@@ -90,9 +139,12 @@ export function mountMiniplayer(container: HTMLElement, source: MiniplayerSource
     }
     context.fillStyle = BACKGROUND
     context.fillRect(0, 0, width, height)
-    const lane = height / WAVES.length
-    for (const [index, wave] of WAVES.entries()) drawWave(context, source.meters[wave.key], samples, width, index * lane, lane, wave.color, wave.fill)
-    drawLegend(context, source, height)
+    if (lanes) drawLanes(context, source, samples, width, height, lanes)
+    else {
+      const lane = height / WAVES.length
+      for (const [index, wave] of WAVES.entries()) drawWave(context, source.meters[wave.key], samples, 0, width, index * lane, lane, wave.color, wave.fill)
+      drawLegend(context, source, height)
+    }
     handle = view.requestAnimationFrame(paint)
   }
   handle = view.requestAnimationFrame(paint)

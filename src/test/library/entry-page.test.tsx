@@ -804,7 +804,7 @@ describe('"Gerar desta nota": o que a janela oferece', () => {
     await openDialog()
     await screen.findByRole('radiogroup', { name: 'O que gerar' })
     go()
-    expect(generateAta).toHaveBeenCalledWith('e', ['resumo'], undefined, { model: A.uid }, { folderId: 'aurora' }, '', undefined, 'transcricao')
+    expect(generateAta).toHaveBeenCalledWith('e', ['resumo'], undefined, { model: A.uid }, { folderId: 'aurora' }, '', undefined, 'quadros')
   })
 
   describe('Modelo da ata', () => {
@@ -835,7 +835,7 @@ describe('"Gerar desta nota": o que a janela oferece', () => {
       fireEvent.change(modelPick(), { target: { value: 'fathom' } })
       expect(parts()).not.toBeInTheDocument()
       go()
-      expect(generateAta).toHaveBeenCalledWith('e', [], 'fathom', { model: A.uid }, { folderId: 'aurora' }, '', undefined, 'transcricao')
+      expect(generateAta).toHaveBeenCalledWith('e', [], 'fathom', { model: A.uid }, { folderId: 'aurora' }, '', undefined, 'quadros')
     })
 
     it('as partes marcadas do Padrão vão na ordem da ata; sem nenhuma, não gera', async () => {
@@ -850,7 +850,7 @@ describe('"Gerar desta nota": o que a janela oferece', () => {
       fireEvent.click(questions)
       fireEvent.click(tasks)
       go()
-      expect(generateAta).toHaveBeenCalledWith('e', ['tarefas', 'perguntas'], undefined, { model: A.uid }, { folderId: 'aurora' }, '', undefined, 'transcricao')
+      expect(generateAta).toHaveBeenCalledWith('e', ['tarefas', 'perguntas'], undefined, { model: A.uid }, { folderId: 'aurora' }, '', undefined, 'quadros')
     })
 
     it('começa no modelo da última Ata feita desta entrada', async () => {
@@ -923,7 +923,8 @@ describe('"Gerar desta nota": o que a janela oferece', () => {
   })
 })
 
-// FR-072: the Ata of a video goes step by step with a model for each step; "Tudo numa chamada" only with a writer that sees video.
+// FR-072: the Ata of a video goes step by step with a model for each step; "Tudo numa chamada" only with a writer that hears audio (T176).
+// T177 (o dono escolheu B em 25/11): a Aula e a Explicação de um vídeo têm as mesmas três escolhas e o mesmo passo a passo.
 describe('"Gerar desta nota": a Ata de vídeo, passo a passo', () => {
   const OR = { id: 'or', type: 'openrouter' as const, name: 'OpenRouter', key: 'k', base: '' }
   const DI = { id: 'di', type: 'deepinfra' as const, name: 'DeepInfra', key: 'k', base: '' }
@@ -931,13 +932,14 @@ describe('"Gerar desta nota": a Ata de vídeo, passo a passo', () => {
   const LUNA = { uid: 'or::openai/gpt-6-luna', pid: 'or', mid: 'openai/gpt-6-luna', name: 'GPT-6 Luna' }
   const DEEPSEEK = { uid: 'di::deepseek-ai/DeepSeek-V4-Flash-0731', pid: 'di', mid: 'deepseek-ai/DeepSeek-V4-Flash-0731', name: 'DeepSeek V4 Flash' }
   const NEW = { uid: 'or::acme/novo', pid: 'or', mid: 'acme/novo', name: 'Novo da Acme' }
+  const VOXA = { uid: 'or::acme/voxa', pid: 'or', mid: 'acme/voxa', name: 'Voxa' }
   const generateAta = vi.fn(async (..._args: unknown[]) => undefined)
   const generateFromNote = vi.fn(async (..._args: unknown[]) => 'nota')
 
   function catalog() {
     const text = { texto: true, imagem: true, audio: false, video: false, pdf: null }
     const gemini = { id: GEMINI.mid, name: GEMINI.name, media: { texto: true, imagem: true, audio: true, video: true, pdf: null } }
-    const list = [gemini, { id: LUNA.mid, name: LUNA.name, media: text }, { id: NEW.mid, name: NEW.name, media: text }]
+    const list = [gemini, { id: LUNA.mid, name: LUNA.name, media: text }, { id: NEW.mid, name: NEW.name, media: text }, { id: VOXA.mid, name: VOXA.name, media: { texto: true, imagem: false, audio: true, video: false, pdf: null } }]
     const only = [{ id: DEEPSEEK.mid, name: DEEPSEEK.name, media: { texto: true, imagem: false, audio: false, video: false, pdf: null } }]
     const live = (items: typeof list) => ({ state: 'ok' as const, token: 1, at: Date.now(), list: items, byId: new Map(items.map(item => [item.id, item])) })
     useModelsStore.setState({ live: { or: live(list), di: live(only) }, probes: {} } as never)
@@ -946,7 +948,7 @@ describe('"Gerar desta nota": a Ata de vídeo, passo a passo', () => {
   async function open(fields: { made?: FileMeta['made'] } = {}, entry: FileSidecar = withTranscript(entrada('e', 'v.mp4', VIDEO))) {
     const extra = fields.made ? [item('velha', { name: 'Ata antiga', type: 'meeting', parentFileId: 'e', made: fields.made })] : []
     seed([entry, ...extra])
-    useLibraryStore.setState(state => ({ index: { ...state.index, settings: { ...state.index.settings, aiConfig: { providers: [OR, DI], models: [GEMINI, LUNA, DEEPSEEK, NEW], defaults: { estudo: LUNA.uid, ata: LUNA.uid, midia: GEMINI.uid, tela: GEMINI.uid }, steps: {} } } } }))
+    useLibraryStore.setState(state => ({ index: { ...state.index, settings: { ...state.index.settings, aiConfig: { providers: [OR, DI], models: [GEMINI, LUNA, DEEPSEEK, NEW, VOXA], defaults: { estudo: LUNA.uid, ata: LUNA.uid, midia: GEMINI.uid, tela: GEMINI.uid }, steps: {} } } } }))
     catalog()
     render(
       <MemoryRouter>
@@ -978,27 +980,28 @@ describe('"Gerar desta nota": a Ata de vídeo, passo a passo', () => {
     installFetch(() => new Response('{}'))
   })
 
-  it('o padrão é "Transcrição + quadros do vídeo · passo a passo", que funciona com um modelo que só lê texto; "Só o texto" não existe', async () => {
+  it('o padrão é "Transcrição + quadros do vídeo · passo a passo", que funciona com um modelo que só lê texto; depois "Só a transcrição" e "Tudo numa chamada"', async () => {
     await open()
-    expect(labels()).toEqual(['Transcrição + quadros do vídeo', 'Tudo numa chamada'])
+    expect(labels()).toEqual(['Transcrição + quadros do vídeo', 'Só a transcrição', 'Tudo numa chamada'])
     expect(checked()).toEqual(['Transcrição + quadros do vídeo'])
     expect(option('Transcrição \\+ quadros do vídeo')).toHaveTextContent('passo a passo')
     expect(option('Transcrição \\+ quadros do vídeo')).toHaveTextContent('GPT-6 Luna')
     expect(option('Transcrição \\+ quadros do vídeo')).toHaveAttribute('aria-disabled', 'false')
-    expect(within(field()).queryByRole('radio', { name: /Só o texto|Só a transcrição|Só o vídeo/ })).not.toBeInTheDocument()
+    expect(within(field()).queryByRole('radio', { name: /Só o texto|Só o vídeo|Só o áudio/ })).not.toBeInTheDocument()
     expect(option('Transcrição \\+ quadros do vídeo')).toHaveTextContent('recomendado')
   })
 
-  it('"Tudo numa chamada" fica visível, desligado e diz por quê quando o modelo da escrita não vê vídeo', async () => {
+  // T176 (dono, 25/11: "o mesmo modelo vê o vídeo e outro não dependendo do modo de nota"): "Tudo numa chamada" manda ao modelo o
+  // áudio do vídeo (from-media.ts: o vídeo nunca vai), então a trava é ouvir áudio, com as palavras da Aula e da Explicação
+  it('"Tudo numa chamada" fica visível, desligado e diz por quê quando o modelo da escrita não ouve áudio', async () => {
     await open()
     expect(option('Tudo numa chamada')).toHaveAttribute('aria-disabled', 'true')
-    expect(option('Tudo numa chamada')).toHaveTextContent('Só abre com um modelo que veja vídeo')
-    expect(option('Tudo numa chamada')).toHaveTextContent('GPT-6 Luna')
+    expect(option('Tudo numa chamada')).toHaveTextContent('O GPT-6 Luna não ouve áudio.')
     fireEvent.click(option('Tudo numa chamada'))
     expect(checked()).toEqual(['Transcrição + quadros do vídeo'])
   })
 
-  it('"Tudo numa chamada" abre com um modelo que vê vídeo e vai na geração; trocar de volta para um que não vê tira a escolha', async () => {
+  it('"Tudo numa chamada" abre com um modelo que ouve áudio e vai na geração; trocar de volta para um que não ouve tira a escolha', async () => {
     await open()
     fireEvent.change(writer(), { target: { value: GEMINI.uid } })
     expect(option('Tudo numa chamada')).toHaveAttribute('aria-disabled', 'false')
@@ -1011,11 +1014,83 @@ describe('"Gerar desta nota": a Ata de vídeo, passo a passo', () => {
     expect(checked()).toEqual(['Transcrição + quadros do vídeo'])
   })
 
-  it('numa Aula ou Explicação a pergunta continua a de antes', async () => {
+  it.each(['Aula', 'Explicação'])('numa %s vêm as mesmas escolhas da Ata, com o passo a passo marcado e os modelos por passo', async kind => {
+    await open()
+    fireEvent.click(screen.getByRole('radio', { name: new RegExp(`^${kind}`) }))
+    expect(labels()).toEqual(['Transcrição + quadros do vídeo', 'Só a transcrição', 'Tudo numa chamada'])
+    expect(checked()).toEqual(['Transcrição + quadros do vídeo'])
+    expect(option('Transcrição \\+ quadros do vídeo')).toHaveTextContent('GPT-6 Luna')
+    expect(section()).toBeInTheDocument()
+  })
+
+  it('na Aula, os passos dizem o que fazem na Aula, só o Vídeo tem nota medida, e os modelos de cada passo vão na geração', async () => {
     await open()
     fireEvent.click(screen.getByRole('radio', { name: /^Aula/ }))
-    expect(labels()).toEqual(['Só o vídeo', 'Só a transcrição', 'Transcrição + vídeo'])
+    reveal()
+    expect(step('Vídeo')).toHaveTextContent('Lê a tela pelos quadros do vídeo.')
+    expect(step('Contexto')).toHaveTextContent('Acha onde a fala aponta para a tela.')
+    expect(step('Escrita')).toHaveTextContent('Escreve a aula. Igual ao Modelo da IA.')
+    expect(step('Vídeo')).toHaveTextContent('recomendado · nota 9')
+    // the scores of Contexto and Escrita were measured on an Ata: none is shown for an Aula
+    for (const name of ['Contexto', 'Escrita']) {
+      expect(step(name)).not.toHaveTextContent(/nota|recomendado|Pode piorar/)
+    }
+    setStep('Vídeo', LUNA.uid)
+    go()
+    expect(generateFromNote).toHaveBeenCalledWith('e', 'lesson', LUNA.uid, { folderId: 'aurora' }, '', 'quadros', { video: LUNA.uid })
+    expect(generateAta).not.toHaveBeenCalled()
+  })
+
+  it('na Explicação, "Só a transcrição" vai sem os modelos por passo', async () => {
+    await open()
+    fireEvent.click(screen.getByRole('radio', { name: /^Explicação/ }))
+    fireEvent.click(option('Só a transcrição'))
     expect(screen.queryByRole('group', { name: 'Modelos por passo' })).not.toBeInTheDocument()
+    go()
+    expect(generateFromNote).toHaveBeenCalledWith('e', 'explanation', LUNA.uid, { folderId: 'aurora' }, '', 'transcricao')
+  })
+
+  it('na Ata, "Só a transcrição" vai sem os modelos por passo', async () => {
+    await open()
+    fireEvent.click(option('Só a transcrição'))
+    expect(checked()).toEqual(['Só a transcrição'])
+    expect(screen.queryByRole('group', { name: 'Modelos por passo' })).not.toBeInTheDocument()
+    go()
+    expect(generateAta).toHaveBeenCalledWith('e', ['resumo'], undefined, { model: LUNA.uid }, { folderId: 'aurora' }, '', undefined, 'transcricao')
+  })
+
+  it('uma Ata feita com "Só a transcrição" volta com "Só a transcrição"', async () => {
+    await open({ made: { at: '2026-11-25T10:00:00.000Z', parts: ['resumo'], model: LUNA.uid, analyze: 'transcricao' } })
+    expect(checked()).toEqual(['Só a transcrição'])
+  })
+
+  it('o mesmo modelo tem o mesmo veredito, com as mesmas palavras, na Ata, na Aula e na Explicação', async () => {
+    await open()
+    const why = 'O GPT-6 Luna não ouve áudio.'
+    expect(option('Tudo numa chamada')).toHaveTextContent(why)
+    for (const kind of ['Aula', 'Explicação']) {
+      fireEvent.click(screen.getByRole('radio', { name: new RegExp(`^${kind}`) }))
+      expect(option('Tudo numa chamada')).toHaveAttribute('aria-disabled', 'true')
+      expect(option('Tudo numa chamada')).toHaveTextContent(why)
+      for (const name of ['Transcrição \\+ quadros do vídeo', 'Só a transcrição']) expect(option(name)).toHaveAttribute('aria-disabled', 'false')
+    }
+  })
+
+  it('um modelo que ouve áudio, mas não vê vídeo, abre "Tudo numa chamada" na Ata, na Aula e na Explicação', async () => {
+    await open()
+    fireEvent.change(writer(), { target: { value: VOXA.uid } })
+    expect(option('Tudo numa chamada')).toHaveAttribute('aria-disabled', 'false')
+    for (const kind of ['Aula', 'Explicação']) {
+      fireEvent.click(screen.getByRole('radio', { name: new RegExp(`^${kind}`) }))
+      fireEvent.change(writer(), { target: { value: VOXA.uid } })
+      expect(option('Tudo numa chamada')).toHaveAttribute('aria-disabled', 'false')
+    }
+  })
+
+  it('"Tudo numa chamada" diz o que manda: o áudio do vídeo, não o vídeo', async () => {
+    await open()
+    expect(option('Tudo numa chamada')).toHaveTextContent('O modelo da escrita ouve o áudio do vídeo, sem passos.')
+    expect(field()).not.toHaveTextContent('vê o vídeo')
   })
 
   it('numa entrada de áudio não há os quadros do vídeo: nem a pergunta nem a seção', async () => {
@@ -1127,7 +1202,7 @@ describe('"Gerar desta nota": a Ata de vídeo, passo a passo', () => {
       fireEvent.click(undo())
       expect(models()).toEqual([GEMINI.uid, DEEPSEEK.uid, LUNA.uid])
       go()
-      expect(generateAta).toHaveBeenCalledWith('e', ['resumo'], undefined, { model: LUNA.uid, context: DEEPSEEK.uid }, { folderId: 'aurora' }, '', undefined, 'transcricao')
+      expect(generateAta).toHaveBeenCalledWith('e', ['resumo'], undefined, { model: LUNA.uid, context: DEEPSEEK.uid }, { folderId: 'aurora' }, '', undefined, 'quadros')
     })
 
     it('"Usar recomendados" também vale para o que a pessoa trocou à mão, e vai para a geração', async () => {
@@ -1139,7 +1214,7 @@ describe('"Gerar desta nota": a Ata de vídeo, passo a passo', () => {
       fireEvent.click(use())
       expect(models()).toEqual([GEMINI.uid, LUNA.uid, LUNA.uid])
       go()
-      expect(generateAta).toHaveBeenCalledWith('e', ['resumo'], undefined, { model: LUNA.uid, write: LUNA.uid, video: GEMINI.uid, context: LUNA.uid }, { folderId: 'aurora' }, '', undefined, 'transcricao')
+      expect(generateAta).toHaveBeenCalledWith('e', ['resumo'], undefined, { model: LUNA.uid, write: LUNA.uid, video: GEMINI.uid, context: LUNA.uid }, { folderId: 'aurora' }, '', undefined, 'quadros')
     })
 
     it('trocar um passo à mão depois de usar tira o "Desfazer": o botão volta a "Usar recomendados"', async () => {
@@ -1211,7 +1286,7 @@ describe('"Gerar desta nota": a Ata de vídeo, passo a passo', () => {
   it('sem trocar nada, vai o que foi mostrado: só o modelo da escrita e o passo a passo, como o padrão de hoje', async () => {
     await open()
     go()
-    expect(generateAta).toHaveBeenCalledWith('e', ['resumo'], undefined, { model: LUNA.uid }, { folderId: 'aurora' }, '', undefined, 'transcricao')
+    expect(generateAta).toHaveBeenCalledWith('e', ['resumo'], undefined, { model: LUNA.uid }, { folderId: 'aurora' }, '', undefined, 'quadros')
   })
 
   it('os modelos escolhidos vão para a geração, passo a passo', async () => {
@@ -1221,7 +1296,7 @@ describe('"Gerar desta nota": a Ata de vídeo, passo a passo', () => {
     setStep('Contexto', DEEPSEEK.uid)
     setStep('Escrita', GEMINI.uid)
     go()
-    expect(generateAta).toHaveBeenCalledWith('e', ['resumo'], undefined, { model: GEMINI.uid, write: GEMINI.uid, video: LUNA.uid, context: DEEPSEEK.uid }, { folderId: 'aurora' }, '', undefined, 'transcricao')
+    expect(generateAta).toHaveBeenCalledWith('e', ['resumo'], undefined, { model: GEMINI.uid, write: GEMINI.uid, video: LUNA.uid, context: DEEPSEEK.uid }, { folderId: 'aurora' }, '', undefined, 'quadros')
   })
 
   it('começa nos modelos da última Ata desta entrada ("Gerar de novo")', async () => {
@@ -1231,8 +1306,11 @@ describe('"Gerar desta nota": a Ata de vídeo, passo a passo', () => {
     expect(stepModel('Contexto').value).toBe(DEEPSEEK.uid)
     expect(stepModel('Escrita').value).toBe(GEMINI.uid)
     expect(step('Contexto')).toHaveTextContent('nota 6 neste passo')
+    // made before T177, when "transcricao" was the step by step: its steps say so
+    expect(checked()).toEqual(['Transcrição + quadros do vídeo'])
     go()
     expect(generateAta.mock.calls[0][3]).toEqual({ model: GEMINI.uid, write: GEMINI.uid, video: LUNA.uid, context: DEEPSEEK.uid })
+    expect(generateAta.mock.calls[0][7]).toBe('quadros')
   })
 
   it('uma Ata antiga feita com "o modelo de vídeo também escreve" volta com ele no Contexto e na Escrita', async () => {

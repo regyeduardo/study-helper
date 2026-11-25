@@ -18,9 +18,26 @@ function element(id: number[], payload: number[]): number[] {
   return [...id, 0x80 | payload.length, ...payload]
 }
 
-function cluster(time: number, blockTimes: number[]): number[] {
-  const blocks = blockTimes.flatMap(offset => element([0xa3], [0x81, offset >> 8, offset & 0xff, 0x80, 0xaa, 0xbb]))
+/** `keys`: the offsets whose block is a keyframe (all of them by default, as in an audio track). */
+function cluster(time: number, blockTimes: number[], keys?: number[]): number[] {
+  const blocks = blockTimes.flatMap(offset => element([0xa3], [0x81, offset >> 8, offset & 0xff, !keys || keys.includes(offset) ? 0x80 : 0x00, 0xaa, 0xbb]))
   return [...CLUSTER, ...UNKNOWN_SIZE, ...element([0xe7], [time >> 8, time & 0xff]), ...blocks]
+}
+
+/** A screen recording of the browser (MediaRecorder): a keyframe at the start, then only frames that depend on the ones before; one more
+ * keyframe in the third stretch, 2 s into it. */
+function screenRecording(): number[] {
+  const steps = Array.from({ length: 250 }, (_, index) => index * 20)
+  return [
+    ...element(EBML, element([0x42, 0x82], [...'webm'].map(letter => letter.charCodeAt(0)))),
+    ...SEGMENT,
+    ...UNKNOWN_SIZE,
+    ...element(INFO, [...element([0x2a, 0xd7, 0xb1], [0x0f, 0x42, 0x40]), ...element([0x4d, 0x80], [0x43, 0x68])]),
+    ...element(TRACKS, element([0xae], [...element([0xd7], [1]), ...element([0x83], [1])])),
+    ...cluster(0, steps, [0]),
+    ...cluster(5000, steps, []),
+    ...cluster(10000, steps, [2000]),
+  ]
 }
 
 function browserRecording(): number[] {
@@ -139,6 +156,59 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllGlobals()
+})
+
+// T180 (25/11): a Ata da Natália parou no servidor com PIPELINE_ERROR_DECODE. O índice apontava cada trecho como lugar de pulo, mas
+// num vídeo do MediaRecorder só o começo tem quadro-chave: o pulo caía num quadro que depende dos anteriores e a decodificação quebrava.
+/** The track of the test recording made a video track (same size: one byte changes). */
+function asVideo(bytes: Uint8Array): Uint8Array {
+  const out = bytes.slice()
+  for (let at = 0; at < out.length - 2; at++) if (out[at] === 0x83 && out[at + 1] === 0x81 && out[at + 2] === 2) out[at + 2] = 1
+  return out
+}
+
+/** Only the first block (and the one 2 s into the stretch at 10 s) stay keyframes, as in a screen recording of the browser. */
+function dropKeys(bytes: Uint8Array): Uint8Array {
+  const out = bytes.slice()
+  const header = read(out, 0)
+  const segment = read(out, header.end)
+  for (let at = segment.data; at < segment.end; ) {
+    const child = read(out, at)
+    if (child.id === hex(CLUSTER)) {
+      let time = 0
+      for (const inner of children(out, child.data, child.end)) {
+        if (inner.id === 'e7') time = number(out, inner)
+        if (inner.id !== 'a3') continue
+        const offset = (out[inner.data + 1] << 8) | out[inner.data + 2]
+        const key = (time === 0 && offset === 0) || (time === 10000 && offset === 2000)
+        out[inner.data + 3] = key ? 0x80 : 0x00
+      }
+    }
+    at = child.end
+  }
+  return out
+}
+
+describe('makeSeekable num vídeo', () => {
+  it('o índice só aponta onde o vídeo pode começar: os quadros-chave, no tempo deles', async () => {
+    const bytes = await bytesOf(await makeSeekable(new Blob([new Uint8Array(screenRecording())], { type: 'video/webm' })))
+    expect(inspect(bytes).cues.map(cue => cue.time)).toEqual([0, 12000])
+    // a jump to 7.5 s starts from the keyframe at 0; to 13 s, from the one at 12 s
+    expect(jumpTo(bytes, 7.5)).toBe(0)
+    expect(jumpTo(bytes, 13)).toBe(10000)
+  })
+
+  it('refaz o índice errado de uma gravação de antes (a que já tem índice)', async () => {
+    // the index of before: every stretch is a place to jump; then only the start (and 2 s into the third) really is a keyframe
+    const indexed = await bytesOf(await makeSeekable(new Blob([new Uint8Array(browserRecording())], { type: 'video/webm' })))
+    expect(inspect(indexed).cues.map(cue => cue.time)).toEqual([0, 5000, 10000])
+    const old = dropKeys(asVideo(indexed))
+    const again = await bytesOf(await makeSeekable(new Blob([old], { type: 'video/webm' }), { redo: true }))
+    expect(inspect(again).cues.map(cue => cue.time)).toEqual([0, 12000])
+    expect(inspect(again).durationMs).toBe(15000)
+    // without "redo", a file that has an index is left as it is
+    expect((await bytesOf(await makeSeekable(new Blob([old], { type: 'video/webm' })))).length).toBe(old.length)
+  })
 })
 
 describe('makeSeekable', () => {

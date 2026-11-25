@@ -1,3 +1,6 @@
+import { makeSeekable } from '@/lib/recording/seekable'
+import { videoEvent } from '@/lib/recording/video-wait'
+
 const MAX_WIDTH = 1920
 const TICKER_SOURCE = 'let timer;onmessage=event=>{clearInterval(timer);if(event.data>0)timer=setInterval(()=>postMessage(0),event.data)}'
 
@@ -304,18 +307,17 @@ const FRAME_WIDTH = 1280
 const SIGNATURE_WIDTH = 16
 const SIGNATURE_HEIGHT = 9
 
-function once(target: HTMLMediaElement, event: string): Promise<void> {
-  return new Promise((resolve, reject) => {
-    target.addEventListener(event, () => resolve(), { once: true })
-    target.addEventListener('error', () => reject(new Error('O vídeo da gravação não abriu.')), { once: true })
-  })
-}
+// never forever: an error the video already has, a new one, or the limit end the wait (T180)
+const once = (target: HTMLMediaElement, event: string) => videoEvent(target, event)
+
+/** A WebM of before has its index made again: the old one pointed at frames a jump cannot start from (T180, PIPELINE_ERROR_DECODE). */
+export const jumpable = (video: Blob) => (/webm/i.test(video.type) ? makeSeekable(video, { redo: true }) : Promise.resolve(video))
 
 export async function grabFrames(video: Blob, times: number[]): Promise<GrabbedFrame[]> {
-  const url = URL.createObjectURL(video)
   const element = document.createElement('video')
   element.muted = true
   element.preload = 'auto'
+  const url = URL.createObjectURL(await jumpable(video))
   const loaded = once(element, 'loadeddata')
   element.src = url
   try {

@@ -79,6 +79,7 @@ export async function copyToHidden(visible: DriveRepository, hidden: DriveReposi
     await hidden.saveFolder(folder)
     step(`Pasta ${folder.name}`)
   }
+  const carried = new Set<string>()
   for (const meta of source.files) {
     const [content, sidecar] = await Promise.all([visible.readContent(meta.id), visible.readSidecar(meta.id)])
     const stored = keepsSource(sidecar)
@@ -86,9 +87,17 @@ export async function copyToHidden(visible: DriveRepository, hidden: DriveReposi
     if (stored) {
       const ref = hidden.sourceRefFor(meta.id) ?? (await hidden.putSource(meta.id, await visible.getSource(stored), sidecar.meta.origin!.name)).ref
       next = { ...sidecar, meta: { ...sidecar.meta, origin: { ...sidecar.meta.origin!, storedFileId: ref } } }
+      carried.add(stored)
     }
     await hidden.saveFile(next, content)
     step(meta.name)
+  }
+  // T181 (25/11): a media no note points at (its note was deleted, or the note says it was removed) goes too; before, it was lost with
+  // the old folder
+  for (const media of visible.sourceFiles()) {
+    if (carried.has(media.ref) || hidden.sourceRefFor(media.fileId || media.ref)) continue
+    await hidden.putSource(media.fileId || media.ref, await visible.getSource(media.ref), media.name)
+    step(media.name)
   }
   await hidden.saveIndex(keepHiddenSettings ? { ...target.index, tags: [...new Set([...target.index.tags, ...source.index.tags])] } : source.index)
   step('Configurações')
@@ -120,6 +129,9 @@ export async function differencesBetween(visible: DriveRepository, hidden: Drive
     const copiedRef = keepsSource(copiedSidecar)
     if (stored && (!copiedRef || visible.sourceChecksum(stored) !== hidden.sourceChecksum(copiedRef))) problems.push(`fonte de ${meta.name}`)
   }
+  // every media of the old folder has its copy, byte for byte, before the old folder goes to the trash
+  const copiedMedia = new Set(hidden.sourceFiles().map(media => media.md5))
+  for (const media of visible.sourceFiles()) if (!copiedMedia.has(media.md5)) problems.push(`mídia ${media.name}`)
   return problems
 }
 
@@ -154,8 +166,9 @@ async function findDriveLibrary(accountId: string, token: TokenProvider, report:
       report('Conferindo a cópia', null)
       const problems = await differencesBetween(source, hidden, pass === 0)
       if (problems.length) return { repo: source, hiddenPending: false, warning: `A cópia para a pasta oculta não bateu (${problems.slice(0, 3).join(', ')}); a pasta .sync-study-helper continua sendo usada e nada foi apagado.` }
-      report('Apagando a pasta antiga', null)
-      await source.removeEverything()
+      // the old folder goes to the Drive's trash, whole: recoverable for 30 days, never deleted for good (T181)
+      report('Mandando a pasta antiga para a lixeira do Drive', null)
+      await source.trashEverything()
     }
     return { repo: hidden, hiddenPending: false, warning: null }
   } catch (error) {

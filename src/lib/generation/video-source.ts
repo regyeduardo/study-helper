@@ -1,28 +1,17 @@
 // FrameSource over a recorded video Blob, in the browser: seeks a hidden <video> and draws to canvas.
 import type { Box, FrameSource, Shot } from './ata-types'
+import { jumpable } from '@/lib/recording/frame-grab'
+import { videoEvent } from '@/lib/recording/video-wait'
 
 const FRAME_WIDTH = 1280
 const SIGNATURE_WIDTH = 48
 const SIGNATURE_HEIGHT = 36
 const DURATION_PROBE_MS = 2000
 const THUMB_VIDEOS = 4
-const OPEN_ERROR = 'O vídeo da gravação não abriu.'
 const DRAW_ERROR = 'Não foi possível desenhar o quadro do vídeo.'
 
-function once(target: HTMLMediaElement, event: string): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const done = () => {
-      target.removeEventListener('error', fail)
-      resolve()
-    }
-    const fail = () => {
-      target.removeEventListener(event, done)
-      reject(new Error(OPEN_ERROR))
-    }
-    target.addEventListener(event, done, { once: true })
-    target.addEventListener('error', fail, { once: true })
-  })
-}
+// never forever: an error the video already has, a new one, or the limit end the wait (T180)
+const once = (target: HTMLMediaElement, event: string) => videoEvent(target, event)
 
 function settle(target: HTMLMediaElement, events: string[], timeoutMs: number): Promise<void> {
   return new Promise((resolve) => {
@@ -70,10 +59,10 @@ export function signatureDifference(a: number[], b: number[]): number {
 }
 
 export async function openVideoFrames(video: Blob): Promise<FrameSource> {
-  const url = URL.createObjectURL(video)
   const element = document.createElement('video')
   element.muted = true
   element.preload = 'auto'
+  const url = URL.createObjectURL(await jumpable(video))
   const loaded = once(element, 'loadeddata')
   element.src = url
 

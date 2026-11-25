@@ -121,7 +121,7 @@ describe('generateAta passo a passo', () => {
 
   async function run(chosen: AtaModels): Promise<{ id: string; models: Record<string, string> }> {
     const source = await video()
-    await useJobsStore.getState().generateAta(source, ['resumo'], undefined, chosen, 'home', '', frames(), 'transcricao')
+    await useJobsStore.getState().generateAta(source, ['resumo'], undefined, chosen, 'home', '', frames(), 'quadros')
     await waitFor(() => expect(ataOf(source)).toBeDefined())
     const saved = sidecars.get(ataOf(source)!.id)!.documents![0]
     return { id: ataOf(source)!.id, models: saved.models as Record<string, string> }
@@ -134,7 +134,7 @@ describe('generateAta passo a passo', () => {
     expect(seen.length).toBeGreaterThan(0)
     expect(seen.every(call => call.body?.model === GEMINI.mid)).toBe(true)
     expect(calls.filter(call => !sees(call)).every(call => call.body?.model === LUNA.mid)).toBe(true)
-    expect(useLibraryStore.getState().files.find(file => file.id === id)?.made).toMatchObject({ model: LUNA.uid, analyze: 'transcricao', parts: ['resumo'], steps: { video: GEMINI.uid, context: LUNA.uid } })
+    expect(useLibraryStore.getState().files.find(file => file.id === id)?.made).toMatchObject({ model: LUNA.uid, analyze: 'quadros', parts: ['resumo'], steps: { video: GEMINI.uid, context: LUNA.uid } })
   })
 
   it('cada passo usa o modelo escolhido para ele, e a escolha fica no `made` para "Gerar de novo"', async () => {
@@ -149,6 +149,6 @@ describe('generateAta passo a passo', () => {
     const writing = calls.filter(call => systemPromptOf(call).startsWith(P.BASE) && systemPromptOf(call).endsWith(P.RESUMO))
     expect(writing.length).toBe(1)
     expect(writing[0].body?.model).toBe(LITE.mid)
-    expect(useLibraryStore.getState().files.find(file => file.id === id)?.made).toMatchObject({ model: LITE.uid, analyze: 'transcricao', steps: { video: GEMMA.uid, context: DEEPSEEK.uid } })
+    expect(useLibraryStore.getState().files.find(file => file.id === id)?.made).toMatchObject({ model: LITE.uid, analyze: 'quadros', steps: { video: GEMMA.uid, context: DEEPSEEK.uid } })
   })
 })

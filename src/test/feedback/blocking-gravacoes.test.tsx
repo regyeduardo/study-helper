@@ -178,20 +178,23 @@ describe('Guardar a mídia da gravação no Drive', () => {
   const recording = () => new NodeFile([new Uint8Array(8)], 'Reunião 14-10-2026, 09-00-00.webm', { type: 'audio/webm' }) as unknown as File
   const request = (file: File) => ({ file, storedName: null, durationSeconds: 65, folderId: null, storage: 'drive' as const, litterboxTime: '72h' as const, marks: [], transcribe: false })
 
-  it('a nota abre, e "Guardando a mídia no Drive…" segura o app até o envio acabar (barra sem número: o envio não conta bytes)', async () => {
+  // 25/11 (dono, com a janela parada: "O usuário vai ficar esperando igual trouxa?"): o envio diz quanto já foi, e a janela conta isso
+  // como andamento (antes a barra ficava sem número e, num vídeo grande, dizia "Nada andou")
+  it('a nota abre, e "Guardando a mídia no Drive…" segura o app até o envio acabar, dizendo quanto já foi', async () => {
     const slow = slowLibrary()
     const upload = deferred<{ ref: string }>()
-    const putSource = vi.fn(() => upload.promise)
+    const putSource = vi.fn((_id: string, _file: File, _name: string, _transfer?: { onProgress?: (done: number, total: number) => void }) => upload.promise)
     Object.assign(slow.repo, { putSource })
     const file = recording()
 
     const id = await useJobsStore.getState().saveRecording(request(file))
     await flush()
-    expect(putSource).toHaveBeenCalledWith(id, file, file.name)
+    expect(putSource).toHaveBeenCalledWith(id, file, file.name, expect.objectContaining({ onProgress: expect.any(Function) }))
     expect(ops()).toHaveLength(1)
     expect(ops()[0]).toMatchObject({ title: 'Guardando a mídia no Drive…' })
     expect(ops()[0].total).toBeUndefined()
-    expect(ops()[0].totalBytes).toBeUndefined()
+    act(() => putSource.mock.calls[0][3]!.onProgress!(4, 8))
+    expect(ops()[0]).toMatchObject({ phase: 'Enviando a mídia', doneBytes: 4, totalBytes: 8 })
 
     await act(async () => {
       upload.resolve({ ref: 'drive-1' })
@@ -215,5 +218,25 @@ describe('Guardar a mídia da gravação no Drive', () => {
     })
     expect(ops()).toHaveLength(0)
     expect(jobsNow()[0]).toMatchObject({ status: 'error', title: 'Guardar a mídia: Reunião 14-10-2026, 09-00-00', error: 'Sem espaço no Drive' })
+  })
+
+  // T181 (dono, 25/11: "Isso vale também pra fim de gravação caso escolher o app e não conseguir enviar"): a gravação guardada neste
+  // navegador fica, e a linha diz onde ela está e como mandar de novo
+  it('o envio falha com a gravação guardada neste navegador: a linha diz que ela está salva em Mídias e como enviar de novo', async () => {
+    const slow = slowLibrary()
+    const upload = deferred<{ ref: string }>()
+    Object.assign(slow.repo, { putSource: vi.fn(() => upload.promise) })
+    const media = await import('@/lib/recording/media-library')
+    vi.spyOn(media, 'linkLocalMedia').mockResolvedValue(undefined as never)
+    const removed = vi.spyOn(media, 'removeLocalMedia').mockResolvedValue(undefined)
+
+    await useJobsStore.getState().saveRecording({ ...request(recording()), storedName: 'gravacao-1.webm' })
+    await flush()
+    await act(async () => {
+      upload.reject(new Error('Sem espaço no Drive'))
+      await settle()
+    })
+    expect(jobsNow()[0].error).toBe('Sem espaço no Drive. A gravação continua salva neste navegador, em Mídias: abra a nota e use "Salvar no meu Drive" para enviar de novo.')
+    expect(removed).not.toHaveBeenCalled()
   })
 })

@@ -257,6 +257,24 @@ export async function buildAta(request: AtaRequest, tools: AtaTools): Promise<At
   return { markdown: markdown.trim() + '\n', title, images: used, recording, models: ai.models(), costUsd: ai.costUsd(), stages: stages.stages }
 }
 
+/**
+ * T177 (the owner's "B" of 25/11): the screen of a video read the way the Ata reads it (the frames, the local OCR, and what the vision
+ * model says where the speech points at the screen), as text for an Aula or an Explicação written from the transcription. Empty when
+ * nothing could be read.
+ */
+export async function readVideoScreen(recording: RecordingData, tools: Pick<AtaTools, 'ai' | 'frames' | 'difference' | 'ocr'>, onProgress: (message: string) => void = () => {}, startedAt = new Date()): Promise<string> {
+  const { ai, frames } = tools
+  if (!frames) return ''
+  const ocr = tools.ocr === undefined ? browserOcr() : tools.ocr
+  if (!ai.hasVision && !ocr) return ''
+  const asked = ai.hasVision ? askedMoments(recording, (user, system) => ai.text('context', system, user, { max: 2000, json: true })).catch(() => []) : []
+  const names = documentNames(recording)
+  const spoken = meetingMaterial(names, startedAt, [])
+  onProgress('Lendo a tela do vídeo pelos quadros')
+  const read = await readScreen(frames, ai, tools.difference, onProgress, { ocr, asked, marks: recording.marks ?? [], saved: recording.screenIndex, speech: spoken.falasEntre }).finally(() => ocr?.close?.())
+  return meetingMaterial(names, startedAt, read.screen ?? groupReadings(read.readings)).tela.trim()
+}
+
 /** Swaps "imagens/NAME" for the stored image so the viewer shows it. */
 export function withImages(markdown: string, images: AtaImage[]): string {
   const byName = new Map(images.map(image => [image.name, image.dataUrl]))

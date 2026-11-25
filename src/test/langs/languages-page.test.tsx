@@ -1,7 +1,7 @@
 import '@/test/account/storage-shim'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
-import { MemoryRouter, Route, Routes } from 'react-router-dom'
+import { MemoryRouter, Route, Routes, useParams } from 'react-router-dom'
 
 const { mockEnv } = vi.hoisted(() => ({ mockEnv: { apiUrl: 'https://api.example.test', basePath: '/' } }))
 vi.mock('@/lib/env', () => ({ env: mockEnv }))
@@ -61,12 +61,18 @@ beforeEach(() => {
 
 afterEach(() => vi.unstubAllGlobals())
 
+function AreaProbe() {
+  const { code, area } = useParams()
+  return <p>estudo da área {area} de {code}</p>
+}
+
 function at(path: string) {
   return render(
     <MemoryRouter initialEntries={[path]}>
       <Routes>
         <Route path="/idiomas" element={<LanguagesPage />} />
         <Route path="/idiomas/:code" element={<LanguagePage />} />
+        <Route path="/idiomas/:code/area/:area" element={<AreaProbe />} />
         <Route path="/idiomas/:code/:textId" element={<p>estudo aberto</p>} />
       </Routes>
     </MemoryRouter>,
@@ -145,6 +151,20 @@ describe('Página do idioma', () => {
     expect(screen.getByRole('button', { name: /Começar/ })).toBeInTheDocument()
     expect(screen.getByRole('status')).toHaveTextContent('Na fila: começa quando o texto anterior terminar.')
     expect(screen.getByText(/Não deu para gerar: A IA não respondeu agora/)).toBeInTheDocument()
+  })
+
+  // T135 (FR-044; dono, 25/11: "Eu clicaria num cara desses que seria o estudo geral de todos os textos")
+  it('clicar numa área da base abre o estudo dela, com todos os textos', async () => {
+    routes['GET /v1/languages/en'] = () => json(200, englishDetail)
+    const view = at('/idiomas/en')
+    fireEvent.click(await screen.findByRole('link', { name: 'Léxico' }))
+    expect(await screen.findByText('estudo da área lexico de en')).toBeInTheDocument()
+    view.unmount()
+    // the whole row answers to the click, not only the name
+    at('/idiomas/en')
+    const gramatica = (await screen.findByRole('rowheader', { name: 'Gramática' })).closest('tr')!
+    fireEvent.click(within(gramatica).getAllByRole('cell')[1])
+    expect(await screen.findByText('estudo da área gramatica de en')).toBeInTheDocument()
   })
 
   it('"Tentar de novo" no texto que falhou', async () => {

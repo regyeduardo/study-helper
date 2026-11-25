@@ -7,11 +7,12 @@ import { READ_TYPES, ReadCard } from '@/components/langs/cards/ReadCard'
 import { ReportDialog } from '@/components/langs/ReportDialog'
 import { Icon } from '@/components/ui/Icon'
 import { ApiError } from '@/controllers/api.controller'
-import { type Card, getKnowledge, getProgress, getText, type LanguageText, langsMessage, recordAnswer, saveProgress } from '@/controllers/langs.controller'
+import { type Area, type Card, getKnowledge, getLanguage, getProgress, getText, type LanguageText, langsMessage, recordAnswer, saveProgress } from '@/controllers/langs.controller'
+import { areaText } from '@/lib/langs/area'
 import { type Answer, grade, ready, type Result, type Slot } from '@/lib/langs/listen'
 import { newSchedule, rate, review } from '@/lib/langs/fsrs'
-import { answer as answered, begin, type Current, currentOf, fitsStudy, type Knowledge, langOf, prune, startStudy, type StudyState, summaryOf, taught } from '@/lib/langs/study'
-import { say, stop } from '@/lib/langs/voice'
+import { answer as answered, type Current, currentOf, fitsStudy, goTo, type Knowledge, langOf, type Part, partLeft, prune, startStudy, type StudyState, summaryOf, taught } from '@/lib/langs/study'
+import { stop } from '@/lib/langs/voice'
 import { paths } from '@/lib/paths'
 import { useLangsPlace } from '@/lib/langs/browser'
 import { useUiStore } from '@/stores/ui'
@@ -19,74 +20,20 @@ import '@/styles/langs.css'
 
 /**
  * The study of a text (spec 004; wireframe A of 21/11: full screen, one thing at a time, the button fixed at the bottom), with the
- * flow of the prototype the owner validated (prototipo/web/app.js) and the order he chose on 24/11: the text's sentences → test and
- * teach (each item of the text, the learn card after a wrong answer) → practice (read and listen; the wrong ones come back once) →
- * context (the text in sight). Leaving at any moment keeps where the person stopped.
+ * flow of the prototype the owner validated (prototipo/web/app.js), in three parts (25/11, FR-041): Vocabulário (each item of the
+ * text, the learn card after a wrong answer) → Prática (read and listen; the wrong ones come back once) → Contexto (the text in
+ * sight). The parts can be switched at any time, each one where it stopped (FR-043). Leaving at any moment keeps where the person
+ * stopped. With an area instead of a text (`/idiomas/:code/area/:area`, FR-044), it studies that area with all the ready texts:
+ * Vocabulário and Prática, no Contexto, each answer going to the card's own text, nothing kept (the base decides each time).
  */
 
-const STEPS: [StudyState['step'], string][] = [
-  ['lines', 'Frases'],
-  ['test', 'Teste e ensino'],
+const PARTS: [Part, string][] = [
+  ['test', 'Vocabulário'],
   ['practice', 'Prática'],
   ['context', 'Contexto'],
 ]
 const SKILL: Record<string, string> = { read: 'Ler', listen: 'Ouvir', speak: 'Falar' }
 const AREA: Record<string, string> = { lexico: 'Léxico', gramatica: 'Gramática', semantica: 'Sentidos', fonologia: 'Pronúncia', ortografia: 'Escrita', registro: 'Registro', pragmatica: 'Uso e discurso' }
-
-function Lines({ text }: { text: LanguageText }) {
-  const [playing, setPlaying] = useState<number | 'all' | null>(null)
-  // "Ouvir tudo" goes on until the end, another sentence is touched or "Parar"
-  const run = useRef(0)
-  const play = async (n: number, slow = false) => {
-    const mine = ++run.current
-    setPlaying(n)
-    await say(text.lines[n], text.locale, { slow })
-    if (run.current === mine) setPlaying(null)
-  }
-  const playAll = async () => {
-    const mine = ++run.current
-    setPlaying('all')
-    for (const [n, line] of text.lines.entries()) {
-      if (n > 0) await new Promise(resolve => setTimeout(resolve, 450))
-      if (run.current !== mine) return
-      await say(line, text.locale)
-    }
-    if (run.current === mine) setPlaying(null)
-  }
-  const halt = () => {
-    run.current++
-    stop()
-    setPlaying(null)
-  }
-  useEffect(() => () => {
-    run.current++
-    stop()
-  }, [])
-  return (
-    <div className="lg-lines">
-      <div className="lg-lines-head">
-        <p className="lg-kicker">Ouvir as frases</p>
-        <button className="btn" onClick={() => (playing === 'all' ? halt() : void playAll())} aria-pressed={playing === 'all'}>
-          <Icon name={playing === 'all' ? 'pause' : 'play'} />
-          {playing === 'all' ? 'Parar' : 'Ouvir tudo'}
-        </button>
-      </div>
-      <ol className="lg-line-list">
-        {text.lines.map((line, n) => (
-          <li key={n} className={playing === n ? 'on' : ''}>
-            <button className="lg-line" onClick={() => void play(n)} aria-label={`Ouvir: ${line}`}>
-              <Icon name="play" />
-              <span lang={text.language}>{line}</span>
-            </button>
-            <button className="btn quiet lg-slow" onClick={() => void play(n, true)} aria-label={`Ouvir devagar: ${line}`}>
-              Devagar
-            </button>
-          </li>
-        ))}
-      </ol>
-    </div>
-  )
-}
 
 /** What the card is, above the question: the part, the skill, the area and, in English, "EN". */
 function kicker(now: Extract<Current, { kind: 'card' }>, text: LanguageText, lang: 'native' | 'target'): string {
@@ -102,7 +49,7 @@ function CardBody({ card, text, slot, lang, answer, onAnswer, checked, result }:
 }
 
 export default function StudyPage() {
-  const { code = '', textId = '' } = useParams()
+  const { code = '', textId = '', area = '' } = useParams()
   const navigate = useNavigate()
   const toast = useUiStore(state => state.toast)
   const { place, ready: placeReady } = useLangsPlace()
@@ -113,19 +60,53 @@ export default function StudyPage() {
   const [reply, setReply] = useState<Answer>(null)
   const [result, setResult] = useState<Result | null>(null)
   const [reporting, setReporting] = useState(false)
+  // FR-044: which text each card of an area came from (the answer and "Reportar" go to it); "Estudar de novo" loads the area again
+  const [origin, setOrigin] = useState<Record<string, string>>({})
+  const [round, setRound] = useState(0)
+
+  const save = (next: StudyState) => {
+    if (area) return
+    saveProgress(code, textId, next as unknown as Record<string, unknown>).catch(() => toast('Não deu para guardar onde você parou. Confira a internet.'))
+  }
 
   useEffect(() => {
     if (!placeReady) return
+    if (area && !AREA[area]) {
+      setProblem('Esta área não existe. Volte à página do idioma e escolha uma área da sua base.')
+      return
+    }
     let alive = true
     ;(async () => {
       try {
+        if (area) {
+          const detail = await getLanguage(code)
+          const ready = detail.texts.filter(row => row.status === 'ready')
+          const [texts, base] = await Promise.all([Promise.all(ready.map(row => getText(code, row.id).catch(() => null))), getKnowledge(code).catch(() => ({}) as Knowledge)])
+          if (!alive) return
+          const study = areaText(
+            texts.filter((loaded): loaded is LanguageText => Boolean(loaded)),
+            area as Area,
+            AREA[area],
+          )
+          setOrigin(study.origin)
+          setText(study.text)
+          setKnowledge(base)
+          setState(startStudy(study.text, base))
+          setReply(null)
+          setResult(null)
+          return
+        }
         const loaded = await getText(code, textId)
         const [kept, base] = await Promise.all([getProgress(code, textId).then(found => found.state as unknown, () => null), getKnowledge(code).catch(() => ({}) as Knowledge)])
         if (!alive) return
         setText(loaded)
         setKnowledge(base)
         // a text already finished opens to be studied again; a study under way goes on, without what the text no longer has
-        setState(fitsStudy(kept) && kept.step !== 'done' ? prune(kept, loaded) : startStudy(loaded, base))
+        const goesOn = fitsStudy(kept) && kept.step !== 'done'
+        const next = goesOn ? prune(kept, loaded) : startStudy(loaded, base)
+        setState(next)
+        // a new study keeps its drawn order from the first card: leaving, or another device, finds the same card
+        if (!goesOn) save(next)
       } catch (error) {
         if (!alive) return
         setProblem(error instanceof ApiError && error.code === 'not_ready' ? 'Este texto ainda está sendo preparado. Volte em alguns minutos.' : langsMessage(error))
@@ -135,13 +116,13 @@ export default function StudyPage() {
       alive = false
       stop()
     }
-  }, [code, textId, placeReady, place])
+  }, [code, textId, area, round, placeReady, place])
 
   const keep = (next: StudyState) => {
     setState(next)
     setReply(null)
     setResult(null)
-    saveProgress(code, textId, next as unknown as Record<string, unknown>).catch(() => toast('Não deu para guardar onde você parou. Confira a internet.'))
+    save(next)
   }
 
   const now: Current | null = state && text ? currentOf(state, text) : null
@@ -166,7 +147,7 @@ export default function StudyPage() {
     review(shown.id, text.schedules?.[shown.id] ?? newSchedule(), rate(graded.ok, retry), new Date())
       .then(schedule => {
         setText(current => (current ? { ...current, schedules: { ...current.schedules, [shown.id]: schedule } } : current))
-        return recordAnswer(code, { textId, cardId: shown.id, stage: card.stage, promptLang: lang, answer: graded.given, ok: graded.ok, retry, schedule })
+        return recordAnswer(code, { textId: origin[shown.id] ?? textId, cardId: shown.id, stage: card.stage, promptLang: lang, answer: graded.given, ok: graded.ok, retry, schedule })
       })
       .catch(() => toast('Não deu para guardar a resposta. Confira a internet.'))
   }
@@ -181,6 +162,8 @@ export default function StudyPage() {
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== 'Enter' || event.shiftKey || reporting || !state) return
       if ((event.target as HTMLElement | null)?.tagName === 'SUMMARY') return
+      // Enter on a part opens the part (FR-043), it does not check the card
+      if ((event.target as HTMLElement | null)?.closest?.('.lg-steps')) return
       if (now?.kind === 'teach') {
         event.preventDefault()
         keep(taught(state))
@@ -194,10 +177,18 @@ export default function StudyPage() {
     return () => window.removeEventListener('keydown', onKey)
   })
 
+  /** FR-043: another part, where it stopped; an answer already checked moves on first (the same card is not answered twice). */
+  const switchTo = (part: Part) => {
+    if (!state || !text || state.step === part) return
+    stop()
+    keep(goTo(card && result ? answered(state, text, knowledge, result.ok, lang) : state, part))
+  }
+
   const leave = () => {
     stop()
     navigate(paths.language(code))
   }
+  const exit = area ? 'Sair' : 'Sair (guarda onde parou)'
 
   if (problem || !text || !state || !now) {
     return (
@@ -207,7 +198,7 @@ export default function StudyPage() {
             <Icon name="x" />
           </Link>
         </header>
-        <div className="lg-stage">{problem ? <p className="lg-error" role="alert">{problem}</p> : <p className="faint">Abrindo o texto…</p>}</div>
+        <div className="lg-stage">{problem ? <p className="lg-error" role="alert">{problem}</p> : <p className="faint">{area ? 'Juntando os textos…' : 'Abrindo o texto…'}</p>}</div>
       </main>
     )
   }
@@ -219,13 +210,26 @@ export default function StudyPage() {
   return (
     <main className="lg-study" aria-label={`Estudo: ${text.title}`}>
       <header className="lg-top">
-        <button className="ibtn" onClick={leave} aria-label="Sair (guarda onde parou)" title="Sair (guarda onde parou)">
+        <button className="ibtn" onClick={leave} aria-label={exit} title={exit}>
           <Icon name="x" />
         </button>
         <div className="lg-progress" role="progressbar" aria-label="Andamento da parte" aria-valuemin={0} aria-valuemax={total} aria-valuenow={position}>
           <i style={{ transform: `scaleX(${total ? position / total : state.step === 'done' ? 1 : 0})` }} />
         </div>
-        <span className="lg-count-top">{total ? `${position} de ${total}` : text.title}</span>
+        <span className="lg-count-top">
+          {total ? (
+            <>
+              <span className="lg-count-name" title={text.title}>
+                {text.title}
+              </span>
+              <span className="lg-count-n">
+                {position} de {total}
+              </span>
+            </>
+          ) : (
+            text.title
+          )}
+        </span>
         {card && (
           <button className="ibtn lg-flag" onClick={() => setReporting(true)} aria-label="Reportar este card" title="Reportar este card">
             <Icon name="flag" />
@@ -233,16 +237,24 @@ export default function StudyPage() {
         )}
       </header>
       <ol className="lg-steps" aria-label="Partes do estudo">
-        {STEPS.map(([step, name]) => (
-          <li key={step} className={state.step === step ? 'on' : ''} aria-current={state.step === step ? 'step' : undefined}>
-            {name}
-          </li>
-        ))}
+        {PARTS.filter(([part]) => !area || part !== 'context').map(([part, name]) => {
+          const on = state.step === part
+          const finished = !on && partLeft(state, part) === 0
+          return (
+            <li key={part}>
+              <button className={on ? 'on' : finished ? 'done' : ''} aria-current={on ? 'step' : undefined} disabled={finished} onClick={() => switchTo(part)}>
+                {finished && <Icon name="check" />}
+                {name}
+                {finished && <span className="sr-only"> (terminada)</span>}
+              </button>
+            </li>
+          )
+        })}
       </ol>
       {reporting && card && (
         <ReportDialog
           code={code}
-          textId={textId}
+          textId={origin[card.card.id] ?? textId}
           cardId={card.card.id}
           onClose={() => setReporting(false)}
           onSent={() => {
@@ -250,20 +262,6 @@ export default function StudyPage() {
             toast('Vou refazer este card. Na próxima vez ele vem diferente.')
           }}
         />
-      )}
-
-      {now.kind === 'lines' && (
-        <>
-          <div className="lg-stage">
-            <h1 className="lg-title">{text.title}</h1>
-            <Lines text={text} />
-          </div>
-          <footer className="lg-foot">
-            <button className="btn primary lg-go" onClick={() => keep(begin(state))}>
-              {state.pq.length ? `Começar o teste (${state.pq.length} ${state.pq.length === 1 ? 'item' : 'itens'})` : state.queue.length ? 'Começar a prática' : 'Terminar'}
-            </button>
-          </footer>
-        </>
       )}
 
       {now.kind === 'teach' && (
@@ -326,10 +324,24 @@ export default function StudyPage() {
         </>
       )}
 
-      {summary && (
+      {summary && area && !state.results.length && (
         <>
           <div className="lg-stage">
-            <h1 className="lg-title">Texto terminado</h1>
+            <h1 className="lg-title">{text.title} está em dia</h1>
+            <p>Nada vencido nem novo nesta área agora. Volte quando chegar uma revisão ou um texto novo.</p>
+          </div>
+          <footer className="lg-foot">
+            <button className="btn primary lg-go" onClick={leave}>
+              Voltar
+            </button>
+          </footer>
+        </>
+      )}
+
+      {summary && !(area && !state.results.length) && (
+        <>
+          <div className="lg-stage">
+            <h1 className="lg-title">{area ? `Estudo de ${text.title} terminado` : 'Texto terminado'}</h1>
             <div className="lg-results">
               <div>
                 <b>
@@ -337,12 +349,14 @@ export default function StudyPage() {
                 </b>
                 <span>prática certa de primeira</span>
               </div>
-              <div>
-                <b>
-                  {summary.context.right} de {summary.context.total}
-                </b>
-                <span>contexto</span>
-              </div>
+              {!area && (
+                <div>
+                  <b>
+                    {summary.context.right} de {summary.context.total}
+                  </b>
+                  <span>contexto</span>
+                </div>
+              )}
               <div>
                 <b>{summary.target}</b>
                 <span>{text.language === 'en' ? 'perguntas em inglês' : 'perguntas no idioma'}</span>
@@ -355,7 +369,7 @@ export default function StudyPage() {
             <button className="btn lg-go" onClick={leave}>
               Voltar
             </button>
-            <button className="btn primary lg-go" onClick={() => keep(startStudy(text, knowledge))}>
+            <button className="btn primary lg-go" onClick={() => (area ? setRound(round + 1) : keep(startStudy(text, knowledge)))}>
               Estudar de novo
             </button>
           </footer>

@@ -85,6 +85,18 @@ function blockTime(bytes: Uint8Array, block: Element, clusterTime: number): numb
   return clusterTime + ((((bytes[at] << 8) | bytes[at + 1]) << 16) >> 16)
 }
 
+/** The track a block belongs to (its first field, a variable-size number). */
+function blockTrack(bytes: Uint8Array, block: Element): number {
+  const length = Math.clz32(bytes[block.data]) - 23
+  let track = bytes[block.data] & (0xff >> length)
+  for (let index = 1; index < length; index++) track = track * 256 + bytes[block.data + index]
+  return track
+}
+
+/** A SimpleBlock says it is a keyframe in its flags (0x80): only from one the video can start decoding. */
+const isKeyframe = (bytes: Uint8Array, block: Element) => (bytes[block.data + Math.clz32(bytes[block.data]) - 23 + 2] & 0x80) !== 0
+const REFERENCE_BLOCK = 0xfb
+
 function bigEndian(value: number, length: number): number[] {
   const out = new Array<number>(length)
   for (let index = length - 1; index >= 0; index--) {
@@ -123,13 +135,17 @@ function cueTrack(bytes: Uint8Array, tracks: Element | undefined): number {
   return (entries.find(entry => entry.type === VIDEO) ?? entries[0])?.number ?? 1
 }
 
-function rebuilt(source: Blob, bytes: Uint8Array): Blob {
+function rebuilt(source: Blob, bytes: Uint8Array, redo: boolean): Blob {
   const header = readElement(bytes, 0, bytes.length)
   const segment = header?.id === EBML ? readElement(bytes, header.end, bytes.length) : null
   if (!header || segment?.id !== SEGMENT) return source
 
   const before: Element[] = []
   const clusters: ClusterStart[] = []
+  // T180 (25/11): a jump lands only where the video can start, a keyframe of the cue track, at its own time; a cue on every stretch made
+  // the browser decode from a frame that depends on others (PIPELINE_ERROR_DECODE), and a MediaRecorder video has a keyframe only at the start
+  const cues: ClusterStart[] = []
+  let track: number | null = null
   const patches: SizePatch[] = []
   let last = 0
   let previous = 0
@@ -140,20 +156,46 @@ function rebuilt(source: Blob, bytes: Uint8Array): Blob {
     blocks++
   }
   for (let element = readElement(bytes, segment.data, segment.end); element;) {
-    if (element.id === CUES) return source
+    if (element.id === CUES) {
+      // a recording of before has an index made on every stretch: `redo` makes it again
+      if (!redo) return source
+      element = readElement(bytes, element.end, segment.end)
+      continue
+    }
     if (element.id !== CLUSTER) {
       if (!clusters.length) before.push(element)
       element = readElement(bytes, element.end, segment.end)
       continue
     }
+    track ??= cueTrack(
+      bytes,
+      before.find(item => item.id === TRACKS),
+    )
     let time = 0
     let at = element.data
+    let cued = false
+    const cue = (block: Element, key: boolean) => {
+      if (cued || !key || blockTrack(bytes, block) !== track) return
+      cues.push({ offset: element!.start, time: blockTime(bytes, block, time) })
+      cued = true
+    }
     for (let child = readElement(bytes, at, element.end); child && INSIDE_CLUSTER.has(child.id); child = readElement(bytes, at, element.end)) {
       if (child.id === TIMECODE) {
         time = numberIn(bytes, child)
         clusters.push({ offset: element.start, time })
-      } else if (child.id === SIMPLE_BLOCK) seen(blockTime(bytes, child, time))
-      else if (child.id === BLOCK_GROUP) for (const inner of childrenOf(bytes, child)) if (inner.id === BLOCK) seen(blockTime(bytes, inner, time))
+      } else if (child.id === SIMPLE_BLOCK) {
+        seen(blockTime(bytes, child, time))
+        cue(child, isKeyframe(bytes, child))
+      } else if (child.id === BLOCK_GROUP) {
+        const inside = childrenOf(bytes, child)
+        // in a BlockGroup, a block that refers to no other is a keyframe
+        const key = !inside.some(inner => inner.id === REFERENCE_BLOCK)
+        for (const inner of inside)
+          if (inner.id === BLOCK) {
+            seen(blockTime(bytes, inner, time))
+            cue(inner, key)
+          }
+      }
       at = child.end
     }
     const sizeAt = element.start + Math.clz32(bytes[element.start]) - 23
@@ -174,15 +216,14 @@ function rebuilt(source: Blob, bytes: Uint8Array): Blob {
   ])
   const kept = before.filter(element => ![INFO, SEEK_HEAD, VOID].includes(element.id))
   const keptBytes = kept.flatMap(element => [...bytes.subarray(element.start, element.end)])
-  const track = cueTrack(
-    bytes,
-    kept.find(element => element.id === TRACKS),
-  )
+  const cueTrackNumber = track ?? 1
+  // no keyframe found at all: the start of the recording is still a place to jump
+  const places = cues.length ? cues : [clusters[0]]
   const first = clusters[0].offset
   const cuesAt = (clustersAt: number) =>
     build(
       CUES,
-      clusters.flatMap(cluster => build(CUE_POINT, [...build(CUE_TIME, bigEndian(cluster.time, 8)), ...build(CUE_TRACK_POSITIONS, [...build(CUE_TRACK, bigEndian(track, 8)), ...build(CUE_CLUSTER_POSITION, bigEndian(clustersAt + cluster.offset - first, 8))])])),
+      places.flatMap(place => build(CUE_POINT, [...build(CUE_TIME, bigEndian(place.time, 8)), ...build(CUE_TRACK_POSITIONS, [...build(CUE_TRACK, bigEndian(cueTrackNumber, 8)), ...build(CUE_CLUSTER_POSITION, bigEndian(clustersAt + place.offset - first, 8))])])),
     )
   const seekHead = (targets: [number, number][]) =>
     build(
@@ -225,9 +266,10 @@ function rebuilt(source: Blob, bytes: Uint8Array): Blob {
   return new Blob([bytes.subarray(0, header.end), new Uint8Array([...idBytes(SEGMENT), 0x01, ...bigEndian(segmentSize, 7), ...head]), ...body], { type: source.type })
 }
 
-export async function makeSeekable(source: Blob): Promise<Blob> {
+/** `redo`: a recording that already has an index gets it made again (the index of before pointed at frames a jump cannot start from). */
+export async function makeSeekable(source: Blob, { redo = false }: { redo?: boolean } = {}): Promise<Blob> {
   try {
-    return rebuilt(source, new Uint8Array(await source.arrayBuffer()))
+    return rebuilt(source, new Uint8Array(await source.arrayBuffer()), redo)
   } catch {
     return source
   }

@@ -23,6 +23,8 @@ async function seedVisible(accountId: string) {
   meeting.meta.origin = { input: 'recording', name: 'reuniao.webm', storage: 'drive', storedFileId: stored.ref, expiresAt: null }
   meeting.transcript = 'Falante 1: oi'
   await repo.saveFile(meeting, '# Ata\n\ndecidimos maio')
+  // a recording whose note is gone: the media alone in the folder (25/11, it was lost in the move)
+  await repo.putSource('nota-que-sumiu', new Blob(['gravação sem nota']), 'sem-nota.webm')
   await repo.saveIndex({ ...snapshot.index, settings: { ...snapshot.index.settings, timezone: 'America/Manaus' }, tags: ['prova'] })
   await repo.heartbeat({ id: 'pc-casa', name: 'PC de casa', kind: 'desktop', browser: 'Firefox', lastSeen: '2026-09-28T10:00:00.000Z' } as never)
   return { folder, loose, meeting }
@@ -73,7 +75,9 @@ describe('pasta oculta do Drive', () => {
     expect(drive.hiddenFiles()).toHaveLength(0)
   })
 
-  it('com a permissão, copia tudo para a oculta, confere, apaga a visível e ao recarregar está tudo igual', async () => {
+  // T181 (dono, 25/11: "Já deixe um backup para sempre que for migrar de X pra Y"): a pasta visível vai para a lixeira do Drive (dá para
+  // recuperar), nunca é apagada de vez, e a mídia sem nota também vai para a oculta
+  it('com a permissão, copia tudo para a oculta (até a mídia sem nota), confere, manda a visível para a lixeira e ao recarregar está tudo igual', async () => {
     const accountId = uniqueAccount()
     const seeded = await seedVisible(accountId)
     const visibleBefore = drive.visibleFiles().length
@@ -85,6 +89,10 @@ describe('pasta oculta do Drive', () => {
     expect(state.hiddenWarning).toBeNull()
     expect((state.repo as DriveRepository).space).toBe('appDataFolder')
     expect(drive.visibleFiles()).toHaveLength(0)
+    // nothing deleted for good: the old folder is whole in the trash
+    expect(drive.trashedFiles()).toHaveLength(visibleBefore)
+    const orphan = drive.hiddenFiles().find(file => file.appProperties?.shKind === 'source' && file.appProperties?.shId === 'nota-que-sumiu')
+    expect(orphan?.content).toBe('gravação sem nota')
     expect(useJobsStore.getState().jobs[0]).toMatchObject({ kind: 'sync', status: 'done', message: 'Tudo na pasta oculta do Drive' })
 
     const reloaded = await connect(accountId)

@@ -11,7 +11,10 @@ import { langPlace, useLangsPlace } from '@/lib/langs/browser'
 import { useUiStore } from '@/stores/ui'
 import '@/styles/langs.css'
 
-/** The page of a language (spec 004, wireframe D of 21/11): the base by area in state colors, and each text with how much of it is known. */
+/**
+ * The page of a language (spec 004, wireframe D of 21/11): the base by area in state colors, and each text with how much of it is
+ * known. An area opens its study with everything generated in all the texts (25/11, FR-044).
+ */
 
 export const AREAS: [Area, string][] = [
   ['lexico', 'Léxico'],
@@ -23,7 +26,8 @@ export const AREAS: [Area, string][] = [
   ['pragmatica', 'Uso e discurso'],
 ]
 
-function Base({ detail }: { detail: LanguageDetail }) {
+function Base({ code, detail }: { code: string; detail: LanguageDetail }) {
+  const navigate = useNavigate()
   const rows = AREAS.map(([area, name]) => ({ area, name, ...(detail.areas[area] ?? { total: 0, seen: 0, fixed: 0 }) })).filter(row => row.total > 0)
   if (!rows.length) return null
   return (
@@ -50,9 +54,13 @@ function Base({ detail }: { detail: LanguageDetail }) {
             const learning = row.seen - row.fixed
             const unseen = row.total - row.seen
             return (
-              <tr key={row.area}>
+              // the whole row opens the area; the name is the link (keyboard and screen reader)
+              <tr key={row.area} className="lg-area-row" onClick={event => (event.target as HTMLElement).closest('a') || navigate(paths.languageArea(code, row.area))}>
                 <th scope="row">
-                  {row.name}
+                  <Link to={paths.languageArea(code, row.area)} title={`Estudar ${row.name} com todos os textos`}>
+                    {row.name}
+                    <Icon name="fwd" />
+                  </Link>
                   <span className="lg-bar" aria-hidden="true">
                     <i className="fixed" style={{ flexGrow: row.fixed }} />
                     <i className="learning" style={{ flexGrow: learning }} />
@@ -186,7 +194,7 @@ export default function LanguagePage() {
           )
         ) : (
           <div className="libbody lg-page">
-            <Base detail={detail} />
+            <Base code={code} detail={detail} />
             <section className="blk" aria-labelledby="lg-texts-h">
               <h3 className="blk-h" id="lg-texts-h">
                 Textos <span>{detail.texts.length}</span>

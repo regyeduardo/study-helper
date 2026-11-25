@@ -56,10 +56,12 @@ body .mini-rec .tile:active:not(:disabled){background:var(--bg-muted);transform:
 body .mini-rec:not(.done){width:340px}
 body .mini-rec .body{gap:8px}
 .mini-rec .mr-media{display:grid;grid-template-columns:1fr;gap:8px}
-.mini-rec .mr-media .player{height:52px}
-.mini-rec .mr-media.screen{grid-template-columns:152px minmax(0,1fr)}
-.mini-rec .mr-media.screen .player{height:86px}
-.mini-rec .mr-thumb{width:152px;height:86px;border-radius:6px;background:#000;object-fit:contain;border:1px solid var(--border-muted)}
+.mini-rec .mr-media .player{height:52px;border:1px solid var(--border-muted);box-sizing:border-box}
+/* the screen above, the whole width, and the waves in a strip below it, side by side (mocks/gravar-reuniao, option I, T175);
+   90 + 4 + 26 keep the floating window (340 x 360) without scrolling, with the summary line below the buttons */
+.mini-rec .mr-media.screen{grid-template-columns:minmax(0,1fr);gap:4px}
+.mini-rec .mr-media.screen .player{height:26px}
+.mini-rec .mr-thumb{width:100%;height:90px;border-radius:8px;background:#0b1220;object-fit:contain;border:1px solid var(--border-muted);box-sizing:border-box}
 .mini-rec .tiles.mr-tiles{grid-template-columns:repeat(3,minmax(0,1fr));gap:4px}
 .mini-rec .tiles.mr-tiles .tile{padding:7px 4px 6px;font-size:11.5px;min-height:48px}
 .mini-rec .mr-panel{display:grid;gap:8px}

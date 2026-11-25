@@ -244,6 +244,11 @@ export async function updateDriveFileController(
   return (await response.json()) as DriveFile
 }
 
+/** To the Drive's trash, with everything inside it: recoverable for 30 days, never gone for good (T181, 25/11). */
+export async function trashDriveFileController(token: TokenProvider, id: string): Promise<void> {
+  await call(token, `/drive/v3/files/${id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ trashed: true }) })
+}
+
 export async function deleteDriveFileController(token: TokenProvider, id: string): Promise<void> {
   try {
     await call(token, `/drive/v3/files/${id}`, { method: 'DELETE' })
