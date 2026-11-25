@@ -37,6 +37,13 @@ export class ScreenCanvas {
   private readonly onlyChanges: boolean
   /** The browser tells each new frame of the screen; without it, every tick counts as a change. */
   private readonly told = typeof HTMLVideoElement !== 'undefined' && 'requestVideoFrameCallback' in HTMLVideoElement.prototype
+  /**
+   * How many frames of the screen the video received: it grows with the app's tab hidden too (the person in the meeting's tab), where
+   * requestVideoFrameCallback stops and the optimized recording fell to one frame a second (T170, measured 0 callbacks against 20
+   * frames a second hidden). Null where the browser does not count.
+   */
+  private readonly counted = typeof HTMLVideoElement !== 'undefined' && 'getVideoPlaybackQuality' in HTMLVideoElement.prototype
+  private framesSeen = -1
   private watching = false
   private stopped = false
   private fresh = true
@@ -72,7 +79,12 @@ export class ScreenCanvas {
   private draw(): void {
     if (!this.onlyChanges) return this.paint()
     const now = Date.now()
-    if (this.fresh || !this.told) {
+    if (this.counted && this.video.srcObject) {
+      const frames = this.video.getVideoPlaybackQuality().totalVideoFrames
+      if (frames !== this.framesSeen) this.fresh = true
+      this.framesSeen = frames
+    }
+    if (this.fresh || !(this.told || this.counted)) {
       this.fresh = false
       this.changedAt = now
     }

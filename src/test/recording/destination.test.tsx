@@ -82,7 +82,7 @@ describe('where the recording goes, chosen before recording', () => {
   it('the end screen comes with the place chosen before, and lets you change it', async () => {
     useRecorderStore.setState({ result: recording('none') })
     renderDone()
-    expect(checked().some(text => text.startsWith('Não, só neste computador'))).toBe(true)
+    expect(checked().some(text => text.startsWith('Neste computador'))).toBe(true)
     expect(screen.queryByText(OTHERS)).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('radio', { name: /Google Drive/ }))
     fireEvent.click(screen.getByRole('button', { name: 'Salvar' }))

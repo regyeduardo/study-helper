@@ -60,13 +60,34 @@ export function useMediaAnalysis(choice: ModelChoice | null, on: boolean, unavai
   return { value, reason, pick: setPicked, sent: ata || picked === value ? value : undefined, ata, writer, youtube }
 }
 
-/** Options the model or the entrada cannot do stay visible, disabled, saying why. */
-export function MediaAnalysisField({ analysis }: { analysis: ReturnType<typeof useMediaAnalysis> }) {
+/** Options the model or the entrada cannot do stay visible, disabled, saying why. `compact`: the choices side by side, with what the
+ * chosen one does under them ("Gravação pronta", spec 007, mocks/gravar-reuniao); `label` names it when there are two. */
+export function MediaAnalysisField({ analysis, compact = false, label = 'O que a IA analisa' }: { analysis: ReturnType<typeof useMediaAnalysis>; compact?: boolean; label?: string }) {
   const items = analysis.ata ? ATA_ANALYSES : (analysis.youtube ? YOUTUBE_ANALYSES : ANALYSES).map(item => ({ ...item, tag: undefined, hint: () => item.hint, recommended: false }))
+  if (compact) {
+    const chosen = items.find(item => item.id === analysis.value)
+    return (
+      <div className="field">
+        <span className="lab">{label}</span>
+        <div className="rd-seg" role="radiogroup" aria-label={label}>
+          {items.map(item => {
+            const blocked = item.id === 'transcricao' ? null : analysis.reason
+            return (
+              <button key={item.id} className="rd-segb" role="radio" aria-checked={analysis.value === item.id} aria-disabled={blocked ? true : undefined} title={blocked ?? undefined} onClick={() => !blocked && analysis.pick(item.id)}>
+                <b>{item.label}</b>
+              </button>
+            )
+          })}
+        </div>
+        {chosen && <span className="rd-about">{chosen.hint(analysis.writer)}</span>}
+        {analysis.reason && <span className="rd-about">{analysis.reason}</span>}
+      </div>
+    )
+  }
   return (
     <div className="field">
-      <span className="lab">O que a IA analisa</span>
-      <div className={`opts says-why${analysis.ata ? ' ata-opts' : ''}`} role="radiogroup" aria-label="O que a IA analisa">
+      <span className="lab">{label}</span>
+      <div className={`opts says-why${analysis.ata ? ' ata-opts' : ''}`} role="radiogroup" aria-label={label}>
         {items.map(item => {
           const blocked = item.id === 'transcricao' ? null : analysis.reason
           return (

@@ -72,6 +72,8 @@ export class FakeAppServer {
   signedIn = true
   /** "Usar a estrutura do app" on, for an account freed by a code: the App's content needs it. */
   appEnabled = true
+  /** GET /v1/ai/config: the providers with a key and the administration's choice; null: the service does not answer it. */
+  aiConfig: { providers: string[]; uses: unknown } | null = { providers: ['deepinfra'], uses: { providers: [], models: [{ uid: 'ouvir', pid: 'deepinfra', mid: 'openai/whisper-large-v3', name: 'Whisper' }], defaults: { transcricao: 'ouvir' }, steps: {} } }
   /** When the account's hierarchy was taken to the map (null = still the way of before). */
   hierarchyAt: string | null = null
   /** Whether `POST /v1/auth/google/token` opens a session (off: the route is not there, as before spec 005). */
@@ -169,6 +171,12 @@ export class FakeAppServer {
       if (action === 'finish') Object.assign(job, { state: 'done', result: fields.result, fraction: 1 })
       if (action === 'fail') Object.assign(job, { state: 'failed', error: fields.error, errorCode: fields.code })
       return json(200, action === 'progress' || action === 'finish' || action === 'fail' ? { ok: true } : job)
+    }
+
+    // the app's AI (spec 006): what the administration chose; null answers as a service that does not respond
+    if (path === '/v1/ai/config' && method === 'GET') {
+      if (this.aiConfig === null) return json(503, { error: 'ai_unavailable' })
+      return json(200, this.aiConfig)
     }
 
     if (path === '/v1/me') {

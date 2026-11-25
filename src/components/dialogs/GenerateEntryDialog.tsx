@@ -45,7 +45,7 @@ function nothingToRead(entry: FileMeta, opened: OpenedFile, file: boolean): stri
 }
 
 /** "Modelo da ata" and parts of the last time: the newest Ata made from this entrada, else the newest made from any entrada; Padrão with the Resumo when there is none. `note`: the Ata of this entrada, whose models and analysis also come back. */
-function lastAta(files: FileMeta[], fileId: string): { model: AtaModelId | null; parts: AtaPart[]; note: FileMeta | null } {
+export function lastAta(files: FileMeta[], fileId: string): { model: AtaModelId | null; parts: AtaPart[]; note: FileMeta | null } {
   const atas = files.filter(file => !file.deletedAt && (file.made?.ataModel || file.made?.parts?.length))
   const newest = (list: FileMeta[]) => list.reduce<FileMeta | null>((best, file) => (!best || file.made!.at > best.made!.at ? file : best), null)
   const own = newest(atas.filter(file => file.parentFileId === fileId))

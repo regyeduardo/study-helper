@@ -16,6 +16,8 @@ import { usePlayback } from '@/components/reader/use-playback'
 import { Icon, type IconName } from '@/components/ui/Icon'
 import { Popover } from '@/components/ui/Popover'
 import { useDocument } from '@/hooks/use-document'
+import { asNoteJob, noteAccountJob, TRANSCRIBING, useAccountJobsStore } from '@/stores/account-jobs'
+import { useSyncStore } from '@/stores/sync'
 import { usePathName } from '@/hooks/use-library-view'
 import { descendantsOf, familyCount } from '@/lib/family'
 import { isSourceNote, mediaLength, mediaOf } from '@/lib/file-types'
@@ -264,14 +266,29 @@ function Transcript({ entry, opened, canTranscribe, canPlay, playback, marking }
   const found = asked !== null && Number.isFinite(Number(asked)) ? Number(asked) : null
   const openOverlay = useUiStore(state => state.open)
   const readOnly = useLibraryStore(state => Boolean(state.sharedView))
-  const job = useJobsStore(state => state.jobs.find(item => item.fileId === entry.id && item.kind === 'transcription' && (item.status === 'running' || item.status === 'error')))
+  const here = useJobsStore(state => state.jobs.find(item => item.fileId === entry.id && item.kind === 'transcription' && (item.status === 'running' || item.status === 'error')))
   const dismiss = useJobsStore(state => state.dismiss)
+  // with the note in the App the transcription runs in the account: its job shows here as one made here does (24/11)
+  const inAccount = useAccountJobsStore(state => noteAccountJob(state.jobs, entry.id, TRANSCRIBING))
+  const ended = useAccountJobsStore(state => state.jobs.find(item => item.fileId === entry.id && TRANSCRIBING.has(item.call) && item.state === 'done')?.id)
+  // done in the account: the note is read again, so the transcription shows by itself even if the live channel missed the change
+  useEffect(() => {
+    if (!ended) return
+    useLibraryStore.setState(state => {
+      const fresh = { ...state.opened }
+      delete fresh[entry.id]
+      return { opened: fresh }
+    })
+    void useSyncStore.getState().syncNow().catch(() => undefined)
+  }, [ended, entry.id])
+  const job = here ?? (inAccount ? asNoteJob(inAccount, 'transcription') : undefined)
   if (!opened) return <div className="muted">Abrindo…</div>
   const { recording, transcript } = opened.sidecar
   const running = job?.status === 'running'
-  // a transcription asked in a window offers it again, as it was filled in
-  const retry = job?.retry
-  const status = job && (running ? <JobProgress job={job} /> : job.error && <Failure text={job.error} onRetry={retry && !readOnly ? () => (dismiss(job.id), openOverlay(retry)) : undefined} />)
+  // a transcription asked in a window offers it again, as it was filled in; one of the account is asked again there
+  const retry = here?.retry
+  const again = here ? (retry && !readOnly ? () => (dismiss(here.id), openOverlay(retry)) : undefined) : inAccount && !readOnly ? () => void useAccountJobsStore.getState().retry(inAccount.id).catch(() => undefined) : undefined
+  const status = job && (running ? <JobProgress job={job} /> : job.error && <Failure text={job.error} onRetry={again} />)
   // from scratch, with the same window as the first time
   const redo = canTranscribe && !running ? () => openOverlay({ kind: 'transcribe', fileId: entry.id }) : undefined
   if (recording?.blocks.length) {

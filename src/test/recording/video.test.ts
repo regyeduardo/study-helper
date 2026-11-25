@@ -115,6 +115,33 @@ describe('a gravação otimizada', () => {
   // the screen hands a new frame: the callbacks waiting run, as the browser does
   const newScreenFrame = () => screenFrames.splice(0).forEach(callback => callback())
 
+  // T170 (vídeo da gravação, 24/11): com a aba do app escondida (a pessoa na aba da reunião), o aviso de quadro novo não roda e a
+  // otimizada caía para 1 quadro por segundo; o contador de quadros recebidos pelo vídeo continua andando com a aba escondida
+  it('com a aba do app escondida, o contador de quadros do vídeo mantém os 30 por segundo enquanto a tela muda', async () => {
+    let received = 0
+    Object.defineProperty(HTMLVideoElement.prototype, 'getVideoPlaybackQuality', { configurable: true, value: () => ({ totalVideoFrames: received }) })
+    try {
+      vi.useFakeTimers()
+      await new MeetingRecorder(callbacks()).start('tab', undefined, { video: { fps: 30, optimized: true } })
+      await vi.advanceTimersByTimeAsync(1500)
+      // the screen changes every frame and no callback runs (hidden page): only the counter grows
+      canvasTrack.requestFrame.mockClear()
+      for (let tick = 0; tick < 30; tick++) {
+        received++
+        await vi.advanceTimersByTimeAsync(1000 / 30)
+      }
+      expect(canvasTrack.requestFrame.mock.calls.length).toBeGreaterThanOrEqual(28)
+      // the screen stops: the second that settles the picture, then one frame a second
+      await vi.advanceTimersByTimeAsync(1100)
+      canvasTrack.requestFrame.mockClear()
+      await vi.advanceTimersByTimeAsync(3000)
+      expect(canvasTrack.requestFrame.mock.calls.length).toBeGreaterThanOrEqual(2)
+      expect(canvasTrack.requestFrame.mock.calls.length).toBeLessThanOrEqual(4)
+    } finally {
+      delete (HTMLVideoElement.prototype as { getVideoPlaybackQuality?: unknown }).getVideoPlaybackQuality
+    }
+  })
+
   it('pede a tela a 30 fps e grava o canvas sem taxa fixa, com a dica de texto', async () => {
     await new MeetingRecorder(callbacks()).start('tab', undefined, { video: { fps: 30, optimized: true } })
     expect(env.getDisplayMedia).toHaveBeenCalledWith(expect.objectContaining({ video: { frameRate: 30 }, audio: true }))

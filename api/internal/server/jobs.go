@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -9,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -29,6 +31,10 @@ const (
 	jobsPerAccount = 2
 	jobsKeptDays   = 30
 	jobDiedMessage = "O trabalho parou de repente; tente de novo."
+	// a page that entered and said nothing at all for this long died before its first step (the worker reports within a second of starting)
+	jobSilentStart    = 10 * time.Minute
+	jobNeverOpened    = "A página do trabalho não abriu no servidor; tente de novo."
+	jobNeverSaidStart = "O trabalho abriu e não deu notícia em 10 minutos; tente de novo."
 )
 
 // jobCalls are the calls of the generations store (src/stores/jobs.ts) a job may make; nothing else runs.
@@ -226,14 +232,86 @@ func (srv *Server) runChromium(ctx context.Context, start JobStart) error {
 	if path == "" {
 		path = "chromium"
 	}
+	// --enable-logging=stderr: the console of the app's page (its errors, the reason a call failed) comes out with Chromium's own lines
 	args := []string{"--headless=new", "--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage", "--no-first-run",
-		"--no-default-browser-check", "--autoplay-policy=no-user-gesture-required", "--mute-audio", "--user-data-dir=" + profile}
+		"--no-default-browser-check", "--autoplay-policy=no-user-gesture-required", "--mute-audio", "--enable-logging=stderr", "--v=0",
+		"--user-data-dir=" + profile}
 	if srv.cfg.ChromiumHosts != "" {
 		args = append(args, "--host-resolver-rules="+srv.cfg.ChromiumHosts)
 	}
 	cmd := exec.CommandContext(ctx, path, append(args, start.EnterURL)...)
 	cmd.WaitDelay = 5 * time.Second
-	return cmd.Run()
+	out := &jobLog{srv: srv, id: start.ID}
+	cmd.Stdout, cmd.Stderr = out, out
+	err = cmd.Run()
+	out.flush()
+	return err
+}
+
+// What the jobs' Chromium writes goes to the service's log (24/11: a job that failed or never ended in production left no trace): line
+// by line with the job's id, at most chromiumLogLines lines of chromiumLineMax bytes per job, and never the ticket of the job's page.
+const (
+	chromiumLogLines = 300
+	chromiumLineMax  = 1000
+)
+
+var ticketInLog = regexp.MustCompile(`ticket=[^&\s"']+`)
+
+type jobLog struct {
+	srv     *Server
+	id      string
+	mu      sync.Mutex
+	pending []byte
+	lines   int
+}
+
+func (l *jobLog) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.pending = append(l.pending, p...)
+	for {
+		end := bytes.IndexByte(l.pending, '\n')
+		if end < 0 {
+			break
+		}
+		l.line(string(l.pending[:end]))
+		l.pending = l.pending[end+1:]
+	}
+	return len(p), nil
+}
+
+func (l *jobLog) flush() {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.line(string(l.pending))
+	l.pending = nil
+}
+
+func (l *jobLog) line(text string) {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return
+	}
+	l.lines++
+	if l.lines > chromiumLogLines {
+		if l.lines == chromiumLogLines+1 {
+			l.srv.logf("jobs: %s chromium: (o resto foi cortado)", l.id)
+		}
+		return
+	}
+	text = ticketInLog.ReplaceAllString(text, "ticket=…")
+	if len(text) > chromiumLineMax {
+		text = strings.ToValidUTF8(text[:chromiumLineMax], "") + "…"
+	}
+	l.srv.logf("jobs: %s chromium: %s", l.id, text)
+}
+
+func (srv *Server) logf(format string, args ...any) {
+	if srv.cfg.Logf != nil {
+		srv.cfg.Logf(format, args...)
+		return
+	}
+	log.Printf(format, args...)
 }
 
 func (srv *Server) cancelRun(id string) {
@@ -632,9 +710,13 @@ func (srv *Server) endJob(job *jobRow, s *Session, set string, args ...any) {
 	srv.wakeJobs()
 }
 
-// checkStalls marks the running jobs that did not move for more than twice the normal time of a step (FR-063), and drops old ones.
+// checkStalls marks the running jobs that did not move for more than twice the normal time of a step (FR-063), and drops old ones. A job
+// whose page never entered (its ticket expired) or entered and never said anything is not working: it fails with the reason and leaves
+// its place, instead of holding a generator and the other jobs of its note for the 3 hours of jobMaxRun (24/11).
 func (srv *Server) checkStalls() {
 	now := srv.now()
+	srv.failStuck(`state = 'running' AND device_id IS NULL AND started_at < ?`, ts(now.Add(-jobTicketTTL)), jobNeverOpened)
+	srv.failStuck(`state = 'running' AND device_id IS NOT NULL AND last_progress_at IS NULL AND started_at < ?`, ts(now.Add(-jobSilentStart)), jobNeverSaidStart)
 	limit := ts(now.Add(-2 * jobNormalStep))
 	rows, err := srv.db.Query(`SELECT id, user_id, COALESCE(last_progress_at, started_at) FROM jobs WHERE state = 'running' AND stalled_since IS NULL AND COALESCE(last_progress_at, started_at) < ?`, limit)
 	if err != nil {
@@ -655,6 +737,39 @@ func (srv *Server) checkStalls() {
 		}
 	}
 	_, _ = srv.db.Exec(`DELETE FROM jobs WHERE state NOT IN ('queued', 'running') AND finished_at < ?`, ts(now.Add(-jobsKeptDays*24*time.Hour)))
+}
+
+// failStuck fails the running jobs that match, with the reason, and stops their Chromium.
+func (srv *Server) failStuck(where, before, message string) {
+	rows, err := srv.db.Query(`SELECT id, user_id FROM jobs WHERE `+where, before)
+	if err != nil {
+		return
+	}
+	type stuck struct{ id, user string }
+	var found []stuck
+	for rows.Next() {
+		var item stuck
+		if rows.Scan(&item.id, &item.user) == nil {
+			found = append(found, item)
+		}
+	}
+	rows.Close()
+	now := ts(srv.now())
+	for _, item := range found {
+		res, err := srv.db.Exec(`UPDATE jobs SET state = 'failed', error = ?, error_code = 'internal', finished_at = ?, updated_at = ? WHERE id = ? AND state = 'running'`, message, now, now, item.id)
+		if err != nil {
+			continue
+		}
+		if changed, _ := res.RowsAffected(); changed == 0 {
+			continue
+		}
+		srv.logf("jobs: %s %s", item.id, message)
+		srv.notifyJob(item.user, item.id)
+		srv.cancelRun(item.id)
+	}
+	if len(found) > 0 {
+		srv.wakeJobs()
+	}
 }
 
 // failJobsOf stops every job of an account (access taken away), with the reason.

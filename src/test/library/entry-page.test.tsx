@@ -15,7 +15,10 @@ import { ColumnsWorkspace } from '@/pages/workspace/container/columns'
 import { CommandsWorkspace } from '@/pages/workspace/container/commands'
 import { FocusWorkspace } from '@/pages/workspace/container/focus'
 import { ReaderWorkspace } from '@/pages/workspace/container/reader'
+import type { AccountJob } from '@/controllers/jobs.controller'
+import { useAccountJobsStore } from '@/stores/account-jobs'
 import { type Job, useJobsStore } from '@/stores/jobs'
+import { useSyncStore } from '@/stores/sync'
 import { useLibraryStore } from '@/stores/library'
 import { useModelsStore } from '@/stores/models'
 import { useUiStore } from '@/stores/ui'
@@ -614,6 +617,68 @@ describe('"O que nasceu daqui": gerando, pronta e falhou', () => {
     useJobsStore.setState({ jobs: [job({ kind: 'transcription', fileId: 'video', status: 'error', message: 'A transcrição não saiu.', error: 'Sem saldo no provedor.' })] })
     renderEntry('video')
     expect(await within(card('Transcrição')).findByRole('alert')).toHaveTextContent('Sem saldo no provedor.')
+  })
+})
+
+// "Mando transcrever e não acontece nada, não abre um loading" (dono, 24/11): com a nota no App, a transcrição roda na conta e só aparecia
+// em Gerações. A página da mídia mostra o trabalho da conta daquela nota como mostra o daqui, e a transcrição aparece sozinha no fim.
+describe('transcrição que roda na conta', () => {
+  const accountJob = (fields: Partial<AccountJob>): AccountJob => ({
+    id: 'conta-1', call: 'transcribeNote', kind: 'transcription', fileId: 'video', title: 'Transcrição · Reunião', state: 'running', queuePosition: null,
+    stage: null, fraction: null, etaAt: null, etaBasis: null, lastProgress: null, lastProgressAt: null, stalledSince: null, args: [], result: null,
+    error: null, errorCode: null, attempt: 1, createdAt: '2026-11-24T22:00:00.000Z', startedAt: '2026-11-24T22:00:05.000Z', finishedAt: null, ...fields,
+  })
+  const realSync = useSyncStore.getState().syncNow
+  afterEach(() => {
+    useAccountJobsStore.setState({ jobs: [] })
+    useSyncStore.setState({ syncNow: realSync })
+  })
+
+  it('na fila: o card diz que está na fila da conta, sem "Sem transcrição ainda" nem o botão Transcrever', async () => {
+    seed([entrada('video', 'Reunião', VIDEO)])
+    useAccountJobsStore.setState({ jobs: [accountJob({ state: 'queued', queuePosition: 2, startedAt: null })] })
+    renderEntry('video')
+    const trans = within(card('Transcrição'))
+    expect(await trans.findByText('Na fila da conta (2º)')).toBeInTheDocument()
+    expect(trans.queryByText('Sem transcrição ainda')).not.toBeInTheDocument()
+    expect(trans.queryByRole('button', { name: 'Transcrever' })).not.toBeInTheDocument()
+  })
+
+  it('rodando: a etapa e o andamento da conta', async () => {
+    seed([entrada('video', 'Reunião', VIDEO)])
+    useAccountJobsStore.setState({ jobs: [accountJob({ stage: 'Transcrevendo pela DeepInfra', fraction: 0.4 })] })
+    renderEntry('video')
+    const trans = within(card('Transcrição'))
+    expect(await trans.findByText('Transcrevendo pela DeepInfra')).toBeInTheDocument()
+    expect(trans.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '40')
+  })
+
+  it('falhou: o motivo no card, e "Tentar de novo" pede de novo à conta', async () => {
+    seed([entrada('video', 'Reunião', VIDEO)])
+    const retry = vi.fn(async () => undefined)
+    useAccountJobsStore.setState({ jobs: [accountJob({ state: 'failed', error: 'Nenhum modelo de transcrição escolhido.' })], retry })
+    renderEntry('video')
+    const trans = within(card('Transcrição'))
+    expect(await trans.findByRole('alert')).toHaveTextContent('Nenhum modelo de transcrição escolhido.')
+    fireEvent.click(trans.getByRole('button', { name: 'Tentar de novo' }))
+    expect(retry).toHaveBeenCalledWith('conta-1')
+  })
+
+  it('pronta na conta: a página lê a nota de novo e a transcrição aparece sozinha', async () => {
+    const video = entrada('video', 'Reunião', VIDEO)
+    seed([video])
+    const syncNow = vi.fn(async () => undefined)
+    useSyncStore.setState({ syncNow })
+    useAccountJobsStore.setState({ jobs: [accountJob({ stage: 'Transcrevendo pela DeepInfra' })] })
+    renderEntry('video')
+    const trans = within(card('Transcrição'))
+    expect(await trans.findByText('Transcrevendo pela DeepInfra')).toBeInTheDocument()
+    // the server wrote the transcription in the note; the job ends
+    video.transcript = 'Marina: o cronograma fecha na sexta.'
+    act(() => useAccountJobsStore.setState({ jobs: [accountJob({ state: 'done', finishedAt: '2026-11-24T22:03:00.000Z' })] }))
+    expect(await trans.findByText('Marina: o cronograma fecha na sexta.')).toBeInTheDocument()
+    expect(syncNow).toHaveBeenCalled()
+    expect(trans.queryByText('Transcrevendo pela DeepInfra')).not.toBeInTheDocument()
   })
 })
 

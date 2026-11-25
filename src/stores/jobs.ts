@@ -145,6 +145,10 @@ export interface SaveRecordingRequest {
   transcriptionModel?: string | null
   /** A note to write from the recording right after saving it (Ata, Aula, Explicação). It transcribes first when it needs the text, so `transcribe` stays off. */
   write?: RecordingWrite
+  /** Several notes to write at once (spec 007, "Gerar" with many marked): after the transcription, when it is marked, so it is made once. */
+  writes?: RecordingWrite[]
+  /** The name the person typed for the note (else the recording's file name). */
+  name?: string
 }
 
 /** The note a recording starts as soon as it is saved: the entrada's child, in the entrada's folder, as "Gerar desta entrada" makes it. */
@@ -206,7 +210,8 @@ interface JobsState {
   generateArtifact(request: ArtifactRequest): Promise<Artifact>
   cancel(jobId: string): void
   dismiss(jobId: string): void
-  trackTask(title: string): TrackedTask
+  /** fileId: the note the task is about (a failure shows on it). */
+  trackTask(title: string, fileId?: string | null): TrackedTask
 }
 
 export interface TrackedTask {
@@ -991,18 +996,18 @@ export const useJobsStore = create<JobsState>((set, get) => {
       // the recording is a media note (Vídeo or Áudio): the transcription and what is generated from it live under it
       // the choice is kept as the note's own: without it, a note made now is born in the App with the structure on, even with "Google Drive" chosen
       const own = request.place ? { place: request.place } : {}
-      const meta = await library().createFile({ name: recordingName(file.name), kept: 'registro', type: sourceTypeOf(origin), description: '', folderId: request.folderId, status: 'ready', pendingExcerpt: null, origin, ...own }, '')
+      const meta = await library().createFile({ name: request.name?.trim() || recordingName(file.name), kept: 'registro', type: sourceTypeOf(origin), description: '', folderId: request.folderId, status: 'ready', pendingExcerpt: null, origin, ...own }, '')
       if (request.marks.length) await library().updateSidecar(meta.id, sidecar => ({ ...sidecar, recording: { blocks: [], speakers: [], marks: request.marks } }))
       if (request.storedName)
         await linkLocalMedia(request.storedName, meta.id).then(
           () => library().updateFile(meta.id, { kept: 'arquivo' }),
           () => undefined,
         )
-      const { write } = request
+      const writes = [...(request.write ? [request.write] : []), ...(request.writes ?? [])]
       // spec 007 (FR-027, FR-031): the media goes up to the App with the structure on, so what was asked goes to the account once it is
       // there, without the file in hand (the account reads the media it has); there the Ata runs after the transcription of the note
       const repo = library().repo as { sideOf?: (id: string) => string | undefined } | null
-      const toAccount = request.storage === 'drive' && library().appOn && repo?.sideOf?.(meta.id) === 'app' && Boolean(request.transcribe || write)
+      const toAccount = request.storage === 'drive' && library().appOn && repo?.sideOf?.(meta.id) === 'app' && Boolean(request.transcribe || writes.length)
       let uploaded: Promise<boolean> = Promise.resolve(true)
       if (toAccount) {
         uploaded = blocking(
@@ -1027,17 +1032,32 @@ export const useJobsStore = create<JobsState>((set, get) => {
       }
       // the upload failed: the work runs here with the file in hand, as before, and nothing asked is lost
       const sourceOf = (ok: boolean) => (toAccount && ok ? undefined : file)
-      if (request.transcribe) void uploaded.then(ok => get().transcribeNote(meta.id, sourceOf(ok), request.transcriptionModel))
-      if (write) {
-        const place = { folderId: request.folderId }
-        void (async () => {
-          const source = sourceOf(await uploaded)
-          // the media just linked has to be known as kept here before the note asks for it
-          useLibraryStore.setState({ localMedia: await listLocalMedia().catch(() => library().localMedia) })
-          if (write.agent === 'meeting') return get().generateAta(meta.id, write.ataModel ? [] : (write.parts ?? []), write.ataModel, { model: write.model }, place, write.instruction, source, write.analyze)
-          return get().generateFromNote(meta.id, write.agent, write.model, place, write.instruction, write.analyze)
-        })().catch(error => get().trackTask(`${AGENT_LABEL[write.agent]}: ${meta.name}`).fail(failureText(error)))
-      }
+      const place = { folderId: request.folderId }
+      const runWrite = (write: RecordingWrite, source: File | undefined) =>
+        (write.agent === 'meeting'
+          ? get().generateAta(meta.id, write.ataModel ? [] : (write.parts ?? []), write.ataModel, { model: write.model }, place, write.instruction, source, write.analyze)
+          : get().generateFromNote(meta.id, write.agent, write.model, place, write.instruction, write.analyze)
+        ).then(
+          () => undefined,
+          error => get().trackTask(`${AGENT_LABEL[write.agent]}: ${meta.name}`).fail(failureText(error)),
+        )
+      // the transcription first, when marked; then the notes, which find it made and do not transcribe again. Without it, the first
+      // note transcribes when it needs the text, and the others wait for it so as not to transcribe twice. In the account, everything is
+      // asked at once, in this order: the service runs the jobs of the same note in turn
+      void (async () => {
+        const ok = await uploaded
+        const source = sourceOf(ok)
+        const inAccount = toAccount && ok
+        if (request.transcribe) {
+          const heard = get().transcribeNote(meta.id, source, request.transcriptionModel).catch(error => get().trackTask(`Transcrição: ${meta.name}`).fail(failureText(error)))
+          if (!inAccount) await heard
+        }
+        if (!writes.length) return
+        // the media just linked has to be known as kept here before the note asks for it
+        useLibraryStore.setState({ localMedia: await listLocalMedia().catch(() => library().localMedia) })
+        if (inAccount || request.transcribe) await Promise.all(writes.map(write => runWrite(write, source)))
+        else for (const write of writes) await runWrite(write, source)
+      })()
       return meta.id
     },
 
@@ -1561,8 +1581,8 @@ export const useJobsStore = create<JobsState>((set, get) => {
       }
     },
 
-    trackTask: title => {
-      const { job } = openJob('sync', title, null)
+    trackTask: (title, fileId = null) => {
+      const { job } = openJob('sync', title, fileId)
       return {
         update: (message, fraction) => patchJob(job.id, { message, fraction }),
         done: message => closeJob(job.id, 'done', message),
@@ -1588,7 +1608,7 @@ export const useJobsStore = create<JobsState>((set, get) => {
     if (typeof original !== 'function') continue
     routed[call] = (...args: unknown[]) => {
       const route = routeOf(call, args)
-      return route ? runOnAccount(call, args, route.fileId, route.title) : original(...args)
+      return route ? runOnAccount(call, args, route.fileId, route.title, () => original(...args)) : original(...args)
     }
   }
   useJobsStore.setState(routed as unknown as Partial<JobsState>)

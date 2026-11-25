@@ -196,7 +196,8 @@ describe('RecordingWindow', () => {
     expect(setEnabled).toHaveBeenCalledWith('microphone', false)
     fireEvent.click(screen.getByRole('button', { name: 'Desligar o som do computador' }))
     expect(setEnabled).toHaveBeenCalledWith('source', false)
-    expect(screen.getByRole('button', { name: 'Trocar tela' })).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Fontes' }))
+    expect(screen.getByRole('button', { name: 'Trocar a tela' })).toBeInTheDocument()
   })
 
   it('shows Continuar while paused', () => {
@@ -232,8 +233,22 @@ describe('RecordingWindow', () => {
     await waitFor(() => expect(floating.document.body.textContent).toContain('Terminar'))
     expect(floating.document.body.textContent).toContain('00:07')
     act(() => useRecorderStore.setState({ active: false, result: recordingOf(5 * MB), resultPlace: 'window' }))
-    await waitFor(() => expect(floating.document.body.textContent).toContain('O que fazer com a gravação'))
+    await waitFor(() => expect(floating.document.body.textContent).toContain('Gerar'))
     expect(screen.queryByRole('button', { name: 'Salvar' })).not.toBeInTheDocument()
+  })
+
+  // spec 007 (mocks/gravar-reuniao, e-depois): the floating window grows to fit the two columns of the end, in the click of Terminar
+  it('Terminar in the floating window makes it grow to fit the choices of the end', async () => {
+    const finish = vi.fn(async () => undefined)
+    const floating = { document: document.implementation.createHTMLDocument('pip'), focus: vi.fn(), close: vi.fn(), resizeTo: vi.fn() } as unknown as Window & { resizeTo: ReturnType<typeof vi.fn> }
+    useRecorderStore.setState({ active: true, seconds: 7, mode: 'tab', live: LIVE, floating, finish })
+    render(<RecordingWindow />)
+    await waitFor(() => expect(floating.document.body.textContent).toContain('Terminar'))
+    const end = [...floating.document.querySelectorAll('button')].find(item => item.textContent === 'Terminar')!
+    // the floating document has no window of its own here: a plain click, as the browser sends it
+    act(() => end.click())
+    expect(floating.resizeTo).toHaveBeenCalledWith(800, 620)
+    await waitFor(() => expect(finish).toHaveBeenCalled())
   })
 
   it('shows the elapsed time and finishes on Terminar', () => {
@@ -271,9 +286,9 @@ describe('RecordingDoneDialog', () => {
   it('asks where else to keep it, keeps it only on this computer on the Local profile, and closes right away', async () => {
     useRecorderStore.setState({ result: recordingOf(50 * MB) })
     renderDone()
-    expect(screen.getByText('Guardar também na nuvem?')).toBeInTheDocument()
-    expect(checked().some(text => text?.startsWith('Não, só neste computador'))).toBe(true)
-    expect(screen.getByRole('radio', { name: /Não, só neste computador/ })).toBeInTheDocument()
+    expect(screen.getByRole('radiogroup', { name: 'Onde salvar' })).toBeInTheDocument()
+    expect(checked().some(text => text?.startsWith('Neste computador'))).toBe(true)
+    expect(screen.getByRole('radio', { name: /Neste computador/ })).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Salvar' }))
     expect(useRecorderStore.getState().result).toBeNull()
     await waitFor(() => expect(startNewContent).toHaveBeenCalled())
@@ -283,7 +298,7 @@ describe('RecordingDoneDialog', () => {
   it('sends the place the person picked', async () => {
     useRecorderStore.setState({ result: recordingOf(50 * MB) })
     renderDone()
-    fireEvent.click(screen.getByRole('radio', { name: /Não, só neste computador/ }))
+    fireEvent.click(screen.getByRole('radio', { name: /Neste computador/ }))
     fireEvent.click(screen.getByRole('button', { name: 'Salvar' }))
     await waitFor(() => expect(startNewContent).toHaveBeenCalled())
     expect(startNewContent.mock.calls[0][0]).toMatchObject({ storage: 'none' })

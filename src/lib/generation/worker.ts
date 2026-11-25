@@ -1,4 +1,6 @@
+import { appAi } from '@/controllers/api.controller'
 import { getJob, reportFailure, reportFinish, reportProgress } from '@/controllers/jobs.controller'
+import { toAppConfig, useAppAiStore } from '@/lib/ai/app-ai'
 import { setWorkerMode } from '@/lib/generation/account-routing'
 import { unpackArgs } from '@/stores/account-jobs'
 import { useJobsStore } from '@/stores/jobs'
@@ -16,6 +18,19 @@ export const REPORT_EVERY_MS = 1000
 
 const AI_DOWN = /fora do ar|sem crédito|indisponível|unavailable|quota|insufficient/i
 
+/**
+ * The app's AI before the call runs: the library only asks for it, without waiting, and a call that started before it came used the
+ * person's own AI, with no model (a transcription failed at once). Without it the job fails saying so.
+ */
+async function loadAppAi(): Promise<void> {
+  try {
+    const answer = await appAi()
+    useAppAiStore.setState({ config: toAppConfig(answer.uses, answer.providers), providers: answer.providers })
+  } catch (error) {
+    throw new Error(`A IA do app está indisponível para o trabalho (${error instanceof Error ? error.message : String(error)}).`)
+  }
+}
+
 export async function runWorker(jobId: string): Promise<void> {
   setWorkerMode(true)
   let report: ReturnType<typeof setInterval> | null = null
@@ -25,6 +40,7 @@ export async function runWorker(jobId: string): Promise<void> {
     if (!me) throw new Error('A sessão do trabalho não abriu.')
     const job = await getJob(jobId)
     await useLibraryStore.getState().connectWorker(me.user.id)
+    await loadAppAi()
     const run = (useJobsStore.getState() as unknown as Record<string, (...args: unknown[]) => Promise<unknown>>)[job.call]
     if (typeof run !== 'function') throw new Error(`Chamada desconhecida: ${job.call}`)
     // the job of the store this call makes is the one that shows its progress

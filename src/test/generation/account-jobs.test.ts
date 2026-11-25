@@ -137,3 +137,37 @@ describe('a store de gerações', () => {
     await expect(result).resolves.toEqual({ count: 12, web: null })
   })
 })
+
+// "Mando transcrever e não acontece nada, não abre um loading" (dono, 24/11): o app publicado manda a transcrição para a conta, mas a API
+// publicada ainda não tinha a rota de trabalhos (404); o erro sumia e nada aparecia. Sem trabalhos na conta, roda aqui, como antes;
+// qualquer outra falha ao pedir à conta aparece, nunca some.
+describe('quando a conta não recebe o trabalho', () => {
+  it('o serviço sem a rota de trabalhos (404): roda aqui, como antes', async () => {
+    vi.stubGlobal('fetch', async () => new Response(JSON.stringify({ error: 'not_found' }), { status: 404, headers: { 'Content-Type': 'application/json' } }))
+    const here = vi.fn(async () => 'feito aqui')
+    await expect(runOnAccount('transcribeNote', ['n1'], 'n1', 'Transcrição · Reunião', here)).resolves.toBe('feito aqui')
+    expect(here).toHaveBeenCalledTimes(1)
+  })
+
+  it('sem internet ou com a estrutura desligada no serviço: roda aqui', async () => {
+    const here = vi.fn(async () => 'feito aqui')
+    vi.stubGlobal('fetch', async () => {
+      throw new TypeError('Failed to fetch')
+    })
+    await expect(runOnAccount('transcribeNote', ['n1'], 'n1', 'Transcrição', here)).resolves.toBe('feito aqui')
+    server.appEnabled = false
+    vi.stubGlobal('fetch', (input: string | URL | Request, init?: RequestInit) => server.fetch(input, init))
+    await expect(runOnAccount('transcribeNote', ['n1'], 'n1', 'Transcrição', here)).resolves.toBe('feito aqui')
+    expect(here).toHaveBeenCalledTimes(2)
+  })
+
+  it('outra recusa da conta não some: aparece um trabalho com falha e o motivo, e quem pediu recebe o erro', async () => {
+    vi.stubGlobal('fetch', async () => new Response(JSON.stringify({ error: 'internal_error' }), { status: 500, headers: { 'Content-Type': 'application/json' } }))
+    const here = vi.fn(async () => 'feito aqui')
+    await expect(runOnAccount('transcribeNote', ['n1'], 'n1', 'Transcrição · Reunião', here)).rejects.toThrow()
+    expect(here).not.toHaveBeenCalled()
+    const failed = useJobsStore.getState().jobs.find(job => job.fileId === 'n1' && job.status === 'error')
+    expect(failed?.title).toBe('Transcrição · Reunião')
+    expect(failed?.error).toMatch(/conta/)
+  })
+})

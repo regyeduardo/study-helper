@@ -165,8 +165,8 @@ describe('Diagnóstico da prova', () => {
 })
 
 describe('Gravação pronta', () => {
-  // "Só guardar": no model to choose in this library
-  const keepOnly = () => fireEvent.click(within(screen.getByRole('radiogroup', { name: 'O que fazer com a gravação' })).getByRole('radio', { name: /Só guardar/ }))
+  // nothing marked in "Gerar" (only keep): no model to choose in this library
+  const keepOnly = () => fireEvent.click(within(screen.getByRole('group', { name: 'Gerar' })).getByRole('checkbox', { name: /^Transcrição/ }))
   const recorded = () => ({ file: new NodeFile([new Uint8Array(8)], 'Reunião.webm', { type: 'audio/webm' }) as unknown as File, mime: 'audio/webm', durationSeconds: 30, storedName: 'gravacao-1.webm', marks: [] })
 
   it('salva com uma nota aberta: fica nela, com "Abrir"', async () => {

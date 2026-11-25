@@ -67,6 +67,8 @@ type Config struct {
 	// ChromiumHosts maps names for the jobs' Chromium (dev in Docker: "MAP localhost host.docker.internal" reaches the app and the API of
 	// the host machine with the same addresses, so the cookie and the origin stay the app's)
 	ChromiumHosts string
+	// Logf writes a line to the service's log (log.Printf when nil); the tests read what the jobs' Chromium wrote.
+	Logf func(format string, args ...any)
 	// ReadDB is the read-only pool of the same database (spec 007, research R5); nil reads from the writing connection, as before.
 	ReadDB      *sql.DB
 	LanguagesAI langs.Chatter

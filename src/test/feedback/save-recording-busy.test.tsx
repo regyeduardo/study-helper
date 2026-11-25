@@ -54,7 +54,7 @@ const open = () =>
 describe('Gravação pronta: "Salvar" mostra que está salvando', () => {
   it('no clique a janela "Salvando a gravação" segura o app, antes de qualquer gravação acabar', async () => {
     open()
-    fireEvent.click(screen.getByRole('radio', { name: /Só guardar/ }))
+    fireEvent.click(screen.getByRole('checkbox', { name: /^Transcrição/ }))
     fireEvent.click(screen.getByRole('button', { name: 'Salvar' }))
     expect(saveCalls).toBe(1)
     expect(useBlockingStore.getState().ops).toMatchObject([{ title: 'Salvando a gravação…', phase: 'Guardando a gravação' }])
@@ -66,7 +66,7 @@ describe('Gravação pronta: "Salvar" mostra que está salvando', () => {
 
   it('terminou: a janela fecha e a nota abre', async () => {
     open()
-    fireEvent.click(screen.getByRole('radio', { name: /Só guardar/ }))
+    fireEvent.click(screen.getByRole('checkbox', { name: /^Transcrição/ }))
     fireEvent.click(screen.getByRole('button', { name: 'Salvar' }))
     await act(async () => {
       saving.resolve('nota-1')
@@ -79,7 +79,7 @@ describe('Gravação pronta: "Salvar" mostra que está salvando', () => {
 
   it('não salvou: a janela fica com o motivo até "Fechar", e a nota não abre', async () => {
     open()
-    fireEvent.click(screen.getByRole('radio', { name: /Só guardar/ }))
+    fireEvent.click(screen.getByRole('checkbox', { name: /^Transcrição/ }))
     fireEvent.click(screen.getByRole('button', { name: 'Salvar' }))
     await act(async () => {
       saving.reject(new Error('Sem espaço no Drive'))

@@ -146,7 +146,10 @@ const open = () =>
   )
 
 const dialog = () => screen.getByRole('dialog', { name: 'Gravação pronta' })
-const goal = (name: RegExp) => fireEvent.click(within(screen.getByRole('radiogroup', { name: 'O que fazer com a gravação' })).getByRole('radio', { name }))
+const generate = () => within(dialog()).getByRole('group', { name: 'Gerar' })
+const box = (name: string) => within(generate()).getByRole('checkbox', { name: new RegExp(`^${name}`) })
+const toggle = (name: string) => fireEvent.click(box(name))
+const moreOptions = () => fireEvent.click(within(dialog()).getByRole('button', { name: /^Mais opções/ }))
 const save = () => fireEvent.click(within(dialog()).getByRole('button', { name: 'Salvar' }))
 
 /** The request the dialog sent, with the store out of the way. */
@@ -156,129 +159,127 @@ function spyOnSave() {
   return saveRecording
 }
 
-describe('Gravação pronta: o que fazer com a gravação', () => {
-  it('pergunta "O que fazer com a gravação" com as cinco saídas, e "Só transcrever" (o de hoje) já marcado', () => {
+const sentOf = (saveRecording: ReturnType<typeof spyOnSave>) => (saveRecording.mock.calls[0] as unknown as [Record<string, unknown> & { writes?: Record<string, unknown>[] }])[0]
+
+// Spec 007 (pedido do dono, 24/11; mocks/gravar-reuniao): "Gerar" com Transcrição, Ata, Aula e Explicação, várias ao mesmo tempo; o nome
+// que a pessoa digita; sem as partes da Ata (sai com o padrão de "Gerar desta nota")
+describe('Gravação pronta: o que gerar', () => {
+  it('"Gerar" tem Transcrição, Ata, Aula e Explicação para marcar, com a Transcrição já marcada; o nome vem com o padrão', () => {
     open()
-    const group = screen.getByRole('radiogroup', { name: 'O que fazer com a gravação' })
-    const radios = within(group).getAllByRole('radio')
-    expect(radios.map(radio => radio.querySelector('b')?.textContent)).toEqual(['Só guardar', 'Só transcrever', 'Ata', 'Aula', 'Explicação'])
-    expect(radios.filter(radio => radio.getAttribute('aria-checked') === 'true').map(radio => radio.querySelector('b')?.textContent)).toEqual(['Só transcrever'])
-    expect(screen.queryByText('Quer a transcrição?')).not.toBeInTheDocument()
-    expect(within(dialog()).getByLabelText('Transcrição')).toBeInTheDocument()
-    expect(within(dialog()).queryByLabelText('Modelo da IA')).not.toBeInTheDocument()
-    expect(within(dialog()).queryByText('Mais opções')).not.toBeInTheDocument()
+    const boxes = within(generate()).getAllByRole('checkbox')
+    expect(boxes.map(item => item.querySelector('b')?.textContent)).toEqual(['Transcrição', 'Ata', 'Aula', 'Explicação'])
+    expect(boxes.filter(item => item.getAttribute('aria-checked') === 'true').map(item => item.querySelector('b')?.textContent)).toEqual(['Transcrição'])
+    expect(within(dialog()).getByRole('textbox', { name: 'Nome' })).toHaveValue('Reunião 14-10-2026, 09-00-00')
+    expect(within(dialog()).queryByRole('radiogroup', { name: 'O que fazer com a gravação' })).not.toBeInTheDocument()
   })
 
-  it('Salvar sem mexer em nada faz o que fazia: só transcreve, e a navegação é a de hoje', async () => {
+  it('Salvar sem mexer em nada só transcreve, como antes, e a navegação é a de hoje', async () => {
     const saveRecording = spyOnSave()
     open()
     save()
     await waitFor(() => expect(navigate).toHaveBeenCalledWith('/arquivo/entrada-1'))
-    const request = saveRecording.mock.calls[0] as unknown as [Record<string, unknown>]
-    expect(request[0]).toMatchObject({ transcribe: true, folderId: null })
-    expect(request[0]).not.toHaveProperty('write')
+    const sent = sentOf(saveRecording)
+    expect(sent).toMatchObject({ transcribe: true, folderId: null })
+    expect(sent.writes ?? []).toEqual([])
+    expect(sent).not.toHaveProperty('name')
   })
 
-  it('"Só guardar" não transcreve nem escreve, e não pede modelo nenhum', async () => {
+  it('o nome digitado vai para a nota, e a janela lembra o padrão', async () => {
     const saveRecording = spyOnSave()
     open()
-    goal(/Só guardar/)
-    expect(within(dialog()).queryByLabelText('Transcrição')).not.toBeInTheDocument()
-    expect(within(dialog()).queryByLabelText('Modelo da IA')).not.toBeInTheDocument()
+    fireEvent.change(within(dialog()).getByRole('textbox', { name: 'Nome' }), { target: { value: 'Planejamento do trimestre' } })
+    expect(within(dialog()).getByText('O padrão era "Reunião 14-10-2026, 09-00-00".')).toBeInTheDocument()
     save()
     await waitFor(() => expect(saveRecording).toHaveBeenCalled())
-    const sent = (saveRecording.mock.calls[0] as unknown as [Record<string, unknown>])[0]
-    expect(sent).toMatchObject({ transcribe: false })
-    expect(sent).not.toHaveProperty('write')
-    expect(sent).not.toHaveProperty('transcriptionModel')
-    await waitFor(() => expect(navigate).toHaveBeenCalledWith('/arquivo/entrada-1'))
+    expect(sentOf(saveRecording)).toMatchObject({ name: 'Planejamento do trimestre' })
   })
 
-  it('"Aula" pede o Modelo da IA e "Mais opções", e guarda a gravação sem transcrever à parte', async () => {
+  it('nada marcado só guarda: não transcreve nem escreve, e não pede modelo nenhum', async () => {
     const saveRecording = spyOnSave()
     open()
-    goal(/^Aula/)
-    expect(within(dialog()).queryByLabelText('Transcrição')).not.toBeInTheDocument()
-    expect(within(dialog()).getByLabelText('Modelo da IA')).toHaveValue('custom::geral')
-    fireEvent.change(within(dialog()).getByLabelText('Modelo da IA'), { target: { value: 'custom::forte' } })
+    toggle('Transcrição')
+    expect(within(dialog()).getByText('Pode marcar vários. Nada marcado: só guarda.')).toBeInTheDocument()
+    expect(within(dialog()).queryByRole('button', { name: /^Mais opções/ })).not.toBeInTheDocument()
+    save()
+    await waitFor(() => expect(saveRecording).toHaveBeenCalled())
+    const sent = sentOf(saveRecording)
+    expect(sent).toMatchObject({ transcribe: false })
+    expect(sent.writes ?? []).toEqual([])
+    expect(sent).not.toHaveProperty('transcriptionModel')
+  })
+
+  it('Transcrição, Ata e Explicação de uma vez: transcreve e escreve as duas, na ordem da janela', async () => {
+    const saveRecording = spyOnSave()
+    open()
+    toggle('Explicação')
+    toggle('Ata')
+    save()
+    await waitFor(() => expect(saveRecording).toHaveBeenCalled())
+    const sent = sentOf(saveRecording)
+    expect(sent.transcribe).toBe(true)
+    expect(sent.writes?.map(write => write.agent)).toEqual(['meeting', 'explanation'])
+  })
+
+  it('a Ata não tem partes para escolher: sai com o padrão de "Gerar desta nota" (o Resumo, sem modelo da ata)', async () => {
+    const saveRecording = spyOnSave()
+    open()
+    toggle('Ata')
+    moreOptions()
+    expect(within(dialog()).queryByRole('group', { name: 'Partes da ata' })).not.toBeInTheDocument()
+    expect(within(dialog()).queryByLabelText('Modelo da ata')).not.toBeInTheDocument()
+    save()
+    await waitFor(() => expect(saveRecording).toHaveBeenCalled())
+    const write = sentOf(saveRecording).writes![0] as { agent: string; parts: string[]; ataModel?: string; model: string }
+    expect(write).toMatchObject({ agent: 'meeting', parts: ['resumo'], model: 'custom::geral' })
+    expect(write.ataModel).toBeUndefined()
+  })
+
+  it('"Mais opções" tem o modelo de cada uma marcada e a instrução, que vai para as escritas', async () => {
+    const saveRecording = spyOnSave()
+    open()
+    toggle('Aula')
+    expect(within(dialog()).queryByLabelText('Aula')).not.toBeInTheDocument()
+    moreOptions()
+    expect(within(dialog()).getByLabelText('Transcrição')).toBeInTheDocument()
+    expect(within(dialog()).getByLabelText('Aula')).toHaveValue('custom::geral')
+    fireEvent.change(within(dialog()).getByLabelText('Aula'), { target: { value: 'custom::forte' } })
     fireEvent.change(within(dialog()).getByLabelText('Instrução extra para a IA (opcional)'), { target: { value: 'foque nos exemplos' } })
     save()
     await waitFor(() => expect(saveRecording).toHaveBeenCalled())
-    expect((saveRecording.mock.calls[0] as unknown as [Record<string, unknown>])[0]).toMatchObject({ transcribe: false, write: { agent: 'lesson', model: 'custom::forte', instruction: 'foque nos exemplos' } })
-    await waitFor(() => expect(navigate).toHaveBeenCalledWith('/arquivo/entrada-1'))
+    expect(sentOf(saveRecording)).toMatchObject({ transcribe: true, writes: [{ agent: 'lesson', model: 'custom::forte', instruction: 'foque nos exemplos' }] })
   })
 
-  it('"Explicação" escreve uma explicação; sem instrução, a instrução não vai', async () => {
+  it('sem instrução, a instrução não vai', async () => {
     const saveRecording = spyOnSave()
     open()
-    goal(/^Explicação/)
+    toggle('Explicação')
     save()
     await waitFor(() => expect(saveRecording).toHaveBeenCalled())
-    const write = ((saveRecording.mock.calls[0] as unknown as [{ write: Record<string, unknown> }])[0]).write
+    const write = sentOf(saveRecording).writes![0]
     expect(write).toMatchObject({ agent: 'explanation', model: 'custom::geral' })
     expect(write.instruction ?? '').toBe('')
   })
 
-  it('"Ata" mostra o Modelo da ata e as Partes da ata (Resumo marcado) e manda as partes na ordem', async () => {
+  it('sem modelo padrão para uma marcada, "Mais opções" abre sozinho e o Salvar espera a pessoa escolher', async () => {
+    useLibraryStore.setState(state => ({ index: { ...state.index, settings: { ...state.index.settings, aiConfig: { ...CONFIG, defaults: { transcricao: CONFIG.defaults.transcricao } } } } }))
     const saveRecording = spyOnSave()
     open()
-    goal(/^Ata/)
-    expect(within(dialog()).getByLabelText('Modelo da ata')).toHaveValue('')
-    const parts = within(dialog()).getByRole('group', { name: 'Partes da ata' })
-    expect(within(parts).getByRole('checkbox', { name: 'Resumo' })).toBeChecked()
-    fireEvent.click(within(parts).getByRole('checkbox', { name: 'Levantamento de tarefas' }))
-    save()
-    await waitFor(() => expect(saveRecording).toHaveBeenCalled())
-    const write = ((saveRecording.mock.calls[0] as unknown as [{ write: { agent: string; parts: string[]; ataModel?: string; model: string } }])[0]).write
-    expect(write.agent).toBe('meeting')
-    expect(write.parts).toContain('resumo')
-    expect(write.parts.length).toBe(2)
-    expect(write.ataModel).toBeUndefined()
-    expect(write.model).toBe('custom::geral')
-  })
-
-  it('"Ata" sem nenhuma parte e sem modelo da ata não deixa salvar', () => {
-    open()
-    goal(/^Ata/)
-    const parts = within(dialog()).getByRole('group', { name: 'Partes da ata' })
-    fireEvent.click(within(parts).getByRole('checkbox', { name: 'Resumo' }))
-    expect(within(dialog()).getByText('Marque ao menos uma parte.')).toBeInTheDocument()
-    expect(within(dialog()).getByRole('button', { name: 'Salvar' })).toBeDisabled()
-    fireEvent.change(within(dialog()).getByLabelText('Modelo da ata'), { target: { value: 'cornell' } })
-    expect(within(dialog()).getByRole('button', { name: 'Salvar' })).toBeEnabled()
-  })
-
-  it('"Ata" com um Modelo da ata manda o modelo no lugar das partes', async () => {
-    const saveRecording = spyOnSave()
-    open()
-    goal(/^Ata/)
-    fireEvent.change(within(dialog()).getByLabelText('Modelo da ata'), { target: { value: 'cornell' } })
-    expect(within(dialog()).queryByRole('group', { name: 'Partes da ata' })).not.toBeInTheDocument()
-    save()
-    await waitFor(() => expect(saveRecording).toHaveBeenCalled())
-    expect((saveRecording.mock.calls[0] as unknown as [Record<string, unknown>])[0]).toMatchObject({ write: { agent: 'meeting', ataModel: 'cornell', parts: [] } })
-  })
-
-  it('sem modelo padrão para a escrita, o Salvar espera a pessoa escolher um', async () => {
-    useLibraryStore.setState(state => ({ index: { ...state.index, settings: { ...state.index.settings, aiConfig: { ...CONFIG, defaults: {} } } } }))
-    const saveRecording = spyOnSave()
-    open()
-    goal(/^Aula/)
+    toggle('Aula')
     expect(within(dialog()).getByText('Sem modelo padrão para Aula: escolha um aqui.')).toBeInTheDocument()
     expect(within(dialog()).getByRole('button', { name: 'Salvar' })).toBeDisabled()
-    fireEvent.change(within(dialog()).getByLabelText('Modelo da IA'), { target: { value: 'custom::forte' } })
+    fireEvent.change(within(dialog()).getByLabelText('Aula'), { target: { value: 'custom::forte' } })
     expect(within(dialog()).getByRole('button', { name: 'Salvar' })).toBeEnabled()
     save()
     await waitFor(() => expect(saveRecording).toHaveBeenCalled())
-    expect((saveRecording.mock.calls[0] as unknown as [Record<string, unknown>])[0]).toMatchObject({ write: { agent: 'lesson', model: 'custom::forte' } })
+    expect(sentOf(saveRecording)).toMatchObject({ writes: [{ agent: 'lesson', model: 'custom::forte' }] })
   })
 
-  it('o que já havia continua: pasta e onde guardar vão junto, qualquer que seja a saída', async () => {
+  it('a pasta e onde salvar vão junto, qualquer que seja o que se gera', async () => {
     const saveRecording = spyOnSave()
     const folder = await useLibraryStore.getState().createFolder({ name: 'Reuniões' })
     open()
-    goal(/^Aula/)
-    expect(within(dialog()).getByText('Guardar também na nuvem?')).toBeInTheDocument()
+    toggle('Aula')
+    expect(within(dialog()).getByRole('radiogroup', { name: 'Onde salvar' })).toBeInTheDocument()
     const field = within(dialog()).getByRole('group', { name: 'Pasta' })
     fireEvent.click(within(field).getByRole('button', { name: 'Trocar' }))
     const chooser = screen.getByRole('dialog', { name: 'Escolher pasta' })
@@ -286,47 +287,58 @@ describe('Gravação pronta: o que fazer com a gravação', () => {
     fireEvent.click(within(chooser).getByRole('button', { name: 'Usar esta pasta' }))
     save()
     await waitFor(() => expect(saveRecording).toHaveBeenCalled())
-    expect((saveRecording.mock.calls[0] as unknown as [Record<string, unknown>])[0]).toMatchObject({ folderId: folder.id, storage: 'none', write: { agent: 'lesson' } })
+    expect(sentOf(saveRecording)).toMatchObject({ folderId: folder.id, storage: 'none', writes: [{ agent: 'lesson' }] })
   })
 })
 
 describe('Gravação pronta: vídeo', () => {
   beforeEach(() => useRecorderStore.setState({ result: recorded('video') }))
 
-  it('a Aula de um vídeo pergunta o que a IA analisa; só a transcrição segue para a escrita', async () => {
+  it('a Aula de um vídeo pergunta, em "Mais opções", o que a IA analisa; só a transcrição segue para a escrita', async () => {
     const saveRecording = spyOnSave()
     open()
-    goal(/^Aula/)
+    toggle('Aula')
+    moreOptions()
     const analysis = within(dialog()).getByRole('radiogroup', { name: 'O que a IA analisa' })
     fireEvent.click(within(analysis).getByRole('radio', { name: /Só a transcrição/ }))
     save()
     await waitFor(() => expect(saveRecording).toHaveBeenCalled())
-    expect((saveRecording.mock.calls[0] as unknown as [Record<string, unknown>])[0]).toMatchObject({ write: { agent: 'lesson', analyze: 'transcricao' } })
+    expect(sentOf(saveRecording)).toMatchObject({ writes: [{ agent: 'lesson', analyze: 'transcricao' }] })
   })
 
-  it('a Ata de um vídeo escolhe entre passo a passo e tudo numa chamada, e sempre diz qual', async () => {
+  it('a Ata de um vídeo vai passo a passo, sem abrir nada, e "Mais opções" diz qual', async () => {
     const saveRecording = spyOnSave()
     open()
-    goal(/^Ata/)
+    toggle('Ata')
+    moreOptions()
     const analysis = within(dialog()).getByRole('radiogroup', { name: 'O que a IA analisa' })
     expect(within(analysis).getByRole('radio', { name: /Transcrição \+ quadros do vídeo/ })).toHaveAttribute('aria-checked', 'true')
     save()
     await waitFor(() => expect(saveRecording).toHaveBeenCalled())
-    expect((saveRecording.mock.calls[0] as unknown as [Record<string, unknown>])[0]).toMatchObject({ write: { agent: 'meeting', analyze: 'transcricao' } })
+    expect(sentOf(saveRecording)).toMatchObject({ writes: [{ agent: 'meeting', analyze: 'transcricao' }] })
   })
 
-  it('"Só guardar" e "Só transcrever" não perguntam o que a IA analisa', () => {
+  it('Ata e Aula juntas: uma escolha para cada, cada uma com o seu nome', () => {
     open()
-    expect(within(dialog()).queryByRole('radiogroup', { name: 'O que a IA analisa' })).not.toBeInTheDocument()
-    goal(/Só guardar/)
-    expect(within(dialog()).queryByRole('radiogroup', { name: 'O que a IA analisa' })).not.toBeInTheDocument()
+    toggle('Ata')
+    toggle('Aula')
+    moreOptions()
+    expect(within(dialog()).getByRole('radiogroup', { name: 'O que a IA analisa na Ata' })).toBeInTheDocument()
+    expect(within(dialog()).getByRole('radiogroup', { name: 'O que a IA analisa na Aula' })).toBeInTheDocument()
+  })
+
+  it('só a Transcrição, ou nada, não pergunta o que a IA analisa', () => {
+    open()
+    moreOptions()
+    expect(within(dialog()).queryByRole('radiogroup', { name: /O que a IA analisa/ })).not.toBeInTheDocument()
   })
 
   it('um áudio nunca pergunta isso', () => {
     useRecorderStore.setState({ result: recorded('audio') })
     open()
-    goal(/^Aula/)
-    expect(within(dialog()).queryByRole('radiogroup', { name: 'O que a IA analisa' })).not.toBeInTheDocument()
+    toggle('Aula')
+    moreOptions()
+    expect(within(dialog()).queryByRole('radiogroup', { name: /O que a IA analisa/ })).not.toBeInTheDocument()
   })
 })
 
@@ -399,6 +411,20 @@ describe('Salvar a gravação e já começar a nota (a loja de verdade)', () => 
     expect(useLibraryStore.getState().files).toHaveLength(1)
     expect(transcribe).not.toHaveBeenCalled()
     expect(calls).toHaveLength(0)
+  })
+
+  it('várias de uma vez: transcreve uma vez só, primeiro, e escreve a Ata e a Explicação debaixo da entrada', async () => {
+    const id = await useJobsStore.getState().saveRecording(request({ transcribe: true, writes: [{ agent: 'meeting', model: null, parts: ['resumo'] }, { agent: 'explanation', model: null }] }))
+    await waitFor(() => expect(useLibraryStore.getState().files.filter(file => file.parentFileId === id && file.status === 'ready').map(file => file.type).sort(), JSON.stringify(useJobsStore.getState().jobs.map(job => [job.kind, job.status, job.error]))).toEqual(['explanation', 'meeting']), { timeout: 6000 })
+    expect(transcribe).toHaveBeenCalledTimes(1)
+    expect(memory.sidecars.get(id)?.recording?.blocks).toHaveLength(7)
+  })
+
+  it('o nome escolhido é o nome da nota, e a transcrição não troca pelo título da IA', async () => {
+    const id = await useJobsStore.getState().saveRecording(request({ transcribe: true, name: 'Planejamento do trimestre' }))
+    expect(entry(id).name).toBe('Planejamento do trimestre')
+    await waitFor(() => expect(memory.sidecars.get(id)?.recording?.blocks).toHaveLength(7))
+    expect(entry(id).name).toBe('Planejamento do trimestre')
   })
 
   it('"Só transcrever" continua só transcrevendo, sem nota nova', async () => {

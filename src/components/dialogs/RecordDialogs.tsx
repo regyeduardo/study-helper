@@ -2,18 +2,14 @@ import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { matchPath } from 'react-router-dom'
 
-import type { AtaModelId, AtaPart } from '@/types/domain'
-import { AtaPartsFields, toggledPart } from '@/components/dialogs/AtaPartsDialog'
 import { Dialog } from '@/components/ui/Dialog'
 import { Icon } from '@/components/ui/Icon'
 import { IntegrationStatus } from '@/components/dialogs/IntegrationStatus'
-import { MoreOptions } from '@/components/dialogs/FromNoteFields'
 import { goToNew } from '@/components/dialogs/go-to-new'
+import { lastAta } from '@/components/dialogs/GenerateEntryDialog'
 import { MediaAnalysisField, useMediaAnalysis } from '@/components/dialogs/MediaAnalysisField'
 import { ModelPick, useModelChoice } from '@/components/dialogs/ModelPick'
 import { FolderField } from '@/components/dialogs/FolderChooser'
-import { SourceStoragePicker } from '@/components/dialogs/SourceStoragePicker'
-import type { LitterboxTime } from '@/controllers/hosting.controller'
 import {
   IntegrationCapture,
   type IntegrationDevice,
@@ -23,14 +19,15 @@ import {
   type IntegrationWindow,
   useIntegrationStore,
 } from '@/lib/recording/integration'
-import { MEDIA_LABEL } from '@/lib/file-types'
+import { MEDIA_LABEL, recordingName } from '@/lib/file-types'
 import { PART_ORDER } from '@/lib/generation/ata'
 import { paths } from '@/lib/paths'
 import { removeLocalMedia } from '@/lib/recording/media-library'
 import { mountMiniplayer } from '@/lib/recording/miniplayer'
 import { type AudioInput, CaptureCheck, type RecordingDestination, type CaptureMode, type CheckStatus, COMPUTER_AUDIO_AUTO, COMPUTER_AUDIO_NONE, hears, listAudioInputs, type LiveCapture, playTestSound, SOUND_LEVEL, type StartOptions, systemAudioNotice, type VideoFps, VOICE_LEVEL } from '@/lib/recording/recorder'
 import { AUDIO_BITS_PER_SECOND, CHOSEN, OPTIMIZED, VARIANTS } from '@/lib/recording/variants'
-import { defaultStorage, type StorageOption, storageOptions } from '@/lib/storage/source-storage'
+import { defaultStorage, storageOptions } from '@/lib/storage/source-storage'
+import { useAppAiStore } from '@/lib/ai/app-ai'
 import { blocking } from '@/lib/blocking'
 import { working } from '@/lib/working'
 import { useAccountStore } from '@/stores/account'
@@ -732,6 +729,21 @@ function counted(count: number, one: string, many: string): string {
   return `${count} ${count === 1 ? one : many}`
 }
 
+/** The screen being recorded, small, beside the waves (spec 007, mocks/gravar-reuniao, d-durante). */
+function ScreenThumb({ stream }: { stream: MediaStream }) {
+  const ref = useRef<HTMLVideoElement>(null)
+  useEffect(() => {
+    const video = ref.current
+    if (!video) return
+    video.srcObject = stream
+    void Promise.resolve(video.play()).catch(() => undefined)
+    return () => {
+      video.srcObject = null
+    }
+  }, [stream])
+  return <video className="mr-thumb" ref={ref} muted playsInline autoPlay aria-label="A tela que está sendo gravada" />
+}
+
 function RecordingControls() {
   const { seconds, mode, live, floating, marks, finish, cancel, pause, resume, setEnabled, setScreen, switchScreen, mark, annotate, switchMicrophone, switchComputerInput, reshare, switchIntegrationSource, openFloating } = useRecorderStore()
   const toast = useUiStore(state => state.toast)
@@ -747,43 +759,120 @@ function RecordingControls() {
   const screenOn = Boolean(live?.screenOn)
   const flags = marks.filter(item => item.kind === 'mark').length
   const notes = marks.length - flags
+  // the waves only: the screen goes beside them, in its own picture
+  const waves = useMemo(() => (live ? { ...live, preview: null } : null), [live])
   const keepNote = () => {
     if (note.trim()) annotate(note.trim())
     setNote('')
     setPanel(null)
   }
+  const end = () => {
+    // the window grows to fit the choices of the end, in this same click (the browser only lets it grow on a click)
+    if (floating) {
+      try {
+        floating.resizeTo(FLOATING_DONE.width, FLOATING_DONE.height)
+      } catch {
+        // refused: the choices fit in one column, with the middle scrolling
+      }
+    }
+    // closing the file and making it seekable takes seconds: the app is held until the recording is ready
+    void blocking('Finalizando a gravação…', () => finish())
+  }
   return (
     <>
-      <div className="bar-top">
-        <Icon name="monitor" />
-        <span style={{ flex: 1 }}>Gravando {what}</span>
+      <div className="mr-head">
+        <div className="timer">
+          {clock(seconds)}
+          {live?.paused ? <span className="faint">pausado</span> : null}
+        </div>
+        <span className="mr-what">Gravando {what}</span>
         {!floating && (
-          <button className="btn" style={{ height: 24, padding: '0 8px', fontSize: 11.5 }} aria-label="Abrir em janela própria" title="Abrir em janela própria" onClick={() => void openFloating().then(opened => setBlocked(!opened))}>
+          <button className="btn mr-detach" aria-label="Abrir em janela própria" title="Destacar: abrir em janela própria" onClick={() => void openFloating().then(opened => setBlocked(!opened))}>
             <Icon name="monitor" />
-            Destacar
           </button>
         )}
       </div>
       {blocked && !floating && <div className="source">O navegador bloqueou a janela: libere as janelas deste site e tente de novo.</div>}
       <div className="body">
-        <div className="mini-head">
-          <div className="timer">
-            {clock(seconds)}
-            {live?.paused ? <span className="faint" style={{ fontSize: 13 }}>pausado</span> : null}
+        {panel === 'sources' ? (
+          <div className="mr-panel" role="group" aria-label="Fontes">
+            <div className="mr-panel-head">
+              <b>Fontes</b>
+              <button className="btn quiet" onClick={() => setPanel(null)}>
+                <Icon name="back" />
+                Voltar
+              </button>
+            </div>
+            <div className="mini-panel">
+              <label className="lab" htmlFor="live-microphone">
+                Microfone
+              </label>
+              <select className="input" id="live-microphone" value={live?.microphoneId ?? ''} onChange={event => attempt(() => switchMicrophone(event.target.value || null))}>
+                <option value="">Padrão do sistema</option>
+                {options.microphones.map(device => (
+                  <option key={device.id} value={device.id}>
+                    {device.label}
+                  </option>
+                ))}
+              </select>
+              <label className="lab" htmlFor="live-source">
+                Som do computador
+              </label>
+              {mode === 'integration' ? (
+                <select
+                  className="input"
+                  id="live-source"
+                  value={live?.sourceChoice ?? 'system'}
+                  onChange={event => {
+                    const key = event.target.value
+                    attempt(() => switchIntegrationSource({ source: integrationSourceOf(key), label: sourceLabel(key, options.windows) }))
+                  }}
+                >
+                  <IntegrationSourceOptions windows={options.windows} listing={options.listing} />
+                </select>
+              ) : (
+                <select className="input" id="live-source" value={live?.sourceChoice === 'display' ? 'display' : (live?.sourceChoice ?? COMPUTER_AUDIO_NONE)} onChange={event => attempt(() => (event.target.value === 'display' ? reshare() : switchComputerInput(event.target.value)))}>
+                  {(mode === 'tab' || mode === 'screen') && <option value="display">{mode === 'tab' ? 'Som da aba compartilhada' : 'Som da tela compartilhada'}</option>}
+                  <option value={COMPUTER_AUDIO_AUTO}>Automático · entradas de som do computador</option>
+                  {options.inputs
+                    .filter(input => input.computer)
+                    .map(input => (
+                      <option key={input.deviceId} value={input.deviceId}>
+                        {input.label}
+                      </option>
+                    ))}
+                  <option value={COMPUTER_AUDIO_NONE}>Nenhum som do computador</option>
+                </select>
+              )}
+            </div>
+            <div className="mr-screen">
+              <button className="btn" aria-pressed={screenOn} aria-label={screenOn ? 'Desligar a gravação de tela' : 'Ligar a gravação de tela'} title={screenOn ? 'Desligar a gravação de tela' : 'Ligar a gravação de tela'} onClick={() => attempt(() => setScreen(!screenOn))}>
+                <Icon name={screenOn ? 'check' : 'monitor'} />
+                Gravar a tela
+              </button>
+              <button className="btn" disabled={!screenOn} onClick={() => attempt(switchScreen)}>
+                <Icon name="swap" />
+                Trocar a tela
+              </button>
+            </div>
           </div>
-          <Miniplayer live={live} />
-        </div>
-        <div className="tiles">
-          <Tile label="Microfone" name={microphoneOn ? 'Desligar o microfone' : 'Ligar o microfone'} icon={<Icon name="mic" />} pressed={microphoneOn} onClick={() => setEnabled('microphone', !microphoneOn)} />
-          <Tile label="Som do PC" name={sourceOn ? 'Desligar o som do computador' : 'Ligar o som do computador'} icon={<Glyph name="speaker" />} pressed={sourceOn} disabled={!live?.hasSource} onClick={() => setEnabled('source', !sourceOn)} />
-          <Tile label={live?.paused ? 'Continuar' : 'Pausar'} name={live?.paused ? 'Continuar' : 'Pausar'} icon={live?.paused ? <Glyph name="play" /> : <Icon name="pause" />} onClick={() => (live?.paused ? resume() : pause())} />
-          <Tile label="Gravar tela" name={screenOn ? 'Desligar a gravação de tela' : 'Ligar a gravação de tela'} icon={<Icon name="monitor" />} pressed={screenOn} onClick={() => attempt(() => setScreen(!screenOn))} />
-          <Tile label="Trocar janela" name="Trocar janela" icon={<Glyph name="window" />} expanded={panel === 'sources'} onClick={() => setPanel(panel === 'sources' ? null : 'sources')} />
-          <Tile label="Trocar tela" name="Trocar tela" icon={<Icon name="swap" />} disabled={!screenOn} onClick={() => attempt(switchScreen)} />
-          <Tile label="Marcar" name="Marcar momento" icon={<Glyph name="flag" />} onClick={mark} />
-          <Tile label="Anotar" name="Anotar" icon={<Icon name="pen" />} expanded={panel === 'note'} onClick={() => setPanel(panel === 'note' ? null : 'note')} />
-        </div>
-        {panel === 'note' && (
+        ) : (
+          <>
+            <div className={`mr-media${live?.preview ? ' screen' : ''}`}>
+              {live?.preview && <ScreenThumb stream={live.preview} />}
+              <Miniplayer live={waves} />
+            </div>
+            <div className="tiles mr-tiles">
+              <Tile label="Microfone" name={microphoneOn ? 'Desligar o microfone' : 'Ligar o microfone'} icon={<Icon name="mic" />} pressed={microphoneOn} onClick={() => setEnabled('microphone', !microphoneOn)} />
+              <Tile label="Som do PC" name={sourceOn ? 'Desligar o som do computador' : 'Ligar o som do computador'} icon={<Glyph name="speaker" />} pressed={sourceOn} disabled={!live?.hasSource} onClick={() => setEnabled('source', !sourceOn)} />
+              <Tile label={live?.paused ? 'Continuar' : 'Pausar'} name={live?.paused ? 'Continuar' : 'Pausar'} icon={live?.paused ? <Glyph name="play" /> : <Icon name="pause" />} onClick={() => (live?.paused ? resume() : pause())} />
+              <Tile label="Marcar" name="Marcar momento" icon={<Glyph name="flag" />} onClick={mark} />
+              <Tile label="Anotar" name="Anotar" icon={<Icon name="pen" />} expanded={panel === 'note'} onClick={() => setPanel(panel === 'note' ? null : 'note')} />
+              <Tile label="Fontes" name="Fontes" icon={<Glyph name="window" />} expanded={false} onClick={() => setPanel('sources')} />
+            </div>
+          </>
+        )}
+        {panel === 'note' ? (
           <input
             className="input"
             aria-label="Anotação"
@@ -796,67 +885,15 @@ function RecordingControls() {
               if (event.key === 'Escape') setPanel(null)
             }}
           />
+        ) : (
+          (live?.computerAudio || marks.length > 0) && (
+            <div className="mini-info">
+              {live?.computerAudio && <span>Som do computador: {live.computerAudio}</span>}
+              {marks.length > 0 && <span>{[flags && counted(flags, 'marcação', 'marcações'), notes && counted(notes, 'anotação', 'anotações')].filter(Boolean).join(' · ')}</span>}
+            </div>
+          )
         )}
-        {panel === 'sources' && (
-          <div className="mini-panel">
-            <label className="lab" htmlFor="live-microphone">
-              Microfone
-            </label>
-            <select className="input" id="live-microphone" value={live?.microphoneId ?? ''} onChange={event => attempt(() => switchMicrophone(event.target.value || null))}>
-              <option value="">Padrão do sistema</option>
-              {options.microphones.map(device => (
-                <option key={device.id} value={device.id}>
-                  {device.label}
-                </option>
-              ))}
-            </select>
-            <label className="lab" htmlFor="live-source">
-              Som do computador
-            </label>
-            {mode === 'integration' ? (
-              <select
-                className="input"
-                id="live-source"
-                value={live?.sourceChoice ?? 'system'}
-                onChange={event => {
-                  const key = event.target.value
-                  attempt(() => switchIntegrationSource({ source: integrationSourceOf(key), label: sourceLabel(key, options.windows) }))
-                }}
-              >
-                <IntegrationSourceOptions windows={options.windows} listing={options.listing} />
-              </select>
-            ) : (
-              <select className="input" id="live-source" value={live?.sourceChoice === 'display' ? 'display' : (live?.sourceChoice ?? COMPUTER_AUDIO_NONE)} onChange={event => attempt(() => (event.target.value === 'display' ? reshare() : switchComputerInput(event.target.value)))}>
-                {(mode === 'tab' || mode === 'screen') && <option value="display">{mode === 'tab' ? 'Som da aba compartilhada' : 'Som da tela compartilhada'}</option>}
-                <option value={COMPUTER_AUDIO_AUTO}>Automático · entradas de som do computador</option>
-                {options.inputs
-                  .filter(input => input.computer)
-                  .map(input => (
-                    <option key={input.deviceId} value={input.deviceId}>
-                      {input.label}
-                    </option>
-                  ))}
-                <option value={COMPUTER_AUDIO_NONE}>Nenhum som do computador</option>
-              </select>
-            )}
-          </div>
-        )}
-        {!panel && (live?.computerAudio || marks.length > 0) && (
-          <div className="mini-info">
-            {live?.computerAudio && <span>Som do computador: {live.computerAudio}</span>}
-            {marks.length > 0 && <span>{[flags && counted(flags, 'marcação', 'marcações'), notes && counted(notes, 'anotação', 'anotações')].filter(Boolean).join(' · ')}</span>}
-          </div>
-        )}
-        <div className="acts">
-          <button className="btn danger" onClick={() => setConfirming(true)}>
-            Cancelar
-          </button>
-          {/* closing the file and making it seekable takes seconds: the app is held until the recording is ready */}
-          <button className="btn primary" onClick={() => void blocking('Finalizando a gravação…', () => finish())}>
-            Terminar
-          </button>
-        </div>
-        {confirming && (
+        {confirming ? (
           <div className="inline-confirm">
             Descartar a gravação?
             <button className="btn danger" onClick={() => (setConfirming(false), void blocking('Descartando a gravação…', () => cancel()))}>
@@ -866,60 +903,97 @@ function RecordingControls() {
               Voltar
             </button>
           </div>
+        ) : (
+          <div className="acts">
+            <button className="btn danger" onClick={() => setConfirming(true)}>
+              Cancelar
+            </button>
+            <button className="btn primary" onClick={end}>
+              Terminar
+            </button>
+          </div>
         )}
       </div>
     </>
   )
 }
 
+/** The floating window at the end, to fit the two columns of "Gravação pronta" (mocks/gravar-reuniao, e-depois). */
+const FLOATING_DONE = { width: 800, height: 620 }
+
 /** The saved recording opens, unless a note or an entrada is open: then she stays, and a notice offers it. */
 function openNote(fileId: string) {
   void import('@/routes').then(({ router }) => goToNew(paths.file(fileId), 'A gravação foi salva', router.state?.location.pathname ?? '/', to => void router.navigate(to)))
 }
 
-/** What to do with the recording when it ends: only keep it, only transcribe it (as before), or also start a note from it. */
-type Goal = 'keep' | 'transcribe' | NoteAgent
+/** What "Gerar" makes from the recording (spec 007, pedido do dono de 24/11): any of them at once; none, it only keeps the recording. */
+type Making = 'transcribe' | NoteAgent
 
-const GOALS: { id: Goal; label: string; hint: string }[] = [
-  { id: 'keep', label: 'Só guardar', hint: 'Guarda a gravação como está. Dá para transcrever depois, na própria nota.' },
-  { id: 'transcribe', label: 'Só transcrever', hint: 'A busca acha o que foi falado e dá para gerar Ata, Aula, Mapa mental, Cartões, Tutor e Prova.' },
-  { id: 'meeting', label: 'Ata', hint: 'Pontos relevantes e tarefas' },
-  { id: 'lesson', label: 'Aula', hint: 'Para aprender o conteúdo' },
+const MAKES: { id: Making; label: string; hint: string }[] = [
+  { id: 'transcribe', label: 'Transcrição', hint: 'Quem falou e quando' },
+  { id: 'meeting', label: 'Ata', hint: 'Decisões e tarefas' },
+  { id: 'lesson', label: 'Aula', hint: 'Para aprender' },
   { id: 'explanation', label: 'Explicação', hint: 'Direto ao ponto' },
 ]
+
+const WRITERS = ['meeting', 'lesson', 'explanation'] as const
+type Writer = (typeof WRITERS)[number]
+const LABEL_OF: Record<Making, string> = Object.fromEntries(MAKES.map(item => [item.id, item.label])) as Record<Making, string>
+
+/** "a", "a e b", "a, b e c" */
+const listed = (items: string[]) => (items.length < 2 ? (items[0] ?? '') : `${items.slice(0, -1).join(', ')} e ${items[items.length - 1]}`)
 
 function RecordingDoneOptions({ place }: { place: 'dialog' | 'window' }) {
   const { result, clearResult } = useRecorderStore()
   const account = useAccountStore(state => state.active())
   const limit = useLibraryStore(state => state.index.settings.storageLimitBytes)
   const usage = useSyncStore(state => state.usage)
+  const files = useLibraryStore(state => state.files)
   const saveRecording = useJobsStore(state => state.saveRecording)
   const toast = useUiStore(state => state.toast)
-  const [goal, setGoal] = useState<Goal>('transcribe')
+  const appAi = useAppAiStore(state => state.config)
+  const [marked, setMarked] = useState<Making[]>(['transcribe'])
   const heardBy = useModelChoice('transcricao')
-  // the note the recording starts: who writes, as in "Gerar desta entrada"
-  const writers = { meeting: useModelChoice('ata'), lesson: useModelChoice('aula', true), explanation: useModelChoice('explicacao', true) }
-  const [ata, setAta] = useState<{ model: AtaModelId | null; parts: AtaPart[] }>({ model: null, parts: ['resumo'] })
+  // who writes each note, as in "Gerar desta entrada"
+  const writers: Record<Writer, ReturnType<typeof useModelChoice>> = { meeting: useModelChoice('ata'), lesson: useModelChoice('aula', true), explanation: useModelChoice('explicacao', true) }
+  // the Ata comes out as "Gerar desta nota" makes it: the "Modelo da ata" and parts of the last Ata, else Padrão with the Resumo
+  const [ata] = useState(() => lastAta(files, ''))
   const [instruction, setInstruction] = useState('')
+  const defaultName = result ? recordingName(result.file.name) : ''
+  const [name, setName] = useState(defaultName)
+  const [moreOpen, setMoreOpen] = useState(false)
   const isVideo = Boolean(result?.file.type.startsWith('video/'))
-  const writer = goal === 'keep' || goal === 'transcribe' ? null : writers[goal]
-  // the Ata of a video goes step by step or all in one call; the other notes choose what the AI analyzes
-  const analysis = useMediaAnalysis(writer, Boolean(writer) && isVideo, null, { ata: goal === 'meeting' && isVideo })
+  const has = (id: Making) => marked.includes(id)
+  const writing = WRITERS.filter(has)
+  const others = writing.filter(id => id !== 'meeting')
+  // of a video: the Ata goes step by step or all in one call; the other notes choose what the AI analyzes
+  const ataAnalysis = useMediaAnalysis(writers.meeting, has('meeting') && isVideo, null, { ata: true })
+  const otherAnalysis = useMediaAnalysis(writers[others[0] ?? 'lesson'], others.length > 0 && isVideo)
   const [discarding, setDiscarding] = useState(false)
   // unchosen: the folder open when the recording started
   const [pickedFolder, setFolderId] = useState<string | null | undefined>(undefined)
   const [storage, setStorage] = useState<RecordingDestination | null>(null)
   const appOn = useLibraryStore(state => state.appOn)
-  const [litterboxTime, setLitterboxTime] = useState<LitterboxTime>('72h')
   if (!result) return null
   const driveAvailable = account.kind === 'google'
   const room = usage && limit ? limit - usage.appBytes : null
   const folderId = pickedFolder === undefined ? (result.folderId ?? null) : pickedFolder
   const media = storageOptions(result.file.size, driveAvailable, room)
-  const app: StorageOption<RecordingDestination> = { id: 'app', name: 'App', description: 'A nota e a mídia ficam no App.', fits: true, enabled: true, thirdParty: false }
-  const options: StorageOption<RecordingDestination>[] = appOn ? [...media.slice(0, 1), app, ...media.slice(1)] : media
+  const drive = media.find(option => option.id === 'drive')
   const preferred = storage ?? result.destination ?? null
-  const chosen: RecordingDestination = preferred && options.some(option => option.id === preferred && option.fits && option.enabled) ? preferred : appOn ? 'app' : defaultStorage(driveAvailable, media)
+  const placeOk = (id: RecordingDestination) => id === 'none' || (id === 'app' ? appOn : Boolean(drive?.fits && drive.enabled))
+  const chosen: RecordingDestination = preferred && placeOk(preferred) ? preferred : appOn ? 'app' : defaultStorage(driveAvailable, media)
+  const places: SideBySideOption<RecordingDestination>[] = [
+    { value: 'none', label: 'Neste computador', about: 'Fica em Mídias, neste navegador. A nota guarda o nome da gravação.' },
+    { value: 'drive', label: 'Google Drive', about: 'Também vai para o seu Drive. Conta no seu limite de armazenamento.', ...(drive?.fits && drive.enabled ? {} : { why: drive?.reason ?? 'O Google Drive não está disponível agora.' }) },
+    ...(appOn ? [{ value: 'app' as const, label: 'App', about: 'A nota e a mídia ficam no App.' }] : []),
+  ]
+  const toggleMaking = (id: Making) => setMarked(current => MAKES.map(item => item.id).filter(item => (item === id ? !current.includes(id) : current.includes(item))))
+  const notReady = MAKES.filter(item => has(item.id) && !(item.id === 'transcribe' ? heardBy.ready : writers[item.id as Writer].ready))
+  // inside "Mais opções": the models (only with the person's own AI), what the AI analyzes in a video, and the instruction
+  const inside = [!appAi && marked.length > 0 && 'modelos', isVideo && writing.length > 0 && 'vídeo', writing.length > 0 && 'instrução'].filter((item): item is string => Boolean(item))
+  const showMore = (moreOpen || notReady.length > 0) && inside.length > 0
+  const both = has('meeting') && others.length > 0
   const later = () => {
     clearResult()
     toast('A gravação ficou salva em Mídias')
@@ -935,25 +1009,41 @@ function RecordingDoneOptions({ place }: { place: 'dialog' | 'window' }) {
     clearResult()
     setStorage(null)
     setFolderId(undefined)
-    const transcribing = goal === 'transcribe'
-    // the note transcribes the recording first when it needs the text, so the recording is saved without transcribing by itself
-    const write: RecordingWrite | undefined = writer
-      ? {
-          agent: goal as NoteAgent,
-          model: writer.model || null,
-          ...(instruction.trim() ? { instruction } : {}),
-          ...(isVideo && analysis.sent ? { analyze: analysis.sent } : {}),
-          ...(goal === 'meeting' ? (ata.model ? { ataModel: ata.model, parts: [] } : { parts: PART_ORDER.filter(part => ata.parts.includes(part)) }) : {}),
-        }
-      : undefined
-    // the window closes at once and saving takes several writes: a line in the tasks says it is saving until the note opens
-    void working('Salvando a gravação…', async () => openNote(await saveRecording({ file, storedName, durationSeconds, folderId, storage: chosen === 'app' ? 'drive' : chosen, ...(chosen === 'app' || chosen === 'drive' ? { place: chosen } : {}), litterboxTime, marks: marks ?? [], transcribe: transcribing, ...(transcribing && heardBy.model ? { transcriptionModel: heardBy.model } : {}), ...(write ? { write } : {}) })), {
-      message: 'Guardando a gravação',
+    const transcribing = has('transcribe')
+    const writes: RecordingWrite[] = writing.map(agent => {
+      const analysis = agent === 'meeting' ? ataAnalysis : otherAnalysis
+      return {
+        agent,
+        model: writers[agent].model || null,
+        ...(instruction.trim() ? { instruction } : {}),
+        ...(isVideo && analysis.sent ? { analyze: analysis.sent } : {}),
+        ...(agent === 'meeting' ? (ata.model ? { ataModel: ata.model, parts: [] } : { parts: PART_ORDER.filter(part => ata.parts.includes(part)) }) : {}),
+      }
     })
+    const typed = name.trim()
+    // the window closes at once and saving takes several writes: a line in the tasks says it is saving until the note opens
+    void working(
+      'Salvando a gravação…',
+      async () =>
+        openNote(
+          await saveRecording({
+            file,
+            storedName,
+            durationSeconds,
+            folderId,
+            storage: chosen === 'app' ? 'drive' : chosen,
+            ...(chosen === 'app' || chosen === 'drive' ? { place: chosen } : {}),
+            litterboxTime: '72h',
+            marks: marks ?? [],
+            transcribe: transcribing,
+            ...(transcribing && heardBy.model ? { transcriptionModel: heardBy.model } : {}),
+            ...(writes.length ? { writes } : {}),
+            ...(typed && typed !== defaultName ? { name: typed } : {}),
+          }),
+        ),
+      { message: 'Guardando a gravação' },
+    )
   }
-  // the Ata needs a model or at least one part; a writer needs a model to write with
-  const ataEmpty = goal === 'meeting' && !ata.model && !ata.parts.length
-  const cannotSave = goal === 'transcribe' ? !heardBy.ready : writer ? !writer.ready || ataEmpty : false
   const actions = discarding ? (
     <div className="inline-confirm">
       Descartar a gravação?
@@ -966,58 +1056,94 @@ function RecordingDoneOptions({ place }: { place: 'dialog' | 'window' }) {
     </div>
   ) : (
     <>
-      <button className="btn quiet" onClick={() => setDiscarding(true)}>
+      <button className="btn quiet rd-media" onClick={() => setDiscarding(true)}>
         Descartar
       </button>
-      <button className="btn primary" disabled={cannotSave} onClick={save}>
+      <button className="btn primary" disabled={notReady.length > 0} onClick={save}>
         Salvar
       </button>
     </>
   )
+  const meta = `${MEDIA_LABEL[isVideo ? 'video' : 'audio']} · ${duration(result.durationSeconds)} · ${formatBytes(result.file.size)}`
   const body = (
-    <div className="db">
-      <span className="muted">
-        {MEDIA_LABEL[result.file.type.startsWith('video/') ? 'video' : 'audio']} · {duration(result.durationSeconds)} · {formatBytes(result.file.size)}
-      </span>
-      <div className="field">
-        <span className="lab">O que fazer com a gravação</span>
-        <div className="opts" role="radiogroup" aria-label="O que fazer com a gravação">
-          {GOALS.map(item => (
-            <button key={item.id} className="opt" role="radio" aria-checked={goal === item.id} onClick={() => setGoal(item.id)}>
-              <span className="radio" />
-              <span>
-                <b>{item.label}</b>
-                <span>{item.hint}</span>
-              </span>
-            </button>
-          ))}
+    <div className="rd-cols rd-done">
+      <div className="rd-col">
+        <div className="field">
+          <label className="lab" htmlFor="rec-name">
+            Nome
+          </label>
+          <input className="input" id="rec-name" value={name} onChange={event => setName(event.target.value)} />
+          {name.trim() && name.trim() !== defaultName && <span className="rd-about">O padrão era "{defaultName}".</span>}
         </div>
+        <div className="field">
+          <span className="lab">Gerar</span>
+          <div className="opts rd-screen" role="group" aria-label="Gerar">
+            {MAKES.map(item => (
+              <button key={item.id} className="opt" role="checkbox" aria-checked={has(item.id)} onClick={() => toggleMaking(item.id)}>
+                <span className="radio" style={{ borderRadius: 5 }} />
+                <span>
+                  <b>{item.label}</b>
+                  <span>{item.hint}</span>
+                </span>
+              </button>
+            ))}
+          </div>
+          <span className="rd-about">Pode marcar vários. Nada marcado: só guarda.</span>
+        </div>
+        {inside.length > 0 && (
+          <div className="rd-more">
+            <button className="rd-more-toggle" aria-expanded={showMore} onClick={() => setMoreOpen(!showMore)}>
+              <Icon name={showMore ? 'chev' : 'fwd'} />
+              <b>Mais opções</b>
+              {!showMore && <span>{listed(inside)}</span>}
+            </button>
+            {showMore && (
+              <div className="rd-more-body">
+                <div className="rd-models">
+                  {has('transcribe') && <ModelPick choice={heardBy} label="Transcrição" />}
+                  {writing.map(agent => (
+                    <ModelPick key={agent} choice={writers[agent]} label={LABEL_OF[agent]} />
+                  ))}
+                </div>
+                {isVideo && has('meeting') && <MediaAnalysisField analysis={ataAnalysis} compact label={both ? 'O que a IA analisa na Ata' : 'O que a IA analisa'} />}
+                {isVideo && others.length > 0 && <MediaAnalysisField analysis={otherAnalysis} compact label={both ? `O que a IA analisa na ${others.map(id => LABEL_OF[id]).join(' e na ')}` : 'O que a IA analisa'} />}
+                {writing.length > 0 && (
+                  <div className="field">
+                    <label className="lab" htmlFor="rec-instruction">
+                      Instrução extra para a IA (opcional)
+                    </label>
+                    <textarea className="input" id="rec-instruction" rows={2} value={instruction} onChange={event => setInstruction(event.target.value)} placeholder={has('meeting') ? 'Ex.: foque nas decisões e nas tarefas' : 'Ex.: foque na parte prática'} />
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
       </div>
-      {goal === 'transcribe' && <ModelPick choice={heardBy} label="Transcrição" />}
-      {goal === 'meeting' && <AtaPartsFields parts={ata.parts} onToggle={part => setAta(current => ({ ...current, parts: toggledPart(current.parts, part) }))} model={ata.model} onModel={model => setAta(current => ({ ...current, model }))} />}
-      {writer && <ModelPick choice={writer} />}
-      {writer && isVideo && <MediaAnalysisField analysis={analysis} />}
-      {writer && <MoreOptions instruction={instruction} onInstruction={setInstruction} placeholder={goal === 'meeting' ? 'Ex.: foque nas decisões e nas tarefas' : 'Ex.: foque na parte prática'} />}
-      <SourceStoragePicker
-        label="Guardar também na nuvem?"
-        sizeBytes={result.file.size}
-        options={options}
-        chosen={chosen}
-        onChoose={setStorage}
-        litterboxTime={litterboxTime}
-        onLitterboxTime={setLitterboxTime}
-        names={{ none: { name: 'Não, só neste computador', description: 'Fica só em Mídias, neste navegador. A nota guarda o nome da gravação.' } }}
-      />
-      <div className="field">
-        <span className="lab">Pasta</span>
-        <FolderField value={folderId} onChange={setFolderId} />
+      <div className="rd-col">
+        <SideBySide<RecordingDestination> label="Onde salvar" options={places} value={chosen} onChange={value => setStorage(value)} />
+        <div className="field">
+          <span className="lab">Pasta</span>
+          <FolderField value={folderId} onChange={setFolderId} />
+        </div>
       </div>
     </div>
   )
   if (place === 'dialog') {
     return (
-      <Dialog title="Gravação pronta" size="narrow" onClose={later} footer={actions}>
-        {body}
+      <Dialog
+        title={
+          <>
+            Gravação pronta <span className="rd-meta">{meta}</span>
+          </>
+        }
+        label="Gravação pronta"
+        size="wide"
+        style={{ width: 'min(800px, 100%)' }}
+        onClose={later}
+        footer={actions}
+      >
+        <div className="db">{body}</div>
       </Dialog>
     )
   }
@@ -1026,6 +1152,7 @@ function RecordingDoneOptions({ place }: { place: 'dialog' | 'window' }) {
       <div className="bar-top">
         <Icon name="check" />
         <span style={{ flex: 1 }}>Gravação pronta</span>
+        <span>{meta}</span>
       </div>
       <div className="body">
         {body}

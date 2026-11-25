@@ -9,6 +9,7 @@ vi.mock('@/lib/env', async importOriginal => ({ env: { ...((await importOriginal
 
 import { routeOf, setWorkerMode } from '@/lib/generation/account-routing'
 import { REPORT_EVERY_MS, runWorker } from '@/lib/generation/worker'
+import { appAiConfig, useAppAiStore } from '@/lib/ai/app-ai'
 import { useJobsStore } from '@/stores/jobs'
 import { useLibraryStore } from '@/stores/library'
 import { FakeAppServer } from '@/test/storage/fake-app-server'
@@ -29,6 +30,7 @@ afterEach(() => {
   vi.unstubAllGlobals()
   vi.useRealTimers()
   useJobsStore.setState({ regenerate: realRegenerate, jobs: [] })
+  useAppAiStore.setState({ config: null, providers: [] })
   setWorkerMode(false)
 })
 
@@ -84,6 +86,32 @@ describe('a página de trabalho', () => {
     const job = server.jobs.get('job-1')
     expect(job.state).toBe('failed')
     expect(job.error).toBe('A transcrição não saiu. Nenhum modelo de transcrição escolhido.')
+  })
+
+  // the app's AI used to be asked without waiting: a call could start before it came and fall back to the person's own AI, with no model
+  it('a IA do app chega antes da chamada rodar', async () => {
+    let seen: unknown = null
+    useJobsStore.setState({
+      regenerate: async () => {
+        seen = appAiConfig()
+        return 'ok' as never
+      },
+    })
+    await runWorker('job-1')
+    expect(server.jobs.get('job-1').state).toBe('done')
+    expect(seen).toMatchObject({ defaults: { transcricao: 'ouvir' } })
+  })
+
+  it('sem a IA do app, falha dizendo por quê, sem rodar a chamada', async () => {
+    server.aiConfig = null
+    const run = vi.fn(async () => 'ok' as never)
+    useJobsStore.setState({ regenerate: run })
+    await runWorker('job-1')
+    const job = server.jobs.get('job-1')
+    expect(run).not.toHaveBeenCalled()
+    expect(job.state).toBe('failed')
+    expect(job.error).toMatch(/IA do app/)
+    expect(job.errorCode).toBe('ai_unavailable')
   })
 
   it('cancelada lá dentro, também não volta como pronta', async () => {

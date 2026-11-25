@@ -483,3 +483,88 @@ func TestJobsOfTheSameNoteRunInTurn(t *testing.T) {
 	close(release)
 	waitState(t, h, ana, ata["id"].(string), "done")
 }
+
+// "Ainda não transcreve" (dono, 24/11): a job whose page did not open on the server, or opened and died before saying anything, stayed
+// "running" for the 3 hours of jobMaxRun, holding one of the generators and every other job of the same note. Now it fails with the reason
+// and leaves its place.
+func TestAPageThatNeverEntersFailsWithTheReason(t *testing.T) {
+	h, _ := jobsHarness(t, 2)
+	stopped := make(chan struct{})
+	h.srv.cfg.JobRunner = func(ctx context.Context, start JobStart) error {
+		<-ctx.Done()
+		close(stopped)
+		return ctx.Err()
+	}
+	client, _ := h.account("enabled", true, "ana@exemplo.com")
+	_, job := newJob(t, h, client, "transcribeNote", "n1")
+	id := job["id"].(string)
+	waitState(t, h, client, id, "running")
+	h.now = h.now.Add(jobTicketTTL + time.Minute)
+	h.srv.checkStalls()
+	got := waitState(t, h, client, id, "failed")
+	if !strings.Contains(got["error"].(string), "não abriu") {
+		t.Fatalf("motivo %v", got["error"])
+	}
+	select {
+	case <-stopped:
+	case <-time.After(3 * time.Second):
+		t.Fatal("o Chromium do trabalho não foi parado")
+	}
+}
+
+func TestAPageThatEntersAndNeverSaysAnythingFails(t *testing.T) {
+	h, fake := jobsHarness(t, 2)
+	entered := make(chan struct{})
+	fake.behave = func(w *worker, ctx context.Context) error {
+		close(entered)
+		<-ctx.Done()
+		return ctx.Err()
+	}
+	client, _ := h.account("enabled", true, "ana@exemplo.com")
+	_, job := newJob(t, h, client, "transcribeNote", "n1")
+	id := job["id"].(string)
+	waitState(t, h, client, id, "running")
+	// the clock moves only after the page is in (the fake enters in its own goroutine)
+	select {
+	case <-entered:
+	case <-time.After(3 * time.Second):
+		t.Fatal("a página não entrou")
+	}
+	// a page that is working but quiet for a while is not stopped
+	h.now = h.now.Add(jobSilentStart - time.Minute)
+	h.srv.checkStalls()
+	if state := jobOf(t, h, client, id)["state"]; state != "running" {
+		t.Fatalf("parado cedo demais: %v", state)
+	}
+	h.now = h.now.Add(2 * time.Minute)
+	h.srv.checkStalls()
+	got := waitState(t, h, client, id, "failed")
+	if !strings.Contains(got["error"].(string), "não deu notícia") {
+		t.Fatalf("motivo %v", got["error"])
+	}
+}
+
+func TestAPageThatReportedIsOnlyMarkedStalled(t *testing.T) {
+	h, fake := jobsHarness(t, 2)
+	fake.behave = func(w *worker, ctx context.Context) error {
+		w.post("/progress", map[string]any{"message": "Transcrevendo pela DeepInfra", "fraction": 0.1})
+		<-ctx.Done()
+		return ctx.Err()
+	}
+	client, _ := h.account("enabled", true, "ana@exemplo.com")
+	_, job := newJob(t, h, client, "transcribeNote", "n1")
+	id := job["id"].(string)
+	waitState(t, h, client, id, "running")
+	for deadline := time.Now().Add(3 * time.Second); jobOf(t, h, client, id)["lastProgress"] == nil; {
+		if time.Now().After(deadline) {
+			t.Fatal("o andamento não chegou")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	h.now = h.now.Add(jobSilentStart + 10*time.Minute)
+	h.srv.checkStalls()
+	got := jobOf(t, h, client, id)
+	if got["state"] != "running" || got["stalledSince"] == nil {
+		t.Fatalf("um trabalho que já deu notícia só fica marcado parado: %v %v", got["state"], got["stalledSince"])
+	}
+}

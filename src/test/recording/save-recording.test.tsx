@@ -97,12 +97,11 @@ const open = () =>
   )
 
 describe('Gravação pronta: guardar ou transcrever', () => {
-  it('"Só guardar" saves a note of the recording, linked to the media, and opens it, with no transcription', async () => {
+  it('nada marcado saves a note of the recording, linked to the media, and opens it, with no transcription', async () => {
     open()
-    expect(screen.getByRole('radiogroup', { name: 'O que fazer com a gravação' })).toBeInTheDocument()
-    expect(screen.getByRole('radio', { name: /Só transcrever/ })).toHaveAttribute('aria-checked', 'true')
-    expect(screen.queryByText('O que gerar')).not.toBeInTheDocument()
-    fireEvent.click(screen.getByRole('radio', { name: /Só guardar/ }))
+    expect(screen.getByRole('group', { name: 'Gerar' })).toBeInTheDocument()
+    expect(screen.getByRole('checkbox', { name: /^Transcrição/ })).toHaveAttribute('aria-checked', 'true')
+    fireEvent.click(screen.getByRole('checkbox', { name: /^Transcrição/ }))
     fireEvent.click(screen.getByRole('button', { name: 'Salvar' }))
     await waitFor(() => expect(navigate).toHaveBeenCalled())
     const note = useLibraryStore.getState().files[0]
@@ -113,7 +112,7 @@ describe('Gravação pronta: guardar ou transcrever', () => {
     expect(transcribe).not.toHaveBeenCalled()
   })
 
-  it('"Só transcrever" saves and transcribes inside the note', async () => {
+  it('"Transcrição" (marcada de início) saves and transcribes inside the note', async () => {
     open()
     fireEvent.click(screen.getByRole('button', { name: 'Salvar' }))
     await waitFor(() => expect(transcribe).toHaveBeenCalled())

@@ -131,7 +131,7 @@ describe('Gravação pronta', () => {
   it('"Só neste computador" deixa a mídia em Mídias e a nota no lugar da pasta', async () => {
     useRecorderStore.setState({ result: recording('app', faculdade.id) })
     renderDone()
-    fireEvent.click(screen.getByRole('radio', { name: /só neste computador/ }))
+    fireEvent.click(screen.getByRole('radio', { name: /Neste computador/ }))
     fireEvent.click(screen.getByRole('button', { name: 'Salvar' }))
     await waitFor(() => expect(saveRecording).toHaveBeenCalled())
     const request = saveRecording.mock.calls[0][0] as Record<string, unknown>
