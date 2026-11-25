@@ -22,29 +22,67 @@ function startTicker(intervalMs: number, tick: () => void): Ticker {
   return { stop: () => window.clearInterval(timer) }
 }
 
+// The optimized recording (spec 007, FR-023, research R17): after the screen changes, frames go on for this long so the encoder settles
+// the picture (the text gets sharp), and a still screen still hands one frame this often.
+const SETTLE_MS = 1000
+const BEAT_MS = 1000
+
 export class ScreenCanvas {
   readonly track: MediaStreamTrack
   private readonly canvas = document.createElement('canvas')
   private readonly context: CanvasRenderingContext2D | null
   private readonly video = document.createElement('video')
   private readonly ticker: Ticker
+  /** A frame only when the screen changed: the canvas has no rate of its own and is asked for each frame. */
+  private readonly onlyChanges: boolean
+  /** The browser tells each new frame of the screen; without it, every tick counts as a change. */
+  private readonly told = typeof HTMLVideoElement !== 'undefined' && 'requestVideoFrameCallback' in HTMLVideoElement.prototype
+  private watching = false
+  private stopped = false
+  private fresh = true
+  private changedAt = 0
+  private sentAt = 0
 
-  constructor(fps: number) {
+  constructor(fps: number, onlyChanges = false) {
+    this.onlyChanges = onlyChanges
     this.canvas.width = 1280
     this.canvas.height = 720
     this.context = this.canvas.getContext('2d')
     this.video.muted = true
     this.video.playsInline = true
-    this.track = this.canvas.captureStream(fps).getVideoTracks()[0]
+    this.track = this.canvas.captureStream(onlyChanges ? 0 : fps).getVideoTracks()[0]
     this.ticker = startTicker(1000 / fps, () => this.draw())
   }
 
   show(stream: MediaStream | null): void {
     this.video.srcObject = stream
+    this.fresh = true
     if (stream) void this.video.play().catch(() => undefined)
+    if (this.onlyChanges && this.told && !this.watching) {
+      this.watching = true
+      this.video.requestVideoFrameCallback(this.watch)
+    }
+  }
+
+  private readonly watch = (): void => {
+    this.fresh = true
+    if (!this.stopped) this.video.requestVideoFrameCallback(this.watch)
   }
 
   private draw(): void {
+    if (!this.onlyChanges) return this.paint()
+    const now = Date.now()
+    if (this.fresh || !this.told) {
+      this.fresh = false
+      this.changedAt = now
+    }
+    if (now - this.changedAt >= SETTLE_MS && now - this.sentAt < BEAT_MS) return
+    this.paint()
+    this.sentAt = now
+    if ('requestFrame' in this.track) (this.track as CanvasCaptureMediaStreamTrack).requestFrame()
+  }
+
+  private paint(): void {
     const context = this.context
     if (!context) return
     if (!this.video.srcObject) {
@@ -66,6 +104,7 @@ export class ScreenCanvas {
   }
 
   stop(): void {
+    this.stopped = true
     this.ticker.stop()
     this.track.stop()
     this.video.srcObject = null

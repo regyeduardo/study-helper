@@ -2,7 +2,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { MeetingRecorder } from '@/lib/recording/recorder'
-import { AUDIO_BITS_PER_SECOND, CHOSEN, recorderOptions, VARIANTS } from '@/lib/recording/variants'
+import { AUDIO_BITS_PER_SECOND, CHOSEN, OPTIMIZED, recorderOptions, VARIANTS } from '@/lib/recording/variants'
 import { FakeMediaRecorder, FakeMediaStream, FakeTrack, installMediaEnvironment } from '@/test/recording/media-fakes'
 
 const everything = () => true
@@ -34,6 +34,16 @@ describe('as variantes do gravador', () => {
   })
 })
 
+// Spec 007, FR-023 (T151/T152): a escolhida na medida a 30 fps (medidas-gravacao.md): VP9 até 250 kb/s, quadro só quando a tela muda e
+// quadro-chave a cada 30 s (a cada 2 min, pular um trecho de movimento passava de 2 s).
+describe('a gravação otimizada', () => {
+  it('VP9 até 250 kb/s a 30 fps, quadro-chave a cada 30 s, dica de texto, quadro só quando a tela muda', () => {
+    expect(recorderOptions(OPTIMIZED, 30, everything)).toEqual({ mimeType: 'video/webm;codecs=vp9,opus', audioBitsPerSecond: 32_000, videoBitsPerSecond: 250_000, videoKeyFrameIntervalDuration: 30_000 })
+    expect(OPTIMIZED.contentHint).toBe('text')
+    expect(OPTIMIZED.onlyChanges).toBe(true)
+  })
+})
+
 describe('o gravador grava com a escolhida', () => {
   afterEach(() => {
     vi.restoreAllMocks()
@@ -52,5 +62,17 @@ describe('o gravador grava com a escolhida', () => {
     const recorder = FakeMediaRecorder.instances.at(-1)!
     expect(recorder.options).toEqual(recorderOptions(VARIANTS[CHOSEN], 5, mime => FakeMediaRecorder.supported.has(mime)))
     expect((canvasTrack as unknown as { contentHint?: string }).contentHint).toBe(VARIANTS[CHOSEN].contentHint)
+  })
+
+  it('a gravação otimizada grava com as opções dela', async () => {
+    installMediaEnvironment()
+    const canvasTrack = Object.assign(new FakeTrack('video', 'canvas'), { requestFrame: vi.fn() })
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation((() => ({ drawImage: vi.fn(), fillRect: vi.fn(), fillStyle: '' })) as never)
+    Object.defineProperty(HTMLCanvasElement.prototype, 'captureStream', { configurable: true, value: () => new FakeMediaStream([canvasTrack]) })
+    vi.spyOn(HTMLMediaElement.prototype, 'play').mockImplementation(async () => undefined)
+    const callbacks = { onLive: vi.fn(), onTick: vi.fn(), onFinished: vi.fn(), onCancelled: vi.fn(), onError: vi.fn() }
+    await new MeetingRecorder(callbacks).start('tab', undefined, { video: { fps: 30, optimized: true } })
+    expect(FakeMediaRecorder.instances.at(-1)!.options).toEqual(recorderOptions(OPTIMIZED, 30, mime => FakeMediaRecorder.supported.has(mime)))
+    expect((canvasTrack as unknown as { contentHint?: string }).contentHint).toBe('text')
   })
 })

@@ -89,3 +89,92 @@ describe('recording the screen as video', () => {
     expect(lastRecorder().options?.mimeType).toMatch(/^video\//)
   })
 })
+
+// Spec 007, FR-023 (research R17, T152): a gravação otimizada grava a 30 fps, mas o canvas só manda quadro quando a tela muda.
+describe('a gravação otimizada', () => {
+  let screenFrames: (() => void)[]
+  let canvasTrack: FakeTrack & { requestFrame: ReturnType<typeof vi.fn>; contentHint?: string }
+
+  beforeEach(() => {
+    screenFrames = []
+    canvasTrack = Object.assign(new FakeTrack('video', 'canvas'), { requestFrame: vi.fn() })
+    captureStream.mockImplementation(() => new FakeMediaStream([canvasTrack]))
+    Object.defineProperty(HTMLVideoElement.prototype, 'requestVideoFrameCallback', {
+      configurable: true,
+      value(callback: () => void) {
+        screenFrames.push(callback)
+        return screenFrames.length
+      },
+    })
+  })
+
+  afterEach(() => {
+    delete (HTMLVideoElement.prototype as { requestVideoFrameCallback?: unknown }).requestVideoFrameCallback
+  })
+
+  // the screen hands a new frame: the callbacks waiting run, as the browser does
+  const newScreenFrame = () => screenFrames.splice(0).forEach(callback => callback())
+
+  it('pede a tela a 30 fps e grava o canvas sem taxa fixa, com a dica de texto', async () => {
+    await new MeetingRecorder(callbacks()).start('tab', undefined, { video: { fps: 30, optimized: true } })
+    expect(env.getDisplayMedia).toHaveBeenCalledWith(expect.objectContaining({ video: { frameRate: 30 }, audio: true }))
+    expect(captureStream).toHaveBeenCalledWith(0)
+    expect(canvasTrack.contentHint).toBe('text')
+    expect(lastRecorder().options?.mimeType).toMatch(/^video\//)
+  })
+
+  it('tela parada: um quadro por segundo depois de firmar a imagem; tela mudando: 30 por segundo', async () => {
+    vi.useFakeTimers()
+    await new MeetingRecorder(callbacks()).start('tab', undefined, { video: { fps: 30, optimized: true } })
+    newScreenFrame()
+    // the second after a change, the picture settles at 30 fps
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(canvasTrack.requestFrame.mock.calls.length).toBeGreaterThanOrEqual(28)
+    // still screen: only the frame of each second
+    canvasTrack.requestFrame.mockClear()
+    await vi.advanceTimersByTimeAsync(3000)
+    expect(canvasTrack.requestFrame.mock.calls.length).toBeGreaterThanOrEqual(2)
+    expect(canvasTrack.requestFrame.mock.calls.length).toBeLessThanOrEqual(4)
+    // the screen changes every frame: 30 per second
+    canvasTrack.requestFrame.mockClear()
+    for (let tick = 0; tick < 30; tick++) {
+      newScreenFrame()
+      await vi.advanceTimersByTimeAsync(1000 / 30)
+    }
+    expect(canvasTrack.requestFrame.mock.calls.length).toBeGreaterThanOrEqual(28)
+  })
+
+  it('tela parada não é desenhada de novo a cada quadro', async () => {
+    vi.useFakeTimers()
+    await new MeetingRecorder(callbacks()).start('tab', undefined, { video: { fps: 30, optimized: true } })
+    newScreenFrame()
+    await vi.advanceTimersByTimeAsync(1500)
+    drawn = []
+    await vi.advanceTimersByTimeAsync(3000)
+    expect(drawn.length).toBeLessThanOrEqual(4)
+  })
+
+  it('onde o navegador não avisa o quadro novo da tela, grava a 30 fps como a de 30', async () => {
+    delete (HTMLVideoElement.prototype as { requestVideoFrameCallback?: unknown }).requestVideoFrameCallback
+    vi.useFakeTimers()
+    await new MeetingRecorder(callbacks()).start('tab', undefined, { video: { fps: 30, optimized: true } })
+    canvasTrack.requestFrame.mockClear()
+    await vi.advanceTimersByTimeAsync(2000)
+    expect(canvasTrack.requestFrame.mock.calls.length).toBeGreaterThanOrEqual(56)
+  })
+
+  it('a de 30 fps continua com taxa fixa e sem pedir quadro', async () => {
+    vi.useFakeTimers()
+    await new MeetingRecorder(callbacks()).start('tab', undefined, { video: { fps: 30 } })
+    expect(captureStream).toHaveBeenCalledWith(30)
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(canvasTrack.requestFrame).not.toHaveBeenCalled()
+  })
+
+  it('com a integração, também só manda quadro quando a tela muda', async () => {
+    const capture = { context: new FakeAudioContext(), microphone: { connect: vi.fn() }, source: { connect: vi.fn() }, label: 'Sistema inteiro', choice: { microphone: null, source: { kind: 'system' } }, stop: vi.fn(async () => undefined) }
+    await new MeetingRecorder(callbacks()).startIntegration(capture as unknown as IntegrationCapture, { video: { fps: 30, optimized: true } })
+    expect(env.getDisplayMedia).toHaveBeenCalledWith(expect.objectContaining({ video: { frameRate: 30 } }))
+    expect(captureStream).toHaveBeenCalledWith(0)
+  })
+})

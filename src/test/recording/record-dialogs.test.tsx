@@ -52,7 +52,7 @@ describe('RecordDialog', () => {
     expect(download).toHaveAttribute('href', expect.stringMatching(/desktop-latest\/study-helper-audio-x86_64\.AppImage$/))
     // the link shows while the search runs; the status says "não conectada" when the search ends (slow on a busy machine)
     await waitFor(() => expect(screen.getByRole('status', { name: 'Integração' })).toHaveTextContent('Integração não conectada'), { timeout: 5000 })
-    expect(screen.getByRole('radio', { name: /A aba da reunião/ })).toBeInTheDocument()
+    expect(screen.getByRole('radio', { name: /Aba da reunião/ })).toBeInTheDocument()
   })
 
   it('with the integration, lists the open windows, previews the chosen one and records exactly that preview', async () => {
@@ -93,7 +93,7 @@ describe('RecordDialog', () => {
     expect(screen.getByRole('option', { name: 'Não gravar o som do computador' })).toBeInTheDocument()
     expect(screen.getAllByText(/Monitor of…/).length).toBeGreaterThan(0)
     expect(screen.queryByText(/só o microfone e a imagem/)).not.toBeInTheDocument()
-    expect(screen.getByRole('note', { name: 'Aviso do Firefox' })).toHaveTextContent('Escolha "Sem compartilhar a tela" para gravar o seu microfone e todo o som do computador')
+    expect(screen.getByRole('note', { name: 'Aviso do Firefox' })).toHaveTextContent('Escolha "Sem compartilhar" para gravar o seu microfone e todo o som do computador')
     expect(screen.getByText(/Parar pela barra do navegador também termina/)).toBeInTheDocument()
   })
 
@@ -155,7 +155,7 @@ describe('RecordDialog', () => {
     const start = vi.fn(async () => undefined)
     useRecorderStore.setState({ start })
     render(<RecordDialog />)
-    fireEvent.click(await screen.findByRole('radio', { name: /Sem compartilhar a tela/ }))
+    fireEvent.click(await screen.findByRole('radio', { name: /Sem compartilhar/ }))
     fireEvent.click(screen.getByRole('button', { name: /Começar a gravar/ }))
     await waitFor(() => expect(start).toHaveBeenCalledWith('microphone', 'auto', { microphoneOn: true, microphoneId: null, video: null, destination: 'none', folderId: null }))
   })
@@ -164,7 +164,7 @@ describe('RecordDialog', () => {
     const start = vi.fn(async () => undefined)
     useRecorderStore.setState({ start })
     render(<RecordDialog />)
-    fireEvent.click(await screen.findByRole('radio', { name: /Sem compartilhar a tela/ }))
+    fireEvent.click(await screen.findByRole('radio', { name: /Sem compartilhar/ }))
     fireEvent.click(screen.getByRole('checkbox', { name: /Gravar o meu microfone/ }))
     fireEvent.change(screen.getByLabelText('Som do computador'), { target: { value: 'none' } })
     expect(screen.getByRole('button', { name: /Começar a gravar/ })).toBeDisabled()

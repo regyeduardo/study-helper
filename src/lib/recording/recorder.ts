@@ -4,7 +4,7 @@ import { integrationSourceKey, type IntegrationSourceChoice } from '@/lib/record
 import type { Meters } from '@/lib/recording/miniplayer'
 import { ScreenCanvas } from '@/lib/recording/frame-grab'
 import { makeSeekable } from '@/lib/recording/seekable'
-import { CHOSEN, recorderOptions, VARIANTS } from '@/lib/recording/variants'
+import { CHOSEN, OPTIMIZED, recorderOptions, type RecordingVariant, VARIANTS } from '@/lib/recording/variants'
 
 export type CaptureMode = 'tab' | 'screen' | 'microphone' | 'integration'
 
@@ -39,7 +39,8 @@ export type RecordingDestination = SourceStorage | 'app'
 export interface StartOptions {
   microphoneOn?: boolean
   microphoneId?: string | null
-  video?: { fps: VideoFps } | null
+  /** optimized: the "Gravação otimizada" (FR-023): 30 fps, a frame only when the screen changes. */
+  video?: { fps: VideoFps; optimized?: boolean } | null
   destination?: RecordingDestination
   /** The library folder open when the recording started: it comes chosen at the end. */
   folderId?: string | null
@@ -98,8 +99,8 @@ export async function listAudioInputs(askPermission = false): Promise<AudioInput
     .map(device => ({ deviceId: device.deviceId, label: device.label, computer: isComputerInput(device.label) }))
 }
 
-function supportedMime(video: boolean): string {
-  return (video ? VARIANT.videoMimes : MIME_OPTIONS).find(mime => MediaRecorder.isTypeSupported(mime)) ?? ''
+function supportedMime(variant: RecordingVariant | null): string {
+  return (variant ? variant.videoMimes : MIME_OPTIONS).find(mime => MediaRecorder.isTypeSupported(mime)) ?? ''
 }
 
 function extensionOf(mime: string): string {
@@ -336,6 +337,7 @@ export class MeetingRecorder {
   private handed: MediaStream | null = null
   private screen: MediaStream | null = null
   private fps: VideoFps | null = null
+  private variant: RecordingVariant = VARIANT
   private canvas: ScreenCanvas | null = null
   private gains: Record<'microphone' | 'source', GainNode | null> = { microphone: null, source: null }
   private analysers: Record<'microphone' | 'source', AnalyserNode | null> = { microphone: null, source: null }
@@ -361,8 +363,7 @@ export class MeetingRecorder {
       this.mode = 'integration'
       this.integration = capture
       this.audioContext = capture.context
-      this.fps = options.video?.fps ?? null
-      if (this.fps) this.canvas = new ScreenCanvas(this.fps)
+      this.useVideo(options)
       const mix = this.prepare(capture.context)
       capture.microphone.connect(this.gains.microphone!)
       capture.source.connect(this.gains.source!)
@@ -375,6 +376,12 @@ export class MeetingRecorder {
       await this.releaseDevices()
       throw error
     }
+  }
+
+  private useVideo(options: StartOptions): void {
+    this.fps = options.video?.fps ?? null
+    this.variant = options.video?.optimized ? OPTIMIZED : VARIANT
+    if (this.fps) this.canvas = new ScreenCanvas(this.fps, Boolean(options.video?.optimized))
   }
 
   private prepare(context: AudioContext): MediaStreamAudioDestinationNode {
@@ -440,9 +447,8 @@ export class MeetingRecorder {
 
   private async begin(mode: CaptureMode, computerAudio: string, options: StartOptions): Promise<void> {
     this.mode = mode
-    this.fps = options.video?.fps ?? null
+    this.useVideo(options)
     this.handed = options.display ?? null
-    if (this.fps) this.canvas = new ScreenCanvas(this.fps)
     this.audioContext = new AudioContext()
     const mix = this.prepare(this.audioContext)
     const displayAudio = mode === 'tab' || mode === 'screen' ? await this.share(mode) : null
@@ -480,14 +486,14 @@ export class MeetingRecorder {
   }
 
   private async record(mix: MediaStreamAudioDestinationNode): Promise<void> {
-    this.mime = supportedMime(this.canvas !== null)
+    this.mime = supportedMime(this.canvas ? this.variant : null)
     const root = await navigator.storage.getDirectory()
     this.handle = await root.getFileHandle(`gravacao-${Date.now()}.${extensionOf(this.mime)}`, { create: true })
     this.writable = await this.handle.createWritable()
 
     const tracks = [...(this.canvas ? [this.canvas.track] : []), ...mix.stream.getAudioTracks()]
-    if (this.canvas && VARIANT.contentHint) this.canvas.track.contentHint = VARIANT.contentHint
-    const { mimeType: _chosen, ...settings } = recorderOptions(VARIANT, this.fps, mime => MediaRecorder.isTypeSupported(mime))
+    if (this.canvas && this.variant.contentHint) this.canvas.track.contentHint = this.variant.contentHint
+    const { mimeType: _chosen, ...settings } = recorderOptions(this.variant, this.fps, mime => MediaRecorder.isTypeSupported(mime))
     this.recorder = new MediaRecorder(new MediaStream(tracks), { ...(this.mime ? { mimeType: this.mime } : {}), ...settings })
     this.recorder.ondataavailable = event => {
       if (!event.data.size || !this.writable) return

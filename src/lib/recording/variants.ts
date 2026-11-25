@@ -7,7 +7,8 @@
 export type VariantId = 'A' | 'B' | 'C' | 'D' | 'E' | 'F'
 
 export interface RecordingVariant {
-  id: VariantId
+  /** O: the optimized recording, apart from the measured A to F. */
+  id: VariantId | 'O'
   /** What it is, for the measure. */
   label: string
   /** Video bitrate at 5 and at 30 frames per second. */
@@ -16,8 +17,8 @@ export interface RecordingVariant {
   videoMimes: string[]
   /** A key frame at least this often (ms), where the browser takes the option. */
   keyFrameIntervalMs?: number
-  /** The hint for the encoder: a screen with text keeps its detail. */
-  contentHint?: 'detail'
+  /** The hint for the encoder: a screen with text keeps its detail ('text' also turns on AV1's tools for screens). */
+  contentHint?: 'detail' | 'text'
 }
 
 const VP9_FIRST = ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm', 'video/mp4']
@@ -34,6 +35,22 @@ export const VARIANTS: Record<VariantId, RecordingVariant> = {
 
 /** The variant the app records with (medidas-gravacao.md). */
 export const CHOSEN: VariantId = 'F'
+
+/**
+ * The optimized recording, an option of "Gravar a tela" (spec 007, FR-023, research R17; numbers in medidas-gravacao.md): 30 frames per
+ * second, but the canvas hands a frame only when the screen changed (ScreenCanvas), VP9 up to 250 kb/s with the hint of text and a key
+ * frame every 30 s. Chrome otherwise puts one every 100 frames (3 s at 30 fps), which made slides 3 times heavier; every 2 min, jumping
+ * inside a stretch of motion took more than 2 s. AV1 was not lighter in motion and older iPhones do not play it.
+ */
+export const OPTIMIZED: RecordingVariant & { onlyChanges: true } = {
+  id: 'O',
+  label: 'otimizada: VP9 até 250 kb/s, só quando a tela muda, quadro-chave a cada 30 s, texto',
+  videoBitsPerSecond: { 5: 250_000, 30: 250_000 },
+  videoMimes: VP9_FIRST,
+  keyFrameIntervalMs: 30_000,
+  contentHint: 'text',
+  onlyChanges: true,
+}
 
 export const AUDIO_BITS_PER_SECOND = 32_000
 

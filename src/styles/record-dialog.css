@@ -1,0 +1,34 @@
+/* "Gravar reunião" (spec 007, FR-023, mocks/gravar-reuniao/decisoes.md): wide, in two columns, so it fits without scrolling; on a phone
+   one column, and only the middle (.db) scrolls while the title and the buttons stay. */
+.rd-cols{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;align-items:start}
+.rd-col{display:grid;gap:14px;min-width:0;align-content:start}
+@media (max-width:760px){.rd-cols{grid-template-columns:1fr}}
+
+/* Choices side by side ("O que gravar", "Onde salvar"): the app's segmented look (filter panel), at the height of a field. */
+.rd-seg{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(0,1fr);gap:2px;padding:2px;background:var(--bg);border:1px solid var(--border);border-radius:7px}
+.rd-segb{min-height:30px;padding:0 6px;border-radius:5px;font-size:12.5px;color:var(--fg-muted);cursor:pointer;display:grid;place-items:center;text-align:center;line-height:1.25}
+.rd-segb b{font-weight:400}
+.rd-segb:hover{color:var(--fg);background:var(--bg-hover)}
+.rd-segb[aria-checked="true"]{background:var(--bg-muted);color:var(--fg)}
+.rd-segb[aria-checked="true"] b{font-weight:600}
+.rd-segb[aria-disabled="true"],.rd-segb[aria-disabled="true"]:hover{color:var(--fg-faint);background:none;cursor:not-allowed}
+.rd-segb:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.rd-about{font-size:12px;color:var(--fg-muted)}
+@media (max-width:760px),(pointer:coarse){.rd-segb{min-height:40px}}
+
+/* "Gravar a tela": four choices in 2 x 2, each with how much an hour takes; the new one wears a tag on its border (as .opt-rec). */
+.opts.rd-screen{grid-template-columns:repeat(2,minmax(0,1fr))}
+.rd-screen .opt{position:relative;padding:9px 10px;gap:9px}
+.rd-screen .opt .rd-new{position:absolute;top:-9px;right:12px;display:inline-block;margin:0;padding:1px 8px;border-radius:10px;font-size:11.5px;font-weight:600;line-height:1.5;color:var(--accent);background:var(--accent-soft);border:1px solid var(--bg)}
+@media (max-width:560px){.opts.rd-screen{grid-template-columns:1fr}}
+.rd-note{display:flex;gap:6px;align-items:flex-start;font-size:12px;color:var(--fg-muted)}
+.rd-note .ic{width:14px;height:14px;margin-top:1px}
+
+/* The microphone in one row: the box and the list together. */
+.rd-mic{display:grid;grid-template-columns:auto minmax(0,1fr);gap:8px;align-items:stretch}
+.rd-mic .opt{padding:7px 12px;align-items:center}
+.rd-mic .opt .radio{margin-top:0}
+@media (max-width:420px){.rd-mic{grid-template-columns:1fr}}
+
+/* The footer: the recordings of this computer on the left, the window's buttons on the right. */
+.df .rd-media{margin-right:auto}

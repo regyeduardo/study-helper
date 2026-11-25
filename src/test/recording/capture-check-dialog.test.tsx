@@ -104,7 +104,7 @@ describe('RecordDialog check before recording', () => {
 
   it('has no window to pick when nothing of the screen is recorded', async () => {
     await openCheck()
-    fireEvent.click(screen.getByRole('radio', { name: /Sem compartilhar a tela/ }))
+    fireEvent.click(screen.getByRole('radio', { name: /Sem compartilhar/ }))
     expect(screen.queryByRole('button', { name: /Escolher .* agora/ })).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('radio', { name: /5 fps/ }))
     expect(screen.getByRole('button', { name: 'Escolher a janela agora' })).toBeInTheDocument()

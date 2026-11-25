@@ -7,10 +7,10 @@ workers_dev = true
 ALLOWED_ORIGINS = "https://study.ryns.me,https://regyeduardo.github.io"
 APP_URL = "https://study.ryns.me"
 
-# Mídia dos compartilhamentos fica em shared-media/<id>/<nota> e vale 3 dias
-# (o Worker responde 410 depois disso e apaga). Regra opcional de limpeza no R2:
-#   npx wrangler r2 bucket lifecycle add study-helper midia-3-dias shared-media/ --expire-days 3
-# Atenção: "Atualizar o link" dá mais 3 dias ao link e à mídia que já está nele (sem enviar de novo). Com essa regra o R2 apaga a mídia 3 dias
+# Mídia dos compartilhamentos fica em shared-media/<id>/<nota> e vale o prazo escolhido: 1, 3 ou 7 dias (spec 007)
+# (o Worker responde 410 depois disso e apaga). Regra opcional de limpeza no R2, com o prazo mais longo:
+#   npx wrangler r2 bucket lifecycle add study-helper midia-7-dias shared-media/ --expire-days 7
+# Atenção: "Atualizar o link" dá mais tempo ao link e à mídia que já está nele (sem enviar de novo). Com essa regra o R2 apaga a mídia 7 dias
 # depois do envio, mesmo com o link atualizado; ao atualizar de novo, o app vê que ela sumiu e envia outra vez.
 [[r2_buckets]]
 binding = "BUCKET"
