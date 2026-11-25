@@ -2,9 +2,10 @@ import type { RecordingMark, SourceStorage } from '@/types/domain'
 import type { IntegrationCapture } from '@/lib/recording/integration'
 import { integrationSourceKey, type IntegrationSourceChoice } from '@/lib/recording/integration'
 import type { Meters } from '@/lib/recording/miniplayer'
+import { CodecRecorder } from '@/lib/recording/codec-recorder'
 import { ScreenCanvas } from '@/lib/recording/frame-grab'
 import { makeSeekable } from '@/lib/recording/seekable'
-import { CHOSEN, OPTIMIZED, recorderOptions, type RecordingVariant, VARIANTS } from '@/lib/recording/variants'
+import { AUDIO_BITS_PER_SECOND, CHOSEN, OPTIMIZED, recorderOptions, type RecordingVariant, VARIANTS } from '@/lib/recording/variants'
 
 export type CaptureMode = 'tab' | 'screen' | 'microphone' | 'integration'
 
@@ -314,8 +315,10 @@ function emptyLive(): LiveCapture {
 }
 
 export class MeetingRecorder {
-  private recorder: MediaRecorder | null = null
+  private recorder: MediaRecorder | CodecRecorder | null = null
   private audioContext: AudioContext | null = null
+  /** Where the microphone and the source meet, before the recorder: the optimized recording through WebCodecs hears it here. */
+  private mixNode: AudioNode | null = null
   private integration: IntegrationCapture | null = null
   private writable: FileSystemWritableFileStream | null = null
   private handle: FileSystemFileHandle | null = null
@@ -390,6 +393,7 @@ export class MeetingRecorder {
     mix.channelCountMode = 'explicit'
     const sides = context.createChannelMerger(2)
     sides.connect(mix)
+    this.mixNode = sides
     for (const [side, kind] of (['microphone', 'source'] as const).entries()) {
       const gain = context.createGain()
       gain.connect(sides, 0, side)
@@ -486,16 +490,24 @@ export class MeetingRecorder {
   }
 
   private async record(mix: MediaStreamAudioDestinationNode): Promise<void> {
-    this.mime = supportedMime(this.canvas ? this.variant : null)
+    // the optimized recording through WebCodecs where the browser has it (research R18, T174); MediaRecorder for the others and elsewhere
+    const codec =
+      this.canvas && this.variant === OPTIMIZED && this.audioContext && this.mixNode
+        ? await CodecRecorder.open(this.canvas, this.audioContext, this.mixNode, { videoBitsPerSecond: OPTIMIZED.videoBitsPerSecond[30], audioBitsPerSecond: AUDIO_BITS_PER_SECOND, keyFrameIntervalMs: OPTIMIZED.keyFrameIntervalMs ?? 30_000 })
+        : null
+    this.mime = codec ? codec.mimeType : supportedMime(this.canvas ? this.variant : null)
     const root = await navigator.storage.getDirectory()
     this.handle = await root.getFileHandle(`gravacao-${Date.now()}.${extensionOf(this.mime)}`, { create: true })
     this.writable = await this.handle.createWritable()
 
-    const tracks = [...(this.canvas ? [this.canvas.track] : []), ...mix.stream.getAudioTracks()]
-    if (this.canvas && this.variant.contentHint) this.canvas.track.contentHint = this.variant.contentHint
-    const { mimeType: _chosen, ...settings } = recorderOptions(this.variant, this.fps, mime => MediaRecorder.isTypeSupported(mime))
-    this.recorder = new MediaRecorder(new MediaStream(tracks), { ...(this.mime ? { mimeType: this.mime } : {}), ...settings })
-    this.recorder.ondataavailable = event => {
+    if (codec) this.recorder = codec
+    else {
+      const tracks = [...(this.canvas ? [this.canvas.track] : []), ...mix.stream.getAudioTracks()]
+      if (this.canvas && this.variant.contentHint) this.canvas.track.contentHint = this.variant.contentHint
+      const { mimeType: _chosen, ...settings } = recorderOptions(this.variant, this.fps, mime => MediaRecorder.isTypeSupported(mime))
+      this.recorder = new MediaRecorder(new MediaStream(tracks), { ...(this.mime ? { mimeType: this.mime } : {}), ...settings })
+    }
+    this.recorder.ondataavailable = (event: { data: Blob }) => {
       if (!event.data.size || !this.writable) return
       const writable = this.writable
       this.writing = this.writing.then(() => writable.write(event.data))

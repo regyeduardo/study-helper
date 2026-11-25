@@ -43,9 +43,13 @@ export class FakeAudioContext {
   readonly gains: { gain: { value: number }; connect: ReturnType<typeof vi.fn>; disconnect: ReturnType<typeof vi.fn> }[] = []
   readonly analysers: { fftSize: number; level: number; getByteTimeDomainData: ReturnType<typeof vi.fn> }[] = []
   readonly oscillators: { frequency: { value: number }; connect: ReturnType<typeof vi.fn>; start: ReturnType<typeof vi.fn>; stop: ReturnType<typeof vi.fn> }[] = []
-  readonly merger = { connect: vi.fn() }
+  readonly merger = { connect: vi.fn(), disconnect: vi.fn() }
   readonly close = vi.fn(async () => undefined)
   readonly resume = vi.fn(async () => undefined)
+  // the clock and the worklet of the optimized recording through WebCodecs (T174)
+  readonly sampleRate = 48000
+  currentTime = 0
+  readonly audioWorklet = { addModule: vi.fn(async () => undefined) }
 
   constructor() {
     FakeAudioContext.instances.push(this)
