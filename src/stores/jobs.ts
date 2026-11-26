@@ -40,6 +40,7 @@ import { isSourceNote, isYoutube, mediaOf, type NoteMedia, readsAsTranscript, re
 import { entryOfSource, entryOriginOf, keptInNote, linkIn, noteSourceOf } from '@/lib/note-source'
 import { cannotWatch, youtubeParts } from '@/lib/generation/youtube-video'
 import { downloadStoredSource, sourceExpired, storeSource } from '@/lib/storage/source-storage'
+import { convertVideo, NotConvertible } from '@/lib/recording/convert-video'
 import { keepLocalMedia, linkLocalMedia, listLocalMedia, readLocalMedia } from '@/lib/recording/media-library'
 import { transcribe } from '@/lib/transcription'
 import { StageClock } from '@/lib/transcription/types'
@@ -48,7 +49,7 @@ import { recorderName, useAccountStore } from '@/stores/account'
 import { liveFolders, useLibraryStore } from '@/stores/library'
 import { mediaOfModel, searchesWeb, useModelsStore } from '@/stores/models'
 import { askOf } from '@/stores/retry'
-import type { Overlay } from '@/stores/ui'
+import { type Overlay, useUiStore } from '@/stores/ui'
 
 export type Agent = 'lesson' | 'explanation' | 'meeting' | 'reading'
 
@@ -121,6 +122,8 @@ export interface NewContentRequest {
   models?: GenerationModels
   /** Of a video, what the AI analyzes (FR-046); absent: the media when the model hears it, else the transcription. An audio always goes by its transcription. */
   analyze?: MediaAnalysis
+  /** "Converter para o formato otimizado" (T184): a video sent becomes the optimized recording's format before it is kept or read. */
+  optimize?: boolean
 }
 
 /** What the generation dialog picked: who writes, who transcribes; `everyStep`: the video model writes the document (Aula and Explicação); `steps`: what was picked in "Modelos por passo" for the Ata of a video. */
@@ -663,6 +666,26 @@ export const useJobsStore = create<JobsState>((set, get) => {
     if (suggested.length) await library().updateFile(fileId, { suggestedTags: suggested })
   }
 
+  /**
+   * "Converter para o formato otimizado" (T184, research R19): the video sent becomes the optimized recording's format before anything
+   * keeps or reads it, so only the converted one is kept (owner's choice). One that cannot be converted goes as it is, saying why: the
+   * sending is never lost. Cancelling here cancels the sending.
+   */
+  const optimizedRequest = async (request: NewContentRequest, progress: (message: string, fraction?: number) => void, signal: AbortSignal): Promise<NewContentRequest> => {
+    const { input } = request
+    if (!request.optimize || input.kind !== 'file' || !input.file.type.startsWith('video/')) return request
+    const converting = 'Convertendo o vídeo para o formato otimizado'
+    progress(converting, 0)
+    try {
+      const file = await convertVideo(input.file, fraction => progress(converting, fraction), signal)
+      return { ...request, input: { ...input, file } }
+    } catch (error) {
+      if (signal.aborted) throw error
+      useUiStore.getState().toast(`O vídeo não foi convertido: ${error instanceof NotConvertible ? error.message : failureText(error)}. Ele foi como estava.`)
+      return request
+    }
+  }
+
   const folderFor = async (source: FileMeta, place: Placement): Promise<string | null> => {
     if (place !== 'home') return place.folderId
     const home = homeFolderOf(source, library().folders)
@@ -951,11 +974,13 @@ export const useJobsStore = create<JobsState>((set, get) => {
     live: {},
     proposals: [],
 
-    startNewContent: async (request, onJob, retry) => {
-      const agent: Agent = request.input.kind === 'topic' && request.agent === 'lesson' ? 'explanation' : request.agent
-      const { job, controller } = openJob('generation', request.name || AGENT_LABEL[agent], null)
+    startNewContent: async (asked, onJob, retry) => {
+      const agent: Agent = asked.input.kind === 'topic' && asked.agent === 'lesson' ? 'explanation' : asked.agent
+      const { job, controller } = openJob('generation', asked.name || AGENT_LABEL[agent], null)
       if (retry) patchJob(job.id, { retry })
       onJob?.(job.id)
+      // with "Converter para o formato otimizado", the converted video is the one kept and read from here on
+      let request = asked
       let resolved: ResolvedInput
       // "Transcrição + vídeo": the media waits for the transcription, to go with it in the same call
       let both: MediaParts | null = null
@@ -963,6 +988,7 @@ export const useJobsStore = create<JobsState>((set, get) => {
       let watched: MediaParts | null = null
       try {
         const progress = (message: string, fraction?: number) => patchJob(job.id, { message, fraction: fraction ?? null })
+        request = await optimizedRequest(asked, progress, controller.signal)
         const heardBy = request.models?.transcription
         const file = request.input.kind === 'recording' || request.input.kind === 'file' ? request.input.file : null
         if (file && agent !== 'reading' && /^(audio|video)\//.test(file.type)) {

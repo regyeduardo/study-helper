@@ -46,6 +46,8 @@ export interface NewContentForm {
   models: { aula?: string; explicacao?: string; ata?: string; transcricao?: string; videoWrites?: boolean }
   analyze?: MediaAnalysis
   steps?: AtaStepModels
+  /** "Converter para o formato otimizado" as the person left it (absent: what the file comes with). */
+  optimize?: boolean
 }
 
 export type Overlay =

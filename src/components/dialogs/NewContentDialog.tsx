@@ -27,6 +27,7 @@ import { ATA_MODELS, PART_ORDER } from "@/lib/generation/ata";
 import type { ContentInput } from "@/lib/generation/inputs";
 import { detectKind } from "@/lib/generation/uploads";
 import { noteNamed, placeOf } from "@/lib/names";
+import { canOptimize, optimizeByDefault } from "@/lib/recording/convert-video";
 import { paths } from "@/lib/paths";
 import { sideForNew } from "@/lib/storage/combined-repository";
 import { defaultStorage, storageOptions } from "@/lib/storage/source-storage";
@@ -186,6 +187,40 @@ function GenerationProgress({
 }
 
 /** `prefill`: the window as it was when that generation failed ("Tentar de novo" in the corner). */
+/** T184: the video sent may become the format of the optimized recording before it is kept or read; only the converted one is kept. */
+function OptimizeVideoField({
+  on,
+  available,
+  onToggle,
+}: {
+  on: boolean;
+  available: boolean;
+  onToggle(): void;
+}) {
+  return (
+    <button
+      type="button"
+      className="opt"
+      role="checkbox"
+      aria-checked={on}
+      disabled={!available}
+      onClick={onToggle}
+    >
+      <span className={`check ${on ? "on" : ""}`}>
+        {on && <Icon name="check" />}
+      </span>
+      <span>
+        <b>Converter para o formato otimizado</b>
+        <span>
+          {available
+            ? "Fica bem menor, no mesmo formato da gravação do app. Converte neste computador antes de guardar: leva alguns minutos, mais em vídeos longos."
+            : "Este navegador não converte vídeo: ele vai como está."}
+        </span>
+      </span>
+    </button>
+  );
+}
+
 export function NewContentDialog({
   folderId: initialFolder,
   prefill,
@@ -227,6 +262,10 @@ export function NewContentDialog({
   );
   const [ataModel, setAtaModel] = useState<AtaModelId | null>(
     prefill?.ataModel ?? null,
+  );
+  // null: what a new file comes with (checked above 200 MB)
+  const [optimize, setOptimize] = useState<boolean | null>(
+    prefill?.optimize ?? null,
   );
   const input = useRef<HTMLInputElement>(null);
 
@@ -282,6 +321,11 @@ export function NewContentDialog({
   const choosesParts =
     agent === "meeting" && tab === "file" && Boolean(file) && isMedia;
   const media = tab === "file" && Boolean(file) && isMedia;
+  // T184: a video sent may first become the optimized recording's format (checked above 200 MB, owner's choice)
+  const sendsVideo = media && Boolean(file?.type.startsWith("video/"));
+  const converts = canOptimize();
+  const optimizes =
+    sendsVideo && converts && (optimize ?? optimizeByDefault(file!.size));
   // a window that comes back after a failure has the models it had
   const was = (uid: string | undefined, videoWrites = false) => ({
     ...(uid ? { pick: uid } : {}),
@@ -337,6 +381,7 @@ export function NewContentDialog({
   const pickFile = async (picked: File | null) => {
     setFile(picked);
     setStorage(null);
+    setOptimize(null);
     if (!picked) return;
     const kind = detectKind(
       picked.name,
@@ -391,6 +436,7 @@ export function NewContentDialog({
     },
     ...(analyzes && analysis.sent ? { analyze: analysis.sent } : {}),
     ...(stepByStep ? { steps: steps.sent } : {}),
+    ...(optimize !== null ? { optimize } : {}),
   });
 
   const go = async () => {
@@ -424,6 +470,7 @@ export function NewContentDialog({
           ...(stepByStep ? { steps: steps.sent } : {}),
         },
         ...(analyzes && analysis.sent ? { analyze: analysis.sent } : {}),
+        ...(optimizes ? { optimize: true } : {}),
       },
       setJobId,
       retry,
@@ -572,6 +619,13 @@ export function NewContentDialog({
                 void pickFile(event.target.files?.[0] ?? null)
               }
             />
+            {sendsVideo && (
+              <OptimizeVideoField
+                on={optimizes}
+                available={converts}
+                onToggle={() => setOptimize(!optimizes)}
+              />
+            )}
             {media && <ModelPick choice={heardBy} label="Transcrição" />}
           </>
         )}
