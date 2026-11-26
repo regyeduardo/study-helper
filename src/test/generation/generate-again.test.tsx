@@ -321,6 +321,22 @@ describe('every other place that asks for a folder uses the single chooser', () 
     expect(useLibraryStore.getState().files[0]).toMatchObject({ name: 'nota', folderId: target.id })
   })
 
+  // FR-021 (spec 005, 25/11, "Bloquear e avisar"): a name already in the folder chosen is refused, saying which, and nothing is created
+  it('Importar: a name already in the folder chosen is refused, saying which', async () => {
+    const target = await destino()
+    await useLibraryStore.getState().createFile({ name: 'Nota', type: 'reading', folderId: target.id }, '# antes')
+    render(
+      <MemoryRouter>
+        <ImportDialog />
+      </MemoryRouter>,
+    )
+    const dialog = screen.getByRole('dialog', { name: 'Importar' })
+    chooseInField(dialog, 'Escolher pasta', 'Destino')
+    fireEvent.change(dialog.querySelector('#imp-file')!, { target: { files: [new File(['# Oi'], 'nota.md', { type: 'text/markdown' })] } })
+    expect(await within(dialog).findByRole('alert')).toHaveTextContent('Já existe uma nota chamada "Nota" em Destino.')
+    expect(useLibraryStore.getState().files.map(item => item.name)).toEqual(['Nota'])
+  })
+
   it('Isso rende uma pasta: the chooser says where it makes the folder, and the chosen one is used', async () => {
     const target = await destino()
     const acceptCourse = vi.fn(async () => 'pasta-feita')

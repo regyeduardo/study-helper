@@ -177,7 +177,9 @@ describe('Novo conteúdo de um link do YouTube', () => {
     expect(captions(calls)).toHaveLength(0)
     const entry = files().find(file => isSourceNote(file))!
     expect(entry.origin).toMatchObject({ input: 'youtube', url: URL_, name: TITLE })
-    expect(fileOf(id)).toMatchObject({ type: 'class', name: TITLE, parentFileId: entry.id, made: { analyze: 'video' } })
+    // the note of the video already has the title in this folder: the Aula gets " (2)" (FR-021, spec 005, 25/11)
+    expect(entry.name).toBe(TITLE)
+    expect(fileOf(id)).toMatchObject({ type: 'class', name: `${TITLE} (2)`, parentFileId: entry.id, made: { analyze: 'video' } })
   })
 
   it('"Transcrição + vídeo": o link como vídeo e a legenda na mesma chamada', async () => {

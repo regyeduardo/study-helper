@@ -8,6 +8,7 @@ import { Dialog } from '@/components/ui/Dialog'
 import { FolderIcon } from '@/components/ui/FolderIcon'
 import { Icon } from '@/components/ui/Icon'
 import { searchWords } from '@/lib/library-search'
+import { NameTakenError, type NameRule } from '@/lib/names'
 import { liveFolders, useLibraryStore } from '@/stores/library'
 
 /** A folder offered before it exists: the one named after the note. Whoever confirms it makes it. */
@@ -18,7 +19,7 @@ type Entry = ProposedFolder & Partial<Pick<FolderMeta, 'favorite' | 'color' | 'p
 /** Where the folders come from: the library open now, unless the caller gives another (the importer's own, under a shared link). */
 export interface FolderSource {
   folders: FolderMeta[]
-  createFolder(fields: Partial<FolderMeta> & { name: string }): Promise<FolderMeta>
+  createFolder(fields: Partial<FolderMeta> & { name: string }, rule?: NameRule): Promise<FolderMeta>
 }
 
 interface ChoiceOptions {
@@ -165,7 +166,7 @@ export function FolderChooser({ value, onChange, onConfirm, onCancel, source, ex
   const [seen, setSeen] = useState(value)
   const [name, setName] = useState('')
   const [busy, setBusy] = useState(false)
-  const [failed, setFailed] = useState(false)
+  const [failed, setFailed] = useState<boolean | string>(false)
   const root = useRef<HTMLDivElement>(null)
   const filter = useRef<HTMLInputElement>(null)
   const rowEls = useRef(new Map<string, HTMLButtonElement>())
@@ -274,12 +275,13 @@ export function FolderChooser({ value, onChange, onConfirm, onCancel, source, ex
       const createFolder = source?.createFolder ?? useLibraryStore.getState().createFolder
       // inside the proposed folder: that one has to exist first
       const parentId = extra && value === extra.id ? (await createFolder({ name: extra.name, parentId: extra.parentId })).id : value
-      const folder = await createFolder({ name: clean, parentId })
+      // the person's new folder: a name already there is refused, saying so (FR-021)
+      const folder = await createFolder({ name: clean, parentId }, 'block')
       setName('')
       setQuery('')
       onChange(folder.id)
-    } catch {
-      setFailed(true)
+    } catch (error) {
+      setFailed(error instanceof NameTakenError ? error.message : true)
     } finally {
       setBusy(false)
     }
@@ -400,7 +402,7 @@ export function FolderChooser({ value, onChange, onConfirm, onCancel, source, ex
       </div>
       {failed && (
         <p className="fc-fail" role="alert">
-          Não deu para criar a pasta. Tente de novo.
+          {typeof failed === 'string' ? failed : 'Não deu para criar a pasta. Tente de novo.'}
         </p>
       )}
       {hint && <p className="fc-hint">{hint(value)}</p>}

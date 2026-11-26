@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom'
 import type { FileMeta, FolderMeta } from '@/types/domain'
 import { type Blocker, blocking } from '@/lib/blocking'
 import { courseOf as courseOfFolders } from '@/lib/generation/course-lesson'
+import { moveConflict } from '@/lib/names'
 import { paths } from '@/lib/paths'
 import { itemsOf } from '@/lib/working'
 import { useJobsStore } from '@/stores/jobs'
@@ -44,9 +45,12 @@ function canEnter(folderIds: string[], target: string | null): boolean {
  */
 export async function moveItems(blocker: Blocker, fileIds: string[], folderIds: string[], target: string | null): Promise<number> {
   const { files, folders, moveFiles, updateFolder } = useLibraryStore.getState()
+  // FR-021 ("Bloquear e avisar", 25/11): nothing moves when one of them would repeat a name there
+  const conflict = moveConflict(files, folders, fileIds, folderIds, target)
+  if (conflict) throw conflict
   const items = [
     ...fileIds.map(id => ({ name: files.find(file => file.id === id)?.name ?? '', move: () => moveFiles([id], target) })),
-    ...folderIds.map(id => ({ name: folders.find(folder => folder.id === id)?.name ?? '', move: () => updateFolder(id, { parentId: target }) })),
+    ...folderIds.map(id => ({ name: folders.find(folder => folder.id === id)?.name ?? '', move: () => updateFolder(id, { parentId: target }, 'block') })),
   ]
   let moved = 0
   for (const item of items) {

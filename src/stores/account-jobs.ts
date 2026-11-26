@@ -18,14 +18,19 @@ interface AccountJobsState {
   jobs: AccountJob[]
   load(): Promise<void>
   apply(job: AccountJob): void
-  /** Resolves at the end of the job (done, failed or cancelled). */
-  waitFor(id: string): Promise<AccountJob>
+  /**
+   * Resolves at the end of the job (done, failed or cancelled); `early`: also when the job gives its result while it goes on (the note a
+   * call gives back at once and writes after, 25/11).
+   */
+  waitFor(id: string, early?: boolean): Promise<AccountJob>
   cancel(id: string): Promise<void>
   retry(id: string): Promise<void>
   dismiss(id: string): Promise<void>
 }
 
-const waiting = new Map<string, ((job: AccountJob) => void)[]>()
+const waiting = new Map<string, { resolve: (job: AccountJob) => void; early: boolean }[]>()
+
+const givesEarly = (job: AccountJob) => job.state === 'running' && job.result !== null && job.result !== undefined
 
 export const useAccountJobsStore = create<AccountJobsState>((set, get) => ({
   jobs: [],
@@ -33,19 +38,19 @@ export const useAccountJobsStore = create<AccountJobsState>((set, get) => ({
   load: async () => {
     const jobs = await listJobs()
     set({ jobs })
-    for (const job of jobs) if (ENDED.has(job.state)) settle(job)
+    for (const job of jobs) if (ENDED.has(job.state) || givesEarly(job)) settle(job)
   },
 
   apply: job => {
     set(state => ({ jobs: state.jobs.some(item => item.id === job.id) ? state.jobs.map(item => (item.id === job.id ? job : item)) : [job, ...state.jobs] }))
-    if (ENDED.has(job.state)) settle(job)
+    if (ENDED.has(job.state) || givesEarly(job)) settle(job)
   },
 
-  waitFor: id => {
+  waitFor: (id, early = false) => {
     const known = get().jobs.find(job => job.id === id)
-    if (known && ENDED.has(known.state)) return Promise.resolve(known)
+    if (known && (ENDED.has(known.state) || (early && givesEarly(known)))) return Promise.resolve(known)
     return new Promise(resolve => {
-      waiting.set(id, [...(waiting.get(id) ?? []), resolve])
+      waiting.set(id, [...(waiting.get(id) ?? []), { resolve, early }])
       const poll = setInterval(() => {
         if (!waiting.has(id)) return clearInterval(poll)
         void getJob(id).then(job => get().apply(job), () => undefined)
@@ -58,12 +63,24 @@ export const useAccountJobsStore = create<AccountJobsState>((set, get) => ({
   dismiss: async id => get().apply(await dismissJob(id)),
 }))
 
+/** The waits this state of the job ends: all at the end; at a result given while it goes on, only the ones that take it early. */
 function settle(job: AccountJob) {
-  const resolvers = waiting.get(job.id)
-  if (!resolvers) return
-  waiting.delete(job.id)
-  for (const resolve of resolvers) resolve(job)
+  const waits = waiting.get(job.id)
+  if (!waits) return
+  const ending = ENDED.has(job.state)
+  const now = waits.filter(wait => ending || wait.early)
+  const later = waits.filter(wait => !now.includes(wait))
+  if (later.length) waiting.set(job.id, later)
+  else waiting.delete(job.id)
+  for (const wait of now) wait.resolve(job)
 }
+
+// a job that ends in the account changed notes there: this device reads the library again, so what it wrote shows (the note, the mark of
+// an explained passage) even if the live channel missed the change (25/11: "Explicação: handshake" pronta em Gerações, não escrita na nota)
+useAccountJobsStore.subscribe((state, before) => {
+  const ended = state.jobs.some(job => job.state === 'done' && before.jobs.some(item => item.id === job.id && item.state !== 'done'))
+  if (ended) void import('@/stores/sync').then(({ useSyncStore }) => useSyncStore.getState().syncNow()).catch(() => undefined)
+})
 
 /** The calls that transcribe a note: their job in the account shows on the note's page as a transcription made here does (24/11). */
 export const TRANSCRIBING = new Set(['transcribeNote', 'redoTranscript'])
@@ -72,6 +89,17 @@ export const TRANSCRIBING = new Set(['transcribeNote', 'redoTranscript'])
 export function noteAccountJob(jobs: AccountJob[], fileId: string, calls: Set<string>): AccountJob | null {
   const mine = jobs.filter(job => job.fileId === fileId && calls.has(job.call))
   return mine.find(job => job.state === 'queued' || job.state === 'running') ?? mine.find(job => job.state === 'failed') ?? null
+}
+
+/** The calls that write the note they start from; the others make a new note and give it back as their result. */
+const WRITES_ITSELF = new Set(['generatePending', 'regenerate', 'generateSecondTab'])
+
+/**
+ * The account's job writing this note, waiting or running (25/11: the note said "ainda não foi escrita" while the account wrote it): on
+ * the note itself ("Gerar agora", "Gerar de novo"), or the note a call gave back at once and writes after ("Explicar", "Gerar desta nota").
+ */
+export function writingJob(jobs: AccountJob[], fileId: string): AccountJob | null {
+  return jobs.find(job => (job.state === 'queued' || job.state === 'running') && ((WRITES_ITSELF.has(job.call) && job.fileId === fileId) || job.result === fileId)) ?? null
 }
 
 /** An account job in the shape of a job made here, for the same progress and failure on the note's page. */
@@ -122,8 +150,9 @@ export async function runOnAccount(call: string, args: unknown[], fileId: string
     throw error
   }
   useAccountJobsStore.getState().apply(job)
-  const end = await useAccountJobsStore.getState().waitFor(job.id)
-  if (end.state === 'done') return end.result
+  // the note a call gives back at once comes while the account still writes it: whoever asked gets it then, as when it runs here
+  const end = await useAccountJobsStore.getState().waitFor(job.id, true)
+  if (end.state === 'done' || givesEarly(end)) return end.result
   if (end.state === 'cancelled') throw new Error('A geração foi cancelada.')
   throw new Error(end.error ?? 'A geração falhou na conta.')
 }

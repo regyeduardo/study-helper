@@ -26,6 +26,7 @@ import { youtubeId } from "@/controllers/sources.controller";
 import { ATA_MODELS, PART_ORDER } from "@/lib/generation/ata";
 import type { ContentInput } from "@/lib/generation/inputs";
 import { detectKind } from "@/lib/generation/uploads";
+import { noteNamed, placeOf } from "@/lib/names";
 import { paths } from "@/lib/paths";
 import { sideForNew } from "@/lib/storage/combined-repository";
 import { defaultStorage, storageOptions } from "@/lib/storage/source-storage";
@@ -234,6 +235,11 @@ export function NewContentDialog({
   const inApp = useLibraryStore(
     (state) => sideForNew(state.repo, folderId) === "app",
   );
+  // the person's name for the note: one already in the folder is refused here, saying which (FR-021)
+  const nameTaken = useLibraryStore((state) =>
+    name.trim() ? noteNamed(state.files, folderId, name) : undefined,
+  );
+  const folders = useLibraryStore((state) => state.folders);
   const room =
     usage && settings.storageLimitBytes
       ? settings.storageLimitBytes - usage.appBytes
@@ -441,6 +447,7 @@ export function NewContentDialog({
     return <GenerationProgress jobId={jobId} onHide={ui.close} onBack={back} />;
 
   const canGo =
+    !nameTaken &&
     Boolean(contentInput()) &&
     !(choosesParts && !ataModel && !ataParts.length) &&
     (!writer || writer.ready) &&
@@ -684,6 +691,8 @@ export function NewContentDialog({
               value={name}
               onChange={(event) => setName(event.target.value)}
               placeholder="Vem da fonte se ficar vazio"
+              aria-invalid={nameTaken ? true : undefined}
+              aria-describedby={nameTaken ? "nc-name-taken" : undefined}
             />
           </div>
           <div className="field">
@@ -691,6 +700,15 @@ export function NewContentDialog({
             <FolderField value={folderId} onChange={setFolderId} />
           </div>
         </div>
+        {nameTaken && (
+          <div className="banner" role="alert" id="nc-name-taken">
+            <Icon name="warn" />
+            <span>
+              Já existe uma nota chamada "{nameTaken.name}"{" "}
+              {placeOf(folders, folderId)}. Escolha outro nome ou outra pasta.
+            </span>
+          </div>
+        )}
         <MoreDetails filled={Boolean(prompt.trim() || description.trim())}>
           <summary
             className="muted"

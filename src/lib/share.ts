@@ -8,6 +8,7 @@ import { today } from '@/lib/generation/cards'
 import { mapToMermaid } from '@/lib/generation/map-render'
 import { newFileMeta, newFolderMeta } from '@/lib/defaults'
 import { newId, nowIso } from '@/lib/ids'
+import { folderNamed, folderTaken, type NameRule, type NameTakenError, noteNamed, noteTaken, placeOf } from '@/lib/names'
 import { keepLocalMedia, type LocalMedia, readLocalMedia } from '@/lib/recording/media-library'
 import { makeSeekable } from '@/lib/recording/seekable'
 import { choiceOf, defaultChoice, type EntryShareChoice, entryShareTree } from '@/lib/share-entry'
@@ -299,9 +300,10 @@ export function saveSharedAttempt(shareId: string, fileId: string, fields: Omit<
   return next
 }
 
+/** `rule` (FR-021): what lands where the person chose is refused when the name is there ('block'); what comes inside it never fails for a name. */
 export interface ImportActions {
-  createFolder(fields: Partial<FolderMeta> & { name: string }): Promise<FolderMeta>
-  createFile(fields: Partial<FileMeta> & { name: string; type: FileMeta['type'] }, content: string): Promise<FileMeta>
+  createFolder(fields: Partial<FolderMeta> & { name: string }, rule?: NameRule): Promise<FolderMeta>
+  createFile(fields: Partial<FileMeta> & { name: string; type: FileMeta['type'] }, content: string, rule?: Exclude<NameRule, 'reuse'>): Promise<FileMeta>
   updateSidecar(id: string, change: (sidecar: OpenedFile['sidecar']) => OpenedFile['sidecar']): Promise<unknown>
 }
 
@@ -470,21 +472,28 @@ export async function importSharedItem(item: SharedItem, attempts: SharedAttempt
   while (pending.length) {
     const index = pending.findIndex(folder => folder.parentId === null || folderIds.has(folder.parentId) || !item.folders.some(other => other.id === folder.parentId))
     const [folder] = pending.splice(index < 0 ? 0 : index, 1)
-    const created = await actions.createFolder({
-      name: folder.name,
-      parentId: folder.parentId ? (folderIds.get(folder.parentId) ?? null) : null,
-      position: folder.position,
-      isCourse: folder.isCourse,
-      description: folder.description,
-    })
+    const parentId = folder.parentId ? (folderIds.get(folder.parentId) ?? null) : null
+    // the folder of the link lands in the Biblioteca: a name there refuses it; the ones inside it are the link's own (FR-021)
+    const created = await actions.createFolder(
+      {
+        name: folder.name,
+        parentId,
+        position: folder.position,
+        isCourse: folder.isCourse,
+        description: folder.description,
+      },
+      parentId === null ? 'block' : 'reuse',
+    )
     folderIds.set(folder.id, created.id)
   }
   let firstFileId: string | null = null
   let mediaFailed: string | undefined
   for (const file of item.files) {
+    const folderId = file.folderId ? (folderIds.get(file.folderId) ?? null) : null
     const meta = await actions.createFile(
-      { name: file.name, type: knownType(file.type), folderId: file.folderId ? (folderIds.get(file.folderId) ?? null) : null, position: file.position, description: file.description, tags: file.tags, origin: { input: 'shared', name: item.title, url: linkUrl(item), storage: 'none' } },
+      { name: file.name, type: knownType(file.type), folderId, position: file.position, description: file.description, tags: file.tags, origin: { input: 'shared', name: item.title, url: linkUrl(item), storage: 'none' } },
       file.content,
+      folderId === null ? 'block' : 'number',
     )
     firstFileId ??= meta.id
     await fillImported(actions, meta.id, file, attempts, item.createdAt)
@@ -503,6 +512,28 @@ function copyName(name: string, existing: FileMeta[], shareId: string): string {
   return `${name} (cópia ${copy})`
 }
 
+/**
+ * FR-021 ("Bloquear e avisar", 25/11): what the import would repeat where it lands, said before anything is downloaded or written; null
+ * when it fits. An entrada lands in the folder chosen (as "(cópia N)" when this link came before); a folder or a note, in the Biblioteca.
+ * `files` and `folders`: the library of who imports.
+ */
+export function importConflict(item: SharedItem, folderId: string | null, files: FileMeta[], folders: FolderMeta[]): NameTakenError | null {
+  if (item.kind === 'entrada') {
+    const there = noteNamed(files, folderId, copyName(entryOf(item).name, files, item.id))
+    return there ? noteTaken(there.name, placeOf(folders, folderId)) : null
+  }
+  const ids = new Set(item.folders.map(folder => folder.id))
+  for (const folder of item.folders.filter(folder => !folder.parentId || !ids.has(folder.parentId))) {
+    const there = folderNamed(folders, null, folder.name)
+    if (there) return folderTaken(there.name, placeOf(folders, null))
+  }
+  for (const file of item.files.filter(file => !file.folderId || !ids.has(file.folderId))) {
+    const there = noteNamed(files, null, file.name)
+    if (there) return noteTaken(there.name, placeOf(folders, null))
+  }
+  return null
+}
+
 export interface EntryImport {
   /** The folder chosen in the folder picker; the whole family goes into it. */
   folderId: string | null
@@ -517,8 +548,9 @@ export async function importSharedEntry(item: SharedItem, attempts: SharedAttemp
   const failedBefore = options.media?.failed?.get(entry.id)
   const withMedia = options.media && entry.media && hasSharedMedia(item) && !failedBefore ? options.media : null
   const base = (file: SharedFile) => ({ type: knownType(file.type), folderId: options.folderId, position: file.position, description: file.description, tags: file.tags, origin: file.meta?.origin ?? null })
-  // "Só o registro" until the media arrives (keepImportedMedia), never a note pointing at a file that is not there
-  const created = await actions.createFile({ ...base(entry), name: copyName(entry.name, options.existing, item.id), type: sourceTypeOf(entry.meta?.origin), kept: 'registro', parentFileId: null, sharedFrom: item.id }, entry.content)
+  // "Só o registro" until the media arrives (keepImportedMedia), never a note pointing at a file that is not there; a name already in the
+  // folder refuses it (FR-021), and the notes under it never fail for a name
+  const created = await actions.createFile({ ...base(entry), name: copyName(entry.name, options.existing, item.id), type: sourceTypeOf(entry.meta?.origin), kept: 'registro', parentFileId: null, sharedFrom: item.id }, entry.content, 'block')
   await fillImported(actions, created.id, entry, attempts, item.createdAt)
   const ids = new Map([[entry.id, created.id]])
   // mothers first: a note whose mother did not come hangs from the entrada

@@ -551,6 +551,8 @@ func (srv *Server) progressJob(w http.ResponseWriter, r *http.Request, s *Sessio
 	var body struct {
 		Message  string   `json:"message"`
 		Fraction *float64 `json:"fraction"`
+		// the note a call gave back at once while its writing goes on ("Explicar", "Gerar desta nota", 25/11): the device opens it now
+		Result json.RawMessage `json:"result"`
 	}
 	if !readJSON(r, &body) {
 		fail(w, http.StatusBadRequest, "invalid_body", nil)
@@ -578,8 +580,12 @@ func (srv *Server) progressJob(w http.ResponseWriter, r *http.Request, s *Sessio
 		value := ts(now)
 		lastAt = &value
 	}
-	if _, err := srv.db.Exec(`UPDATE jobs SET stage = ?, fraction = ?, eta_at = ?, eta_basis = ?, last_progress = ?, last_progress_at = ?, stalled_since = CASE WHEN ? THEN NULL ELSE stalled_since END, updated_at = ? WHERE id = ?`,
-		body.Message, fraction, eta, etaBasis, body.Message, lastAt, moved, ts(now), job.ID); err != nil {
+	var result any
+	if len(body.Result) > 0 && string(body.Result) != "null" {
+		result = string(body.Result)
+	}
+	if _, err := srv.db.Exec(`UPDATE jobs SET stage = ?, fraction = ?, eta_at = ?, eta_basis = ?, last_progress = ?, last_progress_at = ?, stalled_since = CASE WHEN ? THEN NULL ELSE stalled_since END, result = COALESCE(?, result), updated_at = ? WHERE id = ?`,
+		body.Message, fraction, eta, etaBasis, body.Message, lastAt, moved, result, ts(now), job.ID); err != nil {
 		fail(w, http.StatusInternalServerError, "internal_error", nil)
 		return
 	}

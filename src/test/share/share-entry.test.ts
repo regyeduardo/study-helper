@@ -170,7 +170,8 @@ describe('importar o link de uma entrada', () => {
     expect(useLibraryStore.getState().files.map(file => file.name).sort()).toEqual([ENTRY_NAME, 'Ata'].sort())
   })
 
-  it('importar de novo cria outra cópia, sem mexer na que existe: "(cópia 1)", "(cópia 2)" só no nome da entrada', async () => {
+  // FR-021 (spec 005, 25/11): na mesma pasta não há duas notas de mesmo nome; as notas de cada cópia ganham " (2)", " (3)"
+  it('importar de novo cria outra cópia, sem mexer na que existe: "(cópia 1)", "(cópia 2)" na entrada, " (2)", " (3)" nas notas dela', async () => {
     const shared = await item()
     const first = await importNow(shared)
     const second = await importNow(shared)
@@ -179,7 +180,9 @@ describe('importar o link de uma entrada', () => {
     expect(files.find(file => file.id === first.fileId)!.name).toBe(ENTRY_NAME)
     expect(files.find(file => file.id === second.fileId)!.name).toBe(`${ENTRY_NAME} (cópia 1)`)
     expect(files.find(file => file.id === third.fileId)!.name).toBe(`${ENTRY_NAME} (cópia 2)`)
-    expect(files.filter(file => file.name === 'Ata').map(file => file.parentFileId).sort()).toEqual([first.fileId, second.fileId, third.fileId].sort())
+    const ataOf = (parent: string) => files.find(file => file.parentFileId === parent && file.name.startsWith('Ata'))?.name
+    expect([ataOf(first.fileId), ataOf(second.fileId), ataOf(third.fileId)]).toEqual(['Ata', 'Ata (2)', 'Ata (3)'])
+    expect(new Set(files.map(file => `${file.folderId}/${file.name.toLowerCase()}`)).size).toBe(files.length)
     expect(files).toHaveLength(12)
   })
 

@@ -27,6 +27,7 @@ import { currentDevice, stamp } from '@/lib/device'
 import { migrateEntries } from '@/lib/entry-migration'
 import { descendantsOf } from '@/lib/family'
 import { masteryOf } from '@/lib/exam'
+import { folderNamed, folderTaken, freeName, moveConflict, nameKey, type NameRule, noteNamed, noteTaken, placeOf } from '@/lib/names'
 import { isSourceNote, mediaOf } from '@/lib/file-types'
 import { nameArtifact, nameSource } from '@/lib/generation/artifact-name'
 import { GenerationSession } from '@/lib/generation/session'
@@ -98,12 +99,14 @@ interface LibraryState {
   connectWorker(accountId: string): Promise<void>
   applySnapshot(snapshot: Snapshot, changedFileIds?: string[]): void
   openFile(id: string): Promise<OpenedFile>
-  createFile(fields: Partial<FileMeta> & { name: string; type: FileType }, content: string): Promise<FileMeta>
+  /** `rule` (FR-021): a name already there gets " (2)" (the app's own notes), or the person's act is refused saying which ('block'). */
+  createFile(fields: Partial<FileMeta> & { name: string; type: FileType }, content: string, rule?: Exclude<NameRule, 'reuse'>): Promise<FileMeta>
   saveContent(id: string, content: string, patch?: Partial<FileMeta>): Promise<void>
-  updateFile(id: string, patch: Partial<FileMeta>): Promise<void>
+  updateFile(id: string, patch: Partial<FileMeta>, rule?: Exclude<NameRule, 'reuse'>): Promise<void>
   /** The same change for many files: the list shows it for all at once; the writes follow one by one. */
-  updateFiles(ids: string[], patch: Partial<FileMeta>): Promise<void>
+  updateFiles(ids: string[], patch: Partial<FileMeta>, rule?: Exclude<NameRule, 'reuse'>): Promise<void>
   updateSidecar(id: string, change: (sidecar: FileSidecar) => FileSidecar): Promise<FileSidecar>
+  /** The person's move: refused, with nothing moved, when one of them would repeat a name in the folder (FR-021). */
   moveFiles(ids: string[], folderId: string | null): Promise<void>
   hasMedia(id: string): boolean
   trashFiles(ids: string[], options?: { media?: boolean }): Promise<void>
@@ -116,12 +119,15 @@ interface LibraryState {
   /** An item of an "Apagar tudo" brings back all with the same mark; each to the root when its folder is gone. */
   restoreFile(id: string): Promise<void>
   deleteFileForever(id: string): Promise<void>
-  createFolder(fields: Partial<FolderMeta> & { name: string }): Promise<FolderMeta>
+  /** `rule` (FR-021): the app's folder by name is the one already there ('reuse'); 'number' gives " (2)"; 'block' refuses saying which. */
+  createFolder(fields: Partial<FolderMeta> & { name: string }, rule?: NameRule): Promise<FolderMeta>
   /** The folders of who is looking, even while a shared link is open (the importer's folder picker). */
   ownFolders(): FolderMeta[]
+  /** The notes of who is looking, even while a shared link is open (what an import would repeat, FR-021). */
+  ownFiles(): FileMeta[]
   /** A folder in one's own library, even while a shared link is open: the link stays read only. */
-  createOwnFolder(fields: Partial<FolderMeta> & { name: string }): Promise<FolderMeta>
-  updateFolder(id: string, patch: Partial<FolderMeta>): Promise<void>
+  createOwnFolder(fields: Partial<FolderMeta> & { name: string }, rule?: NameRule): Promise<FolderMeta>
+  updateFolder(id: string, patch: Partial<FolderMeta>, rule?: Exclude<NameRule, 'reuse'>): Promise<void>
   trashFolder(id: string): Promise<void>
   restoreFolder(id: string): Promise<void>
   deleteFolderForever(id: string): Promise<void>
@@ -221,6 +227,58 @@ export const useLibraryStore = create<LibraryState>((set, get) => {
       for (const back of undo.values()) back()
       throw error
     }
+  }
+
+  /**
+   * FR-021: a note that changes name or folder, or comes back from the Lixeira, does not repeat a name there: 'number' gives the free
+   * name, 'block' refuses saying which. `files`: the library as it will be, when many change together.
+   */
+  const freeNote = (files: FileMeta[], id: string, patch: Partial<FileMeta>, rule: Exclude<NameRule, 'reuse'>): Partial<FileMeta> => {
+    const meta = files.find(file => file.id === id)
+    if (!meta || !('name' in patch || 'folderId' in patch || 'deletedAt' in patch)) return patch
+    const next = { ...meta, ...patch }
+    const folderId = next.folderId ?? null
+    const changed = folderId !== (meta.folderId ?? null) || nameKey(next.name) !== nameKey(meta.name) || Boolean(meta.deletedAt)
+    if (next.deletedAt || !changed) return patch
+    const taken = (name: string) => Boolean(noteNamed(files, folderId, name, id))
+    const there = noteNamed(files, folderId, next.name, id)
+    if (!there) return patch
+    if (rule === 'block') throw noteTaken(there.name, placeOf(get().folders, folderId))
+    return { ...patch, name: freeName(next.name, taken) }
+  }
+
+  /** The same for many: each one sees the names the ones before it took. */
+  const freeNotes = (changes: [string, Partial<FileMeta>][], rule: Exclude<NameRule, 'reuse'>): [string, Partial<FileMeta>][] => {
+    let files = get().files
+    return changes.map(([id, patch]) => {
+      const named = freeNote(files, id, patch, rule)
+      files = files.map(file => (file.id === id ? { ...file, ...named } : file))
+      return [id, named]
+    })
+  }
+
+  /** FR-021 for a folder that changes name or place, or comes back from the Lixeira. */
+  const freeFolder = (id: string, patch: Partial<FolderMeta>, rule: Exclude<NameRule, 'reuse'>): Partial<FolderMeta> => {
+    const folders = get().folders
+    const folder = folders.find(item => item.id === id)
+    if (!folder || !('name' in patch || 'parentId' in patch || 'deletedAt' in patch)) return patch
+    const next = { ...folder, ...patch }
+    const parentId = next.parentId ?? null
+    const changed = parentId !== (folder.parentId ?? null) || nameKey(next.name) !== nameKey(folder.name) || Boolean(folder.deletedAt)
+    if (next.deletedAt || !changed) return patch
+    const there = folderNamed(folders, parentId, next.name, id)
+    if (!there) return patch
+    if (rule === 'block') throw folderTaken(there.name, placeOf(folders, parentId))
+    return { ...patch, name: freeName(next.name, name => Boolean(folderNamed(folders, parentId, name, id))) }
+  }
+
+  /** A folder by name, by the rule: the one already there (`reused`), or a new one to save; `folders`: where it is born (the importer's own library under a shared link). */
+  const folderByRule = (folders: FolderMeta[], fields: Partial<FolderMeta> & { name: string }, rule: NameRule): { folder: FolderMeta; reused: boolean } => {
+    const parentId = fields.parentId ?? null
+    const there = folderNamed(folders, parentId, fields.name)
+    if (there && rule === 'reuse') return { folder: there, reused: true }
+    if (there && rule === 'block') throw folderTaken(there.name, placeOf(folders, parentId))
+    return { folder: newFolderMeta({ ...fields, name: there ? freeName(fields.name, name => Boolean(folderNamed(folders, parentId, name))) : fields.name }), reused: false }
   }
 
   const sidecarOf = async (id: string): Promise<FileSidecar> => get().opened[id]?.sidecar ?? (await repository().readSidecar(id))
@@ -516,8 +574,12 @@ export const useLibraryStore = create<LibraryState>((set, get) => {
       return opened
     },
 
-    createFile: async (fields, content) => {
-      const meta = newFileMeta({ ...fields, ...statsOf(content) })
+    createFile: async (fields, content, rule = 'number') => {
+      const folderId = fields.folderId ?? null
+      const there = noteNamed(get().files, folderId, fields.name)
+      if (there && rule === 'block') throw noteTaken(there.name, placeOf(get().folders, folderId))
+      const name = there ? freeName(fields.name, taken => Boolean(noteNamed(get().files, folderId, taken))) : fields.name
+      const meta = newFileMeta({ ...fields, name, ...statsOf(content) })
       const sidecar = newSidecar(meta)
       await repository().saveFile(sidecar, content)
       measure(repository(), [meta.id])
@@ -528,7 +590,8 @@ export const useLibraryStore = create<LibraryState>((set, get) => {
 
     saveContent: async (id, content, patch = {}) => {
       const sidecar = await sidecarOf(id)
-      const next: FileSidecar = { ...sidecar, meta: { ...sidecar.meta, ...patch, ...statsOf(content), updated: stamp() } }
+      const named = freeNote(get().files, id, patch, 'number')
+      const next: FileSidecar = { ...sidecar, meta: { ...sidecar.meta, ...named, ...statsOf(content), updated: stamp() } }
       const saved = await repository().saveFile(next, content)
       measure(repository(), [id])
       const merged = await repository().readContent(id).catch(() => content)
@@ -536,24 +599,28 @@ export const useLibraryStore = create<LibraryState>((set, get) => {
       set(state => ({ opened: { ...state.opened, [id]: { content: merged, sidecar: saved } } }))
     },
 
-    updateFile: async (id, patch) => {
+    updateFile: async (id, patch, rule = 'number') => {
       // a library that is closed or read only refuses before anything is shown
       repository()
+      const named = freeNote(get().files, id, patch, rule)
       // the list shows the change now; if the write fails it goes back
-      const undo = showNow<FileMeta>('files', [id], patch)
+      const undo = showNow<FileMeta>('files', [id], named)
       try {
         const sidecar = await sidecarOf(id)
-        await saveSidecarOnly({ ...sidecar, meta: { ...sidecar.meta, ...patch, updated: stamp() } })
+        await saveSidecarOnly({ ...sidecar, meta: { ...sidecar.meta, ...named, updated: stamp() } })
       } catch (error) {
         undo()
         throw error
       }
     },
 
-    updateFiles: (ids, patch) =>
+    updateFiles: (ids, patch, rule = 'number') =>
       changeMany(
-        ids.map(id => [id, patch]),
-        (id, change) => get().updateFile(id, change),
+        freeNotes(
+          ids.map(id => [id, patch]),
+          rule,
+        ),
+        (id, change) => get().updateFile(id, change, rule),
       ),
 
     updateSidecar: async (id, change) => {
@@ -562,7 +629,11 @@ export const useLibraryStore = create<LibraryState>((set, get) => {
       return saveSidecarOnly({ ...next, meta: { ...next.meta, updated: stamp() } })
     },
 
-    moveFiles: (ids, folderId) => get().updateFiles(ids, { folderId }),
+    moveFiles: async (ids, folderId) => {
+      const conflict = moveConflict(get().files, get().folders, ids, [], folderId)
+      if (conflict) throw conflict
+      await get().updateFiles(ids, { folderId }, 'block')
+    },
 
     hasMedia: id => {
       const meta = get().files.find(file => file.id === id)
@@ -613,7 +684,8 @@ export const useLibraryStore = create<LibraryState>((set, get) => {
         const folder = get().folders.find(item => item.id === file.folderId)
         return [file.id, { deletedAt: null, folderId: folder && !folder.deletedAt ? file.folderId : null, ...(mark ? { trashedWith: undefined } : {}) }]
       })
-      await changeMany(back, (id, patch) => get().updateFile(id, patch))
+      // where the name is taken by now, it comes back with " (2)" (FR-021)
+      await changeMany(freeNotes(back, 'number'), (id, patch) => get().updateFile(id, patch))
     },
 
     deleteFileForever: async id => {
@@ -640,8 +712,9 @@ export const useLibraryStore = create<LibraryState>((set, get) => {
       })
     },
 
-    createFolder: async fields => {
-      const folder = newFolderMeta(fields)
+    createFolder: async (fields, rule = 'reuse') => {
+      const { folder, reused } = folderByRule(get().folders, fields, rule)
+      if (reused) return folder
       await repository().saveFolder(folder)
       replaceFolder(folder)
       return folder
@@ -649,23 +722,27 @@ export const useLibraryStore = create<LibraryState>((set, get) => {
 
     ownFolders: () => (own ?? get()).folders,
 
-    createOwnFolder: async fields => {
-      if (!own) return get().createFolder(fields)
+    ownFiles: () => (own ?? get()).files,
+
+    createOwnFolder: async (fields, rule = 'reuse') => {
+      if (!own) return get().createFolder(fields, rule)
       const repo = get().repo
       if (!repo) throw new Error('A biblioteca ainda não abriu.')
-      const folder = newFolderMeta(fields)
+      const { folder, reused } = folderByRule(own.folders, fields, rule)
+      if (reused) return folder
       await repo.saveFolder(folder)
       if (own) own = { ...own, folders: [...own.folders, folder] }
       return folder
     },
 
-    updateFolder: async (id, patch) => {
+    updateFolder: async (id, patch, rule = 'number') => {
       const folder = get().folders.find(item => item.id === id)
       if (!folder) return
       repository()
-      const undo = showNow<FolderMeta>('folders', [id], patch)
+      const named = freeFolder(id, patch, rule)
+      const undo = showNow<FolderMeta>('folders', [id], named)
       try {
-        const next = { ...folder, ...patch, updated: stamp() }
+        const next = { ...folder, ...named, updated: stamp() }
         await repository().saveFolder(next)
         replaceFolder(next)
       } catch (error) {

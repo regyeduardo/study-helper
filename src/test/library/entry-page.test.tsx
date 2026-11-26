@@ -7,6 +7,7 @@ import { GenerateEntryDialog } from '@/components/dialogs/GenerateEntryDialog'
 import { EntryPage } from '@/components/reader/EntryPage'
 import { useViewRoute } from '@/hooks/use-view-route'
 import { defaultIndex, newFileMeta, newFolderMeta, newSidecar } from '@/lib/defaults'
+import { backgroundSettled, hasBackground } from '@/lib/generation/background'
 import { PROMPTS } from '@/lib/generation/prompts.data'
 import { paths } from '@/lib/paths'
 import type { LocalMedia } from '@/lib/recording/media-library'
@@ -617,6 +618,75 @@ describe('"O que nasceu daqui": gerando, pronta e falhou', () => {
     useJobsStore.setState({ jobs: [job({ kind: 'transcription', fileId: 'video', status: 'error', message: 'A transcrição não saiu.', error: 'Sem saldo no provedor.' })] })
     renderEntry('video')
     expect(await within(card('Transcrição')).findByRole('alert')).toHaveTextContent('Sem saldo no provedor.')
+  })
+})
+
+// "Mandei gerar uma ata e continuou sem um loading de que há um conteúdo do input sendo gerado" (dono, 25/11): a Ata gerada na conta só
+// aparecia em Gerações; a nota dela nasce no fim. "O que nasceu daqui" mostra o trabalho da conta como mostra o daqui.
+describe('geração que roda na conta', () => {
+  const accountJob = (fields: Partial<AccountJob>): AccountJob => ({
+    id: 'conta-ata', call: 'generateAta', kind: 'generation', fileId: 'video', title: 'Ata · Reunião', state: 'running', queuePosition: null,
+    stage: null, fraction: null, etaAt: null, etaBasis: null, lastProgress: null, lastProgressAt: null, stalledSince: null, args: [], result: null,
+    error: null, errorCode: null, attempt: 1, createdAt: '2026-11-25T20:00:00.000Z', startedAt: '2026-11-25T20:00:05.000Z', finishedAt: null, ...fields,
+  })
+  afterEach(() => useAccountJobsStore.setState({ jobs: [] }))
+  const family = () => within(card('O que nasceu daqui'))
+
+  it('rodando: o nome, "gerando…" e a etapa, no lugar de "Nada nasceu daqui ainda"', async () => {
+    seed([entrada('video', 'Reunião', VIDEO)])
+    useAccountJobsStore.setState({ jobs: [accountJob({ stage: 'Vendo quem fala pelos quadros da chamada', fraction: 0.3 })] })
+    renderEntry('video')
+    expect(await family().findByText('gerando…')).toBeInTheDocument()
+    expect(family().getByText('Vendo quem fala pelos quadros da chamada')).toBeInTheDocument()
+    expect(family().queryByText('Nada nasceu daqui ainda')).not.toBeInTheDocument()
+  })
+
+  it('na fila: diz que está na fila da conta', async () => {
+    seed([entrada('video', 'Reunião', VIDEO)])
+    useAccountJobsStore.setState({ jobs: [accountJob({ state: 'queued', queuePosition: 1, startedAt: null })] })
+    renderEntry('video')
+    expect(await family().findByText('Na fila da conta (1º)')).toBeInTheDocument()
+  })
+
+  it('a transcrição da conta fica no card dela, não aqui', async () => {
+    seed([entrada('video', 'Reunião', VIDEO)])
+    useAccountJobsStore.setState({ jobs: [accountJob({ call: 'transcribeNote', kind: 'transcription', title: 'Transcrição · Reunião' })] })
+    renderEntry('video')
+    expect(await family().findByText('Nada nasceu daqui ainda')).toBeInTheDocument()
+  })
+
+  it('pronta na conta: a biblioteca é lida de novo e a Ata nova aparece no lugar do "gerando…"', async () => {
+    seed([entrada('video', 'Reunião', VIDEO)])
+    const realSync = useSyncStore.getState().syncNow
+    // the server made the Ata: reading the library again brings it
+    const syncNow = vi.fn(async () => useLibraryStore.setState(state => ({ files: [...state.files, item('ata-nova', { name: 'Ata da reunião', type: 'meeting', parentFileId: 'video', folderId: atas.id }).meta] })))
+    useSyncStore.setState({ syncNow })
+    try {
+      useAccountJobsStore.setState({ jobs: [accountJob({ stage: 'Escrevendo a ata' })] })
+      renderEntry('video')
+      expect(await family().findByText('gerando…')).toBeInTheDocument()
+      act(() => useAccountJobsStore.setState({ jobs: [accountJob({ state: 'done', stage: 'Salvando', finishedAt: '2026-11-25T20:03:00.000Z' })] }))
+      expect(await family().findByText('Ata da reunião')).toBeInTheDocument()
+      expect(syncNow).toHaveBeenCalledTimes(1)
+      expect(family().queryByText('gerando…')).not.toBeInTheDocument()
+    } finally {
+      useSyncStore.setState({ syncNow: realSync })
+    }
+  })
+
+  it('a que já tinha terminado antes de abrir a nota não faz ler de novo', async () => {
+    seed([entrada('video', 'Reunião', VIDEO)])
+    const realSync = useSyncStore.getState().syncNow
+    const syncNow = vi.fn(async () => undefined)
+    useSyncStore.setState({ syncNow })
+    try {
+      useAccountJobsStore.setState({ jobs: [accountJob({ state: 'done', finishedAt: '2026-11-25T19:00:00.000Z' })] })
+      renderEntry('video')
+      expect(await family().findByText('Nada nasceu daqui ainda')).toBeInTheDocument()
+      expect(syncNow).not.toHaveBeenCalled()
+    } finally {
+      useSyncStore.setState({ syncNow: realSync })
+    }
   })
 })
 
@@ -1365,6 +1435,18 @@ describe('gerar de verdade: a nota é filha da entrada', () => {
     await waitFor(() => expect(fileOf(id)?.status).toBe('ready'))
     expect(sent()).toContain('A inflação de serviços')
     expect(fileOf('texto')?.folderId).toBe('aurora')
+  })
+
+  // 25/11: a nota volta na hora e é escrita depois; a página de trabalho do servidor espera essa escrita antes de dar o trabalho por
+  // terminado (senão a escrita morria com a página: "Explicação: handshake" nunca escrita)
+  it('a escrita que segue depois da nota devolvida fica marcada até acabar', async () => {
+    seed([entrada('texto', 'Texto colado', PASTED, { kept: 'registro' })], { texto: 'A inflação de serviços segue acima da média.' })
+    withWriter()
+    const id = await useJobsStore.getState().generateFromNote('texto', 'lesson', null, { folderId: 'trabalho' }, '')
+    expect(hasBackground()).toBe(true)
+    await backgroundSettled()
+    expect(fileOf(id)?.status).toBe('ready')
+    expect(hasBackground()).toBe(false)
   })
 
   it('aceita Explicação', async () => {

@@ -462,7 +462,14 @@ function EntryView({ fileId }: { fileId: string }) {
     for (const file of [...family].sort((a, b) => a.created.at.localeCompare(b.created.at))) found.set(file.parentFileId!, [...(found.get(file.parentFileId!) ?? []), file])
     return found
   }, [family])
-  const ownJobs = useMemo(() => jobs.filter(job => job.fileId === fileId && job.kind === 'generation' && (job.status === 'running' || job.status === 'error')), [jobs, fileId])
+  // a note generated in the account (the Ata, an Aula…) is born at the end: until then its job shows here as one made here (25/11:
+  // "mandei gerar uma ata e continuou sem um loading")
+  const accountJobs = useAccountJobsStore(state => state.jobs)
+  const ownJobs = useMemo(() => {
+    const here = jobs.filter(job => job.fileId === fileId && job.kind === 'generation' && (job.status === 'running' || job.status === 'error'))
+    const there = accountJobs.filter(job => job.fileId === fileId && !TRANSCRIBING.has(job.call) && (job.state === 'queued' || job.state === 'running') && !here.some(item => item.id === job.id))
+    return [...here, ...there.map(job => asNoteJob(job, 'generation'))]
+  }, [jobs, accountJobs, fileId])
   // trashed: nothing left to see here
   useEffect(() => {
     if (entry?.deletedAt) navigate(paths.folder(entry.folderId), { replace: true })

@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 
 import { ROUTED_CALLS, routeOf } from '@/lib/generation/account-routing'
+import { inBackground } from '@/lib/generation/background'
 import { runOnAccount } from '@/stores/account-jobs'
 import type { AiSettings, AiStep, AiUse, Artifact, AtaModelId, AtaPart, AtaStepModels, CourseAnalysis, FileMeta, FileType, FolderMeta, GenerationChoice, GenerationMeta, MediaAnalysis, MeetingDocument, Place, RecordingData, RecordingMark, SourceMeta, SourceStorage, StageTime, StoredQuestion } from '@/types/domain'
 import { Cancelled } from '@/controllers/ai.controller'
@@ -1146,17 +1147,21 @@ export const useJobsStore = create<JobsState>((set, get) => {
       const kept = keptSource(proposal.request, resolved)
       const entry = kept ? null : await sourceEntry(proposal.request, resolved)
       await keepSource(proposal.request, resolved, entry, null).catch(() => undefined)
-      const root = await library().createFolder({
-        name: analysis.name || 'Aulas',
-        parentId: folderId,
-        isCourse: true,
-        courseOrigin: resolved.origin.url ?? resolved.origin.name,
-        courseDescription: analysis.description,
-        courseMaterial: resolved.content,
-      })
+      // a course is a new folder: one of the same name already there stays as it is, and this one gets " (2)" (FR-021)
+      const root = await library().createFolder(
+        {
+          name: analysis.name || 'Aulas',
+          parentId: folderId,
+          isCourse: true,
+          courseOrigin: resolved.origin.url ?? resolved.origin.name,
+          courseDescription: analysis.description,
+          courseMaterial: resolved.content,
+        },
+        'number',
+      )
       const firstModule: FileMeta[] = []
       for (const [index, module] of analysis.modules.entries()) {
-        const parent = module.lessons.length ? await library().createFolder({ name: module.title, parentId: root.id, position: index }) : root
+        const parent = module.lessons.length ? await library().createFolder({ name: module.title, parentId: root.id, position: index }, 'number') : root
         const plans = module.lessons.length ? module.lessons : [module]
         const created: FileMeta[] = []
         for (const [position, plan] of plans.entries()) {
@@ -1242,14 +1247,15 @@ export const useJobsStore = create<JobsState>((set, get) => {
           const meta = library().files.find(file => file.id === place.replace)
           if (!meta || get().jobs.some(job => job.fileId === meta.id && job.status === 'running')) return null
           await library().updateFile(meta.id, { made })
-          void runOnFile(meta, agent, material, null, AGENT_LABEL[agent], source.name, undefined, recording, model, true, parts, instruction, look)
+          // the note goes back now and is written after: the job page on the server waits for the writing (25/11)
+          void inBackground(runOnFile(meta, agent, material, null, AGENT_LABEL[agent], source.name, undefined, recording, model, true, parts, instruction, look))
           return meta.id
         }
         const meta = await library().createFile(
           { name: `${AGENT_LABEL[agent]}: ${source.name}`, type: FILE_TYPE[agent], description: `gerado de ${source.name}`, folderId: await folderFor(source, place), parentFileId: source.id, status: 'generating', pendingExcerpt: material, origin: { input: 'text', name: source.name, storage: 'none' }, made },
           '',
         )
-        void runOnFile(meta, agent, material, null, AGENT_LABEL[agent], source.name, undefined, recording, model, false, parts, instruction, look)
+        void inBackground(runOnFile(meta, agent, material, null, AGENT_LABEL[agent], source.name, undefined, recording, model, false, parts, instruction, look))
         return meta.id
       } catch (error) {
         prep.refuse('A geração não começou.', error)
@@ -1425,12 +1431,16 @@ export const useJobsStore = create<JobsState>((set, get) => {
           '',
         ))
       const input = selectionInput(source, content, library().files, excerpt, prompt, mode)
-      void (async () => {
-        await runOnFile(meta, 'explanation', input, null, 'Explicação', `trecho de "${source.name}"`, undefined, undefined, model, true)
-        const saved = useLibraryStore.getState().opened[meta.id]?.content
-        // replaced: the same name, the text new
-        if (saved && !replaced) await library().updateFile(meta.id, { name: `${AGENT_LABEL.explanation}: ${explanationName(saved, excerpt)}` })
-      })()
+      // the note goes back now and is written after (the person goes on reading): the job page on the server waits for the writing and
+      // its name (25/11: "Explicação: handshake" was never written)
+      void inBackground(
+        (async () => {
+          await runOnFile(meta, 'explanation', input, null, 'Explicação', `trecho de "${source.name}"`, undefined, undefined, model, true)
+          const saved = useLibraryStore.getState().opened[meta.id]?.content
+          // replaced: the same name, the text new
+          if (saved && !replaced) await library().updateFile(meta.id, { name: `${AGENT_LABEL.explanation}: ${explanationName(saved, excerpt)}` })
+        })(),
+      )
       return meta.id
     },
 
@@ -1483,7 +1493,7 @@ export const useJobsStore = create<JobsState>((set, get) => {
             },
             '',
           )
-          void runOnFile(meta, agent, resolved.content, resolved, AGENT_LABEL[agent], url ?? passage, undefined, undefined, model, false, undefined, instruction)
+          void inBackground(runOnFile(meta, agent, resolved.content, resolved, AGENT_LABEL[agent], url ?? passage, undefined, undefined, model, false, undefined, instruction))
           return meta.id
         },
         { phase: 'Preparando' },

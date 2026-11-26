@@ -179,6 +179,60 @@ describe('Mover para…', () => {
   })
 })
 
+// FR-021 (spec 005, 25/11): "no mesmo diretório não pode existir nem pasta de nome igual nem arquivo". O que a pessoa faz com um nome que
+// já existe ali é bloqueado, dizendo qual, e nada é gravado.
+describe('um nome que já existe na pasta', () => {
+  it('renomear: o motivo aparece na janela, que fica aberta, e nada é gravado', async () => {
+    const other = (await store().createFile({ name: 'Derivadas', type: 'class', status: 'ready', folderId: null }, '# D')).id
+    useUiStore.setState({ overlay: { kind: 'rename', target: 'file', id: other } })
+    render(
+      <MemoryRouter>
+        <RenameDialog target="file" id={other} />
+      </MemoryRouter>,
+    )
+    const before = slow.writes.saveFile
+    fireEvent.change(screen.getByLabelText('Nome'), { target: { value: ' limites ' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Salvar' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('Já existe uma nota chamada "Limites" na Biblioteca.')
+    expect(useUiStore.getState().overlay).not.toBeNull()
+    expect(fileNow(other)?.name).toBe('Derivadas')
+    expect(slow.writes.saveFile).toBe(before)
+  })
+
+  it('nova pasta: o motivo aparece e nenhuma pasta é criada', async () => {
+    await store().createFolder({ name: 'Cálculo' })
+    render(
+      <MemoryRouter>
+        <NewFolderDialog parentId={null} />
+      </MemoryRouter>,
+    )
+    fireEvent.change(screen.getByLabelText('Nome'), { target: { value: 'cálculo' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Criar pasta' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('Já existe uma pasta chamada "Cálculo" na Biblioteca.')
+    expect(slow.writes.saveFolder).toBe(1)
+    expect(store().folders.filter(folder => folder.name.toLowerCase() === 'cálculo')).toHaveLength(1)
+  })
+
+  it('mover: nada se move e o aviso diz qual', async () => {
+    const folder = await store().createFolder({ name: 'Cálculo' })
+    await store().createFile({ name: 'limites', type: 'class', status: 'ready', folderId: folder.id }, '# L')
+    useUiStore.setState({ overlay: { kind: 'move', fileIds: [id], folderIds: [] } })
+    render(
+      <MemoryRouter>
+        <MoveDialog fileIds={[id]} folderIds={[]} />
+      </MemoryRouter>,
+    )
+    fireEvent.click(await screen.findByRole('treeitem', { name: /Cálculo/ }))
+    fireEvent.click(screen.getByRole('button', { name: 'Mover' }))
+    await act(async () => {
+      await settle()
+    })
+    expect(fileNow(id)?.folderId).toBeNull()
+    expect(toastsNow()).toContain('Não deu para mover: Já existe uma nota chamada "limites" em Cálculo.')
+    expect(holding()).toHaveLength(0)
+  })
+})
+
 describe('Lixeira', () => {
   it('"Restaurar": o item sai da lixeira na hora', async () => {
     await store().trashFiles([id])

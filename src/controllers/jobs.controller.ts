@@ -59,6 +59,8 @@ export const retryJob = (id: string) => apiCall<AccountJob>('POST', path(id, '/r
 export const dismissJob = (id: string) => apiCall<AccountJob>('POST', path(id, '/dismiss'))
 
 // the job page (on the server)
-export const reportProgress = (id: string, message: string, fraction: number | null) => apiCall<{ ok: true }>('POST', path(id, '/progress'), { message, fraction })
+/** `result`: the note a call gave back at once while its writing goes on (25/11), so the device opens it as before. */
+export const reportProgress = (id: string, message: string, fraction: number | null, result?: unknown) =>
+  apiCall<{ ok: true }>('POST', path(id, '/progress'), { message, fraction, ...(result !== undefined ? { result } : {}) })
 export const reportFinish = (id: string, result: unknown) => apiCall<{ ok: true }>('POST', path(id, '/finish'), { result: result === undefined ? null : result })
 export const reportFailure = (id: string, error: string, code = 'internal') => apiCall<{ ok: true }>('POST', path(id, '/fail'), { error, code })

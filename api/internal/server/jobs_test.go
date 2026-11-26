@@ -132,6 +132,46 @@ func TestJobRunsInTheAccountAndGivesBackTheValue(t *testing.T) {
 	}
 }
 
+// 25/11 ("Explicação: handshake" pronta em Gerações e nunca escrita): "Explicar" and "Gerar desta nota" give the note back at once and
+// write it after. The job page sends the note with the progress and the job stays running until the writing ends; the device opens the
+// note meanwhile, as when it runs there.
+func TestTheNoteGivenBackGoesWithTheProgressWhileTheJobRuns(t *testing.T) {
+	h, fake := jobsHarness(t, 2)
+	written := make(chan struct{})
+	fake.behave = func(w *worker, ctx context.Context) error {
+		if res, body := w.post("/progress", map[string]any{"message": "Escrevendo a explicação", "fraction": 0.2, "result": "nota-nova"}); res.StatusCode != 200 {
+			t.Errorf("progress %d %v", res.StatusCode, body)
+		}
+		<-written
+		// a later progress without the note keeps the note it gave
+		w.post("/progress", map[string]any{"message": "Salvando", "fraction": 0.9})
+		w.post("/finish", map[string]any{"result": "nota-nova"})
+		return nil
+	}
+	client, _ := h.account("enabled", true, "ana@exemplo.com")
+	_, job := newJob(t, h, client, "explainSelection", "n1")
+	id := job["id"].(string)
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		_, now := h.do(client, call{method: http.MethodGet, path: "/v1/jobs/" + id})
+		if now["result"] == "nota-nova" {
+			if now["state"] != "running" {
+				t.Fatalf("with the note given, the job is %v", now["state"])
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the note never came with the progress: %v", now)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	close(written)
+	done := waitState(t, h, client, id, "done")
+	if done["result"] != "nota-nova" {
+		t.Fatalf("result %v", done["result"])
+	}
+}
+
 func TestJobRefusals(t *testing.T) {
 	h, fake := jobsHarness(t, 2)
 	// the job made here stays running until the test ends

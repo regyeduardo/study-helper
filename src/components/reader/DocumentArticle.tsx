@@ -29,6 +29,7 @@ import { renameSpeakerOnClick } from '@/lib/transcription/rename-everywhere'
 import { SyncLocalBanner } from '@/components/library/SyncLocal'
 import { withRecorder } from '@/lib/transcription/turns'
 import { recorderName, useAccountStore } from '@/stores/account'
+import { asNoteJob, useAccountJobsStore, writingJob } from '@/stores/account-jobs'
 import { type Heading, useDocumentStore } from '@/stores/document'
 import { useJobsStore } from '@/stores/jobs'
 import { liveFiles, useLibraryStore } from '@/stores/library'
@@ -367,6 +368,9 @@ export function DocumentBody({ fileId, compact = false }: { fileId: string; comp
   const live = useJobsStore(state => state.live[fileId])
   const job = useJobsStore(state => state.jobs.find(item => item.fileId === fileId && item.status === 'running'))
   const cancel = useJobsStore(state => state.cancel)
+  // the account writing this note shows as one written here: its stage and Cancelar, never "ainda não foi escrita" (25/11)
+  const inAccount = useAccountJobsStore(state => writingJob(state.jobs, fileId))
+  const writing = job ?? (inAccount ? asNoteJob(inAccount, 'generation') : undefined)
   const search = new URLSearchParams(useLocation().search)
   const asked = Number(search.get('t'))
   // the words of the search that opened the note (FR-074)
@@ -454,7 +458,7 @@ export function DocumentBody({ fileId, compact = false }: { fileId: string; comp
       {!readOnly && <SyncLocalBanner fileId={fileId} />}
       <DocumentHead meta={meta} onInfo={showInfo} transcribed={transcribed} />
       {error && <div className="banner">{error}</div>}
-      {meta.status !== 'ready' && !job && (
+      {meta.status !== 'ready' && !writing && (
         <div className="empty" style={{ margin: '24px auto' }}>
           <Icon name="file" />
           <div>{courseOf(folders, meta.folderId) ? 'Esta aula ainda não foi escrita. O recorte do material já está guardado.' : 'A geração não terminou. O material ficou guardado para tentar de novo.'}</div>
@@ -464,11 +468,11 @@ export function DocumentBody({ fileId, compact = false }: { fileId: string; comp
           </button>
         </div>
       )}
-      {job && (
+      {writing && (
         <div className="reader-live" role="status">
           <Icon name="sync" className="spinning" />
-          <span style={{ flex: 1 }}>{job.message}…</span>
-          <button className="btn danger" onClick={() => cancel(job.id)}>
+          <span style={{ flex: 1 }}>{writing.message}…</span>
+          <button className="btn danger" onClick={() => (job ? cancel(job.id) : inAccount && void useAccountJobsStore.getState().cancel(inAccount.id).catch(() => undefined))}>
             Cancelar
           </button>
         </div>

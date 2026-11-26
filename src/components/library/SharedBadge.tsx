@@ -9,7 +9,7 @@ import { useNow } from '@/hooks/use-now'
 import { blocking } from '@/lib/blocking'
 import { sideForNew } from '@/lib/storage/combined-repository'
 import { paths } from '@/lib/paths'
-import { daysLeftText, importSharedEntry, importSharedItem, linkMediaState, prefetchEntryMedia, type MediaPlace, readSharedAttempts, sharedMediaFailure } from '@/lib/share'
+import { daysLeftText, importConflict, importSharedEntry, importSharedItem, linkMediaState, prefetchEntryMedia, type MediaPlace, readSharedAttempts, sharedMediaFailure } from '@/lib/share'
 import { useAccountStore } from '@/stores/account'
 import { useJobsStore } from '@/stores/jobs'
 import { useLibraryStore } from '@/stores/library'
@@ -129,9 +129,9 @@ export function SharedBadge({ label = false, button = false }: { label?: boolean
         }
         const media = place ? { place, repo: library.repo, track, ...fetched } : undefined
         let copied = 0
-        const createFile: typeof library.createFile = async (fields, content) => {
+        const createFile: typeof library.createFile = async (fields, content, rule) => {
           blocker.progress({ phase: 'Copiando as notas', done: copied, total: item.files.length, current: fields.name, doneBytes: undefined, totalBytes: undefined })
-          const meta = await library.createFile(fields, content)
+          const meta = await library.createFile(fields, content, rule)
           blocker.progress({ done: ++copied })
           return meta
         }
@@ -169,15 +169,23 @@ export function SharedBadge({ label = false, button = false }: { label?: boolean
     void importItem(place, folderId)
   }
 
+  /** FR-021 ("Bloquear e avisar", 25/11): a name already where it lands is said before anything is downloaded or written. */
+  const refused = (folderId: string | null) => {
+    const library = useLibraryStore.getState()
+    const conflict = importConflict(item, folderId, library.ownFiles(), library.ownFolders())
+    if (conflict) toast(`Não deu para importar: ${conflict.message}`)
+    return Boolean(conflict)
+  }
+
   const startImport = () => {
     if (item.kind === 'entrada') return setOwnFolders(useLibraryStore.getState().ownFolders())
-    askMedia(null)
+    if (!refused(null)) askMedia(null)
   }
 
   const source: FolderSource | null = ownFolders && {
     folders: ownFolders,
-    createFolder: async fields => {
-      const folder = await useLibraryStore.getState().createOwnFolder(fields)
+    createFolder: async (fields, rule) => {
+      const folder = await useLibraryStore.getState().createOwnFolder(fields, rule)
       setOwnFolders(useLibraryStore.getState().ownFolders())
       return folder
     },
@@ -191,6 +199,8 @@ export function SharedBadge({ label = false, button = false }: { label?: boolean
       leaf={item.title}
       onClose={() => setOwnFolders(null)}
       onConfirm={folderId => {
+        // refused: the picker stays open, for another folder
+        if (refused(folderId)) return
         setOwnFolders(null)
         askMedia(folderId)
       }}

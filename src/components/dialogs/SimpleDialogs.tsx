@@ -86,7 +86,8 @@ export function NewFolderDialog({ parentId }: { parentId: string | null }) {
     // a folder is a write to the Drive: the button answers at once and does not make two
     const folder = await run(async () => {
       try {
-        return await createFolder({ name: name.trim(), parentId })
+        // a name already there is refused, saying so (FR-021)
+        return await createFolder({ name: name.trim(), parentId }, 'block')
       } catch (failure) {
         setError(failure instanceof Error ? failure.message : 'Não deu para criar a pasta.')
         return undefined
@@ -136,8 +137,9 @@ export function RenameDialog({ target, id }: { target: 'file' | 'folder'; id: st
     // the new name shows in the list at once; the window waits for the write, saying so, and saves once
     const saved = await run(async () => {
       try {
-        if (target === 'file') await library.updateFile(id, { name: name.trim(), description })
-        else await library.updateFolder(id, { name: name.trim(), description })
+        // a name already there is refused, saying so (FR-021)
+        if (target === 'file') await library.updateFile(id, { name: name.trim(), description }, 'block')
+        else await library.updateFolder(id, { name: name.trim(), description }, 'block')
         return true
       } catch (failure) {
         setError(failure instanceof Error ? failure.message : 'Não deu para salvar.')

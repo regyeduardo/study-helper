@@ -8,6 +8,7 @@ const { mockEnv } = vi.hoisted(() => ({ mockEnv: { apiUrl: 'https://api.example.
 vi.mock('@/lib/env', async importOriginal => ({ env: { ...((await importOriginal()) as { env: object }).env, apiUrl: mockEnv.apiUrl } }))
 
 import { routeOf, setWorkerMode } from '@/lib/generation/account-routing'
+import { inBackground } from '@/lib/generation/background'
 import { REPORT_EVERY_MS, runWorker } from '@/lib/generation/worker'
 import { appAiConfig, useAppAiStore } from '@/lib/ai/app-ai'
 import { useJobsStore } from '@/stores/jobs'
@@ -112,6 +113,51 @@ describe('a página de trabalho', () => {
     expect(job.state).toBe('failed')
     expect(job.error).toMatch(/IA do app/)
     expect(job.errorCode).toBe('ai_unavailable')
+  })
+
+  // 25/11 ("Explicação: handshake" pronta em Gerações e "ainda não foi escrita" na nota): "Explicar" e "Gerar desta nota" devolvem a
+  // nota na hora e escrevem depois; o trabalho acabava ali, a sessão saía e a escrita morria com a página. Agora a nota vai no andamento
+  // (o aparelho abre ela como antes) e o fim só vem quando a escrita acaba.
+  it('a chamada que devolve a nota e segue escrevendo: a nota vai no andamento, e o fim só vem com a escrita', async () => {
+    let write: () => void = () => {}
+    useJobsStore.setState({
+      regenerate: async () => {
+        useJobsStore.setState({ jobs: [{ id: 'local-1', kind: 'generation', title: 'Explicação', fileId: 'nota-nova', status: 'running', message: 'Escrevendo', fraction: 0.2, error: null, startedAt: Date.now() }] })
+        void inBackground(
+          new Promise<void>(resolve => {
+            write = () => {
+              useJobsStore.setState({ jobs: [{ id: 'local-1', kind: 'generation', title: 'Explicação', fileId: 'nota-nova', status: 'done', message: 'Pronto', fraction: 1, error: null, startedAt: Date.now() }] })
+              resolve()
+            }
+          }),
+        )
+        return 'nota-nova' as never
+      },
+    })
+    const working = runWorker('job-1')
+    await vi.waitFor(() => expect(server.jobs.get('job-1').result).toBe('nota-nova'))
+    expect(server.jobs.get('job-1').state).toBe('running')
+    expect(server.calls.some(call => call.path === '/v1/jobs/job-1/finish')).toBe(false)
+    write()
+    await working
+    expect(server.jobs.get('job-1')).toMatchObject({ state: 'done', result: 'nota-nova' })
+  })
+
+  it('a escrita que segue depois falha: o trabalho falha com o motivo', async () => {
+    useJobsStore.setState({
+      regenerate: async () => {
+        useJobsStore.setState({ jobs: [{ id: 'local-1', kind: 'generation', title: 'Explicação', fileId: 'nota-nova', status: 'running', message: 'Escrevendo', fraction: 0.2, error: null, startedAt: Date.now() }] })
+        // it fails a moment after the call gave the note back
+        void inBackground(
+          new Promise(resolve => setTimeout(resolve, 50)).then(() =>
+            useJobsStore.setState({ jobs: [{ id: 'local-1', kind: 'generation', title: 'Explicação', fileId: 'nota-nova', status: 'error', message: 'A explicação não saiu.', fraction: null, error: 'A IA não respondeu.', startedAt: Date.now() }] }),
+          ),
+        )
+        return 'nota-nova' as never
+      },
+    })
+    await runWorker('job-1')
+    expect(server.jobs.get('job-1')).toMatchObject({ state: 'failed', error: 'A explicação não saiu. A IA não respondeu.' })
   })
 
   it('cancelada lá dentro, também não volta como pronta', async () => {

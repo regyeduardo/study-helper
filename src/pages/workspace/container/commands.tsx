@@ -245,7 +245,7 @@ function Properties({ fileId }: { fileId: string }) {
           </div>
           <div className="prop">
             <span>Pasta</span>
-            <select aria-label="Pasta" value={meta.folderId ?? ''} onChange={event => void library.updateFile(meta.id, { folderId: event.target.value || null })}>
+            <select aria-label="Pasta" value={meta.folderId ?? ''} onChange={event => void library.updateFile(meta.id, { folderId: event.target.value || null }, 'block').catch(error => ui.toast(`Não deu para mover: ${error instanceof Error ? error.message : 'tente de novo.'}`))}>
               <option value="">Biblioteca</option>
               {folders.map(folder => (
                 <option key={folder.id} value={folder.id}>

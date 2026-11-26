@@ -355,7 +355,11 @@ export function ExamRun({ title, questions, sourceOf, diagnosisTarget, onRegener
   // what was kept of this exam, read once: it opens where the person left it
   const [restored, setRestored] = useState(() => (draftKey ? loadExamDraft(draftKey, questions) : null))
   const [seed, setSeed] = useState(0)
-  const exam = useMemo(() => restored?.exam ?? shuffleExam(questions.map(questionFromStored)), [questions, seed, restored])
+  // one draw per exam (25/11, "a alternativa que eu marquei foi contabilizada outra"): the note read again (the result saved in the App, a
+  // sync) brings the same questions in another list, and a new draw gave the marked letters to other alternatives and another order;
+  // only "Refazer" (seed) or other questions draw again
+  const same = questions.map(question => question.storedId).join('|')
+  const exam = useMemo(() => restored?.exam ?? shuffleExam(questions.map(questionFromStored)), [same, seed, restored])
   const [answers, setAnswers] = useState<Record<number, UserAnswer>>(restored?.answers ?? {})
   const [certainty, setCertainty] = useState<Record<number, Certainty>>(restored?.certainty ?? {})
   const [done, setDone] = useState(false)

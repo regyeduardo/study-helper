@@ -2,6 +2,7 @@ import { appAi } from '@/controllers/api.controller'
 import { getJob, reportFailure, reportFinish, reportProgress } from '@/controllers/jobs.controller'
 import { toAppConfig, useAppAiStore } from '@/lib/ai/app-ai'
 import { setWorkerMode } from '@/lib/generation/account-routing'
+import { backgroundSettled, hasBackground } from '@/lib/generation/background'
 import { unpackArgs } from '@/stores/account-jobs'
 import { useJobsStore } from '@/stores/jobs'
 import { useLibraryStore } from '@/stores/library'
@@ -45,9 +46,10 @@ export async function runWorker(jobId: string): Promise<void> {
     if (typeof run !== 'function') throw new Error(`Chamada desconhecida: ${job.call}`)
     // the job of the store this call makes is the one that shows its progress
     const before = new Set(useJobsStore.getState().jobs.map(item => item.id))
+    const made = () => useJobsStore.getState().jobs.filter(item => !before.has(item.id))
     let last = ''
     report = setInterval(() => {
-      const mine = useJobsStore.getState().jobs.find(item => !before.has(item.id))
+      const mine = made()[0]
       if (!mine) return
       const now = `${mine.message}|${mine.fraction}`
       if (now === last) return
@@ -55,13 +57,21 @@ export async function runWorker(jobId: string): Promise<void> {
       void reportProgress(jobId, mine.message, mine.fraction).catch(() => undefined)
     }, REPORT_EVERY_MS)
     const result = await run(...unpackArgs(job.args))
+    // "Explicar" and "Gerar desta nota" give the note back at once and write it after: the note goes now, in the progress (the device
+    // opens it as before), and the job ends with the writing, or the session left and the writing died with the page (25/11)
+    if (hasBackground()) {
+      const mine = made()[0]
+      await reportProgress(jobId, mine?.message ?? 'Escrevendo', mine?.fraction ?? null, result ?? null).catch(() => undefined)
+      await backgroundSettled()
+    }
     clearInterval(report)
     report = null
     // the transcription and the generations close their own job with the failure and end without throwing: that is a failure here too,
     // with its reason, never "done" with nothing made
-    const mine = useJobsStore.getState().jobs.find(item => !before.has(item.id))
-    if (mine?.status === 'error') throw new Error([mine.message, mine.error].filter(Boolean).join(' '))
-    if (mine?.status === 'cancelled') throw new Error(mine.message || 'Cancelado.')
+    const failed = made().find(item => item.status === 'error')
+    if (failed) throw new Error([failed.message, failed.error].filter(Boolean).join(' '))
+    const cancelled = made().find(item => item.status === 'cancelled')
+    if (cancelled) throw new Error(cancelled.message || 'Cancelado.')
     await reportFinish(jobId, result ?? null)
   } catch (error) {
     if (report) clearInterval(report)

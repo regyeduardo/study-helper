@@ -8,12 +8,13 @@ const { mockEnv } = vi.hoisted(() => ({ mockEnv: { apiUrl: 'https://api.example.
 vi.mock('@/lib/env', async importOriginal => ({ env: { ...((await importOriginal()) as { env: object }).env, apiUrl: mockEnv.apiUrl } }))
 
 import type { FileMeta } from '@/types/domain'
-import { createJob, listJobs } from '@/controllers/jobs.controller'
+import { type AccountJob, createJob, listJobs } from '@/controllers/jobs.controller'
 import { newFileMeta } from '@/lib/defaults'
 import { routeOf, setWorkerMode } from '@/lib/generation/account-routing'
 import { packArgs, runOnAccount, unpackArgs, useAccountJobsStore, WAIT_POLL_MS } from '@/stores/account-jobs'
 import { useJobsStore } from '@/stores/jobs'
 import { useLibraryStore } from '@/stores/library'
+import { useSyncStore } from '@/stores/sync'
 import { FakeAppServer } from '@/test/storage/fake-app-server'
 
 let server: FakeAppServer
@@ -122,6 +123,41 @@ describe('o valor volta para quem pediu', () => {
     const job = [...server.jobs.values()][0]
     useAccountJobsStore.getState().apply({ ...job, state: 'done', result: { id: 'mapa-1' } })
     await expect(running).resolves.toEqual({ id: 'mapa-1' })
+  })
+})
+
+// 25/11 ("Explicação: handshake" pronta em Gerações e "ainda não foi escrita" na nota): a conta manda a nota que a chamada devolveu
+// assim que ela existe, e segue escrevendo; quem pediu recebe a nota nessa hora, como quando roda aqui. Quando o trabalho acaba, este
+// aparelho lê a biblioteca de novo, para o que foi escrito aparecer mesmo se o canal ao vivo perdeu a mudança.
+describe('a nota que a conta devolve antes de acabar de escrever', () => {
+  it('quem pediu recebe a nota quando ela chega no andamento, sem esperar a escrita', async () => {
+    const running = runOnAccount('explainSelection', ['n1', 'handshake'], 'n1', 'Explicação · Aula')
+    await vi.waitFor(() => expect(server.jobs.size).toBe(1))
+    const job = [...server.jobs.values()][0]
+    let got: unknown = 'nada'
+    void running.then(value => (got = value))
+    useAccountJobsStore.getState().apply({ ...job, state: 'running', stage: 'Lendo a Aula' })
+    await Promise.resolve()
+    expect(got).toBe('nada')
+    useAccountJobsStore.getState().apply({ ...job, state: 'running', stage: 'Escrevendo', result: 'explicacao-1' })
+    await expect(running).resolves.toBe('explicacao-1')
+  })
+
+  it('quando um trabalho acaba na conta, a biblioteca é lida de novo; um que já tinha acabado, não', async () => {
+    const syncNow = vi.fn(async () => undefined)
+    const realSync = useSyncStore.getState().syncNow
+    useSyncStore.setState({ syncNow })
+    try {
+      const job: AccountJob = { id: 'j1', call: 'explainSelection', kind: 'generation', fileId: 'n1', title: 'Explicação · Aula', state: 'running', queuePosition: null, stage: 'Escrevendo', fraction: 0.5, etaAt: null, etaBasis: null,
+        lastProgress: null, lastProgressAt: null, stalledSince: null, args: [], result: 'explicacao-1', error: null, errorCode: null, attempt: 1, createdAt: '2026-11-25T22:52:16Z', startedAt: '2026-11-25T22:52:16Z', finishedAt: null }
+      useAccountJobsStore.setState({ jobs: [{ ...job, id: 'velho', state: 'done' }] })
+      useAccountJobsStore.getState().apply({ ...job })
+      expect(syncNow).not.toHaveBeenCalled()
+      useAccountJobsStore.getState().apply({ ...job, state: 'done', finishedAt: '2026-11-25T22:53:00Z' })
+      await vi.waitFor(() => expect(syncNow).toHaveBeenCalledTimes(1))
+    } finally {
+      useSyncStore.setState({ syncNow: realSync })
+    }
   })
 })
 

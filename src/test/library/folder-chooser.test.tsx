@@ -7,6 +7,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 
 import { FolderChooser, FolderChooserDialog, FolderField } from '@/components/dialogs/FolderChooser'
 import { Dialog } from '@/components/ui/Dialog'
+import { NameTakenError } from '@/lib/names'
 import { useLibraryStore } from '@/stores/library'
 import type { FolderColor, FolderMeta } from '@/types/domain'
 
@@ -198,7 +199,7 @@ describe('criar pasta no lugar', () => {
     fireEvent.change(name, { target: { value: '  Contratos ' } })
     fireEvent.click(screen.getByRole('button', { name: 'Criar' }))
     await waitFor(() => expect(marked()).toEqual([item('Contratos')]))
-    expect(createFolder).toHaveBeenCalledWith({ name: 'Contratos', parentId: 'aurora' })
+    expect(createFolder).toHaveBeenCalledWith({ name: 'Contratos', parentId: 'aurora' }, 'block')
     expect(changes).toEqual(['nova-1'])
     expect(name).toHaveValue('')
     expect(item('Projeto Aurora')).toHaveAttribute('aria-expanded', 'true')
@@ -212,6 +213,16 @@ describe('criar pasta no lugar', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('Não deu para criar a pasta.')
     expect(changes).toEqual([])
     expect(screen.getByRole('textbox', { name: 'Nome da pasta nova' })).toHaveValue('Contratos')
+  })
+
+  it('um nome que já existe ali: diz qual, e continua na marcada', async () => {
+    createFolder.mockRejectedValueOnce(new NameTakenError('Já existe uma pasta chamada "Atas" em Projeto Aurora.'))
+    render(<Panel start="aurora" />)
+    fireEvent.change(screen.getByRole('textbox', { name: 'Nome da pasta nova' }), { target: { value: 'atas' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Criar' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('Já existe uma pasta chamada "Atas" em Projeto Aurora.')
+    expect(createFolder).toHaveBeenCalledWith({ name: 'atas', parentId: 'aurora' }, 'block')
+    expect(changes).toEqual([])
   })
 
   it('enquanto cria, o botão diz "Criando…" e não deixa criar de novo', async () => {
@@ -229,7 +240,7 @@ describe('criar pasta no lugar', () => {
     render(<Panel start={null} />)
     fireEvent.change(screen.getByRole('textbox', { name: 'Nome da pasta nova' }), { target: { value: 'Viagens' } })
     fireEvent.keyDown(screen.getByRole('textbox', { name: 'Nome da pasta nova' }), { key: 'Enter' })
-    await waitFor(() => expect(createFolder).toHaveBeenCalledWith({ name: 'Viagens', parentId: null }))
+    await waitFor(() => expect(createFolder).toHaveBeenCalledWith({ name: 'Viagens', parentId: null }, 'block'))
     await waitFor(() => expect(marked()).toEqual([item('Viagens')]))
     expect(confirmed).toEqual([])
   })
@@ -239,7 +250,8 @@ describe('criar pasta no lugar', () => {
     fireEvent.change(screen.getByRole('textbox', { name: 'Nome da pasta nova' }), { target: { value: 'Rascunhos' } })
     fireEvent.click(screen.getByRole('button', { name: 'Criar' }))
     await waitFor(() => expect(createFolder).toHaveBeenCalledTimes(2))
-    expect(createFolder.mock.calls).toEqual([[{ name: 'Pauta', parentId: 'atas' }], [{ name: 'Rascunhos', parentId: 'nova-1' }]])
+    // the proposed one is the app's (the one of that name, when there is one); the person's new one refuses a name already there (FR-021)
+    expect(createFolder.mock.calls).toEqual([[{ name: 'Pauta', parentId: 'atas' }], [{ name: 'Rascunhos', parentId: 'nova-1' }, 'block']])
     await waitFor(() => expect(changes).toEqual(['nova-2']))
   })
 })

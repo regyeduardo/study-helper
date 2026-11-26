@@ -144,12 +144,21 @@ export function OrderDialog({ folderId }: { folderId: string }) {
     await library.updateFolder(other.id, { position: current.position })
   }
 
+  // a name already there is refused, saying which (FR-021): the field goes back to the name it had
+  const rename = (input: HTMLInputElement, before: string, save: (name: string) => Promise<void>) => {
+    if (!input.value.trim() || input.value === before) return
+    save(input.value.trim()).catch(error => {
+      input.value = before
+      ui.toast(error instanceof Error ? error.message : 'Não deu para renomear.')
+    })
+  }
+
   const renderLessons = (parentId: string) => {
     const lessons = lessonsOf(parentId)
     return lessons.map((lesson, index) => (
       <div key={lesson.id} className="row" style={{ cursor: 'default', gridTemplateColumns: '1fr auto' }}>
         <div>
-          <input className="input" aria-label="Nome da aula" defaultValue={lesson.name} onBlur={event => event.target.value.trim() && event.target.value !== lesson.name && void library.updateFile(lesson.id, { name: event.target.value.trim() })} />
+          <input className="input" aria-label="Nome da aula" defaultValue={lesson.name} onBlur={event => rename(event.target, lesson.name, name => library.updateFile(lesson.id, { name }, 'block'))} />
           {lesson.description && (
             <input className="input" style={{ marginTop: 4 }} aria-label="Descrição da aula" defaultValue={lesson.description} onBlur={event => event.target.value !== lesson.description && void library.updateFile(lesson.id, { description: event.target.value })} />
           )}
@@ -161,7 +170,7 @@ export function OrderDialog({ folderId }: { folderId: string }) {
           <button className="ibtn" onClick={() => void swapFiles(lessons, index, 1)} disabled={index === lessons.length - 1} aria-label="Descer">
             <Icon name="down" />
           </button>
-          <select className="input" style={{ width: 150 }} aria-label="Mover para o módulo" value={lesson.folderId ?? ''} onChange={event => void library.updateFile(lesson.id, { folderId: event.target.value || folderId, position: 999 })}>
+          <select className="input" style={{ width: 150 }} aria-label="Mover para o módulo" value={lesson.folderId ?? ''} onChange={event => void library.updateFile(lesson.id, { folderId: event.target.value || folderId, position: 999 }, 'block').catch(error => ui.toast(`Não deu para mover: ${error instanceof Error ? error.message : 'tente de novo.'}`))}>
             <option value={folderId}>{course?.name}</option>
             {modules.map(module => (
               <option key={module.id} value={module.id}>
@@ -189,7 +198,7 @@ export function OrderDialog({ folderId }: { folderId: string }) {
             <div key={module.id} className="q">
               <div className="qh" style={{ alignItems: 'center' }}>
                 <Icon name="layers" />
-                <input className="input" aria-label="Nome do módulo" defaultValue={module.name} onBlur={event => event.target.value.trim() && event.target.value !== module.name && void library.updateFolder(module.id, { name: event.target.value.trim() })} />
+                <input className="input" aria-label="Nome do módulo" defaultValue={module.name} onBlur={event => rename(event.target, module.name, name => library.updateFolder(module.id, { name }, 'block'))} />
                 <button className="ibtn" onClick={() => void swapModules(index, -1)} disabled={index === 0} aria-label="Subir o módulo">
                   <Icon name="up" />
                 </button>
@@ -214,7 +223,7 @@ export function OrderDialog({ folderId }: { folderId: string }) {
             disabled={!newModule.trim()}
             onClick={async () => {
               // the window holds the app until the folder exists: a second click does not make a second module
-              if (await working('Criando o módulo…', () => library.createFolder({ name: newModule.trim(), parentId: folderId, position: modules.length }))) setNewModule('')
+              if (await working('Criando o módulo…', () => library.createFolder({ name: newModule.trim(), parentId: folderId, position: modules.length }, 'block'))) setNewModule('')
             }}
           >
             <Icon name="plus" />
@@ -276,9 +285,11 @@ export function ImportDialog() {
     try {
       const imported = await importDocument(file)
       const type = imported.type === 'class' || imported.type === 'explanation' || imported.type === 'meeting' || imported.type === 'reading' ? imported.type : 'reading'
+      // a name already in the folder is refused, saying which (FR-021)
       const meta = await library.createFile(
         { name: file.name.replace(/\.(md|zip|pdf|docx)$/i, ''), type, folderId, origin: { input: 'import', name: file.name, sizeBytes: file.size, mime: file.type, storage: 'none' } },
         imported.markdown,
+        'block',
       )
       const questions = Array.isArray(imported.questions) ? imported.questions : (imported.questions as { questions?: unknown[] } | undefined)?.questions
       if (Array.isArray(questions) && questions.length) await library.setQuestions(meta.id, questions.map(question => storedFromRaw(question as never)))

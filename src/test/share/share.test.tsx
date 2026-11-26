@@ -396,6 +396,30 @@ describe('importar', () => {
   })
 })
 
+// FR-021 (spec 005, 25/11, "Bloquear e avisar"): o que o link traria para onde já há um item de mesmo nome é dito antes de baixar ou
+// gravar qualquer coisa; o link continua aberto e nada entra na biblioteca.
+describe('importar um nome que já existe', () => {
+  it('uma nota solta com o nome de uma que já está na Biblioteca: avisa qual, fica no link e nada é importado', async () => {
+    await useLibraryStore.getState().createFile({ name: 'aula 1', type: 'class', folderId: null }, '# minha')
+    const item = sharedItem({ kind: 'file', title: 'Aula 1', folders: [], files: [{ ...sharedItem().files[0], folderId: null }] })
+    useLibraryStore.getState().enterShared(item, {})
+    render(
+      <MemoryRouter initialEntries={[`/shared/${item.id}`]}>
+        <Routes>
+          <Route path="/shared/:shareId" element={<SharedBadge />} />
+          <Route path="*" element={<div>biblioteca</div>} />
+        </Routes>
+      </MemoryRouter>,
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Importar para a minha biblioteca' }))
+    await waitFor(() => expect(useUiStore.getState().toasts.at(-1)?.text).toBe('Não deu para importar: Já existe uma nota chamada "aula 1" na Biblioteca.'))
+    expect(screen.queryByText('biblioteca')).not.toBeInTheDocument()
+    expect(useLibraryStore.getState().sharedView).not.toBeNull()
+    useLibraryStore.getState().leaveShared()
+    expect(useLibraryStore.getState().files.map(file => file.name)).toEqual(['aula 1'])
+  })
+})
+
 describe('Compartilhado comigo', () => {
   it('some com o link quando ele expira', async () => {
     vi.useFakeTimers({ toFake: ['Date'] })
