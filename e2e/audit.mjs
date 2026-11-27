@@ -1,0 +1,28 @@
+import { chromium } from '@playwright/test'
+const dir = process.argv[2]
+const browser = await chromium.launch({ executablePath: '/usr/bin/chromium' })
+const page = await browser.newPage({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 })
+const shot = async (n) => { await page.screenshot({ path: `${dir}/${n}.png` }); console.log('shot', n) }
+const main = page.locator('main')
+await page.goto('http://localhost:8081', { waitUntil: 'networkidle' })
+await page.waitForTimeout(1500)
+await page.getByRole('button', { name: 'Biblioteca' }).last().click()
+await page.waitForTimeout(1200)
+await main.getByText('Claude Certified Architect - Foundations').first().click()
+await page.waitForTimeout(1200)
+await main.getByText('Introdução e Visão Geral do Curso').first().click()
+await page.waitForTimeout(1200)
+await main.getByText('Visão Geral do Curso', { exact: false }).last().click()
+await page.waitForTimeout(3000)
+await shot('04-leitor')
+const panelBtn = page.getByLabel('Índice, notas e questões')
+if (await panelBtn.count()) { await panelBtn.click(); await page.waitForTimeout(900); await shot('05-painel-gaveta'); await page.mouse.click(20, 400); await page.waitForTimeout(400) }
+await page.getByLabel('Menu').click()
+await page.waitForTimeout(900)
+await shot('06-menu-lateral')
+await page.mouse.click(375, 700)
+await page.waitForTimeout(400)
+await page.getByRole('button', { name: 'Novo' }).last().click()
+await page.waitForTimeout(1500)
+await shot('07-novo-conteudo')
+await browser.close()

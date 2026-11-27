@@ -84,13 +84,13 @@ describe('Gerar: a janela cobre o preparo e fecha quando o job abre', () => {
     // the choice is still being written to the note: no job yet, the window holds the app
     expect(ops()).toMatchObject([{ title: 'Aula: Limites', phase: 'Preparando' }])
     expect(running()).toHaveLength(0)
-    expect(container).toHaveAttribute('inert')
+    expect(container).toHaveAttribute('aria-hidden', 'true')
 
     release()
     await flush()
     expect(ops()).toHaveLength(0)
     expect(closed.seen).toEqual([[lesson.id]])
-    expect(container).not.toHaveAttribute('inert')
+    expect(container).not.toHaveAttribute('aria-hidden')
     closed.stop()
     void done
   })

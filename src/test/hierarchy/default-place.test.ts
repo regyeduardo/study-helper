@@ -132,7 +132,9 @@ describe('lugar padrão', () => {
     await b.repo.load()
     await b.repo.removeFolder(projeto.id)
 
-    const seen = await a.repo.load()
+    // spec 007 (R3, T028): opening shows the copy at once; the folder deleted elsewhere goes with what changed since its seq
+    await a.repo.load()
+    const seen = (await a.repo.pullChanges()).snapshot
     expect(seen.folders).toEqual([])
     expect(seen.files.find(file => file.id === ideia.id)?.folderId).toBeNull()
     expect(a.repo.lostFolder.has(ideia.id)).toBe(true)

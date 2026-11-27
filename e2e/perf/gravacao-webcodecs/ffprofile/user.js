@@ -1,0 +1,11 @@
+user_pref("browser.shell.checkDefaultBrowser", false);
+user_pref("datareporting.policy.dataSubmissionEnabled", false);
+user_pref("toolkit.telemetry.reportingpolicy.firstRun", false);
+user_pref("browser.startup.homepage_override.mstone", "ignore");
+user_pref("app.update.auto", false);
+user_pref("app.update.enabled", false);
+user_pref("media.autoplay.default", 0);
+user_pref("browser.aboutwelcome.enabled", false);
+user_pref("dom.disable_open_during_load", false);
+user_pref("browser.link.open_newwindow", 3);
+user_pref("dom.allow_scripts_to_close_windows", true);

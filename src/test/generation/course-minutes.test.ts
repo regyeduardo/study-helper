@@ -135,14 +135,25 @@ describe('minutes', () => {
     expect(events).toEqual(['phase1_complete', 'lesson_complete'])
   })
 
-  it('when joining gives no JSON, the pieces are put together as they came; with no JSON at all only the title is left', async () => {
+  it('when joining gives no JSON, the pieces are put together as they came', async () => {
     installFetch(request =>
       systemPromptOf(request) === PROMPTS.MINUTES_EXTRACT_PROMPT ? openAiStream(JSON.stringify({ assunto: 'Plano', temas: [{ tema: 'T', pontos: [{ texto: 'algo' }] }], passos: [{ texto: 'fazer' }] })) : openAiStream('sem json'),
     )
     expect((await buildMinutes('a'.repeat(13000), new GenerationSession(llm7Settings()))).markdown).toBe('# Plano\n\n### T\n- algo\n\n### T\n- algo\n\n**Próximos passos**\n- [ ] fazer — sem dono · sem prazo\n- [ ] fazer — sem dono · sem prazo\n')
-    installFetch(() => openAiStream('sem json'))
-    const { markdown, subject } = await buildMinutes('fala curta', new GenerationSession(llm7Settings()))
-    expect(subject).toBe('Reunião')
-    expect(markdown).toBe('# Reunião\n')
+  })
+
+  // 27/11 (dono: "Bom"): an AI answer out of format left an Ata with its title alone ("# Reunião"), marked ready; now the piece is asked
+  // once more and, still out of format, the Ata fails saying why
+  it('a piece answered without JSON is asked once more; still without it, the Ata fails saying why, never a title alone', async () => {
+    const { calls } = installFetch(() => openAiStream('sem json'))
+    await expect(buildMinutes('fala curta', new GenerationSession(llm7Settings()))).rejects.toThrow('A IA não devolveu a ata no formato esperado')
+    expect(calls.filter(call => systemPromptOf(call) === PROMPTS.MINUTES_EXTRACT_PROMPT)).toHaveLength(2)
+  })
+
+  it('a piece that comes right on the second ask is written', async () => {
+    let asked = 0
+    installFetch(() => (++asked === 1 ? openAiStream('sem json') : openAiStream(JSON.stringify({ assunto: 'Plano', temas: [{ tema: 'T', pontos: [{ texto: 'algo' }] }], passos: [] }))))
+    expect((await buildMinutes('fala curta', new GenerationSession(llm7Settings()))).markdown).toBe('# Plano\n\n### T\n- algo\n')
+    expect(asked).toBe(2)
   })
 })

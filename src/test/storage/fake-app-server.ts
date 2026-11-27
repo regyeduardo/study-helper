@@ -86,6 +86,8 @@ export class FakeAppServer {
   failPutFor: string | null = null
   /** How those writes fail: a server error by default, or a refusal (404 not_found, 403 app_off…). */
   failWith = { status: 500, error: 'internal_error' }
+  /** Spec 005, FR-021: the real server refuses a name already in the folder; a test names the item it refuses and the one in the way. */
+  nameTakenFor: { id: string; taken: { id: string; name: string } } | null = null
   private versions = 0
 
   private nextVersion(): string {
@@ -240,6 +242,7 @@ export class FakeAppServer {
         if (row.itemKind === 'file' && row.place !== 'app' && row.place !== 'drive') return json(422, { error: 'invalid_place' })
         if (row.itemKind === 'file' && row.place === 'app' && !this.appEnabled) return json(403, { error: 'app_off' })
         if ((current?.rev ?? 0) !== baseRev) return json(409, { error: 'conflict', current: structuredClone(current ?? null) })
+        if (this.nameTakenFor?.id === id) return json(409, { error: 'name_taken', taken: this.nameTakenFor.taken })
         const clean = Object.fromEntries(Object.entries(row).filter(([key]) => !SERVER_OWNED.includes(key)))
         if (row.itemKind === 'folder') clean.place = null
         const next: Row = { parts: {}, media: null, noteBytes: 0, mediaBytes: 0, removedAt: null, trashedAt: null, trashedWith: null, rev: 0, seq: 0, ...current, ...clean, id } as Row

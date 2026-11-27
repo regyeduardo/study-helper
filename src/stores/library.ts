@@ -28,6 +28,7 @@ import { migrateEntries } from '@/lib/entry-migration'
 import { descendantsOf } from '@/lib/family'
 import { masteryOf } from '@/lib/exam'
 import { folderNamed, folderTaken, freeName, moveConflict, nameKey, type NameRule, noteNamed, noteTaken, placeOf } from '@/lib/names'
+import { planNameRepair } from '@/lib/names-repair'
 import { isSourceNote, mediaOf } from '@/lib/file-types'
 import { nameArtifact, nameSource } from '@/lib/generation/artifact-name'
 import { GenerationSession } from '@/lib/generation/session'
@@ -125,6 +126,11 @@ interface LibraryState {
   ownFolders(): FolderMeta[]
   /** The notes of who is looking, even while a shared link is open (what an import would repeat, FR-021). */
   ownFiles(): FileMeta[]
+  /**
+   * Spec 005, FR-022 (T052): the repeated names from before the rule that live only in this browser (the Local profile; in an account,
+   * the notes of Local) undone once, with a copy first; the server's are cmd/juntar-nomes. Returns how many items changed.
+   */
+  repairNames(): Promise<number>
   /** A folder in one's own library, even while a shared link is open: the link stays read only. */
   createOwnFolder(fields: Partial<FolderMeta> & { name: string }, rule?: NameRule): Promise<FolderMeta>
   updateFolder(id: string, patch: Partial<FolderMeta>, rule?: Exclude<NameRule, 'reuse'>): Promise<void>
@@ -283,15 +289,20 @@ export const useLibraryStore = create<LibraryState>((set, get) => {
 
   const sidecarOf = async (id: string): Promise<FileSidecar> => get().opened[id]?.sidecar ?? (await repository().readSidecar(id))
 
+  // the same sizes and the same media are not set again: the screen would draw them again at each sync (spec 007, T047)
   const measure = (repo: Repository, fileIds?: string[]) =>
     void repo.fileSizes(fileIds).then(
       sizes => {
-        if (get().repo === repo) set(state => ({ sizes: fileIds ? { ...state.sizes, ...sizes } : sizes }))
+        if (get().repo !== repo) return
+        set(state => {
+          const same = fileIds ? Object.keys(sizes).every(id => sameData(state.sizes[id], sizes[id])) : sameData(state.sizes, sizes)
+          return same ? state : { sizes: fileIds ? { ...state.sizes, ...sizes } : sizes }
+        })
       },
       () => undefined,
     )
 
-  const refreshMedia = () => void listLocalMedia().then(localMedia => set({ localMedia }), () => undefined)
+  const refreshMedia = () => void listLocalMedia().then(localMedia => set(state => (sameData(state.localMedia, localMedia) ? state : { localMedia })), () => undefined)
 
   watchLocalMedia(refreshMedia)
 
@@ -504,6 +515,8 @@ export const useLibraryStore = create<LibraryState>((set, get) => {
         migrateHierarchyWhenReady()
         warnLostFolders(repo)
         await get().purgeExpiredTrash()
+        // spec 005, FR-022: the repeated names from before the rule that live only here, undone once (with a copy first)
+        void get().repairNames().catch(() => undefined)
         // a change of place stopped in the middle (a closed tab) continues from where it stopped (FR-054)
         if (repo instanceof CombinedRepository) void import('@/stores/places').then(({ usePlacesStore }) => usePlacesStore.getState().resume()).catch(() => undefined)
       } catch (error) {
@@ -552,10 +565,20 @@ export const useLibraryStore = create<LibraryState>((set, get) => {
         if (!indexWrites) set({ index: { ...defaultIndex(), ...snapshot.index, settings: normalizeSettings({ ...defaultIndex().settings, ...snapshot.index.settings }) } })
         return
       }
+      // what did not change stays the same object, and a sync with nothing new changes nothing: the lists and the rows are not drawn
+      // again, at the opening and every 5 minutes (spec 007, T047)
       set(state => {
-        const opened = { ...state.opened }
-        for (const id of changedFileIds) delete opened[id]
-        return { folders: snapshot.folders, files: snapshot.files, ...(indexWrites ? {} : { index: { ...defaultIndex(), ...snapshot.index, settings: normalizeSettings({ ...defaultIndex().settings, ...snapshot.index.settings }) } }), opened }
+        const folders = keptItems(state.folders, snapshot.folders)
+        const fresh = indexWrites ? state.index : { ...defaultIndex(), ...snapshot.index, settings: normalizeSettings({ ...defaultIndex().settings, ...snapshot.index.settings }) }
+        const index = sameData(state.index, fresh) ? state.index : fresh
+        const closed = changedFileIds.filter(id => id in state.opened)
+        const opened = closed.length ? { ...state.opened } : state.opened
+        for (const id of closed) delete opened[id]
+        // what was read of a changed note leaves, and the list is a new one (its rows the same objects): the search reads it again
+        const kept = keptItems(state.files, snapshot.files)
+        const files = closed.length && kept === state.files ? [...kept] : kept
+        if (folders === state.folders && files === state.files && index === state.index && opened === state.opened) return state
+        return { folders, files, ...(indexWrites ? {} : { index }), opened }
       })
       const repo = get().repo
       if (repo) measure(repo)
@@ -601,11 +624,20 @@ export const useLibraryStore = create<LibraryState>((set, get) => {
 
     updateFile: async (id, patch, rule = 'number') => {
       // a library that is closed or read only refuses before anything is shown
-      repository()
+      const repo = repository()
       const named = freeNote(get().files, id, patch, rule)
+      const before = get().files.find(file => file.id === id)
       // the list shows the change now; if the write fails it goes back
       const undo = showNow<FileMeta>('files', [id], named)
       try {
+        // only what the hierarchy keeps changes (name, folder, Lixeira): its line goes alone, without reading the note (spec 007, T047)
+        const saved = before && repo instanceof CombinedRepository ? await repo.saveTreeOnly({ ...before, ...named, updated: stamp() }) : null
+        if (saved) {
+          measure(repo, [id])
+          replaceFile(saved)
+          set(state => (state.opened[id] ? { opened: { ...state.opened, [id]: { ...state.opened[id], sidecar: { ...state.opened[id].sidecar, meta: saved } } } } : {}))
+          return
+        }
         const sidecar = await sidecarOf(id)
         await saveSidecarOnly({ ...sidecar, meta: { ...sidecar.meta, ...named, updated: stamp() } })
       } catch (error) {
@@ -723,6 +755,43 @@ export const useLibraryStore = create<LibraryState>((set, get) => {
     ownFolders: () => (own ?? get()).folders,
 
     ownFiles: () => (own ?? get()).files,
+
+    repairNames: async () => {
+      const repo = get().repo
+      const done = `study-helper:nomes-juntados:${get().accountId}`
+      if (!repo || get().sharedView || localStorage.getItem(done)) return 0
+      // in an account the folders and the notes of the App and of the Drive are on the server: here, only the notes of Local, and a
+      // note that is not of this browser keeps its name (it counts as the oldest)
+      const combined = repo instanceof CombinedRepository ? repo : null
+      const local = (id: string) => !combined || combined.sideOf(id) === 'local'
+      const { folders, files } = get()
+      const ranked = combined ? files.map(file => (local(file.id) ? file : { ...file, created: { ...file.created, at: '' } })) : files
+      const plan = planNameRepair(combined ? [] : folders, ranked)
+      const fileChanges = plan.files.filter(change => local(change.id))
+      if (!plan.folders.length && !fileChanges.length) {
+        localStorage.setItem(done, nowIso())
+        return 0
+      }
+      // the copy first (folders and notes, without the content): without it, nothing changes
+      const at = nowIso()
+      try {
+        const folder = await navigator.storage.getDirectory()
+        const handle = await folder.getFileHandle(`copia-antes-de-juntar-nomes-${get().accountId}-${at.replace(/[:.]/g, '-')}.json`, { create: true })
+        const writable = await handle.createWritable()
+        await writable.write(JSON.stringify({ at, folders, files }))
+        await writable.close()
+      } catch {
+        return 0
+      }
+      for (const change of plan.folders) await get().updateFolder(change.id, { parentId: change.parentId, ...(change.trash ? { deletedAt: at } : {}) }, 'number')
+      for (const change of fileChanges) await get().updateFile(change.id, { folderId: change.folderId, name: change.name }, 'number')
+      localStorage.setItem(done, at)
+      const joined = plan.folders.filter(change => change.trash).length
+      const numbered = fileChanges.filter(change => change.name !== files.find(file => file.id === change.id)?.name).length
+      const said = [joined ? `juntei ${joined} pasta${joined === 1 ? '' : 's'} repetida${joined === 1 ? '' : 's'}` : '', numbered ? `pus número em ${numbered} nota${numbered === 1 ? '' : 's'} de mesmo nome` : ''].filter(Boolean).join(' e ')
+      if (said) void import('@/stores/ui').then(({ useUiStore }) => useUiStore.getState().toast(`${said[0].toUpperCase()}${said.slice(1)}. Uma cópia de antes ficou neste navegador.`))
+      return plan.folders.length + fileChanges.length
+    },
 
     createOwnFolder: async (fields, rule = 'reuse') => {
       if (!own) return get().createFolder(fields, rule)
@@ -1055,6 +1124,25 @@ if (typeof window !== 'undefined')
     if (repo instanceof CombinedRepository && repo.hierarchy) void import('@/stores/sync').then(({ useSyncStore }) => useSyncStore.getState().syncNow())
   })
 
+/** The same data: what JSON would write of both is the same. */
+function sameData(a: unknown, b: unknown): boolean {
+  return a === b || JSON.stringify(a) === JSON.stringify(b)
+}
+
+/** The new list, keeping the object shown of each item that did not change (the same object, or the same data): with nothing new it is
+ * the list shown itself, and nothing is drawn again (spec 007, T047). */
+function keptItems<T extends { id: string }>(shown: T[], next: T[]): T[] {
+  const byId = new Map(shown.map(item => [item.id, item]))
+  let same = shown.length === next.length
+  const kept = next.map((item, at) => {
+    const old = byId.get(item.id)
+    const keep = old !== undefined && sameData(old, item) ? old : item
+    if (keep !== shown[at]) same = false
+    return keep
+  })
+  return same ? shown : kept
+}
+
 /** Spec 005, R6: notes in Local whose folder was deleted for good on another device show at the root, and the app says so once. */
 function warnLostFolders(repo: Repository): void {
   if (!(repo instanceof CombinedRepository) || !repo.lostFolder.size) return
@@ -1098,8 +1186,10 @@ useServerAccount.subscribe(() => {
   const on = serverAppOn()
   // spec 006: with the structure on, the AI is the app's
   followAppAi(on && useServerAccount.getState().status === 'signed-in')
-  if (on !== useLibraryStore.getState().appOn) void useLibraryStore.getState().attachApp(on)
+  // the account's hierarchy first: the App attached next reads the library through it, from this device's copy; attached before it,
+  // the App read the library alone and brought the whole map at every opening, holding "Abrindo a biblioteca do App" (spec 007, T028)
   const { repo, accountId } = useLibraryStore.getState()
   if (repo instanceof CombinedRepository && hierarchyOn(accountId) !== Boolean(repo.hierarchy)) void followHierarchy(repo, hierarchyOn(accountId))
+  if (on !== useLibraryStore.getState().appOn) void useLibraryStore.getState().attachApp(on)
   migrateHierarchyWhenReady()
 })

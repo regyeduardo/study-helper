@@ -112,6 +112,104 @@ func TestLibraryMapRows(t *testing.T) {
 	}
 }
 
+// Spec 005, FR-021 (25/11: "no mesmo diretório não pode existir nem pasta de nome igual nem arquivo"): in one folder, the root too, no
+// two folders and no two notes with the same name (capitals and the spaces at the ends do not tell them apart; the Trash does not
+// count; a folder and a note may share a name). The server refuses it even when an old app asks; a pair that existed before the rule
+// still takes its other changes (T052 joins them).
+func TestNamesAreUniqueInAFolder(t *testing.T) {
+	h := newHarness(t)
+	ana, _ := h.account("enabled", true, "ana@exemplo.com")
+	put := func(id string, base int, fields map[string]any) (int, map[string]any) {
+		res, body := h.do(ana, call{method: http.MethodPut, path: "/v1/library/items/" + id, body: map[string]any{"baseRev": base, "row": fields}})
+		return res.StatusCode, body
+	}
+	folder := func(name string, extra map[string]any) map[string]any {
+		out := map[string]any{"itemKind": "folder", "name": name, "position": 0, "meta": map[string]any{"name": name}, "createdAt": "2026-11-25T10:00:00Z", "updatedAt": "2026-11-25T10:00:00Z"}
+		for key, value := range extra {
+			out[key] = value
+		}
+		return out
+	}
+	in := func(folderID string, extra map[string]any) map[string]any {
+		out := map[string]any{"folderId": folderID}
+		for key, value := range extra {
+			out[key] = value
+		}
+		return out
+	}
+	ok := func(what string, status int, body map[string]any) {
+		t.Helper()
+		if status != 200 {
+			t.Fatalf("%s: %d %v", what, status, body)
+		}
+	}
+	taken := func(what string, status int, body map[string]any, name string) {
+		t.Helper()
+		if status != 409 || body["error"] != "name_taken" || body["taken"].(map[string]any)["name"] != name {
+			t.Fatalf("%s: %d %v", what, status, body)
+		}
+	}
+
+	status, body := put("vp6", 0, folder("VP6", nil))
+	ok("VP6", status, body)
+	status, body = put("hm", 0, folder("HM", in("vp6", nil)))
+	ok("HM", status, body)
+	status, body = put("hm2", 0, folder(" hm ", in("vp6", nil)))
+	taken("another HM in VP6", status, body, "HM")
+	status, body = put("hm-root", 0, folder("HM", nil))
+	ok("HM at the root", status, body)
+	status, body = put("n-hm", 0, row("HM", in("vp6", nil)))
+	ok("a note named as a folder", status, body)
+
+	status, body = put("n1", 0, row("Resumo", in("vp6", nil)))
+	ok("Resumo", status, body)
+	status, body = put("n2", 0, row("RESUMO", in("vp6", nil)))
+	taken("another Resumo", status, body, "Resumo")
+	status, body = put("n3", 0, row("Outro", in("vp6", nil)))
+	ok("Outro", status, body)
+	status, body = put("n3", 1, row("resumo ", in("vp6", nil)))
+	taken("renamed to Resumo", status, body, "Resumo")
+	status, body = put("n1", 1, row("Resumo", in("vp6", map[string]any{"position": 5})))
+	ok("the same note, other changes", status, body)
+	status, body = put("n4", 0, row("Resumo", in("hm", nil)))
+	ok("Resumo in HM", status, body)
+	status, body = put("n4", 1, row("Resumo", in("vp6", nil)))
+	taken("moved into VP6", status, body, "Resumo")
+
+	// the Trash does not count; coming back over a live one is refused
+	status, body = put("n1", 2, row("Resumo", in("vp6", map[string]any{"trashedAt": "2026-11-25T12:00:00Z"})))
+	ok("Resumo to the Trash", status, body)
+	status, body = put("n2", 0, row("RESUMO", in("vp6", nil)))
+	ok("RESUMO now", status, body)
+	status, body = put("n1", 3, row("Resumo", in("vp6", nil)))
+	taken("back from the Trash", status, body, "RESUMO")
+
+	// a batch with one repeated name changes nothing
+	res, batch := h.do(ana, call{method: http.MethodPost, path: "/v1/library/items/batch", body: map[string]any{"operations": []any{
+		map[string]any{"id": "n3", "baseRev": 1, "row": row("Terceira", in("vp6", nil))},
+		map[string]any{"id": "n4", "baseRev": 1, "row": row("Resumo", in("vp6", nil))},
+	}}})
+	if res.StatusCode != 409 || batch["error"] != "name_taken" {
+		t.Fatalf("batch: %d %v", res.StatusCode, batch)
+	}
+	if _, got := h.do(ana, call{path: "/v1/library/items/n3"}); got["name"] != "Outro" {
+		t.Fatalf("a refused batch changed a row: %v", got)
+	}
+
+	// a pair from before the rule still takes its other changes
+	var userID string
+	if err := h.db.QueryRow(`SELECT id FROM user WHERE email = ?`, "ana@exemplo.com").Scan(&userID); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"d1", "d2"} {
+		if _, err := h.db.Exec(`INSERT INTO library_items (user_id, id, item_kind, note_type, name, folder_id, place, position, meta, created_at, updated_at, rev, seq) VALUES (?, ?, 'file', 'class', 'Velha', 'vp6', 'app', 0, '{}', '2026-11-20T10:00:00Z', '2026-11-20T10:00:00Z', 1, 0)`, userID, id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	status, body = put("d2", 1, row("Velha", in("vp6", map[string]any{"position": 3})))
+	ok("an old pair, other changes", status, body)
+}
+
 func TestLibraryPartsAndIndex(t *testing.T) {
 	h := newHarness(t)
 	ana, _ := h.account("enabled", true, "ana@exemplo.com")

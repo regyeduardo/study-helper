@@ -9,6 +9,8 @@ ARG VERSION=dev
 RUN CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o /out/estudo ./cmd/estudo
 # spec 007: the seeder of the test library (only ever touches an account ending in @local)
 RUN CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o /out/estudo-semear ./cmd/semear
+# spec 005 (T052): undoes once the repeated names from before the rule, with a copy of the database first (run only on the owner's order)
+RUN CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o /out/estudo-juntar-nomes ./cmd/juntar-nomes
 
 FROM debian:bookworm-slim
 RUN apt-get update \
@@ -18,6 +20,7 @@ RUN apt-get update \
  && mkdir -p /data && chown estudo /data
 COPY --from=build /out/estudo /usr/local/bin/estudo
 COPY --from=build /out/estudo-semear /usr/local/bin/estudo-semear
+COPY --from=build /out/estudo-juntar-nomes /usr/local/bin/estudo-juntar-nomes
 USER estudo
 ENV ESTUDO_ADDR=:8080 ESTUDO_DB=/data/estudo.db ESTUDO_CHROMIUM=/usr/bin/chromium
 EXPOSE 8080

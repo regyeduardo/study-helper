@@ -1,4 +1,5 @@
 import { Link } from 'react-router-dom'
+import { useShallow } from 'zustand/react/shallow'
 
 import type { FileMeta, FileType } from '@/types/domain'
 import { Icon } from '@/components/ui/Icon'
@@ -56,18 +57,18 @@ const plural = (count: number, one: string, many: string) => `${count} ${count =
 
 /** How many notes and artifacts were born of the item, in any folder: "2 notas · 1 artefato"; nothing without descendants. */
 export function FamilyCount({ file }: { file: FileMeta }) {
-  const files = useLibraryStore(state => state.files)
-  const { notes, artifacts } = familyCount(files, file.id)
+  // the counts, not the whole list: another note changed does not draw this row again (spec 007, T047)
+  const { notes, artifacts } = useLibraryStore(useShallow(state => familyCount(state.files, file.id)))
   if (!notes && !artifacts) return null
   return <span className="fam-count">{[notes && plural(notes, 'nota', 'notas'), artifacts && plural(artifacts, 'artefato', 'artefatos')].filter(Boolean).join(' · ')}</span>
 }
 
 /** "de: <mãe>", a link to the mother note or the entrada; "mãe apagada" when she is in the Lixeira or gone. A row nested under its mother does not need it. */
 export function MotherBadge({ file, className = '' }: { file: FileMeta; className?: string }) {
-  const files = useLibraryStore(state => state.files)
+  // the mother, not the whole list: another note changed does not draw this row again (spec 007, T047)
+  const mother = useLibraryStore(state => (file.parentFileId ? motherOf(state.files, file) : null))
   const shared = useLibraryStore(state => Boolean(state.sharedView))
   if (!file.parentFileId) return null
-  const mother = motherOf(files, file)
   // A shared link carries only part of the library: a mother left out of it was not deleted.
   if (!mother) return shared ? null : <span className={`fam-selo off ${className}`}>mãe apagada</span>
   if (mother.deletedAt) return <span className={`fam-selo off ${className}`}>{`de: ${mother.name} · mãe apagada`}</span>

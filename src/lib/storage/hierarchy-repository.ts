@@ -157,28 +157,55 @@ export class HierarchyRepository {
 
   snapshot(): HierarchySnapshot {
     const live = [...this.rows.values()].filter(row => !row.removedAt)
-    return { folders: live.filter(row => row.itemKind === 'folder').map(folderOfRow), files: live.filter(row => row.itemKind === 'file').map(fileOfRow) }
+    return { folders: live.filter(row => row.itemKind === 'folder').map(row => this.made(row, folderOfRow)), files: live.filter(row => row.itemKind === 'file').map(row => this.made(row, fileOfRow)) }
   }
 
-  /** From the copy at once, then what changed since its seq; with the server out, the copy (with no copy, the refusal). */
-  async load(): Promise<HierarchySnapshot> {
+  /** The note or folder of each row, made once per row (a change makes a new row): what did not change is the same object, and the
+   * screen does not draw it again at each sync (spec 007, T047). */
+  private madeOf = new WeakMap<LibraryRow, FileMeta | FolderMeta>()
+  private made<T extends FileMeta | FolderMeta>(row: LibraryRow, make: (row: LibraryRow) => T): T {
+    const known = this.madeOf.get(row) as T | undefined
+    if (known) return known
+    const item = make(row)
+    this.madeOf.set(row, item)
+    return item
+  }
+
+  /**
+   * From the copy at once, without waiting for the network (spec 007, R3, T028): what changed since its seq comes right after, as any
+   * change of another device (the live channel says this seq to the server; its polling, when it is down), with the queue going up
+   * first (`pullChanges`). A new device (no copy) brings the whole map; with the server out and no copy, the refusal.
+   * What asks for the library while it loads (the session turning on the hierarchy and the App, the first sync) waits for this same
+   * load: on a new device the whole map came three times at once on the phone's network (spec 007, T047).
+   */
+  load(): Promise<HierarchySnapshot> {
+    this.loading ??= this.loadNow().finally(() => {
+      this.loading = null
+    })
+    return this.loading
+  }
+
+  private loading: Promise<HierarchySnapshot> | null = null
+
+  private async loadNow(): Promise<HierarchySnapshot> {
     const copy = await this.cache.hasCopy()
     this.rows = new Map((await this.cache.rows()).map(row => [row.id, row]))
     this.seq = copy ? await this.cache.seq() : 0
+    if (copy) {
+      await this.tell()
+      return this.snapshot()
+    }
     // a change the server refused already left the queue and went back to the server's: opening goes on
     await this.flush().catch(() => undefined)
-    try {
-      await this.pull()
-    } catch (error) {
-      if (!(copy && isOffline(error))) throw error
-      this.online = false
-    }
+    await this.pull()
     await this.tell()
     return this.snapshot()
   }
 
   /** The queue goes up first, then what changed on the map since this device's seq. */
   async pullChanges(): Promise<{ snapshot: HierarchySnapshot; changedFileIds: string[] }> {
+    // a load in flight first: then only what came after it
+    if (this.loading) await this.loading.catch(() => undefined)
     await this.flush()
     const changedFileIds = await this.pull()
     return { snapshot: this.snapshot(), changedFileIds }
@@ -298,6 +325,7 @@ export class HierarchyRepository {
         // a newer change of the same item waits in the queue: what this device shows stays, with the new rev
         const row: LibraryRow = { ...shown, ...(later ? {} : mine), rev: saved.rev, seq: saved.seq }
         this.rows.set(id, row)
+        this.follow(saved.seq)
         await this.cache.saveRows([row], this.seq)
         return
       } catch (error) {
@@ -321,6 +349,14 @@ export class HierarchyRepository {
     throw new Error('Este item mudou em outro aparelho várias vezes seguidas. Tente de novo.')
   }
 
+  /**
+   * This device's own write came right after the seq it has: nothing of another device in between, so the copy moves along with it and
+   * opening again does not bring back its own changes (spec 007, T028). With a gap, the seq stays and the next pull brings what is missing.
+   */
+  private follow(seq: number): void {
+    if (seq === this.seq + 1) this.seq = seq
+  }
+
   private async sendDelete(change: OutboxChange): Promise<void> {
     const id = change.id
     let rev = this.rows.get(id)?.rev ?? change.baseRev
@@ -331,6 +367,7 @@ export class HierarchyRepository {
         if (row) {
           const removed = { ...row, removedAt: row.removedAt ?? nowIso(), parts: {}, seq: done.seq }
           this.rows.set(id, removed)
+          this.follow(done.seq)
           await this.cache.saveRows([removed], this.seq)
         }
         return

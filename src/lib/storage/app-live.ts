@@ -27,8 +27,12 @@ export function openLive(handlers: LiveHandlers): () => void {
   let stopped = false
   const url = `${env.apiUrl.replace(/^http/, 'ws')}/v1/live`
 
+  // without the channel, what changed is asked at once (the library opens from this device's copy without asking, spec 007 T028),
+  // then every 15 s
   const startPolling = () => {
-    if (!poll) poll = setInterval(() => handlers.onMap(), POLL_MS)
+    if (poll) return
+    handlers.onMap()
+    poll = setInterval(() => handlers.onMap(), POLL_MS)
   }
   const stopPolling = () => {
     if (poll) clearInterval(poll)

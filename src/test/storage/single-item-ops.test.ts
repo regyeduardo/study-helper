@@ -9,6 +9,7 @@ const { mockEnv } = vi.hoisted(() => ({ mockEnv: { apiUrl: 'https://api.example.
 vi.mock('@/lib/env', async importOriginal => ({ env: { ...((await importOriginal()) as { env: object }).env, apiUrl: mockEnv.apiUrl } }))
 
 import { CombinedRepository } from '@/lib/storage/combined-repository'
+import { PartCache } from '@/lib/storage/part-cache'
 import { type Account, LOCAL_ACCOUNT, useAccountStore } from '@/stores/account'
 import { useLibraryStore } from '@/stores/library'
 import { useServerAccount } from '@/stores/server-account'
@@ -74,6 +75,33 @@ describe('mudanças de um item', () => {
     // the server has the change, and the note's content is untouched
     expect(server.rows.get(meta.id)?.name).toBe('name' in patch ? patch.name : 'Reunião longa')
     expect(server.currentPart(meta.id, 'text')?.content).toBe('texto da nota '.repeat(2000))
+  })
+
+  // the phone, 26/11: a note made on another device and never opened here was read whole (parts/batch) before each of these, one trip
+  // more on the mobile network (apagar and mover in 1.1-1.2 s, target 1 s); what changes is only the line of the hierarchy
+  it.each([
+    ['renomear', { name: 'Reunião renomeada' }],
+    ['mover', { folderId: null, position: 5 }],
+    ['apagar', { deletedAt: '2026-11-24T10:00:00.000Z' }],
+  ] as const)('%s uma nota nunca aberta neste aparelho também não a lê: um pedido só', async (_label, patch) => {
+    const meta = await bigNoteClosed()
+    // this device opens the account again with nothing of the note kept
+    await new PartCache(account).forget()
+    await library().connect(account, token)
+    await waitFor(() => expect(library().appOn && Boolean(repo().hierarchy)).toBe(true))
+    expect(library().opened).toEqual({})
+    server.calls.length = 0
+    await library().updateFile(meta.id, patch)
+    expect(partReads()).toEqual([])
+    expect(server.calls.filter(call => /\/parts\/batch/.test(call.path))).toEqual([])
+    expect(writes()).toHaveLength(1)
+    const shown = library().files.find(file => file.id === meta.id)!
+    for (const [key, value] of Object.entries(patch)) expect(shown[key as keyof typeof shown]).toEqual(value)
+    // the note opens whole afterwards: its text and its transcript are where they were
+    const opened = await library().openFile(meta.id)
+    expect(opened.content).toBe('texto da nota '.repeat(2000))
+    expect(opened.sidecar.transcript).toBe('Ana: fala longa. '.repeat(5000))
+    expect(opened.sidecar.meta.folderId).toBe(shown.folderId)
   })
 
   it('restaurar da Lixeira também', async () => {

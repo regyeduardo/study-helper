@@ -60,19 +60,25 @@ describe('canal ao vivo', () => {
     stop()
   })
 
-  it('sem o canal, pergunta a cada 15 s e volta a abrir o canal', () => {
+  // spec 007 (T028, 26/11): the library opens from the copy without asking the server; without the channel, what changed comes at once
+  // (not 15 s later), then every 15 s
+  it('sem o canal, pergunta na hora e depois a cada 15 s, e volta a abrir o canal', () => {
     const onMap = vi.fn()
     const stop = openLive({ seq: () => 0, onMap })
     FakeSocket.all[0].close()
-    vi.advanceTimersByTime(15_000)
     expect(onMap).toHaveBeenCalledTimes(1)
     vi.advanceTimersByTime(15_000)
     expect(onMap).toHaveBeenCalledTimes(2)
-    // and it tries the channel again
+    vi.advanceTimersByTime(15_000)
+    expect(onMap).toHaveBeenCalledTimes(3)
+    // and it tries the channel again; a new failure while it asks does not ask twice
     expect(FakeSocket.all.length).toBeGreaterThan(1)
+    FakeSocket.all.at(-1)!.close()
+    expect(onMap).toHaveBeenCalledTimes(3)
+    vi.advanceTimersByTime(5_000)
     FakeSocket.all.at(-1)!.open()
     vi.advanceTimersByTime(60_000)
-    expect(onMap).toHaveBeenCalledTimes(2)
+    expect(onMap).toHaveBeenCalledTimes(3)
     stop()
   })
 

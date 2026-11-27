@@ -78,6 +78,8 @@ describe('compartilhar de novo o que já está compartilhado', () => {
     open(id)
     const state = (await screen.findByText('Já compartilhado')).closest('p')
     expect(state).toHaveTextContent(`Já compartilhado em ${dateTime(record.createdAt, timeZone)}. Vale até ${dateTime(record.expiresAt, timeZone)} e mostra a versão daquele dia.`)
+    // the date and its hour stay on one line (T135, review of T128: "28/11/2026," at the end of a line and "23:45" on the next)
+    for (const at of [record.createdAt, record.expiresAt]) expect(state!.textContent).toContain(dateTime(at, timeZone).replace(', ', ',\u00a0'))
     expect(screen.getByText(/^“Atualizar o link” põe a versão de agora/)).toHaveTextContent('“Atualizar o link” põe a versão de agora neste mesmo link, por mais 3 dias. A mídia que já está lá não sobe de novo.')
     expect(screen.getByRole('button', { name: 'Copiar link' })).toHaveClass('primary')
     expect(screen.getByRole('button', { name: 'Atualizar o link' })).not.toHaveClass('primary')

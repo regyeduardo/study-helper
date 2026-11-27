@@ -181,6 +181,20 @@ describe('"O que gerar" chooses only the second tab', () => {
     expect(screen.queryAllByRole('tab')).toHaveLength(0)
   })
 
+  // 27/11 (dono: "Bom"): the AI answering the Ata out of format left an Ata with its title alone ("# Reunião"), marked ready
+  it('"Ata de reunião" with the AI answering out of format fails saying why: never an Ata with its title alone, ready', async () => {
+    installFetch(request => (systemPromptOf(request) === PROMPTS.MINUTES_EXTRACT_PROMPT ? openAiStream('não sei fazer isso') : provider(request)))
+    const id = await noteFrom('meeting')
+    await waitFor(() => expect(useJobsStore.getState().jobs.find(job => job.fileId !== id && job.status === 'error')).toBeTruthy())
+    const failed = useJobsStore.getState().jobs.find(job => job.fileId !== id && job.status === 'error')!
+    expect(`${failed.message} ${failed.error}`).toContain('A IA não devolveu a ata no formato esperado')
+    const ata = useLibraryStore.getState().files.find(file => file.parentFileId === id)
+    if (ata) {
+      expect(ata.status).not.toBe('ready')
+      expect(memory.contents.get(ata.id) ?? '').not.toBe('# Reunião\n')
+    }
+  })
+
   it('an old note that keeps the transcription and the Ata together still has the two tabs', async () => {
     const meta = await useLibraryStore.getState().createFile({ name: 'Antiga', type: 'meeting', description: '', folderId: null, status: 'ready', pendingExcerpt: null }, '# Ata antiga')
     await useLibraryStore.getState().updateSidecar(meta.id, sidecar => ({ ...sidecar, recording: { ...heard, speakers: [] } }))

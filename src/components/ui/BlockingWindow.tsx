@@ -14,8 +14,9 @@ const SHOW_AFTER_MS = 300
 
 /**
  * The window of an operation the person waits for (owner's choice F, 2026-11-21): in the middle of the screen, with the bar, how many of
- * how many, how much space, how long is left and the item in hand; "Cancelar" when the operation can stop. From the click the rest of the
- * page is inert and no key reaches the app (Esc cancels when Cancelar is there). A failure stays with its reason until "Fechar".
+ * how many, how much space, how long is left and the item in hand; "Cancelar" when the operation can stop. From the click the layer takes
+ * every tap, no key reaches the app (Esc cancels when Cancelar is there) and the rest of the page is hidden from the screen reader. A
+ * failure stays with its reason until "Fechar".
  */
 export function BlockingWindow() {
   const ops = useBlockingStore(state => state.ops)
@@ -53,15 +54,18 @@ export function BlockingWindow() {
     return () => window.clearInterval(timer)
   }, [active])
 
-  // the rest of the page goes inert while an operation runs, and the focus waits in the window
+  // while an operation runs the rest of the page leaves the screen reader and the focus waits in the window (the layer takes the taps and
+  // the keys are held below). Not "inert": putting it on the whole page and taking it made the browser restyle every element twice,
+  // ~0.3 s on the phone at each move or delete (spec 007, T047)
   useLayoutEffect(() => {
     if (!active) return
     before.current = document.activeElement
-    const held = [...document.body.children].filter(element => element !== host && !element.hasAttribute('inert'))
-    for (const element of held) element.setAttribute('inert', '')
+    const held = [...document.body.children].filter(element => element !== host && !element.hasAttribute('inert') && !element.hasAttribute('aria-hidden'))
+    // the focus leaves the page before it is hidden: a hidden element must not keep it
     layer.current?.focus()
+    for (const element of held) element.setAttribute('aria-hidden', 'true')
     return () => {
-      for (const element of held) element.removeAttribute('inert')
+      for (const element of held) element.removeAttribute('aria-hidden')
       if (before.current instanceof HTMLElement && before.current.isConnected) before.current.focus()
     }
   }, [active, host])

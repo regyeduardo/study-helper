@@ -150,17 +150,22 @@ describe('A janela que trava o app', () => {
     expect(cancelled).toBe(true)
   })
 
-  it('o resto da página fica inerte enquanto a janela está aberta, e volta depois', async () => {
+  // the page is held from the click: the layer takes every tap, no key reaches the app, and the rest of the page leaves the screen
+  // reader (aria-hidden), the focus waiting in the window. Not with "inert": the browser restyled the whole page to put it and again to
+  // take it, ~0.3 s on the phone at each move or delete (spec 007, T047)
+  it('o resto da página fica de fora enquanto a janela está aberta, e volta depois', async () => {
     const { container } = app()
     const gate = deferred()
     void blocking('Apagando a mídia', () => gate.promise)
     await flush()
-    expect(container).toHaveAttribute('inert')
+    expect(container).toHaveAttribute('aria-hidden', 'true')
+    expect(container).not.toHaveAttribute('inert')
+    expect(document.querySelector('.blk-layer')).toHaveFocus()
     await act(async () => {
       gate.resolve()
       await gate.promise
     })
-    expect(container).not.toHaveAttribute('inert')
+    expect(container).not.toHaveAttribute('aria-hidden')
   })
 
   it('uma falha volta para quem chamou e a janela fecha', async () => {
@@ -192,11 +197,11 @@ describe('Um conflito no meio de uma operação', () => {
       answer = useSyncStore.getState().askConflict(conflict)
     })
     expect(screen.queryByRole('alertdialog')).toBeNull()
-    expect(container).not.toHaveAttribute('inert')
+    expect(container).not.toHaveAttribute('aria-hidden')
     await act(async () => useSyncStore.getState().settleConflict(useSyncStore.getState().conflicts[0].id, conflict))
     await answer
     expect(screen.getByRole('alertdialog')).toBeInTheDocument()
-    expect(container).toHaveAttribute('inert')
+    expect(container).toHaveAttribute('aria-hidden', 'true')
     gate.resolve()
   })
 

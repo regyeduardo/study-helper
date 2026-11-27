@@ -234,8 +234,13 @@ function generatedOf(files: FileMeta[], file: FileMeta, isLive: (item: FileMeta)
 /* ---------- days, in the person's timezone ---------- */
 
 const dayFormats = new Map<string, Intl.DateTimeFormat>()
+/** The day of each moment already worked out, per timezone (spec 007, T047: the filter runs at every drawing). */
+const knownDays = new Map<string, string>()
 
 function dayOf(at: Date | number | string, timeZone: string): string {
+  const key = typeof at === 'string' ? `${timeZone}|${at}` : null
+  const known = key === null ? undefined : knownDays.get(key)
+  if (known !== undefined) return known
   const date = new Date(at)
   if (Number.isNaN(date.getTime())) return ''
   let format = dayFormats.get(timeZone)
@@ -244,7 +249,12 @@ function dayOf(at: Date | number | string, timeZone: string): string {
     dayFormats.set(timeZone, format)
   }
   const parts = Object.fromEntries(format.formatToParts(date).map(part => [part.type, part.value]))
-  return `${parts.year}-${parts.month}-${parts.day}`
+  const day = `${parts.year}-${parts.month}-${parts.day}`
+  if (key !== null) {
+    if (knownDays.size >= 50_000) knownDays.clear()
+    knownDays.set(key, day)
+  }
+  return day
 }
 
 function daysBefore(day: string, count: number): string {
@@ -372,19 +382,26 @@ export function filterLibrary(source: FilterSource, filters: LibraryFilters): Fi
   const chains = liveChains(folders)
   const isLive = (file: FileMeta) => !file.deletedAt && (file.folderId === null || chains.has(file.folderId))
 
-  const facts = files.filter(isLive).map(
-    (file): Facts => ({
+  // the day and what an entrada gave are worked out only for what is looked at (with `only`, what the screen shows; spec 007, T047)
+  const facts = files.filter(isLive).map((file): Facts => {
+    let generated: Set<Generated> | undefined
+    let day: string | undefined
+    return {
       file,
       note: isNote(file),
       noteKind: noteKindOf(file),
       kind: kindOf(file),
       // what the entradas gave, only where "O que gerou" is offered
-      generated: filters.scope === 'notas' ? new Set() : generatedOf(files, file, isLive),
-      day: dayOf(filters.dateField === 'created' ? file.created.at : file.updated.at, timeZone),
+      get generated() {
+        return (generated ??= filters.scope === 'notas' ? new Set() : generatedOf(files, file, isLive))
+      },
+      get day() {
+        return (day ??= dayOf(filters.dateField === 'created' ? file.created.at : file.updated.at, timeZone))
+      },
       chain: file.folderId ? (chains.get(file.folderId) ?? []) : [],
       place: placeOf(file, where),
-    }),
-  )
+    }
+  })
 
   const today = dayOf(source.now, timeZone)
   const startOf = new Map(PRESETS.map(preset => [preset.id, daysBefore(today, preset.daysBack)]))

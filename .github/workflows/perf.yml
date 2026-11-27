@@ -1,0 +1,66 @@
+name: Desempenho
+
+# The guard against getting slower (spec 007, FR-008, research R9): on a pull request, the List of operations runs on the base branch
+# and on the pull request, on the same machine (numbers of different machines are not compared), and the job fails if the median of
+# an operation is more than 20% worse. Profile "computador" only: the profile "celular" (CPU 4x slower) is for the measure by hand.
+on:
+  pull_request:
+    paths: ['src/**', 'api/**', 'e2e/**', 'index.html', 'package.json', 'package-lock.json', 'vite.config.ts', '.github/workflows/perf.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: perf-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  perf:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: pr
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha || github.event.repository.default_branch }}
+          path: base
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: pr/api/go.mod
+          cache-dependency-path: pr/api/go.sum
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: ffmpeg
+        run: sudo apt-get update -q && sudo apt-get install -y -q ffmpeg
+      - name: Dependências
+        run: |
+          for dir in base pr; do
+            (cd "$dir" && npm ci && cd e2e && npm ci)
+          done
+      # the reference: the base branch measured here; a base without the measure (before spec 007) has nothing to compare
+      - name: Medir a base
+        id: base
+        working-directory: base
+        env:
+          CHROMIUM_PATH: /usr/bin/google-chrome
+        run: |
+          if [ ! -f e2e/perf/run.mjs ]; then echo "a base não tem a medida"; echo "skip=1" >> "$GITHUB_OUTPUT"; exit 0; fi
+          node e2e/perf/run.mjs --perfil computador --rodadas 5 --saida "$RUNNER_TEMP/referencia.json"
+      - name: Medir o pull request e comparar
+        if: steps.base.outputs.skip != '1'
+        working-directory: pr
+        env:
+          CHROMIUM_PATH: /usr/bin/google-chrome
+        run: |
+          cp "$RUNNER_TEMP/referencia.json" specs/007-desempenho-gerar-compartilhar/medidas/referencia.json
+          node e2e/perf/run.mjs --perfil computador --rodadas 5 --saida "$RUNNER_TEMP/pr.json" --guarda
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: medidas
+          path: ${{ runner.temp }}/*.json
+          if-no-files-found: ignore

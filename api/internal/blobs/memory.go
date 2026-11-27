@@ -22,7 +22,10 @@ type Memory struct {
 }
 
 type memoryObject struct {
-	body        []byte
+	body []byte
+	// worked out once, when it is written: a hash of the whole body at each read made every part of a 1-hour media take ~20 ms, twice
+	// per request (Head and Get), in the measures of spec 007
+	etag        string
 	contentType string
 	meta        map[string]string
 	at          time.Time
@@ -47,7 +50,8 @@ func etagOf(body []byte) string {
 func (m *Memory) Put(_ context.Context, key string, body []byte, contentType string, meta map[string]string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.objects[key] = memoryObject{body: append([]byte(nil), body...), contentType: contentType, meta: meta, at: time.Now()}
+	kept := append([]byte(nil), body...)
+	m.objects[key] = memoryObject{body: kept, etag: etagOf(kept), contentType: contentType, meta: meta, at: time.Now()}
 	return nil
 }
 
@@ -58,7 +62,7 @@ func (m *Memory) Get(_ context.Context, key string, rng *Range) (io.ReadCloser, 
 	if !ok {
 		return nil, Info{}, ErrNotFound
 	}
-	info := Info{Size: int64(len(object.body)), ContentType: object.contentType, ETag: etagOf(object.body), LastModified: object.at}
+	info := Info{Size: int64(len(object.body)), ContentType: object.contentType, ETag: object.etag, LastModified: object.at}
 	body := object.body
 	if rng != nil {
 		end := rng.End
@@ -121,7 +125,7 @@ func (m *Memory) CompleteMultipart(_ context.Context, key, uploadID string, part
 		}
 		whole = append(whole, body...)
 	}
-	m.objects[key] = memoryObject{body: whole, contentType: upload.contentType, meta: upload.meta, at: time.Now()}
+	m.objects[key] = memoryObject{body: whole, etag: etagOf(whole), contentType: upload.contentType, meta: upload.meta, at: time.Now()}
 	delete(m.uploads, uploadID)
 	return nil
 }

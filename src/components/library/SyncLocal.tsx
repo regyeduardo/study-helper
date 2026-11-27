@@ -24,8 +24,7 @@ function useLocalItems() {
 
 /** "Só neste navegador" on a row (FR-055), in a library that mixes the Google Drive and this browser. */
 export function LocalMark({ id }: { id: string }) {
-  useLibraryStore(state => state.files)
-  if (!placesApply() || sideOfItem(id) !== 'local') return null
+  if (!useIsLocal(id)) return null
   return <span className="ex-place pl-local">Só neste navegador</span>
 }
 
@@ -36,9 +35,10 @@ export function AwayMark({ awayId }: { awayId?: string }) {
   return <span className="ex-place">A pasta dela está em outro navegador</span>
 }
 
+/** Asked again at each change of the library (a move ends with a new snapshot), it draws its row again only when the answer changes:
+ * taking the whole list, any note changed drew every row of the folder again (spec 007, T047). */
 export function useIsLocal(id: string): boolean {
-  useLibraryStore(state => state.files)
-  return placesApply() && sideOfItem(id) === 'local'
+  return useLibraryStore(() => placesApply() && sideOfItem(id) === 'local')
 }
 
 /**

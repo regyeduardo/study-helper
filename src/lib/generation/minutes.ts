@@ -1,7 +1,7 @@
 import type { RecordingData } from '@/types/domain'
 import { withInstruction } from '@/lib/generation/instruction'
 import { extractJson } from '@/lib/generation/mermaid'
-import type { Emit } from '@/lib/generation/pipeline'
+import { type Emit, GenerationError } from '@/lib/generation/pipeline'
 import { PROMPTS } from '@/lib/generation/prompts.data'
 import type { GenerationSession } from '@/lib/generation/session'
 import { clockTime, speechLine } from '@/lib/transcription/export'
@@ -109,8 +109,12 @@ function markedTranscript(recording: RecordingData): string {
 export async function buildMinutes(transcript: string, session: GenerationSession, emit: Emit = () => {}, recording?: RecordingData, instruction = ''): Promise<{ markdown: string; subject: string }> {
   const pieces: Item[] = []
   for (const piece of transcriptChunks(recording ? markedTranscript(recording) : transcript)) {
-    const written = extractJson(await session.chat(withInstruction(piece, instruction), PROMPTS.MINUTES_EXTRACT_PROMPT))
-    if (written) pieces.push(written)
+    const ask = async () => extractJson(await session.chat(withInstruction(piece, instruction), PROMPTS.MINUTES_EXTRACT_PROMPT))
+    // an answer out of format is asked once more; still out of it, the Ata fails saying why: an Ata with its title alone, marked
+    // ready, hid it (27/11, dono)
+    const written = (await ask()) ?? (await ask())
+    if (!written) throw new GenerationError('A IA não devolveu a ata no formato esperado, nem na segunda tentativa. Nada foi escrito; tente de novo.')
+    pieces.push(written)
   }
   const joined = { assunto: text(pieces[0]?.assunto), temas: pieces.flatMap(piece => list(piece.temas)), passos: pieces.flatMap(piece => list(piece.passos)) }
   const minutes = pieces.length > 1 ? (extractJson(await session.chat(withInstruction(JSON.stringify({ partes: pieces }), instruction), PROMPTS.MINUTES_VERIFY_PROMPT)) ?? joined) : joined

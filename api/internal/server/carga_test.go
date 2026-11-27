@@ -161,8 +161,9 @@ func TestLoadManyAccounts(t *testing.T) {
 					status, _, took, err := account.send(http.MethodGet, "/v1/library/items/"+note, nil)
 					times.add("GET /v1/library/items/{id}", status, took, err)
 				case 3, 4:
-					// rename, or move to the trash and back: one PUT of the row at its rev
-					fields := row(fmt.Sprintf("Nota renomeada %d", random.IntN(1000)), nil)
+					// rename, or move to the trash and back: one PUT of the row at its rev; a name of its own, as the app sends (a name taken
+					// in the folder is refused since spec 005, FR-021)
+					fields := row(fmt.Sprintf("Nota renomeada %s %d", note, random.IntN(1000)), nil)
 					if step == 4 && random.IntN(2) == 0 {
 						fields["trashedAt"] = "2026-11-24T10:00:00Z"
 					}
@@ -173,7 +174,7 @@ func TestLoadManyAccounts(t *testing.T) {
 					}
 				case 5:
 					made++
-					status, _, took, err := account.send(http.MethodPut, fmt.Sprintf("/v1/library/items/novo%03d", made), map[string]any{"baseRev": 0, "row": row("Nota nova", nil)})
+					status, _, took, err := account.send(http.MethodPut, fmt.Sprintf("/v1/library/items/novo%03d", made), map[string]any{"baseRev": 0, "row": row(fmt.Sprintf("Nota nova %03d", made), nil)})
 					times.add("PUT /v1/library/items/{id} (criar)", status, took, err)
 				case 6:
 					status, _, took, err := account.send(http.MethodGet, "/v1/space", nil)

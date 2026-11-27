@@ -70,12 +70,14 @@ function CreatedShare({ share, mediaFailed, already = false, updated = false, no
   }
   // the Worker says whether the media of this item is in the link: sent, or the upload never finished
   const mediaThere = status && hasMedia ? status.media.length > 0 : null
+  // a date and its hour on one line: "28/11/2026," at the end of one and "23:45" on the next read as two things (T135)
+  const when = (at: string) => dateTime(at, timeZone).replace(', ', ',\u00a0')
   return (
     <>
       {already && (
         <p className="share-state">
           <b>Já compartilhado</b>
-          {` em ${dateTime(share.createdAt, timeZone)}${share.updatedAt ? `, atualizado em ${dateTime(share.updatedAt, timeZone)}` : ''}. Vale até ${dateTime(share.expiresAt, timeZone)} e mostra a versão daquele dia.`}
+          {` em ${when(share.createdAt)}${share.updatedAt ? `, atualizado em ${when(share.updatedAt)}` : ''}. Vale até ${when(share.expiresAt)} e mostra a versão daquele dia.`}
         </p>
       )}
       {updated && (

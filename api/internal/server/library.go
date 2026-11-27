@@ -234,10 +234,51 @@ func cycles(q querier, userID, id string, fields rowFields) bool {
 	return false
 }
 
-// rowError is a refusal of one row: a conflict (with the current row) or a cycle.
+// rowError is a refusal of one row: a conflict (with the current row), a cycle, or a name already in the folder (with that item).
 type rowError struct {
 	code    string
 	current *libraryRow
+}
+
+// nameKey is what tells two names apart in a folder (spec 005, FR-021): capitals and the spaces at the ends do not.
+func nameKey(name string) string { return strings.ToLower(strings.TrimSpace(name)) }
+
+func folderKey(id *string) string {
+	if id == nil {
+		return ""
+	}
+	return *id
+}
+
+func trashed(at *string) bool { return at != nil && *at != "" }
+
+// nameTaken is the live item of the same kind with the same name in the folder the row goes to (the root too), when the write brings
+// the name there: a new item, a new name or folder, back from the Trash. A pair that existed before the rule keeps taking its other
+// changes (T052 joins them); what is in the Trash does not count.
+func nameTaken(tx *sql.Tx, userID, id string, current *libraryRow, fields rowFields) (*libraryRow, error) {
+	if trashed(fields.TrashedAt) {
+		return nil, nil
+	}
+	if current != nil && current.RemovedAt == nil && !trashed(current.TrashedAt) && current.ItemKind == fields.ItemKind && folderKey(current.FolderID) == folderKey(fields.FolderID) && nameKey(current.Name) == nameKey(fields.Name) {
+		return nil, nil
+	}
+	rows, err := tx.Query(`SELECT id, name FROM library_items WHERE user_id = ? AND item_kind = ? AND id != ? AND removed_at IS NULL AND (trashed_at IS NULL OR trashed_at = '') AND COALESCE(folder_id, '') = ?`,
+		userID, fields.ItemKind, id, folderKey(fields.FolderID))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	key := nameKey(fields.Name)
+	for rows.Next() {
+		var other libraryRow
+		if err := rows.Scan(&other.ID, &other.Name); err != nil {
+			return nil, err
+		}
+		if nameKey(other.Name) == key {
+			return &other, nil
+		}
+	}
+	return nil, rows.Err()
 }
 
 func (e *rowError) Error() string { return e.code }
@@ -275,6 +316,11 @@ func (srv *Server) applyRow(tx *sql.Tx, userID, id string, baseRev int64, fields
 	if cycles(tx, userID, id, fields) {
 		return 0, &rowError{code: "cycle"}
 	}
+	if taken, err := nameTaken(tx, userID, id, current, fields); err != nil {
+		return 0, err
+	} else if taken != nil {
+		return 0, &rowError{code: "name_taken", current: taken}
+	}
 	meta, err := cleanMeta(fields.Meta)
 	if err != nil {
 		return 0, &rowError{code: "invalid_row"}
@@ -308,6 +354,8 @@ func (srv *Server) rowRefusal(w http.ResponseWriter, err error) bool {
 	switch refusal.code {
 	case "conflict":
 		fail(w, http.StatusConflict, "conflict", map[string]any{"current": refusal.current})
+	case "name_taken":
+		fail(w, http.StatusConflict, "name_taken", map[string]any{"taken": map[string]any{"id": refusal.current.ID, "name": refusal.current.Name}})
 	case "cycle", "invalid_place":
 		fail(w, http.StatusUnprocessableEntity, refusal.code, nil)
 	case "app_off":

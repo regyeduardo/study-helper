@@ -84,7 +84,11 @@ describe('cópia no navegador', () => {
     server.offline = false
     await a.saveFolder(newFolderMeta({ name: 'Trabalho' }))
     server.calls.length = 0
-    expect(names((await device('b').load()).folders)).toEqual(['Faculdade', 'Trabalho'])
+    // spec 007 (R3, T028): opening shows the copy at once, with no request; what changed since its seq comes right after
+    const b = device('b')
+    expect(names((await b.load()).folders)).toEqual(['Faculdade'])
+    expect(server.calls).toEqual([])
+    expect(names((await b.pullChanges()).snapshot.folders)).toEqual(['Faculdade', 'Trabalho'])
     const asked = server.calls.find(call => call.path === '/v1/library/map')!
     expect(new URLSearchParams(asked.query).get('since')).toBe(String(seen))
   })

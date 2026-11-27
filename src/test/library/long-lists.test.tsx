@@ -2,7 +2,7 @@
 // computador e 5,8 s no celular na medida de antes). Agora desenha as primeiras 120 e o resto conforme a rolagem chega perto do fim,
 // com "Mostrar mais" para o teclado e o leitor de tela; "Marcar todos" continua valendo para a pasta inteira.
 import { beforeEach, describe, expect, it } from 'vitest'
-import { fireEvent, render, screen, within } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 
 import { Explorer } from '@/components/library/Explorer'
@@ -26,24 +26,26 @@ const rows = () => document.querySelectorAll('tr[aria-label^="Nota "]').length
 beforeEach(() => library(1000))
 
 describe('uma pasta com 1.000 notas', () => {
-  it('desenha as primeiras 120, não as 1.000', { timeout: 30_000 }, () => {
+  // the first frame draws 30 and the rest of the 120 right after (T047, drawn-rows.test.tsx)
+  it('desenha as primeiras 120, não as 1.000', { timeout: 30_000 }, async () => {
     render(
       <MemoryRouter>
         <Explorer view="folder" folderId="grande" />
       </MemoryRouter>,
     )
-    expect(rows()).toBe(120)
+    await waitFor(() => expect(rows()).toBe(120), { timeout: 10_000 })
     expect(screen.getByText('Nota 0001')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /Mostrar mais 120 de 880/ })).toBeInTheDocument()
   })
 
-  it('mostra mais até o fim (o jsdom não rola: o botão faz o que a rolagem faz)', () => {
+  it('mostra mais até o fim (o jsdom não rola: o botão faz o que a rolagem faz)', async () => {
     library(400)
     render(
       <MemoryRouter>
         <Explorer view="folder" folderId="grande" />
       </MemoryRouter>,
     )
+    await screen.findByRole('button', { name: /Mostrar mais/ }, { timeout: 10_000 })
     for (const expected of [240, 360, 400]) {
       fireEvent.click(screen.getByRole('button', { name: /Mostrar mais/ }))
       expect(rows()).toBe(expected)
@@ -62,14 +64,14 @@ describe('uma pasta com 1.000 notas', () => {
     expect(useUiStore.getState().selection.size).toBe(1000)
   })
 
-  it('uma pasta pequena desenha tudo, como antes', () => {
+  it('uma pasta pequena desenha tudo, como antes', async () => {
     library(150)
     render(
       <MemoryRouter>
         <Explorer view="folder" folderId="grande" />
       </MemoryRouter>,
     )
-    expect(rows()).toBe(150)
+    await waitFor(() => expect(rows()).toBe(150), { timeout: 10_000 })
     expect(screen.queryByRole('button', { name: /Mostrar mais/ })).toBeNull()
   })
 })

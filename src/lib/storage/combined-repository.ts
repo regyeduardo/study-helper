@@ -176,24 +176,37 @@ export class CombinedRepository implements Repository {
   }
 
   async load(): Promise<Snapshot> {
+    const mark = this.indexWritten
     if (this.tree) {
       // the Drive out (or without sign-in) does not hide the hierarchy: only its notes do not open
       const [tree, drive, local] = await Promise.all([this.tree.load(), this.drive.load().catch(() => null), this.local.load()])
-      return this.fromTree(tree, drive, local)
+      return this.sinceRead(mark, await this.fromTree(tree, drive, local))
     }
     const [drive, local, app] = await Promise.all([this.drive.load(), this.local.load(), this.appRepo?.load() ?? Promise.resolve(null)])
-    return this.merge(drive, local, app)
+    return this.sinceRead(mark, this.merge(drive, local, app))
   }
 
   async pullChanges(): Promise<RemoteChanges> {
+    const mark = this.indexWritten
     if (this.tree) {
       const [tree, drive, local] = await Promise.all([this.tree.pullChanges(), this.drive.pullChanges().catch(() => null), this.local.load()])
       const sent = await this.sendHeld()
-      return { snapshot: await this.fromTree(this.tree.snapshot(), drive?.snapshot ?? null, local), changedFileIds: [...new Set([...tree.changedFileIds, ...sent, ...(drive?.changedFileIds ?? [])])] }
+      return { snapshot: this.sinceRead(mark, await this.fromTree(this.tree.snapshot(), drive?.snapshot ?? null, local)), changedFileIds: [...new Set([...tree.changedFileIds, ...sent, ...(drive?.changedFileIds ?? [])])] }
     }
     await this.sendHeld()
     const [{ snapshot, changedFileIds }, local, app] = await Promise.all([this.drive.pullChanges(), this.local.load(), this.appRepo?.pullChanges() ?? Promise.resolve(null)])
-    return { snapshot: this.merge(snapshot, local, app?.snapshot ?? null), changedFileIds: [...new Set([...changedFileIds, ...(app?.changedFileIds ?? [])])] }
+    return { snapshot: this.sinceRead(mark, this.merge(snapshot, local, app?.snapshot ?? null)), changedFileIds: [...new Set([...changedFileIds, ...(app?.changedFileIds ?? [])])] }
+  }
+
+  /**
+   * The index writes of this device that ended, and the last one written. A read that began before one of them ended brings the index
+   * from before it: its snapshot takes the index written (spec 007, 26/11: the Drive limit saved on a new device came back empty with
+   * the sync already under way, and its question opened again). A read that begins after it brings what is kept, another device's too.
+   */
+  private indexWritten = 0
+  private written: LibraryIndex | null = null
+  private sinceRead(mark: number, snapshot: Snapshot): Snapshot {
+    return this.indexWritten !== mark && this.written ? { ...snapshot, index: this.written } : snapshot
   }
 
   async readContent(fileId: string): Promise<string> {
@@ -312,6 +325,8 @@ export class CombinedRepository implements Repository {
 
   async saveIndex(index: LibraryIndex): Promise<void> {
     await this.drive.saveIndex(index)
+    this.written = index
+    this.indexWritten++
   }
 
   async putSource(fileId: string, blob: Blob, name: string, transfer?: Transfer): Promise<StoredSource> {
@@ -421,6 +436,24 @@ export class CombinedRepository implements Repository {
     return withoutTree(mapMeta(meta)) === withoutTree(row.meta)
   }
 
+  /**
+   * A change of a note only in what the hierarchy keeps (name, folder, position, Lixeira), written as its line alone, without reading
+   * the note first: a note never opened on this device was read whole before each rename, move or delete, one trip more on the phone's
+   * network (spec 007, T047). Null when the change is more than that, or the note is not in the account's hierarchy: the usual way then.
+   */
+  async saveTreeOnly(meta: FileMeta): Promise<FileMeta | null> {
+    const tree = this.tree
+    const side = this.sides.get(meta.id)
+    if (!tree || (side !== 'app' && side !== 'drive')) return null
+    const row = tree.rowOf(meta.id)
+    if (!row || row.removedAt || row.place !== side) return null
+    const { awayFolderId: _away, ...plain } = meta
+    const next: FileMeta = { ...plain, place: side }
+    if (withoutTree(mapMeta(next)) !== withoutTree(row.meta)) return null
+    await tree.saveFile(next, side, row.driveRef ?? null)
+    return next
+  }
+
   private async writeInTree(side: Side, sidecar: FileSidecar, content: string | undefined): Promise<FileSidecar> {
     const tree = this.tree!
     const id = sidecar.meta.id
@@ -471,6 +504,8 @@ export class CombinedRepository implements Repository {
 
   /** What this device knows of each folder's course text, so an unchanged course is not written again. */
   private readonly courseTexts = new Map<string, string>()
+  /** A course folder as last shown, with its text: the same again is the same object. */
+  private readonly coursed = new WeakMap<FolderMeta, { text: string; folder: FolderMeta }>()
 
   /**
    * A folder's course text is content (spec 005): it goes to the account's default place, the App with the structure on and the
@@ -499,8 +534,14 @@ export class CombinedRepository implements Repository {
                 ? await this.drive.courseOf(folder.id)
                 : null
           if (!course) return folder
-          this.courseTexts.set(folder.id, JSON.stringify({ courseDescription: course.courseDescription ?? null, courseMaterial: course.courseMaterial ?? null }))
-          return { ...folder, courseDescription: course.courseDescription ?? null, courseMaterial: course.courseMaterial ?? null }
+          const text = JSON.stringify({ courseDescription: course.courseDescription ?? null, courseMaterial: course.courseMaterial ?? null })
+          this.courseTexts.set(folder.id, text)
+          // the same folder with the same course text is the same object (spec 007, T047: a sync with nothing new draws nothing again)
+          const known = this.coursed.get(folder)
+          if (known?.text === text) return known.folder
+          const made = { ...folder, courseDescription: course.courseDescription ?? null, courseMaterial: course.courseMaterial ?? null }
+          this.coursed.set(folder, { text, folder: made })
+          return made
         } catch {
           // the course text could not be read now: the folder shows, and the text comes with the next opening
           return folder

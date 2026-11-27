@@ -19,6 +19,7 @@ import {
 } from '@/controllers/library-api.controller'
 import { defaultIndex } from '@/lib/defaults'
 import { isRecording } from '@/lib/file-types'
+import { NameTakenError } from '@/lib/names'
 import { type HeldNote, PartCache } from '@/lib/storage/part-cache'
 import type { Conflict, ConflictResolver, RemoteChanges, Repository, StorageUsage, StoredSize, StoredSource, Transfer } from '@/lib/storage/repository'
 import { uploadMedia, type UploadOptions } from '@/lib/storage/uploads'
@@ -43,6 +44,11 @@ class Stale extends Error {}
 
 const stale = <T>(run: () => Promise<T>): Promise<T> =>
   run().catch(error => {
+    // spec 005, FR-021: the server refuses a name already in the folder (even from an old app); said as a sentence, never tried again
+    if (error instanceof ApiError && error.code === 'name_taken') {
+      const taken = error.data.taken as { name?: string } | undefined
+      throw new NameTakenError(`Já existe um item chamado "${taken?.name ?? ''}" nesta pasta.`)
+    }
     throw error instanceof ApiError && error.code === 'conflict' ? new Stale() : error
   })
 
@@ -208,7 +214,7 @@ function mergeIndex(base: LibraryIndex, mine: LibraryIndex, theirs: LibraryIndex
 /** The server did not answer: no internet, or the account out of reach. */
 const offline = (error: unknown) => error instanceof ApiError && error.code === 'offline'
 /** The server said no for good (a note deleted, the structure off): trying again would get the same answer. Not a missing session nor a busy server. */
-const refused = (error: unknown) => error instanceof ApiError && error.status >= 400 && error.status < 500 && ![401, 408, 409, 429].includes(error.status)
+const refused = (error: unknown) => error instanceof NameTakenError || (error instanceof ApiError && error.status >= 400 && error.status < 500 && ![401, 408, 409, 429].includes(error.status))
 
 export class AppRepository implements Repository {
   readonly kind = 'app' as const
@@ -352,7 +358,7 @@ export class AppRepository implements Repository {
         }
         // refused for good (a note deleted on another device meanwhile): never tried again; what was written here stays in a copy
         if (refused(error)) {
-          const reason = (error as ApiError).code
+          const reason = (error as ApiError | NameTakenError).code
           await this.cache.keepRefused(note, reason).catch(() => undefined)
           await this.release(note.id)
           this.onRefused?.(note, reason)

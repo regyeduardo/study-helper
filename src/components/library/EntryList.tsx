@@ -9,6 +9,7 @@ import { SelectionBar } from '@/components/library/SelectionBar'
 import { isTouchScreen, useFileActions } from '@/components/library/use-file-actions'
 import { entryKind } from '@/components/library/entry-kind'
 import { Icon } from '@/components/ui/Icon'
+import { useDrawnRows } from '@/hooks/use-drawn-rows'
 import { useIsNarrow } from '@/hooks/use-is-narrow'
 import { useFilterSource, useLiveLibrary, useSearchHits, useSearchMissed, useSearchPending } from '@/hooks/use-library-view'
 import { isRecording } from '@/lib/file-types'
@@ -50,6 +51,8 @@ export function EntryList() {
   // a recording is only ever a Vídeo or an Áudio: the other kinds would be options that never apply
   const facets = useMemo(() => ({ ...result.facets, kinds: result.facets.kinds.filter(option => RECORDED_KINDS.has(option.id)) }), [result.facets])
   const visible = useMemo(() => new Set(rows.map(file => file.id)), [rows])
+  // the table draws first what fills the screen and the rest right after (spec 007, T047)
+  const drawn = useDrawnRows(rows.length, 'gravacoes')
 
   // What leaves the table leaves the selection: "Apagar" never acts on what is out of sight.
   useEffect(() => {
@@ -137,7 +140,7 @@ export function EntryList() {
               </tr>
             </thead>
             <tbody>
-              {rows.map(file => {
+              {rows.slice(0, drawn).map(file => {
                 const hit = searching ? hits.get(file.id) : undefined
                 // a result opens at the speech found
                 const to = hit && hit.at !== null ? `${paths.entry(file.id)}?t=${hit.at}` : paths.entry(file.id)

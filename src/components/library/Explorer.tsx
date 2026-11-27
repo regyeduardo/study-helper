@@ -11,6 +11,7 @@ import { SelectionBar } from '@/components/library/SelectionBar'
 import { SyncLocalBanner } from '@/components/library/SyncLocal'
 import { isTouchScreen, useFileActions } from '@/components/library/use-file-actions'
 import { Icon } from '@/components/ui/Icon'
+import { useDrawnRows } from '@/hooks/use-drawn-rows'
 import { useIsNarrow } from '@/hooks/use-is-narrow'
 import { readForSearch, useFilterSource, useLiveLibrary, usePathName, useSearchHits, useSearchMissed, useSearchPending } from '@/hooks/use-library-view'
 import { isNote } from '@/lib/family'
@@ -158,6 +159,10 @@ export function Explorer({ view, folderId }: { view: View; folderId: string | nu
   const long = !searching && sorted.length > LONG_FOLDER
   const rows = searching ? sorted.slice(0, shownResults) : long ? sorted.slice(0, shownRows) : sorted
   const hiddenRows = long ? sorted.length - rows.length : 0
+  // the list draws first what fills the screen and the rest right after (spec 007, T047); a search keeps its own count
+  const drawn = useDrawnRows(rows.length, `${view}|${folderId}|${tag}|${searching}`)
+  const drawnRows = searching || drawn >= rows.length ? rows : rows.slice(0, drawn)
+  const drawnAll = drawnRows.length === rows.length
   const subfolders = useMemo(() => (view === 'folder' && !hasFilters && !searching ? folders.filter(folder => folder.parentId === folderId).sort(byPosition) : []), [view, hasFilters, searching, folders, folderId])
   const childCounts = useMemo(() => {
     const counts = new Map<string, number>()
@@ -175,7 +180,7 @@ export function Explorer({ view, folderId }: { view: View; folderId: string | nu
     const watcher = new IntersectionObserver(entries => entries.some(entry => entry.isIntersecting) && setShownRows(count => count + FOLDER_AT_ONCE), { rootMargin: '800px 0px' })
     watcher.observe(button)
     return () => watcher.disconnect()
-  }, [hiddenRows > 0])
+  }, [hiddenRows > 0 && drawnAll])
 
   // What leaves the table leaves the selection: "Apagar" never acts on what is out of sight.
   useEffect(() => {
@@ -275,14 +280,14 @@ export function Explorer({ view, folderId }: { view: View; folderId: string | nu
               {subfolders.map(folder => (
                 <FolderTableRow key={folder.id} folder={folder} items={childCounts.get(folder.id) ?? 0} {...rowProps} />
               ))}
-              {rows.map(file => {
+              {drawnRows.map(file => {
                 const hit = searching ? hits.get(file.id) : undefined
                 return <FileTableRow key={file.id} file={file} hit={hit} onOpen={hit && openResult(file, hit)} folderName={hit && pathName(file.folderId)} place={placeNote(file)} {...rowProps} />
               })}
             </tbody>
           </table>
         )}
-        {hiddenRows > 0 && (
+        {hiddenRows > 0 && drawnAll && (
           <button ref={moreRows} className="btn ex-more" onClick={() => setShownRows(count => count + FOLDER_AT_ONCE)}>
             {`Mostrar mais ${Math.min(FOLDER_AT_ONCE, hiddenRows)} de ${hiddenRows.toLocaleString('pt-BR')}`}
           </button>

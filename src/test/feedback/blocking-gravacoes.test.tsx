@@ -54,7 +54,7 @@ describe('"Começar a gravar"', () => {
     // the browser's own request went out from the click; the app waits under the window
     expect(start).toHaveBeenCalledTimes(1)
     expect(ops()).toMatchObject([{ title: 'Começando a gravar…' }])
-    expect(container).toHaveAttribute('inert')
+    expect(container).toHaveAttribute('aria-hidden', 'true')
 
     await act(async () => {
       starting.resolve()

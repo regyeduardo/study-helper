@@ -1,5 +1,6 @@
 import { memo } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
+import { useShallow } from 'zustand/react/shallow'
 
 import type { FileMeta, FolderMeta } from '@/types/domain'
 import { Check } from '@/components/ui/Check'
@@ -309,11 +310,21 @@ function kindIcon(file: FileMeta): IconName {
   return media === 'video' ? 'monitor' : media === 'audio' ? 'mic' : KIND_ICON[kindOf(file)]
 }
 
-function dayAndTime(at: string, timeZone: string): { day: string; time: string } {
+const dateFormats = new Map<string, { day: Intl.DateTimeFormat; time: Intl.DateTimeFormat }>()
+
+/** "Hoje" or dd/mm/aaaa, and hh:mm, in the person's timezone. The formatters are made once per timezone: one per cell made a list of
+ * 100 recordings slow to draw on the phone (spec 007, T047). */
+export function dayAndTime(at: string, timeZone: string): { day: string; time: string } {
   const date = new Date(at)
-  const format = (value: Date) => value.toLocaleDateString('pt-BR', { timeZone, day: '2-digit', month: '2-digit', year: 'numeric' })
-  const day = format(date)
-  return { day: day === format(new Date()) ? 'Hoje' : day, time: date.toLocaleTimeString('pt-BR', { timeZone, hour: '2-digit', minute: '2-digit' }) }
+  // what toLocaleDateString said of it (a formatter throws on it)
+  if (Number.isNaN(date.getTime())) return { day: 'Invalid Date', time: 'Invalid Date' }
+  let format = dateFormats.get(timeZone)
+  if (!format) {
+    format = { day: new Intl.DateTimeFormat('pt-BR', { timeZone, day: '2-digit', month: '2-digit', year: 'numeric' }), time: new Intl.DateTimeFormat('pt-BR', { timeZone, hour: '2-digit', minute: '2-digit' }) }
+    dateFormats.set(timeZone, format)
+  }
+  const day = format.day.format(date)
+  return { day: day === format.day.format(new Date()) ? 'Hoje' : day, time: format.time.format(date) }
 }
 
 /** Date over time, each in its own element. */
@@ -440,8 +451,8 @@ function CheckCell({ show, name, id, draggable }: { show: boolean; name: string;
 
 /** "O que nasceu": what came of it, where it came from (1 click to the mother or the entrada), or "Nada ainda" for an entrada that gave nothing. */
 function Born({ file, quiet = false, under }: { file: FileMeta; quiet?: boolean; under?: string }) {
-  const files = useLibraryStore(state => state.files)
-  const { notes, artifacts } = familyCount(files, file.id)
+  // the counts, not the whole list: another note changed does not draw this row again (spec 007, T047)
+  const { notes, artifacts } = useLibraryStore(useShallow(state => familyCount(state.files, file.id)))
   return (
     <>
       <FamilyCount file={file} />

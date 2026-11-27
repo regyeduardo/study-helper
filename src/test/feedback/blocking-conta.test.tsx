@@ -251,7 +251,8 @@ describe('Limite do Drive e o perfil sem login', () => {
     const window_ = windowNamed('Trazendo para esta conta…')
     expect(window_).toHaveTextContent('3 de 12')
     expect(window_).toHaveTextContent('Aula 4')
-    expect(screen.getByRole('button', { name: 'Enviar para o Drive' })).toBeDisabled()
+    // behind the window the page is hidden from the screen reader (aria-hidden): the button is looked for there too
+    expect(screen.getByRole('button', { name: 'Enviar para o Drive', hidden: true })).toBeDisabled()
 
     await act(async () => {
       copying.resolve(12)
