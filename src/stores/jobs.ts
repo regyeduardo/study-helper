@@ -3,7 +3,7 @@ import { create } from 'zustand'
 import { ROUTED_CALLS, routeOf } from '@/lib/generation/account-routing'
 import { inBackground } from '@/lib/generation/background'
 import { runOnAccount } from '@/stores/account-jobs'
-import type { AiSettings, AiStep, AiUse, Artifact, AtaModelId, AtaPart, AtaStepModels, CourseAnalysis, FileMeta, FileType, FolderMeta, GenerationChoice, GenerationMeta, MediaAnalysis, MeetingDocument, Place, RecordingData, RecordingMark, SourceMeta, SourceStorage, StageTime, StoredQuestion } from '@/types/domain'
+import type { AiSettings, AiStep, AiUse, Artifact, AtaModelId, AtaPart, AtaStepModels, CourseAnalysis, FileMeta, FileType, FolderMeta, GenerationChoice, GenerationMeta, MediaAnalysis, MeetingDocument, Place, RecordingData, RecordingMark, SourceMeta, SourceStorage, StageTime, StoredQuestion, TranscriptionChoice } from '@/types/domain'
 import { Cancelled } from '@/controllers/ai.controller'
 import type { LitterboxTime } from '@/controllers/hosting.controller'
 import { youtubeId, youtubeTitle } from '@/controllers/sources.controller'
@@ -63,6 +63,12 @@ export type Placement = 'home' | { folderId: string | null }
 
 /** A new note, placed; or `replace`: the note made before from the same source gets the new text. */
 export type Target = Placement | { replace: string }
+
+/** Transcribing a video (T187): `read` false is "Só a transcrição", the screen not read; `model`, the Vídeo step picked (absent: the Leitura de tela). */
+export interface ScreenChoice {
+  read: boolean
+  model?: string
+}
 
 export type JobStatus = 'running' | 'done' | 'error' | 'cancelled'
 
@@ -182,8 +188,9 @@ interface JobsState {
   /** `retry`: the window as it was filled in, kept on the job for "Tentar de novo". */
   startNewContent(request: NewContentRequest, onJob?: (jobId: string) => void, retry?: Overlay): Promise<string | null>
   saveRecording(request: SaveRecordingRequest): Promise<string>
-  /** `instruction`: what the person asks of the revision (names, words), as in "Refazer a transcrição". */
-  transcribeNote(fileId: string, source?: File, transcriptionModel?: string | null, instruction?: string): Promise<void>
+  /** `instruction`: what the person asks of the revision (names, words), as in "Refazer a transcrição". `screen`: of a video, whether its
+   * screen is read and by which model of the Vídeo step (T187); absent, it is read by the Leitura de tela, as before. */
+  transcribeNote(fileId: string, source?: File, transcriptionModel?: string | null, instruction?: string, screen?: ScreenChoice): Promise<void>
   acceptCourse(proposal: CourseProposal, folderId: string | null): Promise<string>
   declineCourse(proposal: CourseProposal): Promise<string>
   /** `instruction` absent: the one the note kept. */
@@ -892,15 +899,15 @@ export const useJobsStore = create<JobsState>((set, get) => {
     }
   }
 
-  const polished = async (resolved: ResolvedInput, marks: RecordingMark[], progress: (message: string) => void, signal: AbortSignal, source: File | null, instruction = ''): Promise<ResolvedInput> => {
+  const polished = async (resolved: ResolvedInput, marks: RecordingMark[], progress: (message: string) => void, signal: AbortSignal, source: File | null, instruction = '', screen?: ScreenChoice): Promise<ResolvedInput> => {
     const heard = resolved.transcription?.recording
     if (!resolved.transcription || !heard) return resolved
     const session = sessionFor('titulo', signal)
     const clock = new StageClock()
     clock.add(resolved.transcription.stages)
-    const video = source?.type.startsWith('video/') ? source : null
+    const video = source?.type.startsWith('video/') && screen?.read !== false ? source : null
     if (video) progress('Olhando a tela gravada')
-    const look = () => lookAtScreen(heard, video, visionSettingsOf(library().index.settings), session)
+    const look = () => lookAtScreen(heard, video, visionSettingsOf(library().index.settings, screen?.model), session)
     const seen = await (video ? clock.run('Olhar a tela gravada', look) : look())
     progress('Dando título, nomes e revisando a transcrição')
     const finished = await clock.run('Acabamento: título, nomes e revisão', () => polishTranscript(seen, session, library().index.settings.transcription.terms ?? '', instruction))
@@ -1137,7 +1144,7 @@ export const useJobsStore = create<JobsState>((set, get) => {
       return meta.id
     },
 
-    transcribeNote: async (fileId, source, transcriptionModel, instruction) => {
+    transcribeNote: async (fileId, source, transcriptionModel, instruction, screen) => {
       const meta = library().files.find(file => file.id === fileId)
       if (!meta?.origin || get().jobs.some(job => job.fileId === fileId && job.status === 'running')) return
       const origin = meta.origin
@@ -1150,9 +1157,12 @@ export const useJobsStore = create<JobsState>((set, get) => {
         const transcription = await transcribe(file, transcriptionOf(library().index.settings, transcriptionModel), progress, controller.signal, { microphoneOnLeft: origin.input === 'recording', recorder: recorderName(useAccountStore.getState().active()) })
         const read: ResolvedInput = { content: `${CONTENT_HEADER}${transcription.text}`, title: meta.name, description: meta.description, origin, transcription }
         const marks = (await library().openFile(fileId)).sidecar.recording?.marks ?? []
-        const resolved = await polished(read, marks, progress, controller.signal, file, instruction)
+        const resolved = await polished(read, marks, progress, controller.signal, file, instruction, screen)
         const done = resolved.transcription!
-        await library().updateSidecar(fileId, sidecar => ({ ...sidecar, transcript: done.text, ...(done.recording ? { recording: done.recording } : {}) }))
+        // what was used, for the next "Refazer a transcrição" (T187)
+        const looked = file.type.startsWith('video/') && screen?.read !== false
+        const heard: TranscriptionChoice = { ...(transcriptionModel ? { model: transcriptionModel } : {}), screen: looked, ...(looked && screen?.model ? { vision: screen.model } : {}) }
+        await library().updateSidecar(fileId, sidecar => ({ ...sidecar, transcript: done.text, ...(done.recording ? { recording: { ...done.recording, heard } } : {}) }))
         const fresh = library().files.find(file => file.id === fileId) ?? meta
         const polishing = polishSessions.get(done)
         await library().saveContent(fileId, done.text, {

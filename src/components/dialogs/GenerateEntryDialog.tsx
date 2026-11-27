@@ -7,6 +7,7 @@ import { FolderField } from '@/components/dialogs/FolderChooser'
 import { lastModel, lastSteps, MoreOptions } from '@/components/dialogs/FromNoteFields'
 import { analyzedBefore, MediaAnalysisField, useMediaAnalysis } from '@/components/dialogs/MediaAnalysisField'
 import { type ModelChoice, ModelPick, useModelChoice } from '@/components/dialogs/ModelPick'
+import { TranscriptionScreenField, useTranscriptionScreen } from '@/components/dialogs/TranscriptionScreen'
 import { Dialog } from '@/components/ui/Dialog'
 import { Icon } from '@/components/ui/Icon'
 import { useDocument } from '@/hooks/use-document'
@@ -103,6 +104,8 @@ export function GenerateEntryDialog({ fileId, prefill }: { fileId: string; prefi
   // every note of a video goes step by step with the models of its steps (T177): the Ata, the Aula and the Explicação
   const stepByStep = analyzes && !youtube && analysis.value === 'quadros'
   const steps = useAtaSteps(choice, stepByStep, prefill?.steps ?? lastSteps(ata.note ?? undefined, settings), goal === 'meeting' && ata.model ? ATA_MODELS[ata.model].name : undefined, goal === 'lesson' ? 'aula' : goal === 'explanation' ? 'explicacao' : undefined)
+  // transcribing a video, as when creating: read the screen or not, and by which model (T187)
+  const screen = useTranscriptionScreen(choices.transcribe, !writes && canHear && Boolean(entry) && mediaOf(entry!) === 'video', opened?.sidecar.recording?.heard, prefill?.goal === 'transcribe' ? prefill : undefined)
   // an instruction that comes back (after a failure) is in sight
   const [inSight] = useState(Boolean(instruction))
 
@@ -128,11 +131,13 @@ export function GenerateEntryDialog({ fileId, prefill }: { fileId: string; prefi
         instruction,
         ...(folderId !== undefined ? { folderId } : {}),
         ...(analysis.sent ? { analyze: analysis.sent } : {}),
+        ...(screen.analysis.sent ? { analyze: screen.analysis.sent } : {}),
         ...(goal === 'meeting' ? { ataModel: ata.model, parts: ata.parts } : {}),
         ...(stepByStep ? { steps: steps.sent } : {}),
+        ...(screen.reads ? { steps: screen.steps.sent } : {}),
       },
     }
-    if (goal === 'transcribe') return void asking([fileId], retry, () => transcribeNote(fileId, undefined, choice.model || null, instruction))
+    if (goal === 'transcribe') return void asking([fileId], retry, () => transcribeNote(fileId, undefined, choice.model || null, instruction, screen.sent))
     const place = { folderId: destination }
     if (ataOfMedia) return void asking([fileId], retry, () => generateAta(fileId, ata.model ? [] : PART_ORDER.filter(part => ata.parts.includes(part)), ata.model ?? undefined, { model: choice.model || null, ...(stepByStep ? steps.sent : {}) }, place, instruction, undefined, analysis.sent))
     void asking([fileId], retry, () => generateFromNote(fileId, goal, choice.model || null, place, instruction, analysis.sent, ...(stepByStep ? [steps.sent] : [])))
@@ -185,6 +190,7 @@ export function GenerateEntryDialog({ fileId, prefill }: { fileId: string; prefi
             <ModelPick choice={choice} />
             {analyzes && <MediaAnalysisField analysis={analysis} />}
             {stepByStep && <AtaStepsField steps={steps} />}
+            <TranscriptionScreenField screen={screen} />
             {writes && (
               <div className="field">
                 <span className="lab">Salvar em</span>

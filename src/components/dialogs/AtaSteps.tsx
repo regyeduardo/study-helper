@@ -46,8 +46,8 @@ export interface AtaSteps {
 
 /** State of "Modelos por passo". `writer`: the "Modelo da IA" of the window, which is the Escrita; `last`: what comes chosen instead of the default ("Gerar de novo"); `format`: the "Modelo da ata" in the hint of the Escrita. */
 /** `note`: an Aula or an Explicação of a video, step by step (T177): the steps say what they do there; only the Vídeo has a score measured
- * for it (the screen is read the same way). */
-export function useAtaSteps(writer: ModelChoice, on: boolean, last: AtaStepModels = {}, format?: string, note?: 'aula' | 'explicacao'): AtaSteps {
+ * for it (the screen is read the same way). The transcription of a video (T187) has only the Vídeo step: `writer` is its Transcrição. */
+export function useAtaSteps(writer: ModelChoice, on: boolean, last: AtaStepModels = {}, format?: string, note?: 'aula' | 'explicacao' | 'transcricao'): AtaSteps {
   const settings = useLibraryStore(state => state.index.settings)
   const live = useModelsStore(state => state.live)
   const probes = useModelsStore(state => state.probes)
@@ -62,6 +62,7 @@ export function useAtaSteps(writer: ModelChoice, on: boolean, last: AtaStepModel
     if (on) readStale(config.providers.filter(provider => config.models.some(model => model.pid === provider.id)))
   }, [config, on, readStale])
 
+  const ids = note === 'transcricao' ? (['video'] as AtaStepId[]) : ATA_STEP_IDS
   const exists = (uid: string | undefined) => (uid && modelByUid(config, uid) ? uid : undefined)
   const label = (uid: string) => {
     const model = modelByUid(config, uid)
@@ -75,7 +76,7 @@ export function useAtaSteps(writer: ModelChoice, on: boolean, last: AtaStepModel
     return config.models.find(model => model.mid === pair.model && providerById(config, model.pid)?.type === pair.provider)?.uid
   }
   const hints: Record<AtaStepId, string> = note
-    ? { video: 'Lê a tela pelos quadros do vídeo.', context: 'Acha onde a fala aponta para a tela.', write: `Escreve a ${note === 'aula' ? 'aula' : 'explicação'}. Igual ao Modelo da IA.` }
+    ? { video: note === 'transcricao' ? 'Lê a tela pelos quadros do vídeo, para acertar o que a fala diz.' : 'Lê a tela pelos quadros do vídeo.', context: 'Acha onde a fala aponta para a tela.', write: `Escreve a ${note === 'aula' ? 'aula' : 'explicação'}. Igual ao Modelo da IA.` }
     : {
         video: 'Lê a tela e diz quem fala, pelos quadros do vídeo.',
         context: 'O que mudou na reunião, como o prazo que caiu.',
@@ -88,7 +89,7 @@ export function useAtaSteps(writer: ModelChoice, on: boolean, last: AtaStepModel
     context: uid => setPicked(now => ({ ...now, context: uid || undefined })),
     write: uid => writer.setPick(uid),
   }
-  const rows: StepRow[] = ATA_STEP_IDS.map(id => {
+  const rows: StepRow[] = ids.map(id => {
     const uid = current[id]
     const model = modelByUid(config, uid)
     const type = providerById(config, model?.pid)?.type
@@ -96,12 +97,12 @@ export function useAtaSteps(writer: ModelChoice, on: boolean, last: AtaStepModel
     const score = measured(id) ? scoreOfStep(id, model && type ? { provider: type, model: model.mid } : null) : unmeasured
     return { id, label: LABEL[id], hint: hints[id], uid, name: model?.name ?? '', options: uids.map(item => ({ uid: item, label: label(item) })), score, measured: measured(id), pick: setters[id] }
   })
-  const atRecommended = ATA_STEP_IDS.every(id => !recommendedUid(id) || current[id] === recommendedUid(id))
+  const atRecommended = ids.every(id => !recommendedUid(id) || current[id] === recommendedUid(id))
   // a step that starts below the line opens the section: the warning is not hidden
   const isOpen = asked ?? rows.some(row => row.score.low)
   // the section stays as it is while the models change under it, even if the warning that opened it goes away
   const useRecommended = () => {
-    const [video, context, write] = ATA_STEP_IDS.map(recommendedUid)
+    const [video, context, write] = ATA_STEP_IDS.map(id => (ids.includes(id) ? recommendedUid(id) : undefined))
     setAsked(isOpen)
     setBefore({ picked, write: writer.touched ? writer.pick : null, left: { video: video ?? current.video, context: context ?? current.context, write: write ?? current.write } })
     // a step with no recommended model in "Meus modelos" keeps the one it has
@@ -109,15 +110,15 @@ export function useAtaSteps(writer: ModelChoice, on: boolean, last: AtaStepModel
     if (write) writer.setPick(write)
   }
   // "Desfazer" is there while the steps are as "Usar recomendados" left them: a step changed after that, by hand or in the "Modelo da IA", is the person's
-  const canUndo = before !== null && ATA_STEP_IDS.every(id => current[id] === before.left[id])
+  const canUndo = before !== null && ids.every(id => current[id] === before.left[id])
   const undo = () => {
     if (!canUndo || !before) return
     setAsked(isOpen)
     setPicked(before.picked)
-    writer.setPick(before.write)
+    if (ids.includes('write')) writer.setPick(before.write)
     setBefore(null)
   }
-  const sent = { ...(exists(picked.video) ? { video: picked.video } : {}), ...(exists(picked.context) ? { context: picked.context } : {}), ...(writer.touched && writer.model ? { write: writer.model } : {}) }
+  const sent = { ...(exists(picked.video) ? { video: picked.video } : {}), ...(ids.includes('context') && exists(picked.context) ? { context: picked.context } : {}), ...(ids.includes('write') && writer.touched && writer.model ? { write: writer.model } : {}) }
   return { rows, open: isOpen, toggle: () => setAsked(!isOpen), atRecommended, useRecommended, canUndo, undo, sent }
 }
 

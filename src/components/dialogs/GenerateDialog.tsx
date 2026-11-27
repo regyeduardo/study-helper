@@ -5,6 +5,7 @@ import type { AiUse } from '@/types/domain'
 import { FolderWindow, lastModel, madeLine, MoreOptions, ReplaceOrNew, SaveIn, useNoteFolder } from '@/components/dialogs/FromNoteFields'
 import { useGoToNew } from '@/components/dialogs/go-to-new'
 import { type ModelChoice, ModelPick, useModelChoice } from '@/components/dialogs/ModelPick'
+import { TranscriptionScreenField, useTranscriptionScreen } from '@/components/dialogs/TranscriptionScreen'
 import { Dialog } from '@/components/ui/Dialog'
 import { useDocument } from '@/hooks/use-document'
 import { blocking } from '@/lib/blocking'
@@ -127,10 +128,12 @@ export function TranscribeDialog({ fileId, prefill }: { fileId: string; prefill?
   const [instruction, setInstruction] = useState(prefill?.instruction ?? '')
   const redo = Boolean(opened?.sidecar.recording?.blocks.length || opened?.sidecar.transcript?.trim())
   const [asked] = useState(Boolean(instruction))
+  // of a video, as when creating: read the screen or not, and by which model (T187)
+  const screen = useTranscriptionScreen(choice, Boolean(file) && mediaOf(file!) === 'video', opened?.sidecar.recording?.heard, prefill)
   const start = () => {
     close()
-    const retry: Overlay = { kind: 'transcribe', fileId, prefill: { ...pickedOf(choice), instruction } }
-    void asking([fileId], retry, () => transcribeNote(fileId, undefined, choice.model || null, instruction))
+    const retry: Overlay = { kind: 'transcribe', fileId, prefill: { ...pickedOf(choice), instruction, ...(screen.analysis.sent ? { analyze: screen.analysis.sent } : {}), ...(screen.reads ? { steps: screen.steps.sent } : {}) } }
+    void asking([fileId], retry, () => transcribeNote(fileId, undefined, choice.model || null, instruction, screen.sent))
   }
   return (
     <Dialog
@@ -155,6 +158,7 @@ export function TranscribeDialog({ fileId, prefill }: { fileId: string; prefill?
           </p>
         )}
         <ModelPick choice={choice} label="Transcrição" />
+        <TranscriptionScreenField screen={screen} />
         <MoreOptions key={String(redo)} instruction={instruction} onInstruction={setInstruction} placeholder="Ex.: o nome certo é João Vitor; é PIX, não pics" open={redo || asked} />
       </div>
     </Dialog>

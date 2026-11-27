@@ -35,6 +35,12 @@ const YOUTUBE_ANALYSES: Choice[] = [
   { id: 'ambos', label: 'Transcrição + vídeo', hint: () => 'O vídeo e a legenda na mesma chamada.' },
 ]
 
+/** Transcribing a video (T187): the screen read by its frames, by the model of the Vídeo step, or only the speech. */
+const TRANSCRIPTION_ANALYSES: Choice[] = [
+  { id: 'quadros', label: 'Transcrição + quadros do vídeo', hint: () => 'Lê a tela pelos quadros do vídeo: nomes, siglas e termos saem como aparecem escritos.', recommended: true },
+  { id: 'transcricao', label: 'Só a transcrição', hint: () => 'Só a fala, sem ler a tela: sai mais rápido.' },
+]
+
 /** What a note made before analyzed: an Ata of before T177 went step by step as "transcricao" (it kept the models of its steps). */
 export const analyzedBefore = (made: { analyze?: MediaAnalysis; steps?: object } | undefined): MediaAnalysis | undefined => (made?.analyze === 'transcricao' && made.steps ? 'quadros' : made?.analyze)
 
@@ -48,6 +54,8 @@ export interface MediaAnalysisOptions {
   initial?: MediaAnalysis
   /** A YouTube link: the video goes only to a model that watches it, and "Só a transcrição" comes chosen, as before. */
   youtube?: boolean
+  /** The transcription of a video (T187): read the screen by its frames or not; nothing there depends on a writer. */
+  transcription?: boolean
 }
 
 /**
@@ -55,7 +63,7 @@ export interface MediaAnalysisOptions {
  * is not kept (`unavailable` says why); "Tudo numa chamada" needs a writer that hears audio. `sent`: always what the window shows (T177).
  * A YouTube link stays as before: only the transcription unless the person marks the video, which needs a model that watches it.
  */
-export function useMediaAnalysis(choice: ModelChoice | null, on: boolean, unavailable: string | null = null, { ata = false, initial, youtube = false }: MediaAnalysisOptions = {}) {
+export function useMediaAnalysis(choice: ModelChoice | null, on: boolean, unavailable: string | null = null, { ata = false, initial, youtube = false, transcription = false }: MediaAnalysisOptions = {}) {
   const settings = useLibraryStore(state => state.index.settings)
   const live = useModelsStore(state => state.live)
   const probes = useModelsStore(state => state.probes)
@@ -71,22 +79,26 @@ export function useMediaAnalysis(choice: ModelChoice | null, on: boolean, unavai
   }, [config, on, readStale])
   const media = choice?.model ? mediaOfModel(config, live, probes, choice.model) : null
   const writer = choice?.model ? modelByUid(config, choice.model)?.name : undefined
+  if (transcription) {
+    const value: MediaAnalysis = picked === 'transcricao' ? 'transcricao' : 'quadros'
+    return { value, reason: null, blocked: () => null, pick: setPicked, sent: on ? value : undefined, ata, writer, youtube, transcription }
+  }
   if (youtube) {
     const reason = unavailable ?? cannotWatch(config, choice?.model, media)
     const value: MediaAnalysis = picked && (picked === 'transcricao' || !reason) ? picked : 'transcricao'
-    return { value, reason, blocked: (id: MediaAnalysis) => (id === 'transcricao' ? null : reason), pick: setPicked, sent: picked === value ? value : undefined, ata, writer, youtube }
+    return { value, reason, blocked: (id: MediaAnalysis) => (id === 'transcricao' ? null : reason), pick: setPicked, sent: picked === value ? value : undefined, ata, writer, youtube, transcription }
   }
   const deaf = media?.audio === true ? null : notHeard(writer)
   const blocked = (id: MediaAnalysis): string | null => (id === 'transcricao' ? null : id === 'quadros' ? unavailable : (unavailable ?? deaf))
   const value: MediaAnalysis = picked && !blocked(picked) ? picked : unavailable ? 'transcricao' : 'quadros'
-  return { value, reason: blocked('video'), blocked, pick: setPicked, sent: on ? value : undefined, ata, writer, youtube }
+  return { value, reason: blocked('video'), blocked, pick: setPicked, sent: on ? value : undefined, ata, writer, youtube, transcription }
 }
 
 /** Options the model or the entrada cannot do stay visible, disabled, saying why. `compact`: the choices side by side, with what the
  * chosen one does under them ("Gravação pronta", spec 007, mocks/gravar-reuniao); `label` names it when there are two. */
 export function MediaAnalysisField({ analysis, compact = false, label = 'O que a IA analisa' }: { analysis: ReturnType<typeof useMediaAnalysis>; compact?: boolean; label?: string }) {
   const id = useId()
-  const items = analysis.youtube ? YOUTUBE_ANALYSES : VIDEO_ANALYSES
+  const items = analysis.transcription ? TRANSCRIPTION_ANALYSES : analysis.youtube ? YOUTUBE_ANALYSES : VIDEO_ANALYSES
   if (compact) {
     const chosen = items.find(item => item.id === analysis.value)
     return (

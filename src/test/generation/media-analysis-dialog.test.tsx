@@ -4,7 +4,7 @@ import { MemoryRouter } from 'react-router-dom'
 
 // FR-046: the choice of what the AI analyzes, in the two windows, only for a video.
 
-import { GenerateDialog } from '@/components/dialogs/GenerateDialog'
+import { GenerateDialog, TranscribeDialog } from '@/components/dialogs/GenerateDialog'
 import { GenerateEntryDialog } from '@/components/dialogs/GenerateEntryDialog'
 import { NewContentDialog } from '@/components/dialogs/NewContentDialog'
 import { defaultIndex, newFileMeta, newFolderMeta, newSidecar } from '@/lib/defaults'
@@ -14,10 +14,12 @@ import { useLibraryStore } from '@/stores/library'
 import { useModelsStore } from '@/stores/models'
 import { installFetch } from '@/test/ai/fake-provider'
 import { installBlobShim } from '@/test/imports/blob-shim'
-import type { FileMeta, FileSidecar, RecordingData, SourceMeta } from '@/types/domain'
+import type { FileMeta, FileSidecar, RecordingData, SourceMeta, TranscriptionChoice } from '@/types/domain'
 
 const HEARS = { uid: 'or::omni', pid: 'or', mid: 'omni', name: 'Omni' }
 const DEAF = { uid: 'or::texto', pid: 'or', mid: 'texto', name: 'Só texto' }
+/** Another model that sees and hears: what the last transcription used, or a pick in the Vídeo step. */
+const VISTA = { uid: 'or::vista', pid: 'or', mid: 'vista', name: 'Vista' }
 const stamp = { at: '2026-11-03T12:00:00.000Z', deviceId: 'd1', deviceName: 'Notebook' }
 
 const VIDEO: SourceMeta = { input: 'file', name: 'aula.mp4', mime: 'video/mp4', durationSeconds: 60, storage: 'drive', storedFileId: 'drv', expiresAt: null }
@@ -40,7 +42,7 @@ function seed(sidecars: FileSidecar[], defaultModel = HEARS.uid) {
     fileSizes: async () => ({}),
   } as unknown as Repository
   const index = defaultIndex()
-  index.settings.aiConfig = { providers: [{ id: 'or', type: 'openrouter', name: 'OpenRouter', key: 'k', base: '' }], models: [HEARS, DEAF], defaults: { estudo: defaultModel, ata: defaultModel, midia: HEARS.uid }, steps: {} }
+  index.settings.aiConfig = { providers: [{ id: 'or', type: 'openrouter', name: 'OpenRouter', key: 'k', base: '' }], models: [HEARS, DEAF, VISTA], defaults: { estudo: defaultModel, ata: defaultModel, midia: HEARS.uid }, steps: {} }
   useLibraryStore.setState({ repo, accountId: 'local', ready: true, folders: [], files: sidecars.map(sidecar => sidecar.meta), index, opened: {}, openedAt: {}, localMedia: [], sharedView: null })
 }
 
@@ -49,6 +51,7 @@ function catalog() {
   const models = [
     { id: 'omni', name: 'Omni', media: { texto: true, imagem: true, audio: true, video: true, pdf: null } },
     { id: 'texto', name: 'Só texto', media: { texto: true, imagem: false, audio: false, video: false, pdf: null } },
+    { id: 'vista', name: 'Vista', media: { texto: true, imagem: true, audio: true, video: true, pdf: null } },
   ]
   useModelsStore.setState({ live: { or: { state: 'ok', token: 1, at: Date.now(), list: models, byId: new Map(models.map(model => [model.id, model])) } }, probes: {} })
 }
@@ -63,10 +66,18 @@ const checked = () =>
     .map(item => item.querySelector('b')!.textContent)
 const labels = () => within(field()).getAllByRole('radio').map(item => item.querySelector('b')!.textContent)
 const VIDEO_CHOICES = ['Transcrição + quadros do vídeo', 'Só a transcrição', 'Tudo numa chamada']
+const TRANSCRIPTION_CHOICES = ['Transcrição + quadros do vídeo', 'Só a transcrição']
+const openSteps = () => fireEvent.click(screen.getByRole('button', { name: 'Modelos por passo' }))
+const videoStep = () => screen.getByRole('combobox', { name: 'Vídeo' })
+const stepNames = () => within(screen.getByRole('group', { name: 'Modelos por passo' })).getAllByRole('group').map(group => group.getAttribute('aria-label'))
+/** What "ler a tela" the last transcription asked for went with (the 5th argument of `transcribeNote`). */
+const screenSent = () => transcribeNote.mock.calls.at(-1)?.[4]
+const withHeard = (sidecar: FileSidecar, heard: TranscriptionChoice): FileSidecar => ({ ...sidecar, recording: { ...RECORDING, heard } })
 const pickModel = (uid: string) => fireEvent.change(screen.getByLabelText('Modelo da IA'), { target: { value: uid } })
 const generateFromNote = vi.fn(async (..._args: unknown[]) => 'nota')
 const generateAta = vi.fn(async (..._args: unknown[]) => undefined)
 const startNewContent = vi.fn(async (..._args: unknown[]) => null)
+const transcribeNote = vi.fn(async (..._args: unknown[]) => undefined)
 const REAL = useJobsStore.getState()
 
 beforeEach(() => {
@@ -75,12 +86,13 @@ beforeEach(() => {
   generateFromNote.mockClear()
   generateAta.mockClear()
   startNewContent.mockClear()
-  useJobsStore.setState({ jobs: [], generateFromNote, generateAta, startNewContent } as never)
+  transcribeNote.mockClear()
+  useJobsStore.setState({ jobs: [], generateFromNote, generateAta, startNewContent, transcribeNote } as never)
   catalog()
 })
 
 afterEach(() => {
-  useJobsStore.setState({ generateFromNote: REAL.generateFromNote, generateAta: REAL.generateAta, startNewContent: REAL.startNewContent })
+  useJobsStore.setState({ generateFromNote: REAL.generateFromNote, generateAta: REAL.generateAta, startNewContent: REAL.startNewContent, transcribeNote: REAL.transcribeNote })
   vi.unstubAllGlobals()
 })
 
@@ -173,10 +185,56 @@ describe('"Gerar desta nota"', () => {
     expect(generateFromNote).toHaveBeenLastCalledWith('e', 'lesson', HEARS.uid, { folderId: null }, '', 'transcricao')
   })
 
-  it('não aparece ao pedir a transcrição', async () => {
+  // T187 (dono, 27/11): refazer a transcrição de um vídeo escolhe, como no criar, se a tela é lida e por qual modelo (o passo Vídeo)
+  it('ao refazer a transcrição: ler a tela pelos quadros ou só a transcrição, e o passo Vídeo', async () => {
     await open(entrada(VIDEO))
     goal('Refazer a transcrição')
+    expect(labels()).toEqual(TRANSCRIPTION_CHOICES)
+    expect(checked()).toEqual(['Transcrição + quadros do vídeo'])
+    expect(radio('Transcrição + quadros do vídeo')).toHaveTextContent('Lê a tela pelos quadros do vídeo')
+    expect(radio('Só a transcrição')).toHaveTextContent('Só a fala, sem ler a tela: sai mais rápido.')
+    openSteps()
+    expect(stepNames()).toEqual(['Vídeo'])
+    go()
+    expect(screenSent()).toEqual({ read: true })
+    fireEvent.click(radio('Só a transcrição'))
+    expect(screen.queryByRole('group', { name: 'Modelos por passo' })).not.toBeInTheDocument()
+    go()
+    expect(screenSent()).toEqual({ read: false })
+  })
+
+  it('ao refazer a transcrição, o modelo escolhido no passo Vídeo vai junto', async () => {
+    await open(entrada(VIDEO))
+    goal('Refazer a transcrição')
+    openSteps()
+    fireEvent.change(videoStep(), { target: { value: VISTA.uid } })
+    go()
+    expect(screenSent()).toEqual({ read: true, model: VISTA.uid })
+  })
+
+  it('ao refazer a transcrição, vem o que a última usou: o modelo da transcrição, a tela e o modelo do passo Vídeo', async () => {
+    await open(withHeard(entrada(VIDEO), { model: VISTA.uid, screen: true, vision: VISTA.uid }))
+    goal('Refazer a transcrição')
+    expect(screen.getByLabelText('Modelo da IA')).toHaveValue(VISTA.uid)
+    openSteps()
+    expect(videoStep()).toHaveValue(VISTA.uid)
+    go()
+    expect(transcribeNote.mock.calls.at(-1)?.[2]).toBe(VISTA.uid)
+    expect(screenSent()).toEqual({ read: true, model: VISTA.uid })
+  })
+
+  it('a última transcrição sem ler a tela volta com "Só a transcrição"', async () => {
+    await open(withHeard(entrada(VIDEO), { screen: false }))
+    goal('Refazer a transcrição')
+    expect(checked()).toEqual(['Só a transcrição'])
+  })
+
+  it('a transcrição de um áudio não pergunta da tela', async () => {
+    await open(entrada(AUDIO))
+    goal('Refazer a transcrição')
     noField()
+    go()
+    expect(screenSent()).toBeUndefined()
   })
 
   it.each([
@@ -363,5 +421,47 @@ describe('"Gerar de novo"', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Gerar' }))
     expect(generateFromNote.mock.calls[0][5]).toBe('quadros')
     expect(generateFromNote.mock.calls[0][6]).toEqual({ video: HEARS.uid, context: DEAF.uid })
+  })
+})
+
+describe('"Refazer a transcrição" (a janela da aba Transcrição da entrada)', () => {
+  function open(sidecar: FileSidecar) {
+    seed([sidecar])
+    render(
+      <MemoryRouter>
+        <TranscribeDialog fileId="e" />
+      </MemoryRouter>,
+    )
+  }
+  const go = () => fireEvent.click(screen.getByRole('button', { name: 'Transcrever' }))
+
+  it('de um vídeo, as mesmas escolhas do criar: ler a tela pelos quadros (com o passo Vídeo) ou só a transcrição', async () => {
+    open(entrada(VIDEO))
+    await screen.findByRole('dialog', { name: 'Refazer a transcrição' })
+    expect(labels()).toEqual(TRANSCRIPTION_CHOICES)
+    expect(checked()).toEqual(['Transcrição + quadros do vídeo'])
+    openSteps()
+    expect(stepNames()).toEqual(['Vídeo'])
+    fireEvent.change(videoStep(), { target: { value: VISTA.uid } })
+    go()
+    expect(screenSent()).toEqual({ read: true, model: VISTA.uid })
+    fireEvent.click(radio('Só a transcrição'))
+    go()
+    expect(screenSent()).toEqual({ read: false })
+  })
+
+  it('vem com o que a última transcrição usou', async () => {
+    open(withHeard(entrada(VIDEO), { model: VISTA.uid, screen: false }))
+    await screen.findByRole('dialog', { name: 'Refazer a transcrição' })
+    expect(screen.getByLabelText('Transcrição')).toHaveValue(VISTA.uid)
+    expect(checked()).toEqual(['Só a transcrição'])
+  })
+
+  it('de um áudio, não pergunta da tela', async () => {
+    open(entrada(AUDIO))
+    await screen.findByRole('dialog', { name: 'Refazer a transcrição' })
+    noField()
+    go()
+    expect(screenSent()).toBeUndefined()
   })
 })

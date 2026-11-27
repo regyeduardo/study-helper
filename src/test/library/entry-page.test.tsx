@@ -966,7 +966,8 @@ describe('"Gerar desta nota": o que a janela oferece', () => {
     expect(instruction).toBeVisible()
     fireEvent.change(instruction, { target: { value: 'É PIX, não pics.' } })
     go()
-    expect(transcribeNote).toHaveBeenCalledWith('e', undefined, A.uid, 'É PIX, não pics.')
+    // de um vídeo, também o que fazer da tela (T187): lida, pelo modelo de Leitura de tela
+    expect(transcribeNote).toHaveBeenCalledWith('e', undefined, A.uid, 'É PIX, não pics.', { read: true })
   })
 
   const transcribing = { id: 'j', kind: 'transcription' as const, title: 'v', fileId: 'e', status: 'running' as const, message: '', fraction: null, error: null, startedAt: 0 }

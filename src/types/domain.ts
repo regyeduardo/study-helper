@@ -257,6 +257,15 @@ export interface RecordingData {
   screenTerms?: string[]
   /** The distinct screens of the video and their OCR, found by the transcription; the Ata reuses it. */
   screenIndex?: ScreenIndex
+  /** How this transcription was made: "Refazer a transcrição" comes back with it (T187). */
+  heard?: TranscriptionChoice
+}
+
+/** What a transcription used (uids): its model, when picked; whether the screen of the video was read, and by which model of the Vídeo step, when picked. */
+export interface TranscriptionChoice {
+  model?: string
+  screen: boolean
+  vision?: string
 }
 
 export type AtaPart = 'resumo' | 'tarefas' | 'perguntas' | 'linha' | 'um-a-um'
