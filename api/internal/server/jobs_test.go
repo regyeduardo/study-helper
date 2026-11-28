@@ -211,14 +211,33 @@ func TestOnlyTheJobsOwnSessionReports(t *testing.T) {
 	_, job := newJob(t, h, client, "generateFromNote", "n1")
 	id := job["id"].(string)
 	waitState(t, h, client, id, "running")
+	// the job is running before its page uses the ticket: wait for the page to enter, or the test itself would use the ticket
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		var entered bool
+		_ = h.db.QueryRow(`SELECT device_id IS NOT NULL FROM jobs WHERE id = ?`, id).Scan(&entered)
+		if entered {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the page of the job never entered")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 	// the person's own device cannot pretend to be the job
 	if res, _ := h.do(client, call{method: http.MethodPost, path: "/v1/jobs/" + id + "/finish", body: map[string]any{"result": "falso"}}); res.StatusCode != http.StatusForbidden {
 		t.Fatalf("device finished the job: %d", res.StatusCode)
 	}
 	// the ticket is used once
+	fake.mu.Lock()
 	enter := fake.started[0].EnterURL
-	if res, err := http.Get(enter); err != nil || res.StatusCode != http.StatusForbidden {
-		t.Fatalf("ticket used twice: %v %v", res.StatusCode, err)
+	fake.mu.Unlock()
+	res, err := http.Get(enter)
+	if err != nil {
+		t.Fatalf("ticket used twice: %v", err)
+	}
+	if res.StatusCode != http.StatusForbidden {
+		t.Fatalf("ticket used twice: %d", res.StatusCode)
 	}
 	close(release)
 	waitState(t, h, client, id, "done")
