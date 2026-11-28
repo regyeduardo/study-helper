@@ -92,6 +92,12 @@ const VOXTRAL_DI = speech('mistralai/Voxtral-Small-24B-2507', 'Voxtral Small 24B
 
 export const PAIRS: ModelPair[] = [DEEPSEEK_DI, DEEPSEEK_OR, DEEPSEEK_41_OR, MIMO_DI, GLM_OR, GEMMA_26B_OR, LING_OR, HAIKU_OR, LUNA_OR, OMNI_OR, GEMINI_LITE_OR, GEMINI_38_OR, WHISPER_TURBO_DI, WHISPER_DI, QWEN_ASR_DI, VOXTRAL_DI]
 
+/** The price per hour of audio of a speech model of the list (US$), for the cost of a transcription (T200). */
+export function hourlyPrice(model: string): number | undefined {
+  const price = PAIRS.find(pair => pair.model === model && pair.price?.per === 'hour')?.price
+  return price?.per === 'hour' ? price.hour : undefined
+}
+
 export const findPair = (provider: AiProviderId, model: string): ModelPair | undefined => PAIRS.find(item => item.provider === provider && item.model === model)
 
 /**

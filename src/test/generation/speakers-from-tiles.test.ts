@@ -199,3 +199,28 @@ describe('speakersFromTiles', () => {
     expect(result.recording).toBe(input)
   })
 })
+
+// T191 (dono, 27/11: "Corrija tudo… quero 0 problemas"): with a source that reads many frames in one pass, the frames of every question come
+// from it at once, instead of one jump each (about 5 s each on the server)
+describe('speakersFromTiles in one pass (T191)', () => {
+  it('a source with shots gives every frame in one call, and full() is not called; the names come out the same', async () => {
+    const full = vi.fn(frames.full)
+    const shots = vi.fn(async (times: number[]) => times.map(at => ({ at, image: `data:image/jpeg;base64,${at}`, width: 1280, height: 720, signature: [] })))
+    const result = await speakersFromTiles(recording(MEETING), { full, shots }, fakeSee(byTime))
+    expect(shots).toHaveBeenCalledTimes(1)
+    expect(full).not.toHaveBeenCalled()
+    expect(nameOf(result.recording, 's1')).toBe('Ana Souza')
+    expect(nameOf(result.recording, 's2')).toBe('Bruno Lima')
+  })
+
+  it('a frame the pass did not give, or a pass that failed, is read by a jump', async () => {
+    const full = vi.fn(frames.full)
+    const shots = vi.fn(async (times: number[]) => times.map((at, index) => (index ? { at, image: `data:image/jpeg;base64,${at}`, width: 1280, height: 720, signature: [] } : null)))
+    await speakersFromTiles(recording(MEETING), { full, shots }, fakeSee(byTime))
+    expect(full).toHaveBeenCalledTimes(1)
+    const failing = vi.fn(async () => Promise.reject(new Error('o decodificador parou')))
+    const result = await speakersFromTiles(recording(MEETING), { full, shots: failing }, fakeSee(byTime))
+    expect(nameOf(result.recording, 's1')).toBe('Ana Souza')
+  })
+})
+

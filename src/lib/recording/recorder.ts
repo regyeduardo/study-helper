@@ -3,7 +3,11 @@ import type { IntegrationCapture } from '@/lib/recording/integration'
 import { integrationSourceKey, type IntegrationSourceChoice } from '@/lib/recording/integration'
 import type { Meters } from '@/lib/recording/miniplayer'
 import { CodecRecorder } from '@/lib/recording/codec-recorder'
+import type { ScreenOcr } from '@/lib/generation/ata-types'
+import { browserOcr } from '@/lib/generation/screen-ocr'
 import { ScreenCanvas } from '@/lib/recording/frame-grab'
+import { type MarkedScreens, ScreenMarks } from '@/lib/recording/screen-marks'
+import { VOLUME_STEP, VOLUME_TAP_SOURCE, VolumeEnvelope, type VolumePart } from '@/lib/recording/volume'
 import { makeSeekable } from '@/lib/recording/seekable'
 import { AUDIO_BITS_PER_SECOND, CHOSEN, OPTIMIZED, recorderOptions, type RecordingVariant, VARIANTS } from '@/lib/recording/variants'
 
@@ -56,6 +60,10 @@ export interface RecordingResult {
   marks?: RecordingMark[]
   destination?: RecordingDestination
   folderId?: string | null
+  /** T201: the screens marked while recording (index and photos); absent without the screen or without a mark. */
+  screens?: MarkedScreens
+  /** T202: the volume of each channel every 50 ms (the part `volume`); absent where the browser has no AudioWorklet. */
+  volume?: VolumePart
 }
 
 export interface RecorderCallbacks {
@@ -342,6 +350,12 @@ export class MeetingRecorder {
   private fps: VideoFps | null = null
   private variant: RecordingVariant = VARIANT
   private canvas: ScreenCanvas | null = null
+  /** T201: the screens marked while recording, and the browser's OCR that reads them (one at a time). */
+  private marks: ScreenMarks | null = null
+  private ocr: ScreenOcr | null = null
+  /** T202: the volume of the microphone and of the computer every 50 ms, while recording (the pauses add nothing). */
+  private volume: VolumeEnvelope | null = null
+  private volumeTap: AudioWorkletNode | null = null
   private gains: Record<'microphone' | 'source', GainNode | null> = { microphone: null, source: null }
   private analysers: Record<'microphone' | 'source', AnalyserNode | null> = { microphone: null, source: null }
   private plugged: Record<'microphone' | 'source', { nodes: AudioNode[]; streams: MediaStream[] }> = { microphone: { nodes: [], streams: [] }, source: { nodes: [], streams: [] } }
@@ -384,7 +398,11 @@ export class MeetingRecorder {
   private useVideo(options: StartOptions): void {
     this.fps = options.video?.fps ?? null
     this.variant = options.video?.optimized ? OPTIMIZED : VARIANT
-    if (this.fps) this.canvas = new ScreenCanvas(this.fps, Boolean(options.video?.optimized))
+    if (!this.fps) return
+    this.canvas = new ScreenCanvas(this.fps, Boolean(options.video?.optimized))
+    this.ocr = browserOcr()
+    this.marks = new ScreenMarks({ clock: () => (this.recorder?.state === 'recording' ? this.position() : null), snapshot: () => this.canvas?.snapshot() ?? null, ocr: this.ocr })
+    this.canvas.markWith(this.marks)
   }
 
   private prepare(context: AudioContext): MediaStreamAudioDestinationNode {
@@ -489,7 +507,34 @@ export class MeetingRecorder {
     }, 1000)
   }
 
+  /** T202: measures the volume of the two sides (0 the microphone, 1 the computer) every 50 ms of audio; none without AudioWorklet. */
+  private async listenVolume(): Promise<void> {
+    const context = this.audioContext
+    const sides = this.mixNode
+    this.volume = null
+    if (!context || !sides || typeof AudioWorkletNode === 'undefined' || !context.audioWorklet) return
+    try {
+      const url = URL.createObjectURL(new Blob([VOLUME_TAP_SOURCE], { type: 'text/javascript' }))
+      try {
+        await context.audioWorklet.addModule(url)
+      } finally {
+        URL.revokeObjectURL(url)
+      }
+      const tap = new AudioWorkletNode(context, 'study-helper-volume', { numberOfInputs: 1, numberOfOutputs: 0, channelCount: 2, channelCountMode: 'explicit', processorOptions: { size: Math.round(context.sampleRate * VOLUME_STEP) } })
+      const envelope = new VolumeEnvelope()
+      tap.port.onmessage = (event: MessageEvent<[number, number]>) => {
+        if (this.recorder?.state === 'recording') envelope.push(event.data[0], event.data[1])
+      }
+      sides.connect(tap)
+      this.volume = envelope
+      this.volumeTap = tap
+    } catch {
+      // the recording goes on; the server reads the volume from the audio (contracts/runner.md)
+    }
+  }
+
   private async record(mix: MediaStreamAudioDestinationNode): Promise<void> {
+    await this.listenVolume()
     // the optimized recording through WebCodecs where the browser has it (research R18, T174); MediaRecorder for the others and elsewhere
     const codec =
       this.canvas && this.variant === OPTIMIZED && this.audioContext && this.mixNode
@@ -738,6 +783,8 @@ export class MeetingRecorder {
       this.pip?.close()
       this.pip = null
     }
+    const size = this.canvas?.size() ?? null
+    const marks = this.marks
     await this.releaseDevices()
     try {
       await this.writing
@@ -751,13 +798,27 @@ export class MeetingRecorder {
       }
       const saved = await this.seekableCopy(root, handle)
       const name = `Reunião ${new Date().toLocaleString('pt-BR').replace(/[/:]/g, '-')}.${extensionOf(this.mime)}`
-      this.callbacks.onFinished({ file: new File([saved.file], name, { type: this.mime || saved.file.type }), mime: this.mime, durationSeconds: this.seconds, storedName: saved.name })
+      // after the copy, so the OCR of the last screen had its time; what was not read is read later
+      const screens = marks && size ? marks.result(this.seconds, size.width, size.height) : null
+      const volume = this.volume?.count ? this.volume.result() : null
+      this.closeOcr()
+      this.callbacks.onFinished({ file: new File([saved.file], name, { type: this.mime || saved.file.type }), mime: this.mime, durationSeconds: this.seconds, storedName: saved.name, ...(screens ? { screens } : {}), ...(volume ? { volume } : {}) })
     } catch (error) {
       this.callbacks.onError(error instanceof Error ? error.message : 'A gravação não pôde ser salva.')
     } finally {
+      this.closeOcr()
       this.recorder = null
       this.writable = null
     }
+  }
+
+  private closeOcr(): void {
+    this.ocr?.close?.()
+    this.ocr = null
+    this.marks = null
+    if (this.volumeTap) this.volumeTap.port.onmessage = null
+    this.volumeTap = null
+    this.volume = null
   }
 }
 

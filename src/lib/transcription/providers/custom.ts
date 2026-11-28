@@ -56,7 +56,7 @@ export async function transcribeWithCustom(job: ProviderJob): Promise<ProviderRe
   if (!job.credential.model.trim()) throw new TranscriptionError('Falta o modelo do provedor personalizado nas Configurações.')
   const extra = extraOptions(job.credential.extra)
   const replaced = new Set(extra.map(([key]) => key.replace(/\[\]$/, '')))
-  const heard = await sendParts(job, 'Transcrevendo pelo provedor personalizado', async (part, index) => {
+  const heard = await sendParts(job, 'Transcrevendo pelo provedor personalizado', async (part, index, signal) => {
     const form = new FormData()
     form.append('file', part, partName(part))
     form.append('model', job.credential.model.trim())
@@ -64,7 +64,7 @@ export async function transcribeWithCustom(job: ProviderJob): Promise<ProviderRe
     if (!replaced.has('response_format')) form.append('response_format', 'verbose_json')
     for (const [key, value] of extra) if (value !== '') form.append(key, value)
     if (!replaced.has('prompt')) withTerms(form, job)
-    const body = await postAudioController(endpointOf(job.credential.baseUrl), job.credential.apiKey, form, CUSTOM, job.signal)
+    const body = await postAudioController(endpointOf(job.credential.baseUrl), job.credential.apiKey, form, CUSTOM, signal ?? job.signal)
     const offset = partStart(job, index)
     const found = [body.speaker_segments, body.segments, body.words].map(list => turnsOf(list, offset)).find(list => list.length)
     return { words: timedWords(body, offset), turns: found ?? [] }

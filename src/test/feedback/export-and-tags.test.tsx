@@ -135,10 +135,10 @@ describe('Sugerir etiquetas: o clique mostra que a IA está lendo', () => {
     })
   })
 
-  it('aparece "Sugerindo etiquetas…" na hora; no fim, um aviso com o que saiu e o atalho para a nota', async () => {
+  // T194 (dono, 27/11: "rápido e fluido… Corrija tudo"): a IA lê a nota sem segurar o app; o canto diz que está lendo (depois de 1 s)
+  it('o app não trava enquanto a IA lê; no fim, um aviso com o que saiu e o atalho para a nota', async () => {
     fireEvent.click(within(menu(id)).getByRole('button', { name: 'Sugerir etiquetas' }))
-    expect(holding()).toHaveLength(1)
-    expect(holding()[0]).toMatchObject({ title: 'Sugerindo etiquetas…', phase: 'A IA está lendo a nota' })
+    expect(holding()).toHaveLength(0)
 
     await act(async () => {
       suggesting.resolve()

@@ -164,8 +164,18 @@ export async function geminiAudioController(model: string, apiKey: string, audio
   return (body.candidates?.[0]?.content?.parts ?? []).map(part => part.text ?? '').join('')
 }
 
-/** A model that hears through chat/completions (input_audio), like the video models of DeepInfra or OpenRouter. */
-export async function chatAudioController(baseUrl: string, apiKey: string, model: string, wavBase64: string, instruction: string, signal?: AbortSignal): Promise<string> {
+export interface HearingOptions {
+  /** The audio's format for `input_audio` (the part as it is: "wav", or "ogg" for Opus); "wav" by default. */
+  format?: string
+  /** What the provider said the call cost (US$), when it says. */
+  onCost?: (usd: number) => void
+}
+
+/**
+ * A model that hears through chat/completions (input_audio), like the video models of DeepInfra or OpenRouter. On OpenRouter the model
+ * does not "think" (T199: the same transcription for half the cost, measured 28/11).
+ */
+export async function chatAudioController(baseUrl: string, apiKey: string, model: string, wavBase64: string, instruction: string, signal?: AbortSignal, options: HearingOptions = {}): Promise<string> {
   const base = baseUrl.trim().replace(/\/+$/, '')
   if (!base) throw new TranscriptionError('Falta o endereço do provedor do modelo de transcrição.')
   for (let attempt = 0; ; attempt++) {
@@ -175,7 +185,12 @@ export async function chatAudioController(baseUrl: string, apiKey: string, model
       response = await aiFetch(`${base}/chat/completions`, {
         method: 'POST',
         headers: { 'content-type': 'application/json', ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}) },
-        body: JSON.stringify({ model, temperature: 0, messages: [{ role: 'user', content: [{ type: 'input_audio', input_audio: { data: wavBase64, format: 'wav' } }, { type: 'text', text: instruction }] }] }),
+        body: JSON.stringify({
+          model,
+          temperature: 0,
+          ...(/openrouter\.ai/.test(base) ? { reasoning: { enabled: false } } : {}),
+          messages: [{ role: 'user', content: [{ type: 'input_audio', input_audio: { data: wavBase64, format: options.format ?? 'wav' } }, { type: 'text', text: instruction }] }],
+        }),
         signal,
       })
     } catch {
@@ -190,7 +205,8 @@ export async function chatAudioController(baseUrl: string, apiKey: string, model
     }
     if (response.status === 401 || response.status === 403) throw new TranscriptionError(`A chave do provedor de ${model} foi recusada.`)
     if (!response.ok) throw new TranscriptionError(`O modelo ${model} recusou o áudio (${response.status}).`)
-    const body = (await response.json()) as { choices?: { message?: { content?: string } }[] }
+    const body = (await response.json()) as { choices?: { message?: { content?: string } }[]; usage?: { cost?: number } }
+    if (typeof body.usage?.cost === 'number') options.onCost?.(body.usage.cost)
     return body.choices?.[0]?.message?.content ?? ''
   }
 }

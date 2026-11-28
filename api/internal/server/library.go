@@ -26,7 +26,8 @@ const (
 )
 
 var (
-	partName = regexp.MustCompile(`^(text|source|transcript|exam|highlights|documents|course|artifacts/[A-Za-z0-9_-]{1,64})$`)
+	// T203: `telas/<n>` (the photo of each screen marked while recording) and `volume` (the volume of each channel), kept apart
+	partName = regexp.MustCompile(`^(text|source|transcript|exam|highlights|documents|course|volume|telas/[0-9]{1,5}|artifacts/[A-Za-z0-9_-]{1,64})$`)
 	safeID   = regexp.MustCompile(`^[A-Za-z0-9_-]{1,80}$`)
 	// keys the index may never carry with a value (the server refuses it)
 	keyName = regexp.MustCompile(`(?i)api[_-]?key$`)

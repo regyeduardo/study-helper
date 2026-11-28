@@ -255,6 +255,7 @@ func (srv *Server) googleAccount(claims *idClaims, tokens *googleTokens) (string
 	if err != nil {
 		return "", err
 	}
+	srv.accountChanged(id)
 	if tokens.RefreshToken != "" {
 		sealed, err := srv.seal(tokens.RefreshToken)
 		if err != nil {

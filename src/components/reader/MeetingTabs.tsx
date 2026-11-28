@@ -27,11 +27,13 @@ interface MeetingTabsProps {
   onRedoTranscript?(instruction: string, model: string | null): void
   onMarks?(marks: RecordingMark[]): void
   startAt?: number
+  /** The transcription's warning closed for good (dono, 27/11). */
+  onCloseWarning?(): void
 }
 
 type TabId = 'transcript' | 'second' | 'ata'
 
-export function MeetingTabs({ recording, media, name, second, ata, onChooseParts, onRename, onGenerate, onRedo, onRedoTranscript, onMarks, startAt }: MeetingTabsProps) {
+export function MeetingTabs({ recording, media, name, second, ata, onChooseParts, onRename, onGenerate, onRedo, onRedoTranscript, onMarks, startAt, onCloseWarning }: MeetingTabsProps) {
   const player = useRef<HTMLMediaElement | null>(null)
   const [tab, setTab] = useState<TabId>(startAt !== undefined ? 'transcript' : ata ? 'ata' : second ? 'second' : 'transcript')
   const [time, setTime] = useState<number | null>(startAt ?? null)
@@ -129,7 +131,7 @@ export function MeetingTabs({ recording, media, name, second, ata, onChooseParts
       ) : shown === 'second' && second ? (
         <MinutesTab frames={recording.frames} onMoment={playFrom}>{second.node}</MinutesTab>
       ) : (
-        <TranscriptTab recording={recording} name={name} time={time} onPlay={media.available ? playFrom : undefined} onRename={onRename} onMarks={onMarks} editing={marking.editing} onEditing={marking.setEditing} onRedo={onRedoTranscript} />
+        <TranscriptTab recording={recording} name={name} time={time} onPlay={media.available ? playFrom : undefined} onRename={onRename} onMarks={onMarks} editing={marking.editing} onEditing={marking.setEditing} onRedo={onRedoTranscript} onCloseWarning={onCloseWarning} />
       )}
       {media.available && (
         <div className="meeting-dock">

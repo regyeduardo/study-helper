@@ -37,6 +37,8 @@ export interface TranscriptionOutcome {
   speakers: number
   recording?: RecordingData
   stages?: StageTime[]
+  /** T200: what the services charged for it (US$), when the engine says. */
+  cost?: number
 }
 
 export interface TranscribeOptions {
@@ -69,11 +71,12 @@ async function transcribeWithProvider(engine: ProviderEngine, audio: Blob, setti
   const clock = new StageClock()
   const { channels, samples, parts, partStarts } = await clock.run('Preparar o áudio', async () => {
     const [channels, light] = await Promise.all([decodeChannels16k(audio), LIGHT_PARTS.has(engine) ? lightParts(audio, PROVIDER_PART_SECONDS) : null])
-    const samples = mixedDown(channels)
-    return { channels, samples, parts: light?.parts ?? splitSamples(BALANCED_PARTS.has(engine) ? balancedMix(channels) : samples, PROVIDER_PART_SECONDS).map(part => encodeWav(part)), partStarts: light?.starts }
+    // T192: the balanced engines send their own mix; the plain mix (345 MB for 90 min) is made only where it is sent
+    const samples = BALANCED_PARTS.has(engine) || light ? null : mixedDown(channels)
+    return { channels, samples, parts: light?.parts ?? splitSamples(samples ?? balancedMix(channels), PROVIDER_PART_SECONDS).map(part => encodeWav(part)), partStarts: light?.starts }
   })
   const credentials = settings.credentials ?? {}
-  const job: ProviderJob = { audio, parts, ...(partStarts ? { partStarts } : {}), partSeconds: PROVIDER_PART_SECONDS, language: settings.language, terms: settings.terms ?? '', credential: credentials[engine] ?? EMPTY_CREDENTIAL, progress, signal }
+  const job: ProviderJob = { audio, parts, ...(partStarts ? { partStarts } : {}), partSeconds: PROVIDER_PART_SECONDS, language: settings.language, terms: settings.terms ?? '', credential: credentials[engine] ?? EMPTY_CREDENTIAL, ...(settings.listener ? { listener: settings.listener } : {}), progress, signal }
   const heard = await clock.run('Enviar e transcrever', () => PROVIDERS[engine](job))
   let turns = heard.turns
   let warning = ''
@@ -91,7 +94,7 @@ async function transcribeWithProvider(engine: ProviderEngine, audio: Blob, setti
   const blocks = blocksFromWords(heard.inSpeech ? heard.words : wordsInSpeech(heard.words, turns), turns, sides ? microphoneWords(sides) : undefined, sides ? computerWords(sides) : undefined)
   const speakers = speakersOf(blocks, options.recorder)
   const recording: RecordingData = { blocks, speakers, marks: [], ...(warning ? { warning } : {}) }
-  return { text: transcriptText(recording).trim(), engine, language: settings.language, durationSeconds: durationOf(samples), speakers: speakers.length, recording, stages: clock.stages }
+  return { text: transcriptText(recording).trim(), engine, language: settings.language, durationSeconds: durationOf(samples ?? channels[0]), speakers: speakers.length, recording, stages: clock.stages, ...(heard.cost !== undefined ? { cost: heard.cost } : {}) }
 }
 
 export async function transcribe(audio: Blob, settings: TranscriptionSettings, progress: Progress = () => {}, signal?: AbortSignal, options: TranscribeOptions = {}): Promise<TranscriptionOutcome> {

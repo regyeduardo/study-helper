@@ -149,7 +149,7 @@ func TestTheNoteGivenBackGoesWithTheProgressWhileTheJobRuns(t *testing.T) {
 		return nil
 	}
 	client, _ := h.account("enabled", true, "ana@exemplo.com")
-	_, job := newJob(t, h, client, "explainSelection", "n1")
+	_, job := newJob(t, h, client, "generateAta", "n1")
 	id := job["id"].(string)
 	deadline := time.Now().Add(5 * time.Second)
 	for {
@@ -607,4 +607,106 @@ func TestAPageThatReportedIsOnlyMarkedStalled(t *testing.T) {
 	if got["state"] != "running" || got["stalledSince"] == nil {
 		t.Fatalf("um trabalho que já deu notícia só fica marcado parado: %v %v", got["state"], got["stalledSince"])
 	}
+}
+
+// T190 (dono, 27/11: "Corrija tudo"): the queue had 2 places for everything, so a quick text job could wait behind long media jobs; and two
+// media jobs of long videos at once do not fit the server (3,8 GB: each one decodes its video and its audio). A job that may open the media
+// of its note (transcribe, read the screen, send it to the model) runs in the media lane, one at a time by default; the others use the rest.
+
+// mediaNote is a note of the account that keeps its media in the App.
+func mediaNote(t *testing.T, h *harness, userID, id string) {
+	t.Helper()
+	if _, err := h.db.Exec(`INSERT INTO library_items (user_id, id, item_kind, note_type, name, place, position, meta, media, media_bytes, created_at, updated_at, rev, seq) VALUES (?, ?, 'file', 'video', 'Reunião', 'app', 0, '{}', '{"id":"m1","key":"k","mime":"video/webm","bytes":10}', 10, '2026-11-27T10:00:00Z', '2026-11-27T10:00:00Z', 1, 1)`, userID, id); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func blockUntil(release chan struct{}) func(w *worker, ctx context.Context) error {
+	return func(w *worker, ctx context.Context) error {
+		select {
+		case <-release:
+		case <-ctx.Done():
+		}
+		w.post("/finish", map[string]any{"result": "ok"})
+		return nil
+	}
+}
+
+func TestMediaJobsRunOneAtATimeAndTextJobsDoNotWaitForThem(t *testing.T) {
+	h, fake := jobsHarness(t, 0)
+	release := make(chan struct{})
+	fake.behave = blockUntil(release)
+	ana, anaID := h.account("enabled", true, "ana@exemplo.com")
+	bia, biaID := h.account("enabled", true, "bia@exemplo.com")
+	mediaNote(t, h, anaID, "gravacao-ana")
+	mediaNote(t, h, biaID, "gravacao-bia")
+	_, first := newJob(t, h, ana, "transcribeNote", "gravacao-ana")
+	_, second := newJob(t, h, bia, "generateAta", "gravacao-bia")
+	_, text := newJob(t, h, bia, "generateAta", "texto-bia")
+	_, other := newJob(t, h, ana, "generateFromNote", "nota-de-texto")
+	waitState(t, h, ana, first["id"].(string), "running")
+	// the text jobs start beside the media job, even the one that arrived after the media job that waits
+	waitState(t, h, bia, text["id"].(string), "running")
+	waitState(t, h, ana, other["id"].(string), "running")
+	waiting := jobOf(t, h, bia, second["id"].(string))
+	if waiting["state"] != "queued" || waiting["queuePosition"] != float64(1) {
+		t.Fatalf("the second media job is %v (position %v) while the first runs", waiting["state"], waiting["queuePosition"])
+	}
+	close(release)
+	waitState(t, h, bia, second["id"].(string), "done")
+}
+
+func TestTheServerTakesAtMostThreeJobsAtOnceByDefault(t *testing.T) {
+	h, fake := jobsHarness(t, 0)
+	release := make(chan struct{})
+	fake.behave = blockUntil(release)
+	ana, _ := h.account("enabled", true, "ana@exemplo.com")
+	bia, _ := h.account("enabled", true, "bia@exemplo.com")
+	ids := map[string]*http.Client{}
+	for _, item := range []struct {
+		client *http.Client
+		note   string
+	}{{ana, "a"}, {ana, "b"}, {bia, "c"}, {bia, "d"}} {
+		_, job := newJob(t, h, item.client, "generateFromNote", item.note)
+		ids[job["id"].(string)] = item.client
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		var running, queued int
+		_ = h.db.QueryRow(`SELECT COALESCE(SUM(state = 'running'), 0), COALESCE(SUM(state = 'queued'), 0) FROM jobs`).Scan(&running, &queued)
+		if running == 3 && queued == 1 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("%d running and %d queued, wanted 3 and 1", running, queued)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	close(release)
+	for id, client := range ids {
+		waitState(t, h, client, id, "done")
+	}
+}
+
+func TestTheQueuePositionCountsOnlyTheJobsOfTheSameLane(t *testing.T) {
+	h, fake := jobsHarness(t, 0)
+	release := make(chan struct{})
+	fake.behave = blockUntil(release)
+	ana, anaID := h.account("enabled", true, "ana@exemplo.com")
+	bia, biaID := h.account("enabled", true, "bia@exemplo.com")
+	mediaNote(t, h, biaID, "gravacao-bia")
+	mediaNote(t, h, anaID, "gravacao-ana")
+	mediaNote(t, h, anaID, "outra-gravacao")
+	_, running := newJob(t, h, bia, "transcribeNote", "gravacao-bia")
+	waitState(t, h, bia, running["id"].(string), "running")
+	_, media := newJob(t, h, ana, "transcribeNote", "gravacao-ana")
+	_, more := newJob(t, h, ana, "generateAta", "outra-gravacao")
+	if position := jobOf(t, h, ana, more["id"].(string))["queuePosition"]; position != float64(2) {
+		t.Fatalf("the second media job of the queue is at %v", position)
+	}
+	if position := jobOf(t, h, ana, media["id"].(string))["queuePosition"]; position != float64(1) {
+		t.Fatalf("the first media job of the queue is at %v", position)
+	}
+	close(release)
+	waitState(t, h, ana, more["id"].(string), "done")
 }

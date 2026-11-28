@@ -190,4 +190,14 @@ export const abandonUpload = async (id: string) => void (await send('DELETE', `/
 /** Where the player reads the media from (same site: the session cookie goes along; Range works). */
 export const mediaUrl = (item: string, media: string, download = false) => `${env.apiUrl}/v1/media/${encodeURIComponent(item)}/${encodeURIComponent(media)}${download ? '?download=1' : ''}`
 export const getMedia = async (item: string, media: string, transfer?: Transfer) => countedBlob(await send('GET', `/v1/media/${encodeURIComponent(item)}/${encodeURIComponent(media)}`, { signal: transfer?.signal }), transfer)
+/**
+ * T197: the gray thumbnails of the whole video, made by the server's ffmpeg where the media is kept: from `from` seconds, one every `step`,
+ * `count` of them at width×height, one byte per pixel; fewer when the video ends first.
+ */
+export async function getMediaThumbs(item: string, media: string, ask: { from: number; step: number; count: number; width: number; height: number }, signal?: AbortSignal): Promise<Uint8Array[]> {
+  const query = `from=${ask.from}&step=${ask.step}&count=${ask.count}&w=${ask.width}&h=${ask.height}`
+  const bytes = new Uint8Array(await (await send('GET', `/v1/media/${encodeURIComponent(item)}/${encodeURIComponent(media)}/thumbs?${query}`, { signal })).arrayBuffer())
+  const size = ask.width * ask.height
+  return Array.from({ length: Math.floor(bytes.length / size) }, (_, k) => bytes.slice(k * size, (k + 1) * size))
+}
 export const deleteMedia = async (item: string, media: string) => (await (await send('DELETE', `/v1/media/${encodeURIComponent(item)}/${encodeURIComponent(media)}`)).json()) as { seq: number }

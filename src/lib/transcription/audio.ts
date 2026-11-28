@@ -1,9 +1,14 @@
+import { streamDecode16k } from '@/lib/transcription/stream-audio'
+
 export const SAMPLE_RATE = 16000
 const SILENCE_THRESHOLD_DB = -40
 const SILENCE_KEPT_SECONDS = 1
 const FRAME_SECONDS = 0.02
 
 async function render16k(blob: Blob, channelLimit: number): Promise<Float32Array[]> {
+  // T192: in pieces where WebCodecs decodes the audio (a 90 min recording peaked at 4.460 MB the old way); the whole media at once otherwise
+  const streamed = await streamDecode16k(blob, channelLimit)
+  if (streamed) return streamed
   const bytes = await blob.arrayBuffer()
   const context = new OfflineAudioContext(1, 1, SAMPLE_RATE)
   const decoded = await context.decodeAudioData(bytes)

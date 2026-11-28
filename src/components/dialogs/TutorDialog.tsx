@@ -12,6 +12,7 @@ import { Dialog } from '@/components/ui/Dialog'
 import { Icon } from '@/components/ui/Icon'
 import { artifactsOf } from '@/lib/artifacts'
 import { blocking } from '@/lib/blocking'
+import { unheld } from '@/lib/working'
 import { askChat, entryChatContext, type EntryChatContext } from '@/lib/generation/entry-chat'
 import { GenerationSession } from '@/lib/generation/session'
 import { momentLinks, momentPieces } from '@/lib/generation/moment-links'
@@ -97,7 +98,12 @@ export function TutorDialog({ fileId, conversationId, chat = false }: { fileId: 
   const kept = useLibraryStore(state => (owner ? state.localMedia.find(item => item.fileIds.includes(owner))?.durationSeconds : undefined) || ownerMeta?.origin?.durationSeconds || undefined)
   const [loadedLength, setLoadedLength] = useState<number | null>(null)
   const length = loadedLength ?? kept
-  const conversations = useMemo(() => (sidecar ? conversationsOf(artifactsOf(sidecar), scope, onEntry) : []), [sidecar, scope, onEntry])
+  // T194: a conversation renamed shows its new name at once while it is saved, without holding the app; a failure puts the old one back
+  const [renamed, setRenamed] = useState<Record<string, string>>({})
+  const conversations = useMemo(
+    () => (sidecar ? conversationsOf(artifactsOf(sidecar), scope, onEntry) : []).map(item => (renamed[item.id] ? { ...item, name: renamed[item.id] } : item)),
+    [sidecar, scope, onEntry, renamed],
+  )
 
   useEffect(() => {
     const element = playback.player.current
@@ -215,7 +221,10 @@ export function TutorDialog({ fileId, conversationId, chat = false }: { fileId: 
     const said = name.trim()
     if (!said) return
     const before = conversations.find(item => item.id === id)?.name ?? said
-    void blocking(`Renomeando “${before}”…`, () => useLibraryStore.getState().renameArtifact(fileId, id, said)).catch(fail)
+    setRenamed(names => ({ ...names, [id]: said }))
+    void unheld(`Renomeando “${before}”…`, () => useLibraryStore.getState().renameArtifact(fileId, id, said), { failed: `Não deu para renomear “${before}”` }).then(() =>
+      setRenamed(({ [id]: _done, ...rest }) => rest),
+    )
     // the open one is kept in memory: it must not save the old name again with the next message
     if (conversation.current?.id === id) conversation.current = { ...conversation.current, name: said, provisionalName: false }
   }

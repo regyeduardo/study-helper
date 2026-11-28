@@ -2,7 +2,7 @@ import { Icon } from '@/components/ui/Icon'
 import { exportManyWithFeedback } from '@/components/library/slow-actions'
 import { filesInside, useLiveLibrary } from '@/hooks/use-library-view'
 import { descendantsOf } from '@/lib/family'
-import { itemsOf, working } from '@/lib/working'
+import { itemsOf, unheld, working } from '@/lib/working'
 import { useLibraryStore } from '@/stores/library'
 import { useUiStore } from '@/stores/ui'
 
@@ -35,17 +35,16 @@ export function SelectionBar({ hideSingle = false }: { hideSingle?: boolean }) {
       )}
       <button
         className="btn"
-        onClick={async () => {
-          // the stars light up at once; one Drive write per item follows, and a line says so
-          const ok = await working(
+        onClick={() => {
+          // the stars light up at once and the app goes on (T194): a slow write says so in the corner, a failure puts them back, saying why
+          void unheld(
             `Favoritando ${itemsOf(count)}…`,
             async () => {
               await library.updateFiles(fileIds, { favorite: true })
               for (const id of folderIds) await library.updateFolder(id, { favorite: true })
             },
-            { message: 'Marcando como favorito' },
+            { done: `${count} nos favoritos`, failed: `Não deu para favoritar ${itemsOf(count)}` },
           )
-          if (ok) ui.toast(`${count} nos favoritos`)
         }}
       >
         <Icon name="star" />
@@ -78,19 +77,20 @@ export function SelectionBar({ hideSingle = false }: { hideSingle?: boolean }) {
             }
             return ui.open({ kind: 'delete-family', fileId: withFamily, fileIds })
           }
-          // the items leave the list at once; a line says how many are going (one Drive write each)
+          // the items leave the list at once; to the Lixeira, the app goes on (T194: a slow write says so in the corner, a failure brings
+          // them back, saying why); with the media, which does not come back, the window holds the app until it is done, as before
           const trash = async (media: boolean) => {
-            const ok = await working(
-              `Apagando ${itemsOf(count)}…`,
-              async () => {
-                await library.trashFiles(fileIds, { media })
-                for (const id of folderIds) await library.trashFolder(id)
-              },
-              { message: media ? 'Apagando as notas e as mídias' : 'Mandando para a lixeira' },
-            )
-            if (!ok) return
+            const work = async () => {
+              await library.trashFiles(fileIds, { media })
+              for (const id of folderIds) await library.trashFolder(id)
+            }
+            if (!media) {
+              ui.clearSelection()
+              return void unheld(`Apagando ${itemsOf(count)}…`, work, { done: `${count} na lixeira`, failed: `Não deu para apagar ${itemsOf(count)}` })
+            }
+            if (!(await working(`Apagando ${itemsOf(count)}…`, work, { message: 'Apagando as notas e as mídias' }))) return
             ui.clearSelection()
-            ui.toast(`${count} na lixeira${media ? ', com a mídia' : ''}`)
+            ui.toast(`${count} na lixeira, com a mídia`)
           }
           if (!fileIds.some(id => library.hasMedia(id))) return void trash(false)
           const one = count === 1

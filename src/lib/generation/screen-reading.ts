@@ -5,7 +5,7 @@ import type { RecordingMark, ScreenIndex } from '@/types/domain'
 import { Cancelled } from '@/controllers/ai.controller'
 import type { AtaAi } from '@/lib/generation/ata-ai'
 import * as P from '@/lib/generation/ata-prompts'
-import type { Box, FrameSource, OcrText, ScreenOcr } from '@/lib/generation/ata-types'
+import type { Box, FrameSource, OcrText, ScreenOcr, Shot } from '@/lib/generation/ata-types'
 import { clock, jsonIn, oneLine, pool, type Reading, type ScreenGroup, short } from '@/lib/generation/meeting-material'
 import { indexScreens, type IndexedScreen } from '@/lib/generation/scene-index'
 import { type ScreenTerms, seenIn, SURE, termsIn, voteTerms } from '@/lib/generation/screen-terms'
@@ -100,21 +100,25 @@ export async function readScreen(source: FrameSource, ai: AtaAi, difference: (a:
   const area = await findWorkArea(source, ai, times)
   const box: Box = area ?? { x: 0, y: 0, w: source.width, h: source.height }
   onProgress(`Separando as telas diferentes (${times.length} quadros)`)
+  // T191: every sampled crop in one pass where the source can (one jump each, and again to read, was up to 560 jumps); kept to read
+  const sampled = source.shots ? await quiet(source.shots(times, box)) : null
+  const cropped = new Map<number, Shot>()
   const kept: number[] = []
   let last: number[] | null = null
-  for (const at of times) {
-    const shot = await quiet(source.crop(at, box))
+  for (const [position, at] of times.entries()) {
+    const shot = sampled ? sampled[position] : await quiet(source.crop(at, box))
     if (!shot) continue
     if (!last || difference(shot.signature, last) > SAME_CROP) {
       kept.push(at)
       last = shot.signature
+      if (sampled) cropped.set(at, shot)
     }
   }
   const chosen = kept.length > MAX_READS ? Array.from({ length: MAX_READS }, (_, i) => kept[Math.floor((i * kept.length) / MAX_READS)]) : kept
   let done = 0
   onProgress(`Lendo a tela (${chosen.length} telas)`)
   const readings = await pool(chosen, 8, async at => {
-    const shot = await quiet(source.crop(at, box))
+    const shot = cropped.get(at) ?? (await quiet(source.crop(at, box)))
     const leitura = shot ? jsonIn((await quiet(ai.see([shot.image], P.LER_TELA, 6000))) ?? '') : null
     done++
     if (done % 10 === 0) onProgress(`Lendo a tela (${done} de ${chosen.length})`)
@@ -128,10 +132,14 @@ export async function indexAndRead(source: FrameSource, ocr: ScreenOcr | null, s
   const index = await quiet(indexScreens(source))
   if (!index?.masked || !index.screens.length || signal?.aborted) return null
   const read = new Set(spread(index.screens.map((_, k) => k), MAX_OCR))
+  // T191: the crops of every screen read, in one pass where the source can (one jump each was up to 240 jumps); a missing one, by a jump
+  const wanted = ocr && !signal?.aborted ? index.screens.map((_, k) => k).filter(k => read.has(k)) : []
+  const batch = wanted.length && source.shots ? await quiet(source.shots(wanted.map(k => index.screens[k].at), index.area)) : null
+  const place = new Map(wanted.map((k, position) => [k, position]))
   const screens = await Promise.all(
     index.screens.map(async (screen, k) => {
       if (!ocr || !read.has(k) || signal?.aborted) return screen
-      const shot = await quiet(source.crop(screen.at, index.area))
+      const shot = batch?.[place.get(k)!] ?? (await quiet(source.crop(screen.at, index.area)))
       const texts = shot ? await ocr.read(shot.image).catch(() => undefined) : undefined
       return texts ? { ...screen, texts } : screen
     }),
@@ -155,9 +163,12 @@ async function readIndexed(source: FrameSource, ai: AtaAi, box: Box, screens: In
   const crop = (at: number) => quiet(source.crop(at, box)).then(shot => shot?.image ?? null)
   const texts = new Map<number, Promise<OcrText[]>>()
   const ocr = looks.ocr
+  // T191: the crops the OCR reads, in one pass where the source can, once the screens to read are known; the marked ones go before
+  let batched: Map<number, Promise<string | null>> | null = null
   const readText = (index: number) => {
     const kept = screens[index].texts
-    if (!texts.has(index)) texts.set(index, kept ? Promise.resolve(kept) : ocr ? crop(screens[index].at).then(image => (image ? ocr.read(image).catch(() => []) : [])) : Promise.resolve([]))
+    const image = () => batched?.get(index) ?? crop(screens[index].at)
+    if (!texts.has(index)) texts.set(index, kept ? Promise.resolve(kept) : ocr ? image().then(found => (found ? ocr.read(found).catch(() => []) : [])) : Promise.resolve([]))
     return texts.get(index)!
   }
 
@@ -183,6 +194,11 @@ async function readIndexed(source: FrameSource, ai: AtaAi, box: Box, screens: In
     Math.max(0, MAX_OCR - first.length),
   )
   const order = [...first, ...later]
+  const unread = ocr && source.shots ? order.filter(index => !screens[index].texts && !texts.has(index)) : []
+  if (unread.length) {
+    const all = quiet(source.shots!(unread.map(index => screens[index].at), box))
+    batched = new Map(unread.map((index, position) => [index, all.then(list => list?.[position]?.image ?? null).then(image => image ?? crop(screens[index].at))]))
+  }
   if (order.some(index => !screens[index].texts)) onProgress(`Lendo o texto da tela no computador (${order.length} telas)`)
   first.forEach(readText)
   const questions: Look[] = ai.hasVision

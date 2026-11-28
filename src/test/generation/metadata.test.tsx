@@ -14,7 +14,14 @@ import { useLibraryStore } from '@/stores/library'
 import { type CapturedRequest, installFetch, openAiStream, systemPromptOf, userContentOf } from '@/test/ai/fake-provider'
 import type { FileMeta, FileSidecar, FolderMeta } from '@/types/domain'
 import { isSourceNote } from '@/lib/file-types'
+import { storeSource } from '@/lib/storage/source-storage'
+import { installBlobShim } from '@/test/imports/blob-shim'
 
+// T193: keeping the file of a source ("Registro e arquivo") fails here; only the tests that keep a file reach it
+vi.mock('@/lib/storage/source-storage', async importOriginal => {
+  const original = await importOriginal<typeof import('@/lib/storage/source-storage')>()
+  return { ...original, storeSource: vi.fn(original.storeSource) }
+})
 vi.mock('@/lib/transcription', () => ({
   ENGINES: [
     { id: 'whisper', name: 'Whisper (no navegador)', where: '', limits: '' },
@@ -269,6 +276,20 @@ describe('course detection builds the hierarchy', () => {
     await readyFile(byName['Aula 1'].id)
     await readyFile(byName['Aula 2'].id)
     expect(useLibraryStore.getState().files.find(file => file.name === 'Módulo 2')!.status).toBe('pending')
+  })
+
+  // T193 (dono, 27/11: "quero 0 problemas"): the course from a file with "Registro e arquivo" whose file could not be kept stayed "Só o registro",
+  // without a word; now Gerações says so (the lessons are still made)
+  it('a course whose file could not be kept says so in Gerações, and the course is still made', async () => {
+    installFetch(provider({ is_course: true, name: 'Curso de Botânica', modules: [{ title: 'Módulo 1', lessons: [{ title: 'Aula 1', covers: 'luz' }] }] }))
+    installBlobShim()
+    vi.mocked(storeSource).mockRejectedValueOnce(new Error('o Drive não respondeu'))
+    const file = new File(['# Fotossíntese explicada\n\n# Fotossíntese\n\nA planta usa luz.'], 'curso.txt', { type: 'text/plain' })
+    expect(await useJobsStore.getState().startNewContent(request({ input: { kind: 'file', file }, storage: 'drive' }))).toBeNull()
+    expect(useJobsStore.getState().jobs.filter(job => job.status === 'error').map(job => job.error)).toEqual([])
+    const rootId = await useJobsStore.getState().acceptCourse(useJobsStore.getState().proposals[0], null)
+    expect(useLibraryStore.getState().folders.find(folder => folder.id === rootId)).toBeDefined()
+    await waitFor(() => expect(useJobsStore.getState().jobs.find(job => job.status === 'error')?.error).toBe('A fonte não foi guardada: o Drive não respondeu'))
   })
 
   it('the instruction of Novo conteúdo reaches every lesson, the later ones too', async () => {

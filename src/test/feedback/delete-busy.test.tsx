@@ -6,13 +6,16 @@ import { Overlays } from '@/components/dialogs/Overlays'
 import { ItemMenu } from '@/components/library/ItemMenu'
 import { SelectionBar } from '@/components/library/SelectionBar'
 import { BlockingWindow } from '@/components/ui/BlockingWindow'
+import { Toasts } from '@/components/ui/Toasts'
 import { useBlockingStore } from '@/stores/blocking'
 import { useLibraryStore } from '@/stores/library'
 import { useUiStore } from '@/stores/ui'
 import { fileNow, jobsNow, settle, slowLibrary, toastsNow } from '@/test/feedback/slow'
 
-// Apagar writes one file at a time (one Drive write each). The click must show it at once:
-// the items leave the list and the window that holds the app (owner's choice F) says how many are being removed.
+// Apagar writes one file at a time (one Drive write each). The click must show it at once: the items leave the list. T194 (dono, 27/11:
+// "rápido e fluido (mesmo que haja latência no servidor)… Corrija tudo"): to the Lixeira, the app is not held any more (choice F stays for
+// batches, what does not come back, such as the media, and the account); a slow write says so in the corner after 1 s (src/test/feedback/
+// unheld.test.tsx), and a failure brings the items back with the reason and "Tentar de novo".
 
 let slow: ReturnType<typeof slowLibrary>
 let ids: string[]
@@ -41,35 +44,34 @@ const renderApp = () =>
   )
 
 describe('Apagar: o clique responde na hora', () => {
-  it('pelo menu de uma nota: ela sai da lista e aparece "Apagando" antes de o Drive responder', async () => {
+  it('pelo menu de uma nota: ela sai da lista na hora, e o app não trava enquanto o Drive responde', async () => {
     useUiStore.getState().openMenu({ kind: 'file', id: ids[0], x: 10, y: 10 })
     renderApp()
     const release = slow.hold()
     fireEvent.click(within(screen.getByRole('menu')).getByRole('button', { name: 'Apagar' }))
 
     expect(fileNow(ids[0])?.deletedAt).toBeTruthy()
-    expect(holding()).toHaveLength(1)
-    expect(holding()[0]).toMatchObject({ title: 'Apagando "Limites"…', phase: 'Mandando para a lixeira' })
+    expect(holding()).toHaveLength(0)
 
     await act(async () => {
       release()
       await settle()
     })
     expect(holding()).toHaveLength(0)
-    // the window leaves (nothing goes to Tarefas); the toast says it is done
+    // nothing goes to Tarefas; the toast says it is done
     expect(jobsNow()).toHaveLength(0)
     expect(toastsNow()).toContain('"Limites" foi para a lixeira')
   })
 
-  it('pela barra de seleção: "Apagando 3 itens…" e os três saem da lista de uma vez', async () => {
+  it('pela barra de seleção: os três saem da lista de uma vez, a seleção acaba, e o app não trava', async () => {
     useUiStore.setState({ selection: new Set(ids) })
     renderApp()
     const release = slow.hold()
     fireEvent.click(within(screen.getByRole('toolbar', { name: 'Seleção' })).getByRole('button', { name: 'Apagar' }))
 
     for (const id of ids) expect(fileNow(id)?.deletedAt).toBeTruthy()
-    expect(holding()).toHaveLength(1)
-    expect(holding()[0].title).toBe('Apagando 3 itens…')
+    expect(holding()).toHaveLength(0)
+    expect(useUiStore.getState().selection.size).toBe(0)
 
     await act(async () => {
       release()
@@ -80,7 +82,7 @@ describe('Apagar: o clique responde na hora', () => {
     expect(useUiStore.getState().selection.size).toBe(0)
   })
 
-  it('"Apagar tudo" de uma nota com filhas: a família sai da lista e a janela conta quantos', async () => {
+  it('"Apagar tudo" de uma nota com filhas: a família sai da lista, a pergunta fecha, e o app não trava', async () => {
     const filha = await note('Resumo', { parentFileId: ids[0] })
     useUiStore.getState().open({ kind: 'delete-family', fileId: ids[0] })
     renderApp()
@@ -89,8 +91,7 @@ describe('Apagar: o clique responde na hora', () => {
 
     expect(fileNow(ids[0])?.deletedAt).toBeTruthy()
     expect(fileNow(filha)?.deletedAt).toBeTruthy()
-    expect(holding()).toHaveLength(1)
-    expect(holding()[0].title).toBe('Apagando 2 itens…')
+    expect(holding()).toHaveLength(0)
     expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
 
     await act(async () => {
@@ -101,10 +102,16 @@ describe('Apagar: o clique responde na hora', () => {
     expect(toastsNow().at(-1)).toMatch(/foram para a Lixeira/)
   })
 
-  it('o Drive falha: os itens voltam para a lista e a janela diz o motivo até "Fechar"', async () => {
+  it('o Drive falha: os itens voltam para a lista, e o aviso no canto diz o motivo, com "Tentar de novo", até fechar', async () => {
     useUiStore.setState({ selection: new Set(ids) })
     renderApp()
-    render(<BlockingWindow />)
+    render(
+      <MemoryRouter>
+        <BlockingWindow />
+        <Toasts />
+      </MemoryRouter>,
+    )
+    const save = slow.repo.saveFile.bind(slow.repo)
     slow.repo.saveFile = async () => {
       throw new Error('Drive fora do ar')
     }
@@ -114,10 +121,35 @@ describe('Apagar: o clique responde na hora', () => {
     })
     for (const id of ids) expect(fileNow(id)?.deletedAt).toBeFalsy()
     expect(holding()).toHaveLength(0)
-    const window_ = screen.getByRole('alertdialog', { name: 'Apagando 3 itens…' })
-    expect(window_).toHaveTextContent('Drive fora do ar')
-    expect(toastsNow().join(' ')).not.toMatch(/na lixeira/)
-    fireEvent.click(within(window_).getByRole('button', { name: 'Fechar' }))
     expect(screen.queryByRole('alertdialog')).toBeNull()
+    const failure = screen.getByRole('alert')
+    expect(failure).toHaveTextContent('Não deu para apagar 3 itens: Drive fora do ar')
+    expect(toastsNow().join(' ')).not.toMatch(/na lixeira/)
+    // tried again with the Drive back: they go, and the failure leaves
+    slow.repo.saveFile = save
+    await act(async () => {
+      fireEvent.click(within(failure).getByRole('button', { name: 'Tentar de novo' }))
+      await settle()
+    })
+    for (const id of ids) expect(fileNow(id)?.deletedAt).toBeTruthy()
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(toastsNow()).toContain('3 na lixeira')
+  })
+
+  it('com a mídia junto (ela não volta), a janela ainda segura o app até acabar', async () => {
+    useUiStore.getState().openMenu({ kind: 'file', id: ids[0], x: 10, y: 10 })
+    const hasMedia = store().hasMedia
+    useLibraryStore.setState({ hasMedia: (id: string) => id === ids[0] || hasMedia(id) })
+    renderApp()
+    const release = slow.hold()
+    fireEvent.click(within(screen.getByRole('menu')).getByRole('button', { name: 'Apagar' }))
+    fireEvent.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Apagar a nota e a mídia' }))
+    await act(async () => settle())
+    expect(holding()[0]).toMatchObject({ title: 'Apagando "Limites"…', phase: 'Apagando a nota e a mídia' })
+    await act(async () => {
+      release()
+      await settle()
+    })
+    expect(holding()).toHaveLength(0)
   })
 })

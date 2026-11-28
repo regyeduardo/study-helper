@@ -264,6 +264,17 @@ func TestLibraryPartsAndIndex(t *testing.T) {
 	if res, out := h.raw(ana, http.MethodPut, "/v1/library/items/n1/parts/segredos", []byte("x"), map[string]string{"If-None-Match": "*"}); res.StatusCode != 400 || !strings.Contains(string(out), "invalid_part") {
 		t.Fatalf("a strange part name was taken: %d %s", res.StatusCode, out)
 	}
+	// T203: the photos of the screens marked while recording and the volume of each channel, apart from the note's own parts
+	for _, part := range []string{"telas/000", "telas/12345", "volume"} {
+		if res, out := h.raw(ana, http.MethodPut, "/v1/library/items/n1/parts/"+part, []byte(`{"at":1}`), map[string]string{"If-None-Match": "*"}); res.StatusCode != 200 {
+			t.Fatalf("%s: %d %s", part, res.StatusCode, out)
+		}
+	}
+	for _, part := range []string{"telas/abc", "telas/", "telas/1/2", "volumes"} {
+		if res, _ := h.raw(ana, http.MethodPut, "/v1/library/items/n1/parts/"+part, []byte("x"), map[string]string{"If-None-Match": "*"}); res.StatusCode != 400 {
+			t.Fatalf("%s was taken: %d", part, res.StatusCode)
+		}
+	}
 	// ".." never reaches the handler: the router cleans the path and redirects
 	if res, _ := h.raw(ana, http.MethodPut, "/v1/library/items/n1/parts/../secrets", []byte("x"), map[string]string{"If-None-Match": "*"}); res.StatusCode < 300 {
 		t.Fatalf("a path with .. was taken: %d", res.StatusCode)

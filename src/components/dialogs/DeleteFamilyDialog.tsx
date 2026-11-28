@@ -7,7 +7,7 @@ import { Dialog } from '@/components/ui/Dialog'
 import { Icon, type IconName } from '@/components/ui/Icon'
 import { descendantsOf, familyCount } from '@/lib/family'
 import { mediaOf } from '@/lib/file-types'
-import { itemsOf, working } from '@/lib/working'
+import { itemsOf, unheld, working } from '@/lib/working'
 import { useLibraryStore } from '@/stores/library'
 import { type Overlay, useUiStore } from '@/stores/ui'
 
@@ -78,15 +78,19 @@ export function DeleteFamilyDialog({ fileId, fileIds }: { fileId: string; fileId
 
   const familyOf = (file: FileMeta) => descendantsOf(files, file.id)
   const one = selected.length === 1 ? selected[0] : null
-  const done = (message: string) => {
-    if (fileIds) ui.clearSelection()
-    ui.toast(message)
-  }
 
   if (one && !familyOf(one).length) {
+    // the note leaves the list at once; to the Lixeira, the app goes on (T194: a slow write says so in the corner, a failure brings it back,
+    // saying why); with the media, which does not come back, the window holds the app until it is done, as before
     const trash = async (media: boolean) => {
-      const ok = await working(`Apagando "${one.name}"…`, () => library.trashFiles([one.id], { media }), { message: media ? 'Apagando a nota e a mídia' : 'Mandando para a lixeira' })
-      if (ok) done(`"${one.name}" foi para a lixeira${media ? ', com a mídia' : ''}`)
+      const done = `"${one.name}" foi para a lixeira${media ? ', com a mídia' : ''}`
+      if (!media) {
+        if (fileIds) ui.clearSelection()
+        return void unheld(`Apagando "${one.name}"…`, () => library.trashFiles([one.id], { media }), { done, failed: `Não deu para apagar "${one.name}"` })
+      }
+      if (!(await working(`Apagando "${one.name}"…`, () => library.trashFiles([one.id], { media }), { message: 'Apagando a nota e a mídia' }))) return
+      if (fileIds) ui.clearSelection()
+      ui.toast(done)
     }
     const confirm = library.hasMedia(one.id) ? mediaChoice(one, trash) : { kind: 'confirm' as const, title: `Apagar "${one.name}"?`, text: `A nota vai para a lixeira e dá para restaurar.`, ok: 'Apagar', danger: true, onConfirm: () => trash(false) }
     return <ConfirmDialog overlay={confirm} />
@@ -101,11 +105,11 @@ export function DeleteFamilyDialog({ fileId, fileIds }: { fileId: string; fileId
   const born = [notes && counted(notes, 'nota', 'notas'), artifacts && counted(artifacts, 'artefato', 'artefatos')].filter(Boolean).join(' · ')
   const total = tops.reduce((sum, file) => sum + 1 + familyOf(file).length, 0)
 
-  // the window closes at once, the items leave the list, and a line says how many are going (one Drive write each)
-  const run = (action: () => Promise<void>, message: string, count: number) => async () => {
+  // the window closes at once, the items leave the list, and the app goes on (T194); a failure brings them back, saying why
+  const run = (action: () => Promise<void>, message: string, count: number) => () => {
     ui.close()
-    const ok = await working(`Apagando ${itemsOf(count)}…`, action, { message: 'Mandando para a lixeira' })
-    if (ok) done(message)
+    if (fileIds) ui.clearSelection()
+    void unheld(`Apagando ${itemsOf(count)}…`, action, { done: message, failed: `Não deu para apagar ${itemsOf(count)}` })
   }
   const trashAll = async () => {
     for (const file of tops) await (familyOf(file).length ? library.trashFamily(file.id) : library.trashFiles([file.id]))

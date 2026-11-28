@@ -98,7 +98,8 @@ describe('DeepInfra provider', () => {
     expect(calls).toHaveLength(2)
     const body = calls[0][1].body
     expect(calls[0][1].headers.Authorization).toBe('Bearer di_ok')
-    expect(body.get('model')).toBe('openai/whisper-large-v3')
+    // T199 (research R28): without a model chosen, the times come from the turbo (cheaper, faster, fewer words wrong than the large-v3)
+    expect(body.get('model')).toBe('openai/whisper-large-v3-turbo')
     expect(body.get('response_format')).toBe('verbose_json')
     expect(body.getAll('timestamp_granularities[]')).toEqual(['word'])
     expect(body.get('language')).toBe('pt')

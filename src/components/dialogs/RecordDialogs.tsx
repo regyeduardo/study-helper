@@ -1026,7 +1026,7 @@ function RecordingDoneOptions({ place }: { place: 'dialog' | 'window' }) {
     toast('Gravação descartada')
   }
   const save = () => {
-    const { file, storedName, marks, durationSeconds } = result
+    const { file, storedName, marks, durationSeconds, screens, volume } = result
     clearResult()
     setStorage(null)
     setFolderId(undefined)
@@ -1056,6 +1056,8 @@ function RecordingDoneOptions({ place }: { place: 'dialog' | 'window' }) {
             ...(chosen === 'app' || chosen === 'drive' ? { place: chosen } : {}),
             litterboxTime: '72h',
             marks: marks ?? [],
+            ...(screens ? { screens } : {}),
+            ...(volume ? { volume } : {}),
             transcribe: transcribing,
             ...(transcribing && heardBy.model ? { transcriptionModel: heardBy.model } : {}),
             ...(writes.length ? { writes } : {}),

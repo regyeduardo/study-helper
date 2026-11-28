@@ -108,7 +108,8 @@ describe('Favoritar', () => {
     expect(fileNow(id)?.favorite).toBe(true)
   })
 
-  it('pela barra de seleção: todos os itens ficam favoritos de uma vez e a janela conta quantos', async () => {
+  // T194 (dono, 27/11: "rápido e fluido… Corrija tudo"): favoritar não segura mais o app na janela (escolha F fica para lote, irreversível e conta)
+  it('pela barra de seleção: todos os itens ficam favoritos de uma vez, e o app não trava; no fim, o aviso', async () => {
     const other = (await store().createFile({ name: 'Derivadas', type: 'class', status: 'ready', folderId: null }, '# D')).id
     useUiStore.setState({ selection: new Set([id, other]) })
     render(
@@ -120,7 +121,7 @@ describe('Favoritar', () => {
     fireEvent.click(within(screen.getByRole('toolbar', { name: 'Seleção' })).getByRole('button', { name: 'Favoritar' }))
     expect(fileNow(id)?.favorite).toBe(true)
     expect(fileNow(other)?.favorite).toBe(true)
-    expect(holding()[0]).toMatchObject({ title: 'Favoritando 2 itens…', phase: 'Marcando como favorito' })
+    expect(holding()).toHaveLength(0)
     await act(async () => {
       release()
       await settle()

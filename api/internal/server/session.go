@@ -94,7 +94,9 @@ func (srv *Server) logout(w http.ResponseWriter, _ *http.Request, s *Session) {
 		fail(w, http.StatusInternalServerError, "internal_error", nil)
 		return
 	}
+	srv.accountChanged(s.User.ID)
 	http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: "", Path: "/", MaxAge: -1, HttpOnly: true, Secure: srv.cfg.SecureCookies, SameSite: http.SameSiteLaxMode})
+	http.SetCookie(w, &http.Cookie{Name: accessCookie, Value: "", Path: "/", MaxAge: -1, HttpOnly: true, Secure: srv.cfg.SecureCookies, SameSite: http.SameSiteLaxMode})
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 

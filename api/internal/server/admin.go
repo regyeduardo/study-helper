@@ -26,7 +26,7 @@ const (
 func (srv *Server) adminOnly(handle handlerFunc) http.Handler {
 	inner := srv.rules(signedIn, false, handle)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		session, err := srv.sessionOf(r)
+		session, err := srv.authenticate(w, r)
 		if err != nil {
 			fail(w, http.StatusInternalServerError, "internal_error", nil)
 			return
@@ -242,6 +242,7 @@ func (srv *Server) adminRevoke(w http.ResponseWriter, r *http.Request, s *Sessio
 		fail(w, http.StatusNotFound, "not_found", nil)
 		return
 	}
+	srv.accountChanged(id)
 	// every open device of that account hears it now (live channel, entrega 4)
 	srv.notifyAccess(id, deleteAt)
 	// spec 007: the jobs of the account stop, with the reason

@@ -25,6 +25,7 @@ import { useModelsStore } from '@/stores/models'
 import { useUiStore } from '@/stores/ui'
 import { type CapturedRequest, installFetch, openAiStream, systemPromptOf, userContentOf } from '@/test/ai/fake-provider'
 import { installBlobShim } from '@/test/imports/blob-shim'
+import * as download from '@/utils/download'
 
 const MB = 1024 * 1024
 const day = (iso: string) => ({ at: iso, deviceId: 'd1', deviceName: 'Notebook' })
@@ -127,14 +128,31 @@ afterEach(() => {
 })
 
 describe('cabeçalho', () => {
-  it('mostra o nome e a linha "Entrada · tipo · pasta · data · nível"', () => {
+  it('mostra o nome e a linha "tipo · pasta · data", sem o nível de guarda', () => {
     seed([entrada('video', 'Reunião de kickoff.mp4', VIDEO)])
     renderEntry('video')
     expect(screen.getByRole('heading', { level: 1, name: 'Reunião de kickoff.mp4' })).toBeInTheDocument()
     const line = metaLine('Vídeo')
     expect(line).toContain('Projeto Aurora')
     expect(line).toContain('03/11/2026')
-    expect(line).toContain('Registro e arquivo')
+    // dono, 27/11: "desnecessário"
+    expect(line).not.toContain('Registro e arquivo')
+    expect(line).not.toContain('Só o registro')
+  })
+
+  it('a pasta no topo é clicável e leva para a pasta', () => {
+    function Where() {
+      return <span data-testid="where">{useLocation().pathname}</span>
+    }
+    seed([entrada('video', 'Reunião de kickoff.mp4', VIDEO)])
+    render(
+      <MemoryRouter initialEntries={['/entrada/video']}>
+        <EntryPage fileId="video" />
+        <Where />
+      </MemoryRouter>,
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Projeto Aurora' }))
+    expect(screen.getByTestId('where')).toHaveTextContent(paths.folder('aurora'))
   })
 
   it('"Gerar desta nota" abre a janela de gerar', () => {
@@ -259,7 +277,7 @@ describe('Original conforme o tipo', () => {
   it('link em "Só o registro": nome, link e origem, sem player', () => {
     seed([entrada('link', 'Guia de juros compostos', { input: 'url', name: 'Guia de juros', url: 'https://exemplo.org/juros', storage: 'none' }, { kept: 'registro' })])
     renderEntry('link')
-    expect(metaLine('Link')).toContain('Só o registro')
+    expect(metaLine('Link')).not.toContain('Só o registro')
     const original = within(card('Original'))
     expect(original.getByText('Guia de juros')).toBeInTheDocument()
     expect(original.getByRole('link', { name: 'exemplo.org/juros' })).toHaveAttribute('href', 'https://exemplo.org/juros')
@@ -289,13 +307,14 @@ describe('Original conforme o tipo', () => {
 })
 
 describe('Transcrição', () => {
-  it('em mídia, é um card próprio entre o original e a árvore, marcado como parte da mídia', async () => {
+  it('em mídia, é um card próprio entre o original e a árvore, sem aviso no título', async () => {
     seed([withTranscript(entrada('video', 'Reunião de kickoff.mp4', VIDEO))])
     renderEntry('video')
     const trans = within(card('Transcrição'))
     expect(await trans.findByText('Vamos revisar o cronograma antes de fechar o contrato.')).toBeInTheDocument()
     expect(trans.getByText('Marina')).toBeInTheDocument()
-    expect(trans.getByText('Faz parte da mídia')).toBeInTheDocument()
+    // dono, 27/11: "Não precisa da mensagem"
+    expect(trans.queryByText('Faz parte da mídia')).not.toBeInTheDocument()
     expect(screen.getAllByRole('region').filter(region => region.tagName === 'SECTION' && region.classList.contains('ep-card')).map(region => region.getAttribute('aria-label'))).toEqual(['Original', 'Transcrição', 'O que nasceu daqui'])
   })
 
@@ -313,19 +332,82 @@ describe('Transcrição', () => {
     expect(saved.transcript).toContain('Marina Costa')
   })
 
-  it('com transcrição, "Refazer a transcrição" abre a mesma janela de transcrever do zero', async () => {
+  // dono, 27/11: "Poderia estar nos três pontinhos" (Exportar .txt, Exportar .srt e Refazer a transcrição saem do card)
+  const TOOLS = ['Exportar .txt', 'Exportar .srt', 'Refazer a transcrição']
+  const MENU_TOOLS = ['Exportar a transcrição (.txt)', 'Exportar a transcrição (.srt)', 'Refazer a transcrição']
+
+  it('com transcrição, "Refazer a transcrição" fica no ⋯ e abre a mesma janela de transcrever do zero', async () => {
     seed([withTranscript(entrada('video', 'Reunião de kickoff.mp4', VIDEO))])
     renderEntry('video')
     const trans = within(card('Transcrição'))
-    fireEvent.click(await trans.findByRole('button', { name: 'Refazer a transcrição' }))
+    expect(await trans.findByText('Vamos revisar o cronograma antes de fechar o contrato.')).toBeInTheDocument()
+    for (const name of TOOLS) expect(trans.queryByRole('button', { name })).not.toBeInTheDocument()
+    openMenu()
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Refazer a transcrição' }))
     expect(useUiStore.getState().overlay).toEqual({ kind: 'transcribe', fileId: 'video' })
   })
 
-  it('transcrição só em texto também pode ser refeita do zero', async () => {
+  it('"Exportar a transcrição" em .txt e em .srt fica no ⋯, com o nome da nota', async () => {
+    const saved = vi.spyOn(download, 'downloadBlob').mockImplementation(() => undefined)
+    seed([withTranscript(entrada('video', 'Reunião de kickoff.mp4', VIDEO))])
+    renderEntry('video')
+    await within(card('Transcrição')).findByText('Vamos revisar o cronograma antes de fechar o contrato.')
+    openMenu()
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Exportar a transcrição (.txt)' }))
+    openMenu()
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Exportar a transcrição (.srt)' }))
+    expect(saved.mock.calls.map(call => call[1])).toEqual([`${download.safeFilename('Reunião de kickoff.mp4')} - transcrição.txt`, `${download.safeFilename('Reunião de kickoff.mp4')} - transcrição.srt`])
+    expect((saved.mock.calls[0][0] as Blob).size).toBeGreaterThan(0)
+    saved.mockRestore()
+  })
+
+  it('transcrição só em texto também pode ser refeita do zero, pelo ⋯ (sem exportar: não tem falas)', async () => {
     seed([{ ...entrada('video', 'Seminário.mp4', VIDEO), transcript: 'No seminário a turma resolveu o exercício 3.' }])
     renderEntry('video')
-    fireEvent.click(await within(card('Transcrição')).findByRole('button', { name: 'Refazer a transcrição' }))
+    const trans = within(card('Transcrição'))
+    expect(await trans.findByText('No seminário a turma resolveu o exercício 3.')).toBeInTheDocument()
+    expect(trans.queryByRole('button', { name: 'Refazer a transcrição' })).not.toBeInTheDocument()
+    openMenu()
+    expect(screen.queryByRole('menuitem', { name: 'Exportar a transcrição (.txt)' })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Refazer a transcrição' }))
     expect(useUiStore.getState().overlay).toEqual({ kind: 'transcribe', fileId: 'video' })
+  })
+
+  it('sem transcrição, o ⋯ não oferece exportar nem refazer', async () => {
+    seed([entrada('video', 'Reunião de kickoff.mp4', VIDEO)])
+    renderEntry('video')
+    expect(await within(card('Transcrição')).findByText('Sem transcrição ainda')).toBeInTheDocument()
+    openMenu()
+    for (const name of MENU_TOOLS) expect(screen.queryByRole('menuitem', { name })).not.toBeInTheDocument()
+  })
+
+  it('no compartilhado (sem o ⋯), exportar continua no card e refazer não aparece', async () => {
+    seed([withTranscript(entrada('video', 'Reunião de kickoff.mp4', VIDEO))])
+    // the link's note comes already open (who only reads has no library to open it from)
+    await useLibraryStore.getState().openFile('video')
+    useLibraryStore.setState({ sharedView: { item: { files: [] } as never, rootId: null } })
+    renderEntry('video')
+    const trans = within(card('Transcrição'))
+    expect(await trans.findByRole('button', { name: 'Exportar .txt' })).toBeInTheDocument()
+    expect(trans.getByRole('button', { name: 'Exportar .srt' })).toBeInTheDocument()
+    expect(trans.queryByRole('button', { name: 'Refazer a transcrição' })).not.toBeInTheDocument()
+  })
+
+  // dono, 27/11: "Não permite fechar a mensagem"
+  it('o aviso da transcrição tem como fechar, e fechado não volta', async () => {
+    const warning = 'Não deu para ler a tela gravada; a nota foi feita só com o som.'
+    seed([{ ...withTranscript(entrada('video', 'Reunião de kickoff.mp4', VIDEO)), recording: { ...RECORDING, warning } }])
+    const first = renderEntry('video')
+    const trans = within(card('Transcrição'))
+    expect(await trans.findByText(warning)).toBeInTheDocument()
+    fireEvent.click(trans.getByRole('button', { name: 'Fechar o aviso' }))
+    expect(trans.queryByText(warning)).not.toBeInTheDocument()
+    await waitFor(async () => expect((await useLibraryStore.getState().repo!.readSidecar('video')).recording?.warning).toBeUndefined())
+    first.unmount()
+    useLibraryStore.setState({ opened: {} })
+    renderEntry('video')
+    expect(await within(card('Transcrição')).findByText('Vamos revisar o cronograma antes de fechar o contrato.')).toBeInTheDocument()
+    expect(screen.queryByText(warning)).not.toBeInTheDocument()
   })
 
   it('"Chat" no topo abre o chat da mídia, que lê a transcrição e as notas que nasceram dela', async () => {
@@ -364,7 +446,7 @@ describe('quando a mídia não está mais lá', () => {
   it('"Só o registro" de mídia: nome e origem, sem player; a transcrição fica', async () => {
     seed([withTranscript(entrada('video', 'Reunião de kickoff.mp4', { ...VIDEO, storage: 'none', storedFileId: undefined }, { kept: 'registro' }))])
     renderEntry('video')
-    expect(metaLine('Vídeo')).toContain('Só o registro')
+    expect(metaLine('Vídeo')).not.toContain('Só o registro')
     const original = within(card('Original'))
     expect(original.getByText('kickoff.mp4')).toBeInTheDocument()
     expect(original.getByText('Veio de')).toBeInTheDocument()

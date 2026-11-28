@@ -1,5 +1,7 @@
 import { create } from 'zustand'
 
+import type { MarkedScreens } from '@/lib/recording/screen-marks'
+import type { VolumePart } from '@/lib/recording/volume'
 import { ROUTED_CALLS, routeOf } from '@/lib/generation/account-routing'
 import { inBackground } from '@/lib/generation/background'
 import { runOnAccount } from '@/stores/account-jobs'
@@ -29,7 +31,9 @@ import { generateContent, type GenerationEvent } from '@/lib/generation/pipeline
 import { PROMPTS } from '@/lib/generation/prompts.data'
 import { generateQuestions, generateReadingExam, type WrongQuestion } from '@/lib/generation/questions'
 import type { WebOutcome } from '@/lib/generation/web-questions'
-import { lookAtScreen, visionSettingsOf } from '@/lib/generation/frames'
+import { lookAtScreen, REAL_TOOLS, ScreenUnread, visionSettingsOf } from '@/lib/generation/frames'
+import { markedFrameSource, type MarkedScreensSource, markedTools } from '@/lib/generation/marked-screens'
+import { checkScreen } from '@/lib/generation/screen-check'
 import { polishTranscript } from '@/lib/generation/polish'
 import { redoTranscript } from '@/lib/generation/reviewer'
 import { GenerationSession } from '@/lib/generation/session'
@@ -39,6 +43,7 @@ import { sourceKey } from '@/lib/entry-migration'
 import { isSourceNote, isYoutube, mediaOf, type NoteMedia, readsAsTranscript, recordingName, sourceTypeOf } from '@/lib/file-types'
 import { entryOfSource, entryOriginOf, keptInNote, linkIn, noteSourceOf } from '@/lib/note-source'
 import { cannotWatch, youtubeParts } from '@/lib/generation/youtube-video'
+import { rememberAppMedia } from '@/lib/storage/media-ref'
 import { downloadStoredSource, sourceExpired, storeSource } from '@/lib/storage/source-storage'
 import { convertVideo, NotConvertible } from '@/lib/recording/convert-video'
 import { keepLocalMedia, linkLocalMedia, listLocalMedia, readLocalMedia } from '@/lib/recording/media-library'
@@ -159,6 +164,10 @@ export interface SaveRecordingRequest {
   writes?: RecordingWrite[]
   /** The name the person typed for the note (else the recording's file name). */
   name?: string
+  /** T201/T203: the screens marked while recording (the index goes in the note, the photos apart). */
+  screens?: MarkedScreens
+  /** T202/T203: the volume of each channel every 50 ms (apart from the note). */
+  volume?: VolumePart
 }
 
 /** The note a recording starts as soon as it is saved: the entrada's child, in the entrada's folder, as "Gerar desta entrada" makes it. */
@@ -348,25 +357,76 @@ function stepsOf(chosen: AtaModels | undefined): AtaStepModels {
   return { ...(video ? { video } : {}), ...(context ? { context } : {}) }
 }
 
+/** The screen of the transcription made before a note, from what the window chose (T188); absent, as before. */
+const screenFor = (asked: MediaAnalysis | undefined, video: string | null | undefined): ScreenChoice | undefined =>
+  asked === 'transcricao' ? { read: false } : asked === 'quadros' ? { read: true, ...(video ? { model: video } : {}) } : undefined
+
+/** The screen the person chose to read could not be read (T188): the work stops before writing, saying why and what to do. */
+const unread = (why: unknown) => {
+  const message = why instanceof Error ? why.message : String(why)
+  return new ScreenUnread(`${why instanceof ScreenUnread ? message : `A tela não foi lida: ${message}`} Nada foi escrito. ${WITHOUT_SCREEN}`)
+}
+
+/** T203 (research R30): the screens the recording marked, when the note has them (the photos apart from the note, in the App); else null. */
+function markedSourceFor(fileId: string, recording: RecordingData | undefined): MarkedScreensSource | null {
+  const index = recording?.screenIndex
+  const repo = library().repo as { aside?: (id: string, part: string) => Promise<string | undefined> } | null
+  if (index?.madeBy !== 'gravacao' || !index.screens.length || !repo?.aside) return null
+  const aside = repo.aside.bind(repo)
+  return {
+    index,
+    image: async n => {
+      const raw = await aside(fileId, `telas/${String(n).padStart(3, '0')}`)
+      if (!raw) return null
+      try {
+        return (JSON.parse(raw) as { image?: string }).image ?? null
+      } catch {
+        return null
+      }
+    },
+  }
+}
+
+/**
+ * The video of a note, open for reading its screen, after the check of T188 (it opens, jumps, shows a picture, the vision model answers):
+ * what keeps the screen the person chose from being read fails here, before anything is written. With the screens the recording marked
+ * (T203), their photos instead of the video.
+ */
+async function openChosenScreen(video: Blob | null | undefined, chosen: AtaModels | undefined, signal: AbortSignal, marked: MarkedScreensSource | null = null): Promise<FrameSource> {
+  if (!video && !marked) throw unread(NO_MEDIA_TO_READ)
+  const frames = marked ? markedFrameSource(marked) : await openVideoFrames(video!).catch(error => Promise.reject(unread(`O vídeo não deixa ler os quadros: ${error instanceof Error ? error.message : String(error)}`)))
+  try {
+    const problem = await checkScreen(frames, visionSettingsOf(library().index.settings, chosen?.video), { signal })
+    if (problem) throw unread(problem)
+    return frames
+  } catch (error) {
+    frames.close?.()
+    throw error
+  }
+}
+
 /**
  * T177: an Aula or an Explicação of a video, step by step: the screen read by the frames of the video, the way the Ata reads it (the
  * Vídeo model looks, the Contexto model finds where the speech points at the screen), as text the writer gets with the transcription.
- * A video that does not open, or a reading that fails, leaves the note written from the transcription alone.
+ * T188 ("se marcar pra ver a tela é pra ver a tela"): a video that does not open, or a screen that cannot be read, fails the note with
+ * the reason before it is written (it used to come out from the transcription alone, without a word).
  */
-function lookAtVideo(video: () => Promise<Blob | null>, recording: RecordingData | undefined, chosen: AtaModels, startedAt: Date) {
+function lookAtVideo(video: () => Promise<Blob | null>, recording: RecordingData | undefined, chosen: AtaModels, startedAt: Date, marked: MarkedScreensSource | null = null) {
   return async (progress: (message: string) => void, signal: AbortSignal): Promise<string> => {
     if (!recording?.blocks.length) return ''
-    progress('Abrindo o vídeo da gravação')
-    const blob = await video().catch(() => null)
-    const frames = blob ? await openVideoFrames(blob).catch(() => null) : null
-    if (!frames) return ''
+    // T203: with the screens the recording marked, the video is not even fetched
+    if (!marked) progress('Abrindo o vídeo da gravação')
+    const blob = marked ? null : await video().catch(error => (signal.aborted ? Promise.reject(error) : Promise.reject(unread(error))))
+    progress('Conferindo se dá para ler a tela do vídeo')
+    const frames = await openChosenScreen(blob, chosen, signal, marked)
     try {
       const ai = appAi(library().index.settings, signal, undefined, chosen)
-      const screen = await readVideoScreen(recording, { ai, frames, difference: signatureDifference }, progress, startedAt)
+      // T193: the vision or the Contexto AI going down in the middle is the screen not read, before anything is written
+      const screen = await readVideoScreen(recording, { ai, frames, difference: signatureDifference }, progress, startedAt, { strict: true })
       return screen ? `Leitura da tela (o que aparecia na tela do vídeo, lido pelos quadros):\n${screen}` : ''
     } catch (error) {
       if (error instanceof Cancelled || signal.aborted) throw error
-      return ''
+      throw unread(error)
     } finally {
       frames.close?.()
     }
@@ -386,6 +446,9 @@ async function hearsAudio(use: AiUse, pick?: string | null): Promise<string | nu
 }
 
 const NOT_HEARD = 'O modelo escolhido não ouve a mídia: escolha um que ouça áudio, ou "Só a transcrição".'
+/** What to do when the screen chosen cannot be read (T188). */
+const WITHOUT_SCREEN = 'Para seguir sem a tela, faça de novo com "Só a transcrição".'
+const NO_MEDIA_TO_READ = 'o vídeo desta nota não está mais guardado.'
 const NO_MEDIA = 'A mídia desta nota não está mais guardada: use "Só a transcrição".'
 const MEDIA_WONT_GO = 'Não deu para mandar a mídia ao modelo (longa demais ou sem áudio): use "Só a transcrição".'
 const NOTHING_TO_READ = 'Esta nota não tem texto nem arquivo para a IA ler.'
@@ -448,11 +511,13 @@ const keptMedia = (meta: FileMeta) => mediaOf(meta) !== 'text' && (library().loc
 async function mediaFileOf(meta: FileMeta): Promise<File> {
   const origin = meta.origin!
   const local = library().localMedia.find(item => item.fileIds.includes(meta.id))
-  if (local) return readLocalMedia(local)
+  // T197: a media kept in the App (here or downloaded) can have its heavy reading made by the server, where it is kept
+  const remembered = (file: File) => (rememberAppMedia(file, origin.storedFileId), file)
+  if (local) return remembered(await readLocalMedia(local))
   if (!library().repo || !(origin.storedFileId || origin.storedUrl)) throw new Error('A mídia desta nota não está mais guardada: não dá para transcrever.')
   const stored = await downloadStoredSource(origin, library().repo!)
   const blob = typeof stored === 'string' ? await (await fetch(stored)).blob() : stored
-  return new File([blob], origin.name, { type: origin.mime || blob.type })
+  return remembered(new File([blob], origin.name, { type: origin.mime || blob.type }))
 }
 
 /** What is read again of a source the entrada does not hold as text: a link, a topic, a document still stored. */
@@ -747,10 +812,12 @@ export const useJobsStore = create<JobsState>((set, get) => {
       agent === 'reading' ? resolved.content.replace(/^# Conteúdo\n\n/, '') : '',
     )
     if (resolved.transcription) {
+      // T193: the transcription is paid for: a write that fails is tried once more, and then the work fails saying so (it was lost without a word)
       const { text: transcript, recording } = resolved.transcription
-      await library()
-        .updateSidecar(meta.id, sidecar => ({ ...sidecar, transcript, ...(recording ? { recording } : {}) }))
-        .catch(() => undefined)
+      const keep = () => library().updateSidecar(meta.id, sidecar => ({ ...sidecar, transcript, ...(recording ? { recording } : {}) }))
+      await keep()
+        .catch(keep)
+        .catch(error => Promise.reject(new Error(`A transcrição não foi guardada na nota: ${failureText(error)}`)))
     }
     if (request.input.kind === 'file' && resolved.transcription) await keepMedia(request, request.input.file, meta, resolved.transcription.durationSeconds)
     return meta
@@ -899,16 +966,21 @@ export const useJobsStore = create<JobsState>((set, get) => {
     }
   }
 
-  const polished = async (resolved: ResolvedInput, marks: RecordingMark[], progress: (message: string) => void, signal: AbortSignal, source: File | null, instruction = '', screen?: ScreenChoice): Promise<ResolvedInput> => {
-    const heard = resolved.transcription?.recording
-    if (!resolved.transcription || !heard) return resolved
+  /** `skipped`: why the screen of the video is not read, found by the check before the transcription (T188); it goes with the transcription. */
+  const polished = async (resolved: ResolvedInput, marks: RecordingMark[], progress: (message: string) => void, signal: AbortSignal, source: File | null, instruction = '', screen?: ScreenChoice, skipped: string | null = null, marked: MarkedScreensSource | null = null): Promise<ResolvedInput> => {
+    const transcribed = resolved.transcription?.recording
+    if (!resolved.transcription || !transcribed) return resolved
+    const heard = skipped ? { ...transcribed, warning: [transcribed.warning, `A tela não foi lida: ${skipped}`].filter(Boolean).join(' ') } : transcribed
     const session = sessionFor('titulo', signal)
     const clock = new StageClock()
     clock.add(resolved.transcription.stages)
-    const video = source?.type.startsWith('video/') && screen?.read !== false ? source : null
-    if (video) progress('Olhando a tela gravada')
-    const look = () => lookAtScreen(heard, video, visionSettingsOf(library().index.settings, screen?.model), session)
-    const seen = await (video ? clock.run('Olhar a tela gravada', look) : look())
+    // T203: the screens the recording marked are read from their photos and texts, without the video
+    const fromMarks = marked && screen?.read !== false && !skipped ? marked : null
+    const video = !fromMarks && source?.type.startsWith('video/') && screen?.read !== false && !skipped ? source : null
+    if (video || fromMarks) progress('Olhando a tela gravada')
+    // the screen the person chose to read is read, or the work fails saying why (T188)
+    const look = () => lookAtScreen(heard, video, visionSettingsOf(library().index.settings, screen?.model), session, fromMarks ? markedTools(fromMarks, REAL_TOOLS) : undefined, { strict: screen?.read === true })
+    const seen = await (video || fromMarks ? clock.run('Olhar a tela gravada', look) : look())
     progress('Dando título, nomes e revisando a transcrição')
     const finished = await clock.run('Acabamento: título, nomes e revisão', () => polishTranscript(seen, session, library().index.settings.transcription.terms ?? '', instruction))
     const recording = { ...finished.recording, marks }
@@ -1074,7 +1146,15 @@ export const useJobsStore = create<JobsState>((set, get) => {
       // the choice is kept as the note's own: without it, a note made now is born in the App with the structure on, even with "Google Drive" chosen
       const own = request.place ? { place: request.place } : {}
       const meta = await library().createFile({ name: request.name?.trim() || recordingName(file.name), kept: 'registro', type: sourceTypeOf(origin), description: '', folderId: request.folderId, status: 'ready', pendingExcerpt: null, origin, ...own }, '')
-      if (request.marks.length) await library().updateSidecar(meta.id, sidecar => ({ ...sidecar, recording: { blocks: [], speakers: [], marks: request.marks } }))
+      if (request.marks.length || request.screens) await library().updateSidecar(meta.id, sidecar => ({ ...sidecar, recording: { blocks: [], speakers: [], marks: request.marks, ...(request.screens ? { screenIndex: request.screens.index } : {}) } }))
+      // T203: the photos of the screens and the volume go apart from the note (in the App); a failure says so in Gerações
+      const asideParts: Record<string, string> = {}
+      request.screens?.images.forEach((image, index) => (asideParts[`telas/${String(index).padStart(3, '0')}`] = JSON.stringify(image)))
+      if (request.volume) asideParts.volume = JSON.stringify(request.volume)
+      const asideRepo = library().repo as { putAside?: (id: string, parts: Record<string, string>) => Promise<boolean> } | null
+      const keptAside: Promise<unknown> = Object.keys(asideParts).length && asideRepo?.putAside
+        ? asideRepo.putAside(meta.id, asideParts).catch(error => get().trackTask(`Guardar as telas: ${meta.name}`, meta.id).fail(`As telas marcadas na gravação não foram guardadas: ${failureText(error)}`))
+        : Promise.resolve()
       // T181: the recording kept in this browser (Mídias) is the copy that stays if the upload fails
       let keptHere = false
       if (request.storedName)
@@ -1128,6 +1208,8 @@ export const useJobsStore = create<JobsState>((set, get) => {
       // note transcribes when it needs the text, and the others wait for it so as not to transcribe twice. In the account, everything is
       // asked at once, in this order: the service runs the jobs of the same note in turn
       void (async () => {
+        // what runs in the account reads the screens and the volume it was given (T203)
+        await keptAside
         const ok = await uploaded
         const source = sourceOf(ok)
         const inAccount = toAccount && ok
@@ -1153,16 +1235,29 @@ export const useJobsStore = create<JobsState>((set, get) => {
       try {
         progress('Abrindo a mídia')
         const file = source ?? (await mediaFileOf(meta))
+        // T203: the screens the recording marked (read from their photos, not the video), and the index never lost from the note
+        const before = (await library().openFile(fileId)).sidecar.recording
+        const marked = markedSourceFor(fileId, before)
+        // T188: whether the screen can be read is known before anything is spent; the screen the person chose stops everything here
+        let skipped: string | null = null
+        if ((file.type.startsWith('video/') || marked) && screen?.read !== false) {
+          progress('Conferindo se dá para ler a tela do vídeo')
+          skipped = await checkScreen(marked ? markedFrameSource(marked) : file, visionSettingsOf(library().index.settings, screen?.model), { signal: controller.signal })
+          if (skipped && screen?.read === true) throw new ScreenUnread(`${skipped} Nada foi gasto: a transcrição nem começou. ${WITHOUT_SCREEN}`)
+        }
         progress('Transcrevendo a gravação')
         const transcription = await transcribe(file, transcriptionOf(library().index.settings, transcriptionModel), progress, controller.signal, { microphoneOnLeft: origin.input === 'recording', recorder: recorderName(useAccountStore.getState().active()) })
         const read: ResolvedInput = { content: `${CONTENT_HEADER}${transcription.text}`, title: meta.name, description: meta.description, origin, transcription }
         const marks = (await library().openFile(fileId)).sidecar.recording?.marks ?? []
-        const resolved = await polished(read, marks, progress, controller.signal, file, instruction, screen)
+        const resolved = await polished(read, marks, progress, controller.signal, file, instruction, screen, skipped, marked).catch(error => {
+          throw error instanceof ScreenUnread ? new ScreenUnread(`${error.message} A transcrição de antes ficou como estava. ${WITHOUT_SCREEN}`) : error
+        })
         const done = resolved.transcription!
         // what was used, for the next "Refazer a transcrição" (T187)
-        const looked = file.type.startsWith('video/') && screen?.read !== false
+        const looked = (file.type.startsWith('video/') || Boolean(marked)) && screen?.read !== false && !skipped
         const heard: TranscriptionChoice = { ...(transcriptionModel ? { model: transcriptionModel } : {}), screen: looked, ...(looked && screen?.model ? { vision: screen.model } : {}) }
-        await library().updateSidecar(fileId, sidecar => ({ ...sidecar, transcript: done.text, ...(done.recording ? { recording: { ...done.recording, heard } } : {}) }))
+        const kept = before?.screenIndex
+        await library().updateSidecar(fileId, sidecar => ({ ...sidecar, transcript: done.text, ...(done.recording ? { recording: { ...done.recording, ...(!done.recording.screenIndex && kept ? { screenIndex: kept } : {}), heard } } : {}) }))
         const fresh = library().files.find(file => file.id === fileId) ?? meta
         const polishing = polishSessions.get(done)
         await library().saveContent(fileId, done.text, {
@@ -1182,7 +1277,8 @@ export const useJobsStore = create<JobsState>((set, get) => {
       // a link or a text stays in each lesson, with no entrada
       const kept = keptSource(proposal.request, resolved)
       const entry = kept ? null : await sourceEntry(proposal.request, resolved)
-      await keepSource(proposal.request, resolved, entry, null).catch(() => undefined)
+      // T193: "Registro e arquivo" that could not keep the file says so, in Gerações (it stayed "Só o registro" without a word)
+      await keepSource(proposal.request, resolved, entry, null).catch(error => get().trackTask(`Guardar a fonte: ${entry?.name ?? proposal.analysis.name}`, entry?.id).fail(`A fonte não foi guardada: ${failureText(error).replace(/^A aula não foi gerada porque a fonte não pôde ser guardada: /, '')}`))
       // a course is a new folder: one of the same name already there stays as it is, and this one gets " (2)" (FR-021)
       const root = await library().createFolder(
         {
@@ -1267,7 +1363,8 @@ export const useJobsStore = create<JobsState>((set, get) => {
         const needsText = !media || asked === 'ambos'
         // the transcription is needed and missing: made first, and it stays in the entrada
         const before = (await library().openFile(fileId)).sidecar
-        if (needsText && keptMedia(source) && !before.recording?.blocks.length && !before.transcript?.trim()) await prep.around(() => get().transcribeNote(fileId))
+        // the transcription made first follows the window (T188): "Só a transcrição" never reads the screen, "quadros" reads it or stops before spending
+        if (needsText && keptMedia(source) && !before.recording?.blocks.length && !before.transcript?.trim()) await prep.around(() => get().transcribeNote(fileId, undefined, undefined, undefined, screenFor(asked, steps?.video)))
         if (prep.stopped()) return null
         const { content, sidecar } = await library().openFile(fileId)
         const recording = sidecar.recording?.blocks.length ? sidecar.recording : undefined
@@ -1277,7 +1374,7 @@ export const useJobsStore = create<JobsState>((set, get) => {
         const parts = asked === 'ambos' ? withMaterial(media, material) : (media ?? undefined)
         // step by step (T177): the screen of the video read with the models of the steps; the Escrita is the note's model
         const chosen: AtaModels = { model: model || uidFor(aiConfigOf(library().index.settings), AGENT_USE[agent]) || null, ...steps }
-        const look = kind === 'video' && asked === 'quadros' && !isYoutube(source) ? lookAtVideo(() => mediaFileOf(source), recording, chosen, meetingStart(source)) : undefined
+        const look = kind === 'video' && asked === 'quadros' && !isYoutube(source) ? lookAtVideo(() => mediaFileOf(source), recording, chosen, meetingStart(source), markedSourceFor(fileId, recording)) : undefined
         const made = choiceOf(AGENT_USE[agent], model, { ...instructionOf(instruction), ...analyzedOf(kind, asked), ...(look ? { steps: stepsOf(chosen) } : {}) })
         if (typeof place === 'object' && 'replace' in place) {
           const meta = library().files.find(file => file.id === place.replace)
@@ -1319,7 +1416,7 @@ export const useJobsStore = create<JobsState>((set, get) => {
         if (prep.stopped()) return
         const needsText = !media || asked === 'ambos'
         // the transcription is needed and missing: made first, and it stays in the entrada
-        if (needsText && keptMedia(source) && !(await library().openFile(fileId)).sidecar.recording?.blocks.length) await prep.around(() => get().transcribeNote(fileId))
+        if (needsText && keptMedia(source) && !(await library().openFile(fileId)).sidecar.recording?.blocks.length) await prep.around(() => get().transcribeNote(fileId, undefined, undefined, undefined, screenFor(asked, chosen?.video)))
         if (prep.stopped()) return
         heard = (await library().openFile(fileId)).sidecar.recording
         if (needsText && !heard?.blocks.length) return
@@ -1350,12 +1447,24 @@ export const useJobsStore = create<JobsState>((set, get) => {
           return await saveAta({ markdown: ataDocument(raw, model), images: [], models: { write: modelOf(session.settings) }, stages: clock.stages })
         }
         // A video opens even without a vision model: the local OCR still reads the exact terms on screen
-        if (mediaOf(source) === 'video' && asked !== 'transcricao') {
+        if (mediaOf(source) === 'video' && asked === 'quadros') {
+          // chosen ("Transcrição + quadros do vídeo"): checked first, and what keeps the screen from being read stops the Ata (T188);
+          // with the screens the recording marked (T203), from their photos, without even fetching the video
+          const marked = markedSourceFor(fileId, heard)
+          if (!marked) progress('Abrindo o vídeo da gravação')
+          const video = marked ? null : (file ?? (await mediaFileOf(source).catch(error => (controller.signal.aborted ? Promise.reject(error) : Promise.reject(unread(error))))))
+          progress('Conferindo se dá para ler a tela do vídeo')
+          frames = await openChosenScreen(video, chosen, controller.signal, marked)
+        } else if (mediaOf(source) === 'video' && asked !== 'transcricao') {
           progress('Abrindo o vídeo da gravação')
           const video = file ?? (await mediaFileOf(source).catch(() => null))
           frames = video ? await openVideoFrames(video).catch(() => null) : null
         }
-        const done = await buildAta({ recording: heard!, parts, model, startedAt: meetingStart(source), instruction, onProgress: progress }, { ai, frames, difference: signatureDifference, renderPrint: (image, marks, caption) => renderPrint(image, marks, caption) })
+        // T193: with the screen chosen, the vision or the Contexto AI going down in the middle fails the Ata before it is written
+        const done = await buildAta(
+          { recording: heard!, parts, model, startedAt: meetingStart(source), instruction, onProgress: progress, ...(asked === 'quadros' ? { screen: 'required' as const } : {}) },
+          { ai, frames, difference: signatureDifference, renderPrint: (image, marks, caption) => renderPrint(image, marks, caption) },
+        ).catch(error => Promise.reject(error instanceof ScreenUnread ? unread(error) : error))
         if (done.recording !== heard) {
           await library().updateSidecar(fileId, sidecar => (sidecar.recording ? { ...sidecar, recording: { ...sidecar.recording, speakers: done.recording.speakers }, transcript: transcriptText({ ...sidecar.recording, speakers: done.recording.speakers }) } : sidecar))
           if (readsAsTranscript(source)) await library().saveContent(fileId, transcriptText(done.recording).trim())

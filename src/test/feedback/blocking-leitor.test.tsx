@@ -365,7 +365,8 @@ describe('Desta nota: renomear e apagar um artefato', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Opções de Mapa dos limites' }))
   }
 
-  it('Renomear trava com "Renomeando “Mapa dos limites”…" até gravar', async () => {
+  // T194 (dono, 27/11: "rápido e fluido (mesmo que haja latência no servidor)… Corrija tudo"): renomear não segura mais o app
+  it('Renomear: o nome novo aparece na hora e o app não trava enquanto grava; se falhar, o nome volta e o aviso diz por quê', async () => {
     const gate = deferred()
     await withMap()
     useLibraryStore.setState({ renameArtifact: vi.fn(() => gate.promise) })
@@ -374,12 +375,15 @@ describe('Desta nota: renomear e apagar um artefato', () => {
     fireEvent.change(field, { target: { value: 'Mapa novo' } })
     fireEvent.keyDown(field, { key: 'Enter' })
     await shown()
-    expect(windowNamed('Renomeando “Mapa dos limites”…')).toBeInTheDocument()
+    noWindow()
+    expect(screen.getByRole('button', { name: 'Mapa novo' })).toBeInTheDocument()
     await act(async () => {
-      gate.resolve()
+      gate.reject(new Error('Drive fora do ar'))
       await settle()
     })
     noWindow()
+    expect(screen.getByRole('button', { name: 'Mapa dos limites' })).toBeInTheDocument()
+    expect(useUiStore.getState().toasts.map(toast => toast.text)).toContain('Não deu para renomear “Mapa dos limites”: Drive fora do ar')
   })
 
   it('Apagar trava com "Apagando “Mapa dos limites”…" até o Drive responder', async () => {
@@ -413,7 +417,7 @@ describe('Conversas do Tutor (Chat da entrada)', () => {
     fireEvent.click(screen.getByRole('button', { name: /^Conversas/ }))
   }
 
-  it('renomear trava com "Renomeando “Qual o prazo do portal?”…" até gravar', async () => {
+  it('renomear: o nome novo aparece na lista na hora e o app não trava enquanto grava', async () => {
     await chatList()
     const gate = deferred()
     useLibraryStore.setState({ renameArtifact: vi.fn(() => gate.promise) })
@@ -422,7 +426,8 @@ describe('Conversas do Tutor (Chat da entrada)', () => {
     fireEvent.change(field, { target: { value: 'Prazo do portal' } })
     fireEvent.keyDown(field, { key: 'Enter' })
     await shown()
-    expect(windowNamed('Renomeando “Qual o prazo do portal?”…')).toBeInTheDocument()
+    noWindow()
+    expect(screen.getByRole('button', { name: 'Renomear “Prazo do portal”' })).toBeInTheDocument()
     await act(async () => {
       gate.resolve()
       await settle()
@@ -447,7 +452,8 @@ describe('Conversas do Tutor (Chat da entrada)', () => {
 })
 
 describe('Renomear o mapa', () => {
-  it('trava com "Renomeando o mapa…" até gravar', async () => {
+  // the Mind map window is heavy to mount (2,7 s before this change, alone): a loaded machine passed the 5 s of the default
+  it('o nome novo aparece na hora, e o app não trava enquanto grava', { timeout: 20_000 }, async () => {
     slowLibrary()
     const note = await store().createFile({ name: 'Limites', type: 'class', status: 'ready', folderId: null }, '# Limites')
     const map = await store().saveArtifact(note.id, newMapArtifact({ name: 'Mapa dos limites', diagram: { form: 'arvore', root: { id: 'r', text: 'Limites', children: [] } } }))
@@ -464,7 +470,8 @@ describe('Renomear o mapa', () => {
     fireEvent.change(field, { target: { value: 'Mapa novo' } })
     fireEvent.keyDown(field, { key: 'Enter' })
     await shown()
-    expect(windowNamed('Renomeando o mapa…')).toBeInTheDocument()
+    noWindow()
+    expect(screen.getByRole('heading', { name: 'Mapa novo' })).toBeInTheDocument()
     await act(async () => {
       gate.resolve()
       await settle()

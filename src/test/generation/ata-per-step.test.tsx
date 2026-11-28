@@ -84,11 +84,14 @@ describe('generateAta passo a passo', () => {
   }
   const sees = (call: CapturedRequest) => userParts(call).some(part => part.type === 'image_url')
 
+  // T193: the vision model that answers the check before spending and then goes down
+  let visionDown = false
   function provider(request: CapturedRequest): Response {
     const parts = userParts(request)
     if (sees(request)) {
       const image = parts.find(part => part.type === 'image_url')!.image_url!.url
       const prompt = parts.find(part => part.type === 'text')?.text ?? ''
+      if (visionDown && prompt !== 'Responda só: ok') return new Response('fora do ar', { status: 400 })
       return new Response(JSON.stringify({ choices: [{ message: { content: visionAnswer(image, prompt) } }] }))
     }
     // a pass the fixture does not know answers an empty JSON, not a reply the app would ask again (and wait)
@@ -115,6 +118,7 @@ describe('generateAta passo a passo', () => {
     useLibraryStore.setState({ repo, accountId: 'local', ready: true, folders: [], files: [], index, opened: {}, openedAt: {}, localMedia: [], sharedView: null })
     useJobsStore.setState({ jobs: [], live: {}, proposals: [] })
     calls = installFetch(provider).calls
+    visionDown = false
   })
 
   afterEach(() => vi.unstubAllGlobals())
@@ -151,4 +155,22 @@ describe('generateAta passo a passo', () => {
     expect(writing[0].body?.model).toBe(LITE.mid)
     expect(useLibraryStore.getState().files.find(file => file.id === id)?.made).toMatchObject({ model: LITE.uid, analyze: 'quadros', steps: { video: GEMMA.uid, context: DEEPSEEK.uid } })
   })
+
+  // T193 (dono, 27/11: "se marcar pra ver a tela é pra ver a tela… quero 0 problemas"): the check before spending passed, then the vision
+  // model went down in the middle: the Ata used to come out without the screen, without a word
+  it('com "Transcrição + quadros do vídeo", a visão que cai no meio faz a Ata falhar antes de ser escrita, dizendo por quê e o que fazer', async () => {
+    visionDown = true
+    const source = await video()
+    await useJobsStore.getState().generateAta(source, ['resumo'], undefined, { model: LUNA.uid }, 'home', '', frames(), 'quadros')
+    await waitFor(() => expect(useJobsStore.getState().jobs.some(job => job.status === 'error')).toBe(true))
+    const failed = useJobsStore.getState().jobs.find(job => job.status === 'error')!
+    expect(failed.error).toMatch(/^A tela não foi lida: .*\(400\)/)
+    expect(failed.error).toContain('Nada foi escrito.')
+    expect(failed.error).toContain('Só a transcrição')
+    expect(failed.error?.match(/A tela não foi lida/g)).toHaveLength(1)
+    expect(ataOf(source)).toBeUndefined()
+    // nothing was written: no call with the prompt of the Resumo part
+    expect(calls.some(call => systemPromptOf(call).includes(P.RESUMO))).toBe(false)
+  })
 })
+

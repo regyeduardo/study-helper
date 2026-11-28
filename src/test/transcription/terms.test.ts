@@ -44,11 +44,24 @@ describe('your list of terms', () => {
     expect(termsHint('  \n ')).toBe('')
   })
 
-  it('goes with every transcription request, in every provider', async () => {
+  // T199 (medido em 28/11, research R28): com a lista como "prompt", o Whisper turbo pulou quase tudo (122,6% de palavras erradas) e o
+  // large-v3 piorou de 3,7% para 6,6%. A lista vai para o modelo que ouve, como contexto (listener.test.ts), e para os outros modelos.
+  it('never goes to a Whisper model, in any provider', async () => {
     for (const transcribe of [transcribeWithDeepInfra, transcribeWithCustom, transcribeWithOpenAi]) {
       const forms = capture()
       await transcribe(job(TERMS))
       const sent = forms.filter(form => form.has('file') && form.get('model') !== DEEPINFRA_TEXT_MODEL)
+      expect(sent.length).toBeGreaterThan(0)
+      for (const form of sent) expect(form.has('prompt')).toBe(false)
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('goes with the request of a transcription model that is not Whisper, as a hint', async () => {
+    for (const transcribe of [transcribeWithCustom, transcribeWithOpenAi]) {
+      const forms = capture()
+      await transcribe({ ...job(TERMS), credential: { ...job(TERMS).credential, model: 'gpt-4o-transcribe' } })
+      const sent = forms.filter(form => form.has('file'))
       expect(sent.length).toBeGreaterThan(0)
       for (const form of sent) expect(form.get('prompt')).toBe(termsHint(TERMS))
       vi.unstubAllGlobals()

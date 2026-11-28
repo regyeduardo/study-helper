@@ -13,6 +13,7 @@ import GithubMarkdownView, { type PaintedQuote, type ReaderSelection } from '@/c
 import { MediaPlayer, type MeetingMedia, playAt, useMeetingMedia } from '@/components/reader/MediaPlayer'
 import { MarkList } from '@/components/reader/Markers'
 import { MeetingTabs } from '@/components/reader/MeetingTabs'
+import { forgetWarning } from '@/components/reader/TranscriptTab'
 import { MinutesTab } from '@/components/reader/MinutesTab'
 import { NoteSourceRow } from '@/components/reader/NoteSourceRow'
 import { TagSuggestion } from '@/components/reader/TagSuggestion'
@@ -493,6 +494,7 @@ export function DocumentBody({ fileId, compact = false }: { fileId: string; comp
           onRename={readOnly ? undefined : (speakerId, name) => void rename(speakerId, name)}
           onMarks={readOnly ? undefined : keepMarks}
           startAt={startAt}
+          onCloseWarning={readOnly ? undefined : () => forgetWarning(fileId)}
           onGenerate={readOnly || job || meta.status !== 'ready' || !readsAsTranscript(meta) ? undefined : agent => ui.open({ kind: 'generate', fileId: meta.id, agent })}
           onRedoTranscript={readOnly || job ? undefined : (instruction, model) => void redoTranscript(meta.id, instruction, model)}
           onRedo={readOnly || job || meta.status !== 'ready' || (meta.type !== 'meeting' && meta.type !== 'class') ? undefined : () => ui.open({ kind: 'generate', fileId: meta.id, agent: meta.type === 'meeting' ? 'meeting' : 'lesson', redo: true })}

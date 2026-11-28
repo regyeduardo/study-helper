@@ -50,6 +50,7 @@ func (srv *Server) signOutDevice(w http.ResponseWriter, r *http.Request, s *Sess
 		http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: "", Path: "/", MaxAge: -1, HttpOnly: true, Secure: srv.cfg.SecureCookies, SameSite: http.SameSiteLaxMode})
 	}
 	srv.changeDevice(w, r, s, `UPDATE devices SET signed_out_at = ? WHERE id = ? AND user_id = ? AND signed_out_at IS NULL`, stamp(srv.cfg.Now()))
+	srv.accountChanged(s.User.ID)
 }
 
 // changeDevice runs a change on one of the account's own devices; a device of another account is a device that does not exist.

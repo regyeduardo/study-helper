@@ -1,5 +1,10 @@
 import { makeSeekable } from '@/lib/recording/seekable'
-import { videoEvent } from '@/lib/recording/video-wait'
+import type { ScreenMarks } from '@/lib/recording/screen-marks'
+import { openPass, type VideoPass } from '@/lib/recording/video-pass'
+import { FRAME_LATE, videoEvent } from '@/lib/recording/video-wait'
+
+/** Frames in a row that did not come: the video stopped handing them, and waiting for the rest only spends time. */
+const LATE_IN_A_ROW = 3
 
 const MAX_WIDTH = 1920
 const TICKER_SOURCE = 'let timer;onmessage=event=>{clearInterval(timer);if(event.data>0)timer=setInterval(()=>postMessage(0),event.data)}'
@@ -40,6 +45,9 @@ const BEAT_MS = 1000
  * person, a cell half over the picture, measured 0.55 to 0.82 busy in Chromium): a cell that keeps some motion next to a camera is part
  * of it, and next to a camera only a big change (a slide, not the picture's noise) counts as content.
  */
+/** T201: the photo of each marked screen (the part `telas/<n>`): 1280 px wide, JPEG quality 0.75 (~60 to 120 KB a slide). */
+const SNAPSHOT_WIDTH = 1280
+const SNAPSHOT_QUALITY = 0.75
 export const LOOK_WIDTH = 256
 export const LOOK_HEIGHT = 144
 const LOOK_MS = 100
@@ -172,6 +180,9 @@ export class ScreenCanvas {
   private readonly keepsPace: boolean
   /** Who encodes each frame (WebCodecs, T174): the frame goes to it instead of the canvas's track. */
   private sink: ((canvas: HTMLCanvasElement) => void) | null = null
+  /** T201: the screens marked while recording (any recording with the screen, not only the optimized one). */
+  private marks: ScreenMarks | null = null
+  private readonly shot = document.createElement('canvas')
 
   constructor(fps: number, onlyChanges = false) {
     this.onlyChanges = onlyChanges
@@ -193,13 +204,46 @@ export class ScreenCanvas {
     this.ticker = startTicker(1000 / fps, () => this.draw())
   }
 
+  /** T201: marks each new screen while recording; the screen is looked at (256x144, every 100 ms) in any recording with the screen. */
+  markWith(marks: ScreenMarks | null): void {
+    this.marks = marks
+    if (marks && !this.looking) {
+      const copy = document.createElement('canvas')
+      copy.width = LOOK_WIDTH
+      copy.height = LOOK_HEIGHT
+      this.looking = copy.getContext('2d', { willReadFrequently: true })
+      if (this.looking) this.looking.imageSmoothingQuality = 'high'
+    }
+  }
+
+  /** The screen now as a JPEG data URL, 1280 px wide at most (T201); null when there is nothing to take. */
+  snapshot(): string | null {
+    const { videoWidth, videoHeight } = this.video
+    if (!this.video.srcObject || !videoWidth || !videoHeight) return null
+    this.shot.width = Math.min(SNAPSHOT_WIDTH, videoWidth)
+    this.shot.height = Math.round((videoHeight * this.shot.width) / videoWidth)
+    const context = this.shot.getContext('2d')
+    if (!context) return null
+    try {
+      context.drawImage(this.video, 0, 0, this.shot.width, this.shot.height)
+      return this.shot.toDataURL('image/jpeg', SNAPSHOT_QUALITY)
+    } catch {
+      return null
+    }
+  }
+
+  /** The size of the screen being recorded (the marks' index is in these pixels). */
+  size(): { width: number; height: number } {
+    return { width: this.video.videoWidth || this.canvas.width, height: this.video.videoHeight || this.canvas.height }
+  }
+
   show(stream: MediaStream | null): void {
     this.video.srcObject = stream
     this.fresh = true
     // another screen: where its cameras are is learned again
     this.gate = new ChangeGate()
     if (stream) void this.video.play().catch(() => undefined)
-    if (this.onlyChanges && this.told && !this.watching) {
+    if ((this.onlyChanges || this.marks) && this.told && !this.watching) {
       this.watching = true
       this.video.requestVideoFrameCallback(this.watch)
     }
@@ -210,21 +254,31 @@ export class ScreenCanvas {
     if (!this.stopped) this.video.requestVideoFrameCallback(this.watch)
   }
 
+  /** A new frame of the screen came since the last look (counted where requestVideoFrameCallback stops, in a hidden tab). */
+  private noticeFrames(): void {
+    if (!this.counted || !this.video.srcObject) return
+    const frames = this.video.getVideoPlaybackQuality().totalVideoFrames
+    if (frames !== this.framesSeen) this.fresh = true
+    this.framesSeen = frames
+  }
+
   private draw(): void {
-    if (!this.onlyChanges) return this.paint()
-    const now = Date.now()
-    if (this.counted && this.video.srcObject) {
-      const frames = this.video.getVideoPlaybackQuality().totalVideoFrames
-      if (frames !== this.framesSeen) this.fresh = true
-      this.framesSeen = frames
+    if (!this.onlyChanges) {
+      this.paint()
+      this.markLook()
+      return
     }
+    const now = Date.now()
+    this.noticeFrames()
     if ((this.fresh || !(this.told || this.counted)) && now - this.lookedAt >= LOOK_MS) {
       this.fresh = false
       this.lookedAt = now
       const seen = this.look(now)
+      this.marks?.look(seen, now)
       if (seen === null || seen === 'content') this.changedAt = now
       this.holdingUntil = seen === 'camera' ? now + BEAT_MS : 0
     }
+    this.marks?.tick(now)
     if (now - this.changedAt >= SETTLE_MS && now - this.sentAt < BEAT_MS) {
       if (now < this.holdingUntil && this.keepsPace && !this.sink) this.repeat()
       return
@@ -233,6 +287,20 @@ export class ScreenCanvas {
     this.sentAt = now
     this.gate.sent()
     this.requestFrame()
+  }
+
+  /** T201: a recording that sends every frame looks at the screen only for the marks (each look against the one before). */
+  private markLook(): void {
+    if (!this.marks) return
+    const now = Date.now()
+    this.noticeFrames()
+    if ((this.fresh || !(this.told || this.counted)) && now - this.lookedAt >= LOOK_MS) {
+      this.fresh = false
+      this.lookedAt = now
+      this.marks.look(this.look(now), now)
+      this.gate.sent()
+    }
+    this.marks.tick(now)
   }
 
   /** The same picture again: the canvas drawn on itself, so the browser hands one more frame. */
@@ -310,14 +378,64 @@ const SIGNATURE_HEIGHT = 9
 // never forever: an error the video already has, a new one, or the limit end the wait (T180)
 const once = (target: HTMLMediaElement, event: string) => videoEvent(target, event)
 
-/** A WebM of before has its index made again: the old one pointed at frames a jump cannot start from (T180, PIPELINE_ERROR_DECODE). */
-export const jumpable = (video: Blob) => (/webm/i.test(video.type) ? makeSeekable(video, { redo: true }) : Promise.resolve(video))
+const rebuilt = new WeakMap<Blob, Promise<Blob>>()
+
+/**
+ * A WebM of before has its index made again: the old one pointed at frames a jump cannot start from (T180, PIPELINE_ERROR_DECODE).
+ * Once per video (T188): the check, the frames and the index of one transcription used to read and copy the whole file each.
+ */
+export function jumpable(video: Blob): Promise<Blob> {
+  if (!/webm/i.test(video.type)) return Promise.resolve(video)
+  let made = rebuilt.get(video)
+  if (!made) {
+    made = makeSeekable(video, { redo: true })
+    rebuilt.set(video, made)
+  }
+  return made
+}
+
+/** The frames of the times in one pass (T191), at most 1280 px wide in JPEG, with the 16x9 signature; in the order asked, without the missing. */
+async function grabInPass(pass: VideoPass, times: number[]): Promise<GrabbedFrame[]> {
+  const canvas = document.createElement('canvas')
+  const small = document.createElement('canvas')
+  small.width = SIGNATURE_WIDTH
+  small.height = SIGNATURE_HEIGHT
+  const context = canvas.getContext('2d')
+  const tiny = small.getContext('2d', { willReadFrequently: true })
+  if (!context || !tiny) throw new Error('Não deu para desenhar o quadro do vídeo.')
+  const byTime = new Map<number, GrabbedFrame>()
+  await pass.each(times, (at, frame) => {
+    if (!frame) return
+    const scale = Math.min(1, FRAME_WIDTH / (frame.width || FRAME_WIDTH))
+    canvas.width = Math.round((frame.width || FRAME_WIDTH) * scale)
+    canvas.height = Math.round((frame.height || 720) * scale)
+    frame.draw(context, 0, 0, frame.width || FRAME_WIDTH, frame.height || 720, 0, 0, canvas.width, canvas.height)
+    tiny.drawImage(canvas, 0, 0, SIGNATURE_WIDTH, SIGNATURE_HEIGHT)
+    const pixels = tiny.getImageData(0, 0, SIGNATURE_WIDTH, SIGNATURE_HEIGHT).data
+    const signature: number[] = []
+    for (let index = 0; index < pixels.length; index += 4) signature.push((pixels[index] + pixels[index + 1] + pixels[index + 2]) / 3)
+    byTime.set(at, { at, image: canvas.toDataURL('image/jpeg', 0.75), signature })
+  })
+  return times.map(at => byTime.get(at)).filter((frame): frame is GrabbedFrame => Boolean(frame))
+}
 
 export async function grabFrames(video: Blob, times: number[]): Promise<GrabbedFrame[]> {
+  const seekable = await jumpable(video)
+  // T191: one pass where WebCodecs decodes the video (measured: 60 frames in 6 s, against 34 s jumping); the jumps below otherwise
+  const pass = await openPass(seekable)
+  if (pass) {
+    try {
+      return await grabInPass(pass, times)
+    } catch {
+      // the jumps below read them, as before
+    } finally {
+      pass.close()
+    }
+  }
   const element = document.createElement('video')
   element.muted = true
   element.preload = 'auto'
-  const url = URL.createObjectURL(await jumpable(video))
+  const url = URL.createObjectURL(seekable)
   const loaded = once(element, 'loadeddata')
   element.src = url
   try {
@@ -333,10 +451,21 @@ export async function grabFrames(video: Blob, times: number[]): Promise<GrabbedF
     const tiny = small.getContext('2d', { willReadFrequently: true })
     if (!context || !tiny) return []
     const frames: GrabbedFrame[] = []
+    // a frame that does not come is left out (T188: one late frame used to throw all the others away); a few in a row, the video stopped
+    let late = 0
+    let lastLate: unknown = null
     for (const at of times) {
       const seeked = once(element, 'seeked')
       element.currentTime = Math.min(at, Number.isFinite(element.duration) ? element.duration : at)
-      await seeked
+      try {
+        await seeked
+      } catch (error) {
+        if (!(error instanceof Error) || error.message !== FRAME_LATE) throw error
+        lastLate = error
+        if (++late >= LATE_IN_A_ROW) throw error
+        continue
+      }
+      late = 0
       context.drawImage(element, 0, 0, canvas.width, canvas.height)
       tiny.drawImage(canvas, 0, 0, SIGNATURE_WIDTH, SIGNATURE_HEIGHT)
       const pixels = tiny.getImageData(0, 0, SIGNATURE_WIDTH, SIGNATURE_HEIGHT).data
@@ -344,6 +473,7 @@ export async function grabFrames(video: Blob, times: number[]): Promise<GrabbedF
       for (let index = 0; index < pixels.length; index += 4) signature.push((pixels[index] + pixels[index + 1] + pixels[index + 2]) / 3)
       frames.push({ at, image: canvas.toDataURL('image/jpeg', 0.75), signature })
     }
+    if (!frames.length && lastLate) throw lastLate
     return frames
   } finally {
     element.removeAttribute('src')

@@ -161,6 +161,20 @@ export class CombinedRepository implements Repository {
     return this.sides.get(id)
   }
 
+  /** T203: the parts apart from a note (photos of the screens, volume) live only in the App; elsewhere there are none. */
+  async putAside(id: string, parts: Record<string, string>): Promise<boolean> {
+    const app = this.appRepo instanceof AppRepository ? this.appRepo : null
+    if (!app || this.sides.get(id) !== 'app') return false
+    await app.putAside(id, parts)
+    return true
+  }
+
+  async aside(id: string, part: string): Promise<string | undefined> {
+    const app = this.appRepo instanceof AppRepository ? this.appRepo : null
+    if (!app || this.sides.get(id) !== 'app') return undefined
+    return app.aside(id, part)
+  }
+
   /**
    * Where a note made now in this folder is born (spec 005, R9): the App with the structure on, also before the account's hierarchy
    * migrated (owner, 24/11/2026); else the default place with the hierarchy, and the folder's place before it, as it was.

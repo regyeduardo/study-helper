@@ -8,6 +8,7 @@ import { indexAndRead } from '@/lib/generation/screen-reading'
 import type { GenerationSession } from '@/lib/generation/session'
 import { fakeAi, meeting, textAnswer } from '@/test/generation/ata-fixture'
 import { fakeOcr, OCR, recordedCall } from '@/test/generation/screen-fixture'
+import type { Box } from '@/lib/generation/ata-types'
 import type { RecordingData, ScreenIndex } from '@/types/domain'
 
 const startedAt = new Date(2026, 9, 28, 18, 15)
@@ -64,6 +65,30 @@ describe('what the transcription keeps of the screen', () => {
   })
 })
 
+// T191 (dono, 27/11: "Corrija tudo… quero 0 problemas"): the OCR crops of the index were one jump each (up to 240, ~5 s each on the server);
+// with a source that reads many frames in one pass, they come from it, once, in the same box
+describe('the crops of the index in one pass (T191)', () => {
+  it('a source with shots gives every OCR crop in one call, with the same box, and crop() is not called', async () => {
+    const source = recordedCall()
+    const crop = vi.spyOn(source, 'crop')
+    const shots = vi.fn(async (times: number[], box?: Box) => Promise.all(times.map(at => source.full(at).then(shot => ({ ...shot, image: `data:image/jpeg;base64,crop-${at}`, box })))))
+    const kept = (await indexAndRead({ ...source, shots }, fakeOcr()))!
+    expect(shots).toHaveBeenCalledTimes(1)
+    expect(shots.mock.calls[0][0]).toEqual(kept.screens.map(screen => screen.at))
+    expect(shots.mock.calls[0][1]).toEqual(kept.area)
+    expect(crop).not.toHaveBeenCalled()
+    expect(kept.screens.map(screen => screen.texts)).toEqual(OCR)
+  })
+
+  it('a crop the pass did not give is read by a jump, as before', async () => {
+    const source = recordedCall()
+    const shots = vi.fn(async (times: number[]) => times.map((at, index) => (index === 1 ? null : { at, image: `data:image/jpeg;base64,crop-${at}`, width: 1280, height: 800, signature: [] })))
+    const kept = (await indexAndRead({ ...source, shots }, fakeOcr()))!
+    expect(source.crops).toHaveLength(1)
+    expect(kept.screens.map(screen => screen.texts)).toEqual(OCR)
+  })
+})
+
 describe('the transcription step saves it with the recording', () => {
   const video = new Blob(['v'], { type: 'video/webm' })
   const session = { chat: vi.fn(async () => '{"horas": ["00:31"]}') } as unknown as GenerationSession
@@ -77,7 +102,8 @@ describe('the transcription step saves it with the recording', () => {
     const tools: ScreenTools = { grab, see: vi.fn(async () => '{"texto": "Planilha"}'), ocr: () => ocr, index }
     const heard = await lookAtScreen(meeting, video, null, session, tools)
     expect(heard.screenIndex).toEqual(SAVED)
-    expect(index).toHaveBeenCalledWith(video, ocr, session.signal)
+    // T188: its own signal, which follows the session's and also stops the index when the look fails
+    expect(index).toHaveBeenCalledWith(video, ocr, expect.any(AbortSignal))
     expect((await lookAtScreen(meeting, video, vision, session, tools)).screenIndex).toEqual(SAVED)
   })
 

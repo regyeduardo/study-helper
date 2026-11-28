@@ -65,17 +65,19 @@ function ranked(count: Map<string, number>): [string, number][] {
 
 export async function speakersFromTiles(
   recording: RecordingData,
-  frames: Pick<FrameSource, 'full'>,
+  frames: Pick<FrameSource, 'full' | 'shots'>,
   see: SeeFn,
   options: { concurrency?: number } = {},
 ): Promise<{ recording: RecordingData; votes: TileVote[]; tiles: string[] }> {
   const blocks = recording.blocks
   if (!blocks.length) return { recording, votes: [], tiles: [] }
 
+  // T191: the frames of every question in one pass where the source can (one jump each, ~5 s each on the server), asked as they come
+  let prefetched: Promise<Map<number, string>> | null = null
   const ask = async (at: number, prompt: string) => {
     try {
-      const shot = await frames.full(at)
-      return extractJson(await see([shot.image], prompt))
+      const image = (await prefetched)?.get(at) ?? (await frames.full(at)).image
+      return extractJson(await see([image], prompt))
     } catch (error) {
       if (error instanceof Cancelled) throw error
       return null
@@ -91,6 +93,13 @@ export async function speakersFromTiles(
   const tileTimes = [...new Set([5, Math.floor(blocks.length / 2), blocks.length - 5].map(index => blocks[clamp(index)].start))]
   for (const at of tileTimes) jobs.push({ kind: 'tiles', at })
 
+  if (frames.shots && jobs.length) {
+    const times = jobs.map(job => job.at)
+    prefetched = frames.shots(times).then(
+      shots => new Map(shots.flatMap((shot, index) => (shot ? [[times[index], shot.image] as [number, string]] : []))),
+      () => new Map(),
+    )
+  }
   const answers = await pool(jobs, options.concurrency ?? 3, job => ask(job.at, job.kind === 'who' ? WHO_PROMPT : TILES_PROMPT))
 
   const counts = new Map<string, Map<string, number>>(voices.map(speaker => [speaker.id, new Map()]))

@@ -153,6 +153,15 @@ describe('transcription and screen reading go by the model chosen', () => {
     expect(transcriptionOf(settings('or::openai/whisper-1'))).toMatchObject({ engine: 'custom', credentials: { custom: { baseUrl: 'https://openrouter.ai/api/v1', model: 'openai/whisper-1' } } })
   })
 
+  // T199 (research R28): the text of each part comes from a model that hears (Qwen3.8 Omni Flash, on OpenRouter), on the times of Whisper
+  it('with OpenRouter keyed, the DeepInfra transcription gets the model that hears (the text); without its key, or another engine, not', () => {
+    const keyed = (uid: string) => withConfig(config({ defaults: { transcricao: uid }, providers: config().providers.map(provider => (provider.id === 'or' ? { ...provider, key: 'or-key' } : provider)) }))
+    expect(transcriptionOf(keyed('di::openai/whisper-large-v3')).listener).toEqual({ apiKey: 'or-key', baseUrl: 'https://openrouter.ai/api/v1', model: 'qwen/qwen3.8-omni-flash', extra: '' })
+    expect(transcriptionOf(settings('di::openai/whisper-large-v3')).listener).toBeUndefined()
+    expect(transcriptionOf(keyed('di::nvidia/Nemotron-3-Nano-Omni')).listener).toBeUndefined()
+    expect(transcriptionOf(keyed('or::openai/whisper-1')).listener).toBeUndefined()
+  })
+
   it('the model chosen at generation time wins; without any, transcribing asks to choose one', () => {
     expect(transcriptionOf(settings('or::openai/whisper-1'), 'di::openai/whisper-large-v3').engine).toBe('deepinfra')
     expect(transcriptionOf(withConfig(config())).engine).toBe('')

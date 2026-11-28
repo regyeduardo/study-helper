@@ -427,6 +427,10 @@ textarea.input{resize:vertical;min-height:62px}
 .banner{display:flex;gap:8px;align-items:flex-start;font-size:12.5px;padding:8px 10px;border-radius:8px;background:var(--warn-soft);color:var(--fg)}
 .banner.info{background:var(--bg-subtle);color:var(--fg-muted)}
 .banner .ic{margin-top:1px;color:var(--warn)}
+.banner>.banner-close{width:22px;height:22px;margin:-3px -5px -3px auto;border-radius:6px}
+.banner>.banner-close .ic{margin:0;width:14px;height:14px;color:var(--fg-muted)}
+/* T196 (review of T189): the X of the transcription's warning is 44 px under a finger */
+@media (pointer:coarse){.banner>.banner-close{width:44px;height:44px;margin:-12px -12px -12px auto}}
 .drop{border:1.5px dashed var(--border);border-radius:10px;padding:18px;display:grid;gap:6px;justify-items:center;text-align:center;color:var(--fg-muted);cursor:pointer}
 .drop:hover{border-color:var(--accent);color:var(--fg)}
 .progress{display:grid;gap:8px}
@@ -457,6 +461,28 @@ textarea.input{resize:vertical;min-height:62px}
 .toast-act{pointer-events:auto;padding:4px 10px;border-radius:6px;font-weight:600;white-space:nowrap;background:rgba(127,127,127,.25)}
 .toast-act:hover{background:rgba(127,127,127,.4)}
 .toast-act:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+/* T194: an operation running without holding the app, and its failure, which stays with the reason until closed or tried again.
+   The failure is its own alert, outside the polite region of the others (read once); the warning sign takes the text's color: the toast
+   inverts the theme, and the amber of the theme gave 2,3:1 on the light toast of the dark theme. */
+.toasts-live{display:grid;gap:6px;justify-items:center}
+.toast-busy{display:flex;align-items:center;gap:8px}
+.toast-busy .ic{width:14px;height:14px;flex:none}
+.toast.toast-failure{display:grid;grid-template-columns:auto minmax(0,1fr) auto auto;grid-template-areas:"sign text act close";align-items:center;column-gap:10px;padding-right:6px;pointer-events:auto;width:max-content;max-width:min(560px,calc(100vw - 32px))}
+.toast-failure>.ic{grid-area:sign;width:15px;height:15px;color:inherit}
+.toast-failure .toast-text{grid-area:text;overflow-wrap:anywhere}
+.toast-failure .toast-act{grid-area:act}
+.toast-close{grid-area:close;pointer-events:auto;width:26px;height:26px;display:grid;place-items:center;border-radius:6px;color:inherit;opacity:.75}
+.toast-close:hover{opacity:1;background:rgba(127,127,127,.25)}
+.toast-close:focus-visible{outline:2px solid var(--accent);outline-offset:2px;opacity:1}
+.toast-close .ic{width:14px;height:14px}
+/* a narrow screen: the reason over the whole width, the actions under it, the X in its corner */
+@media (max-width:640px){
+.toast.toast-failure{grid-template-columns:auto minmax(0,1fr) auto;grid-template-areas:"sign text close" ". act act";row-gap:6px;align-items:start;width:auto}
+.toast-failure>.ic{margin-top:2px}
+.toast-failure .toast-act{justify-self:start}
+.toast-close{margin-top:-4px}
+}
+@media (pointer:coarse){.toast-act,.toast-close{min-height:44px}.toast-close{min-width:44px}}
 @keyframes rise{from{transform:translateY(6px);opacity:.3}}
 .pal{width:min(620px,100%);background:var(--bg);border:1px solid var(--border);border-radius:14px;box-shadow:var(--shadow);overflow:hidden;display:flex;flex-direction:column;max-height:70%}
 .pal input{border:0;border-bottom:1px solid var(--border-muted);padding:15px 16px;font-size:15px;background:transparent;outline:none;width:100%}

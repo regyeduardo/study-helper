@@ -245,6 +245,8 @@ export interface ScreenIndex {
   area: { x: number; y: number; w: number; h: number }
   /** Each distinct screen from `at` to `end` (seconds), with what the local OCR read on it; no `texts` when it was not read. */
   screens: { at: number; end: number; texts?: { text: string; confidence: number }[] }[]
+  /** T201: made by the recording while it recorded (the screens are not looked for in the video again); absent, found afterwards. */
+  madeBy?: 'gravacao'
 }
 
 export interface RecordingData {
@@ -512,6 +514,8 @@ export interface TranscriptionSettings {
   engine: TranscriptionEngine
   language: string
   credentials: Partial<Record<ProviderEngine, TranscriptionCredential>>
+  /** T199: the model that hears each part and writes its text on the times of Whisper (DeepInfra engine), when OpenRouter is keyed. */
+  listener?: TranscriptionCredential
   speakersEngine: SpeakersEngine
   terms?: string
 }

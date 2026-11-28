@@ -1,6 +1,7 @@
 import type { AiSettings, RecordingData, ScreenFrame, ScreenIndex, Settings } from '@/types/domain'
 import { Cancelled, visionController } from '@/controllers/ai.controller'
 import { visionOf } from '@/lib/ai/config'
+import { VISION_TIMEOUT_MS, withRetry } from '@/lib/generation/ata-ai'
 import type { ScreenOcr } from '@/lib/generation/ata-types'
 import { pool } from '@/lib/generation/meeting-material'
 import { extractJson } from '@/lib/generation/mermaid'
@@ -30,12 +31,17 @@ export interface ScreenMoment {
 
 export interface ScreenTools {
   grab(video: Blob, times: number[]): Promise<GrabbedFrame[]>
-  see(settings: AiSettings, images: string[], prompt: string): Promise<string>
+  see(settings: AiSettings, images: string[], prompt: string, signal?: AbortSignal): Promise<string>
   /** The local OCR (null where it cannot run). */
   ocr?(): ScreenOcr | null
   /** The distinct screens of the whole video with their text, to keep for the Ata (null when there are none to keep). */
   index?(video: Blob, ocr: ScreenOcr | null, signal?: AbortSignal): Promise<ScreenIndex | null>
+  /** T203: the tools come from the screens the recording marked (`markedTools`): no video is needed. */
+  marked?: boolean
 }
+
+/** What the tools get for the video when they come from the marks (they never read it). */
+const NO_VIDEO = new Blob()
 
 async function keptIndex(video: Blob, ocr: ScreenOcr | null, signal?: AbortSignal): Promise<ScreenIndex | null> {
   const source = await openVideoFrames(video)
@@ -46,7 +52,31 @@ async function keptIndex(video: Blob, ocr: ScreenOcr | null, signal?: AbortSigna
   }
 }
 
-const REAL_TOOLS: ScreenTools = { grab: grabFrames, see: (settings, images, prompt) => visionController(settings, images, prompt), ocr: browserOcr, index: keptIndex }
+/** A vision call that hangs never holds the transcription (T188): the time limit and the retries of the Ata, two tries at most. */
+export const REAL_TOOLS: ScreenTools = {
+  grab: grabFrames,
+  see: (settings, images, prompt, signal) => withRetry(own => visionController(settings, images, prompt, own), { signal, timeoutMs: VISION_TIMEOUT_MS, attempts: 2 }),
+  ocr: browserOcr,
+  index: keptIndex,
+}
+
+/** The person asked for the screen and it could not be read (T188): the work fails saying why, instead of going on with the sound alone. */
+export class ScreenUnread extends Error {}
+
+export interface LookOptions {
+  /** The person chose to read the screen ("Transcrição + quadros do vídeo"): what keeps it from being read fails the look. */
+  strict?: boolean
+  /** How long, after the look itself, the index of the whole video may still take (T188); past it, it stops and the Ata makes its own. */
+  indexGraceMs?: number
+}
+
+/**
+ * T188: the index of the whole video held the transcription of a 90 min video for 20 min on the server (1.210 jumps on 2 vCPU). It is
+ * kept when it ends within a minute of the look; otherwise the transcription goes on, and the Ata makes its own when asked.
+ */
+export const INDEX_GRACE_MS = 60_000
+
+const messageOf = (error: unknown) => (error instanceof Error ? error.message : String(error))
 
 /** Leitura de tela (own, or the Vídeo e áudio model), or the one picked at generation time; null without a usable one. */
 export function visionSettingsOf(settings: Settings, pick?: string | null): AiSettings | null {
@@ -109,21 +139,33 @@ function field(raw: string, name: string): string {
   return typeof value === 'string' ? value.trim() : ''
 }
 
-export async function lookAtScreen(recording: RecordingData, video: Blob | null, vision: AiSettings | null, session: GenerationSession, tools: ScreenTools = REAL_TOOLS): Promise<RecordingData> {
-  if (!video) return recording
+export async function lookAtScreen(recording: RecordingData, video: Blob | null, vision: AiSettings | null, session: GenerationSession, tools: ScreenTools = REAL_TOOLS, { strict = false, indexGraceMs = INDEX_GRACE_MS }: LookOptions = {}): Promise<RecordingData> {
+  if (!video && !tools.marked) return recording
+  const source = video ?? NO_VIDEO
   const ocr = tools.ocr?.() ?? null
-  if (!vision && !ocr) return { ...recording, warning: [recording.warning, NO_VISION].filter(Boolean).join(' ') }
-  // the screens of the whole video are found next to the rest and kept with the recording; failing never fails the look
-  const indexing = tools.index?.(video, ocr, session.signal).catch(() => null)
+  if (!vision && !ocr) {
+    if (strict) throw new ScreenUnread(`A tela não foi lida: ${NO_VISION}`)
+    return { ...recording, warning: [recording.warning, NO_VISION].filter(Boolean).join(' ') }
+  }
+  // the screens of the whole video, kept with the recording for the Ata: started after the frames, so its hundreds of jumps do not
+  // compete with theirs (T188), and stopped with the look when it fails or is cancelled; failing never fails the look
+  const stop = new AbortController()
+  const forward = () => stop.abort()
+  session.signal?.addEventListener('abort', forward, { once: true })
+  let indexing: Promise<ScreenIndex | null> = Promise.resolve(null)
   const kept = async () => {
-    const screenIndex = await indexing
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const late = new Promise<null>(resolve => (timer = setTimeout(() => resolve(null), indexGraceMs)))
+    const screenIndex = await Promise.race([indexing, late]).finally(() => clearTimeout(timer))
+    if (!screenIndex) stop.abort()
     return screenIndex ? { screenIndex } : {}
   }
   try {
     const asked = await askedMoments(recording, (user, system) => session.chat(user, system))
     const moments = screenMoments(recording, asked)
     const times = [...new Set(moments.map(moment => moment.at))].sort((a, b) => a - b)
-    const grabbed = new Map((await tools.grab(video, times)).map(frame => [frame.at, frame]))
+    const grabbed = new Map((await tools.grab(source, times)).map(frame => [frame.at, frame]))
+    indexing = tools.index?.(source, ocr, stop.signal).catch(() => null) ?? Promise.resolve(null)
     // The local OCR reads each distinct frame (exact text, free) while the vision model looks; unsure readings never become terms.
     const reading = Promise.all(distinctFrames([...grabbed.values()]).map(frame => (ocr ? ocr.read(frame.image).catch(() => []) : [])))
     if (!vision) {
@@ -146,12 +188,21 @@ export async function lookAtScreen(recording: RecordingData, video: Blob | null,
       const index = speakers.findIndex(speaker => speaker.id === moment.speaker)
       return shot && index >= 0 ? [{ shot, index }] : []
     })
-    // Which screens to read is settled above; the vision calls themselves run side by side.
-    const asks = [
-      ...looks.map(look => () => tools.see(vision, look.shots.map(shot => shot.image), PROMPTS.SCREEN_TEXT_PROMPT)),
-      ...faces.map(face => () => tools.see(vision, [face.shot.image], PROMPTS.SCREEN_NAME_PROMPT.replace('{nome}', speakers[face.index].name))),
-    ]
-    const answers = await pool(asks, SEE_AT_ONCE, ask => ask())
+    // Which screens to read is settled above; the vision calls themselves run side by side. One that fails (after its retry) is left
+    // out and counted (T188: it used to throw away every look already read); all of them failing is the reading failing.
+    const failures: unknown[] = []
+    const ask = (images: string[], prompt: string) => async () => {
+      try {
+        return await tools.see(vision, images, prompt, session.signal)
+      } catch (error) {
+        if (error instanceof Cancelled || session.signal?.aborted) throw error
+        failures.push(error)
+        return ''
+      }
+    }
+    const asks = [...looks.map(look => ask(look.shots.map(shot => shot.image), PROMPTS.SCREEN_TEXT_PROMPT)), ...faces.map(face => ask([face.shot.image], PROMPTS.SCREEN_NAME_PROMPT.replace('{nome}', speakers[face.index].name)))]
+    const answers = await pool(asks, SEE_AT_ONCE, run => run())
+    if (asks.length && failures.length === asks.length) throw failures[0]
     const frames: ScreenFrame[] = []
     looks.forEach((look, index) => {
       const text = field(answers[index], 'texto')
@@ -163,12 +214,24 @@ export async function lookAtScreen(recording: RecordingData, video: Blob | null,
     })
     frames.sort((a, b) => a.at - b.at)
     const screenTerms = voteTerms(await reading).exact
+    const missed = failures.length ? `${failures.length} de ${asks.length} olhadas da tela não vieram (${messageOf(failures[0])}).` : ''
     // a lit tile can be someone else's: a name read for two voices, or one another voice already has, goes to no one (FR-059)
-    return { ...recording, speakers: distinctNames(recording.speakers, speakers), ...(frames.length ? { frames } : {}), ...(screenTerms.length ? { screenTerms } : {}), ...(await kept()) }
+    return {
+      ...recording,
+      speakers: distinctNames(recording.speakers, speakers),
+      ...(frames.length ? { frames } : {}),
+      ...(screenTerms.length ? { screenTerms } : {}),
+      ...(missed ? { warning: [recording.warning, missed].filter(Boolean).join(' ') } : {}),
+      ...(await kept()),
+    }
   } catch (error) {
-    if (error instanceof Cancelled) throw error
-    return { ...recording, warning: [recording.warning, 'Não deu para ler a tela gravada; a nota foi feita só com o som.'].filter(Boolean).join(' '), ...(await kept()) }
+    if (error instanceof Cancelled || session.signal?.aborted) throw error instanceof Cancelled ? error : new Cancelled()
+    // nothing waits for the index of the whole video to say the screen failed
+    stop.abort()
+    if (strict) throw new ScreenUnread(`A tela não foi lida: ${messageOf(error)}`)
+    return { ...recording, warning: [recording.warning, `Não deu para ler a tela gravada (${messageOf(error)}); a nota foi feita só com o som.`].filter(Boolean).join(' ') }
   } finally {
+    session.signal?.removeEventListener('abort', forward)
     ocr?.close?.()
   }
 }

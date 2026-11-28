@@ -166,5 +166,8 @@ func (srv *Server) driveAccount(claims *idClaims) (string, error) {
 		id = newID()
 		_, err = srv.db.Exec(`INSERT INTO user (id, email, email_verified, name, photo_url, created_at, updated_at) VALUES (?, ?, 1, NULLIF(?, ''), NULLIF(?, ''), ?, ?)`, id, claims.Email, claims.Name, claims.Picture, now, now)
 	}
+	if err == nil {
+		srv.accountChanged(id)
+	}
 	return id, err
 }

@@ -10,7 +10,7 @@ import { SaveToDrive } from '@/components/library/SaveToDrive'
 import { SharedBadge } from '@/components/library/SharedBadge'
 import { MarkList } from '@/components/reader/Markers'
 import { MediaPlayer, type MeetingMedia, useMeetingMedia } from '@/components/reader/MediaPlayer'
-import { TranscriptTab } from '@/components/reader/TranscriptTab'
+import { forgetWarning, saveTranscript, TranscriptTab } from '@/components/reader/TranscriptTab'
 import { saveMarks, useMarks } from '@/components/reader/use-marks'
 import { usePlayback } from '@/components/reader/use-playback'
 import { Icon, type IconName } from '@/components/ui/Icon'
@@ -289,15 +289,14 @@ function Transcript({ entry, opened, canTranscribe, canPlay, playback, marking }
   const retry = here?.retry
   const again = here ? (retry && !readOnly ? () => (dismiss(here.id), openOverlay(retry)) : undefined) : inAccount && !readOnly ? () => void useAccountJobsStore.getState().retry(inAccount.id).catch(() => undefined) : undefined
   const status = job && (running ? <JobProgress job={job} /> : job.error && <Failure text={job.error} onRetry={again} />)
-  // from scratch, with the same window as the first time
-  const redo = canTranscribe && !running ? () => openOverlay({ kind: 'transcribe', fileId: entry.id }) : undefined
   if (recording?.blocks.length) {
     // The same rename as in the note: every speech of that voice, the transcript, the note's text and the notes born of it (FR-060)
     const rename = (speakerId: string, name: string) => renameSpeakerOnClick(entry.id, speakerId, name)
     return (
       <>
         {status}
-        <TranscriptTab recording={withRecorder(recording, readOnly ? '' : recorderName(useAccountStore.getState().active()))} name={entry.name} time={playback.time} onPlay={canPlay ? playback.playFrom : undefined} onRename={readOnly ? undefined : (speakerId, name) => void rename(speakerId, name)} onMarks={readOnly ? undefined : marks => saveMarks(entry.id, marks)} editing={marking.editing} onEditing={marking.setEditing} onRetranscribe={redo} found={found} />
+        {/* "Exportar" and "Refazer a transcrição" are in the "⋯" of the page (dono, 27/11); who only reads has no "⋯": "Exportar" stays here */}
+        <TranscriptTab recording={withRecorder(recording, readOnly ? '' : recorderName(useAccountStore.getState().active()))} name={entry.name} time={playback.time} onPlay={canPlay ? playback.playFrom : undefined} onRename={readOnly ? undefined : (speakerId, name) => void rename(speakerId, name)} onMarks={readOnly ? undefined : marks => saveMarks(entry.id, marks)} editing={marking.editing} onEditing={marking.setEditing} found={found} tools={readOnly} onCloseWarning={readOnly ? undefined : () => forgetWarning(entry.id)} />
       </>
     )
   }
@@ -305,14 +304,6 @@ function Transcript({ entry, opened, canTranscribe, canPlay, playback, marking }
     return (
       <>
         {status}
-        {redo && (
-          <div className="tr-tools">
-            <button className="btn" onClick={redo}>
-              <Icon name="sync" />
-              Refazer a transcrição
-            </button>
-          </div>
-        )}
         <MarkList marks={recording?.marks ?? []} actions={marking.actions} onPlay={canPlay ? playback.playFrom : undefined} />
         <p className="ep-plain">{transcript.trim()}</p>
       </>
@@ -493,6 +484,11 @@ function EntryView({ fileId }: { fileId: string }) {
   const canPlay = media.available && entry.kept !== 'registro' && !entry.origin?.removedAt
   const count = familyCount(files, fileId)
   const transcribed = Boolean(opened?.sidecar.recording?.blocks.length || opened?.sidecar.transcript?.trim())
+  const spoken = opened?.sidecar.recording?.blocks.length ? opened.sidecar.recording : null
+  // a transcription on its way (here or in the account): "Refazer" waits for it
+  const transcribing = jobs.some(job => job.fileId === fileId && job.kind === 'transcription' && job.status === 'running') || accountJobs.some(job => job.fileId === fileId && TRANSCRIBING.has(job.call) && (job.state === 'queued' || job.state === 'running'))
+  const redoable = transcribed && canPlay && !transcribing
+  const exportAs = (extension: 'txt' | 'srt') => spoken && saveTranscript(withRecorder(spoken, recorderName(useAccountStore.getState().active())), entry.name, extension)
   const generate = () => ui.open({ kind: 'generate-entry', fileId: entry.id })
   const removeMedia = () =>
     ui.open({
@@ -535,13 +531,12 @@ function EntryView({ fileId }: { fileId: string }) {
                 {readOnly ? (
                   <SharedBadge label />
                 ) : (
-                  <span title={pathName(entry.folderId)}>
+                  <button title={pathName(entry.folderId)} onClick={() => navigate(paths.folder(entry.folderId))}>
                     <Icon name="folder" />
                     {folderName(entry.folderId)}
-                  </span>
+                  </button>
                 )}
                 <span>{date(entry.created.at)}</span>
-                <span className="ep-kept">{entry.kept === 'arquivo' && !entry.origin?.removedAt ? 'Registro e arquivo' : 'Só o registro'}</span>
               </div>
             </div>
           </div>
@@ -573,6 +568,10 @@ function EntryView({ fileId }: { fileId: string }) {
               </button>
               {menu && (
                 <Popover x={menu.x} y={menu.y} onClose={() => setMenu(null)} label="Ações da nota">
+                  {spoken && action('download', 'Exportar a transcrição (.txt)', () => exportAs('txt'))}
+                  {spoken && action('download', 'Exportar a transcrição (.srt)', () => exportAs('srt'))}
+                  {redoable && action('sync', 'Refazer a transcrição', () => ui.open({ kind: 'transcribe', fileId: entry.id }))}
+                  {(spoken || redoable) && <div className="sep" />}
                   {action('pen', 'Renomear', () => ui.open({ kind: 'rename', target: 'file', id: entry.id }))}
                   {action('move', 'Mover para…', () => ui.open({ kind: 'move', fileIds: [entry.id], folderIds: [] }))}
                   {action('link', 'Compartilhar…', () => ui.open({ kind: 'share', target: 'entrada', id: entry.id }))}
@@ -593,10 +592,7 @@ function EntryView({ fileId }: { fileId: string }) {
           </section>
           {isMedia && (
             <section className="ep-card ep-trans" aria-label="Transcrição">
-              <h2>
-                Transcrição
-                {transcribed && <span className="ep-hint">Faz parte da mídia</span>}
-              </h2>
+              <h2>Transcrição</h2>
               <div className="ep-card-body">
                 <Transcript entry={entry} opened={opened} canPlay={canPlay} canTranscribe={canPlay && !readOnly} playback={playback} marking={marking} />
               </div>

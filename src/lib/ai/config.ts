@@ -135,6 +135,19 @@ function engineOf(type: AiProviderId, model: string): ProviderEngine {
   return 'custom'
 }
 
+/**
+ * T199 (research R28, measured 28/11): the text of each part by a model that hears, on the times of Whisper: Qwen3.8 Omni Flash made 0%
+ * of words wrong on the test meeting (Voxtral 1.5%) and 13.1% on real conversation (Voxtral 13.3%) for 1/20 of the cost.
+ */
+export const LISTENER_MODEL = 'qwen/qwen3.8-omni-flash'
+
+/** The model that hears, by the OpenRouter of the configuration (its key, or the app's when the app's AI is on); none without it. */
+function listenerOf(config: AiConfig): TranscriptionCredential | undefined {
+  const provider = config.providers.find(candidate => candidate.type === 'openrouter' && candidate.key)
+  if (!provider) return undefined
+  return { apiKey: provider.key, baseUrl: baseUrlOf({ provider: 'openrouter', baseUrl: '', apiKey: provider.key, model: LISTENER_MODEL }), model: LISTENER_MODEL, extra: '' }
+}
+
 /** What `transcribe` needs, from the Transcrição model (own or inherited from Vídeo e áudio) or the one picked now. */
 export function transcriptionOf(settings: Settings, pick?: string | null): TranscriptionSettings {
   const saved = { ...defaultSettings().transcription, ...settings.transcription }
@@ -144,7 +157,8 @@ export function transcriptionOf(settings: Settings, pick?: string | null): Trans
   if (!target) return { ...common, engine: '' as TranscriptionEngine, credentials: {} }
   const engine = engineOf(target.provider, target.model)
   const credential: TranscriptionCredential = { apiKey: target.apiKey, baseUrl: baseUrlOf(target), model: target.model, extra: engine === 'custom' ? (saved.credentials?.custom?.extra ?? '') : '' }
-  return { ...common, engine, credentials: { [engine]: credential } }
+  const listener = engine === 'deepinfra' ? listenerOf(config) : undefined
+  return { ...common, engine, credentials: { [engine]: credential }, ...(listener ? { listener } : {}) }
 }
 
 /** True unless the provider says the model does NOT take something the use receives. */

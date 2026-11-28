@@ -58,6 +58,7 @@ func (srv *Server) useCode(w http.ResponseWriter, r *http.Request, s *Session) {
 			fail(w, http.StatusInternalServerError, "internal_error", nil)
 			return
 		}
+		srv.accountChanged(s.User.ID)
 		writeJSON(w, http.StatusOK, map[string]any{"status": "enabled", "alreadyEnabled": true})
 		return
 	}
@@ -125,6 +126,7 @@ func (srv *Server) useCode(w http.ResponseWriter, r *http.Request, s *Session) {
 		fail(w, http.StatusInternalServerError, "internal_error", nil)
 		return
 	}
+	srv.accountChanged(s.User.ID)
 	writeJSON(w, http.StatusOK, map[string]any{"status": "enabled"})
 }
 
@@ -161,5 +163,6 @@ func (srv *Server) setStructure(w http.ResponseWriter, r *http.Request, s *Sessi
 		fail(w, http.StatusInternalServerError, "internal_error", nil)
 		return
 	}
+	srv.accountChanged(s.User.ID)
 	writeJSON(w, http.StatusOK, map[string]any{"appEnabled": *body.On})
 }

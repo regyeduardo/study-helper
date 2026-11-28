@@ -29,8 +29,13 @@ const (
 	jobMaxRun     = 3 * time.Hour
 	// up to this many jobs of one account run at the same time (FR-015)
 	jobsPerAccount = 2
-	jobsKeptDays   = 30
-	jobDiedMessage = "O trabalho parou de repente; tente de novo."
+	// T190: places on the server when ESTUDO_GERADORES (all jobs) and ESTUDO_GERADORES_MIDIA (the media lane) are not set. Each job is a
+	// Chromium of about 420 MB (measured, e2e/playwright.trabalho.config.ts); a media job also decodes its video and its audio, and two of
+	// a long video do not fit the 3,8 GB of the server: one at a time, and the text jobs use the other places.
+	defaultGenerators      = 3
+	defaultMediaGenerators = 1
+	jobsKeptDays           = 30
+	jobDiedMessage         = "O trabalho parou de repente; tente de novo."
 	// a page that entered and said nothing at all for this long died before its first step (the worker reports within a second of starting)
 	jobSilentStart    = 10 * time.Minute
 	jobNeverOpened    = "A página do trabalho não abriu no servidor; tente de novo."
@@ -146,32 +151,49 @@ func (srv *Server) generators() int {
 	if srv.cfg.Generators > 0 {
 		return srv.cfg.Generators
 	}
-	return 2
+	return defaultGenerators
 }
 
+// mediaGenerators is how many jobs of the media lane run at once, never more than all the places.
+func (srv *Server) mediaGenerators() int {
+	media := defaultMediaGenerators
+	if srv.cfg.MediaGenerators > 0 {
+		media = srv.cfg.MediaGenerators
+	}
+	return min(media, srv.generators())
+}
+
+// mediaLane is true (1) for the job `j` that may open the media of its note: a transcription, an Ata, or a note generated from a note that
+// keeps its media in the App (to transcribe it first, read its screen or send it to the model). Everything else is text (T190).
+const mediaLane = `(j.call IN ('transcribeNote', 'generateAta', 'generateFromNote') AND EXISTS (SELECT 1 FROM library_items i WHERE i.user_id = j.user_id AND i.id = j.file_id AND i.media IS NOT NULL))`
+
 func (srv *Server) dispatchJobs() {
-	rows, err := srv.db.Query(`SELECT id, user_id, COALESCE(file_id, '') FROM jobs WHERE state = 'queued' ORDER BY rowid`)
+	rows, err := srv.db.Query(`SELECT j.id, j.user_id, COALESCE(j.file_id, ''), ` + mediaLane + ` FROM jobs j WHERE j.state = 'queued' ORDER BY j.rowid`)
 	if err != nil {
 		return
 	}
-	type waiting struct{ id, user, file string }
+	type waiting struct {
+		id, user, file string
+		media          bool
+	}
 	var queue []waiting
 	for rows.Next() {
 		var item waiting
-		if rows.Scan(&item.id, &item.user, &item.file) == nil {
+		if rows.Scan(&item.id, &item.user, &item.file, &item.media) == nil {
 			queue = append(queue, item)
 		}
 	}
 	rows.Close()
 	for _, item := range queue {
-		var total, mine, sameNote int
-		_ = srv.db.QueryRow(`SELECT COUNT(*), COALESCE(SUM(user_id = ?), 0), COALESCE(SUM(user_id = ? AND file_id = ? AND ? != ''), 0) FROM jobs WHERE state = 'running'`,
-			item.user, item.user, item.file, item.file).Scan(&total, &mine, &sameNote)
+		var total, media, mine, sameNote int
+		_ = srv.db.QueryRow(`SELECT COUNT(*), COALESCE(SUM(`+mediaLane+`), 0), COALESCE(SUM(j.user_id = ?), 0), COALESCE(SUM(j.user_id = ? AND j.file_id = ? AND ? != ''), 0) FROM jobs j WHERE j.state = 'running'`,
+			item.user, item.user, item.file, item.file).Scan(&total, &media, &mine, &sameNote)
 		if total >= srv.generators() {
 			return
 		}
-		// the jobs of one note run in turn (FR-031): the Ata of a recording starts after its transcription
-		if mine >= jobsPerAccount || sameNote > 0 {
+		// the jobs of one note run in turn (FR-031): the Ata of a recording starts after its transcription; a media job waits for its lane,
+		// and the text jobs behind it go on
+		if mine >= jobsPerAccount || sameNote > 0 || (item.media && media >= srv.mediaGenerators()) {
 			continue
 		}
 		srv.startJob(item.id, item.user)
@@ -199,6 +221,14 @@ func (srv *Server) startJob(id, userID string) {
 	runner := srv.cfg.JobRunner
 	if runner == nil {
 		runner = srv.runChromium
+	}
+	// T206 (FR-084): a transcription the backend in Go can make runs here, without the Chromium
+	if plan := srv.goTranscriptionOf(id, userID); plan != nil {
+		runner = func(ctx context.Context, start JobStart) error { return srv.runGoTranscription(ctx, start, plan) }
+	}
+	// T207: a generation already in Go runs here too
+	if run := srv.goGenerationOf(id, userID); run != nil {
+		runner = run
 	}
 	go func() {
 		err := runner(ctx, start)
@@ -352,8 +382,9 @@ func (srv *Server) jobOut(job *jobRow) map[string]any {
 	}
 	if job.State == "queued" {
 		var ahead int
-		// the order of arrival (rowid), the same order the queue starts them
-		_ = srv.db.QueryRow(`SELECT COUNT(*) FROM jobs WHERE user_id = ? AND state = 'queued' AND rowid < (SELECT rowid FROM jobs WHERE id = ?)`, job.UserID, job.ID).Scan(&ahead)
+		// the order of arrival (rowid), the same order the queue starts them, among the jobs of the same lane (T190)
+		_ = srv.db.QueryRow(`SELECT COUNT(*) FROM jobs j, jobs me WHERE me.id = ? AND j.user_id = me.user_id AND j.state = 'queued' AND j.rowid < me.rowid
+			AND `+mediaLane+` = (SELECT `+strings.ReplaceAll(mediaLane, "j.", "me.")+`)`, job.ID).Scan(&ahead)
 		out["queuePosition"] = ahead + 1
 	}
 	return out
@@ -708,6 +739,7 @@ func (srv *Server) endJob(job *jobRow, s *Session, set string, args ...any) {
 		log.Printf("jobs: end %s: %v", job.ID, err)
 	}
 	_, _ = srv.db.Exec(`UPDATE devices SET signed_out_at = ? WHERE id = ?`, now, s.DeviceID)
+	srv.accountChanged(s.User.ID)
 	srv.jobs.mu.Lock()
 	delete(srv.jobs.paces, job.ID)
 	srv.jobs.mu.Unlock()

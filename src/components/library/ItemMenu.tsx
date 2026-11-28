@@ -10,7 +10,7 @@ import { descendantsOf } from '@/lib/family'
 import { isSourceNote, mediaOf } from '@/lib/file-types'
 import { isCourseFolder } from '@/lib/generation/course-lesson'
 import { paths } from '@/lib/paths'
-import { working } from '@/lib/working'
+import { unheld, working } from '@/lib/working'
 import { useJobsStore } from '@/stores/jobs'
 import { useLibraryStore } from '@/stores/library'
 import { useUiStore } from '@/stores/ui'
@@ -45,14 +45,18 @@ export function ItemMenu() {
     })()
   }
 
-  // the AI reads the note: the line is there from the click, and the end says what came out
-  const suggestTags = async (fileId: string) => {
-    const ok = await working('Sugerindo etiquetas…', () => jobs.suggestTags(fileId), { message: 'A IA está lendo a nota' })
-    if (!ok) return
-    const found = useLibraryStore.getState().files.find(item => item.id === fileId)?.suggestedTags?.length ?? 0
-    if (found) ui.toast(`${found} ${found === 1 ? 'etiqueta sugerida' : 'etiquetas sugeridas'}.`, { label: 'Ver na nota', to: paths.file(fileId) })
-    else ui.toast('Não saíram etiquetas novas para esta nota.')
-  }
+  // the AI reads the note while the app goes on (T194): the corner says it is running, and the end says what came out
+  const suggestTags = (fileId: string) =>
+    unheld(
+      'Sugerindo etiquetas…',
+      async () => {
+        await jobs.suggestTags(fileId)
+        const found = useLibraryStore.getState().files.find(item => item.id === fileId)?.suggestedTags?.length ?? 0
+        if (found) ui.toast(`${found} ${found === 1 ? 'etiqueta sugerida' : 'etiquetas sugeridas'}.`, { label: 'Ver na nota', to: paths.file(fileId) })
+        else ui.toast('Não saíram etiquetas novas para esta nota.')
+      },
+      { failed: 'Não deu para sugerir etiquetas' },
+    )
 
   if (menu.kind === 'folder') {
     const folder = library.folders.find(item => item.id === menu.id)
@@ -226,10 +230,12 @@ export function ItemMenu() {
         className="mi danger"
         onClick={act(() => {
           if (descendantsOf(library.files, file.id).length) return ui.open({ kind: 'delete-family', fileId: file.id })
-          // the note leaves the list at once and a line says it is being removed (one Drive write, more with the media)
+          // the note leaves the list at once; to the Lixeira, the app goes on (T194: a slow write says so in the corner, a failure brings it
+          // back, saying why); with the media, which does not come back, the window holds the app until it is done, as before
           const trash = async (media: boolean) => {
-            const ok = await working(`Apagando "${file.name}"…`, () => library.trashFiles([file.id], { media }), { message: media ? 'Apagando a nota e a mídia' : 'Mandando para a lixeira' })
-            if (ok) ui.toast(`"${file.name}" foi para a lixeira${media ? ', com a mídia' : ''}`)
+            const done = `"${file.name}" foi para a lixeira${media ? ', com a mídia' : ''}`
+            if (!media) return void unheld(`Apagando "${file.name}"…`, () => library.trashFiles([file.id], { media }), { done, failed: `Não deu para apagar "${file.name}"` })
+            if (await working(`Apagando "${file.name}"…`, () => library.trashFiles([file.id], { media }), { message: 'Apagando a nota e a mídia' })) ui.toast(done)
           }
           if (!library.hasMedia(file.id)) return trash(false)
           ui.open(mediaChoice(file, trash))

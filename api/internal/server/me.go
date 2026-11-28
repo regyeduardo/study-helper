@@ -15,7 +15,11 @@ const (
 func (srv *Server) me(w http.ResponseWriter, _ *http.Request, s *Session) {
 	required := "1"
 	_ = srv.read.QueryRow(`SELECT value FROM app_settings WHERE key = 'require_code'`).Scan(&required)
+	// T210: the access token says only who it is; the name, the photo and the space are read here
 	user := s.User
+	if fresh, err := scanUser(srv.read.QueryRow(`SELECT `+userColumns+` FROM user u WHERE u.id = ?`, s.User.ID)); err == nil {
+		user = fresh
+	}
 	// spec 005: when the hierarchy was taken to the account (null = still the way of before)
 	var hierarchyAt sql.NullString
 	_ = srv.read.QueryRow(`SELECT hierarchy_at FROM user WHERE id = ?`, user.ID).Scan(&hierarchyAt)

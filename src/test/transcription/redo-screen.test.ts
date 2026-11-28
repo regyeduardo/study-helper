@@ -18,6 +18,8 @@ vi.mock('@/lib/recording/media-library', async importOriginal => ({
 }))
 // the look itself is tested in frames.test.ts: here, only whether it is asked and with which model
 vi.mock('@/lib/generation/frames', async importOriginal => ({ ...(await importOriginal<typeof import('@/lib/generation/frames')>()), lookAtScreen: vi.fn(async (recording: unknown) => recording) }))
+// the check before reading the screen (T188) is tested in screen-check.test.ts and screen-first.test.ts: here the screen can be read
+vi.mock('@/lib/generation/screen-check', async importOriginal => ({ ...(await importOriginal<typeof import('@/lib/generation/screen-check')>()), checkScreen: vi.fn(async () => null) }))
 
 import { defaultIndex } from '@/lib/defaults'
 import { lookAtScreen } from '@/lib/generation/frames'

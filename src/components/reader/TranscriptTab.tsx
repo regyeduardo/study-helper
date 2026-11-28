@@ -1,12 +1,13 @@
 import { diffWords } from 'diff'
 import { type MouseEvent, type ReactNode, useEffect, useRef, useState } from 'react'
 
-import type { RecordingData, RecordingMark, RecordingSpeaker, TranscriptBlock } from '@/types/domain'
+import type { FileSidecar, RecordingData, RecordingMark, RecordingSpeaker, TranscriptBlock } from '@/types/domain'
 import { ModelPick, useModelChoice } from '@/components/dialogs/ModelPick'
 import { type MarkActions, MarkGlyph, Markers } from '@/components/reader/Markers'
 import { Icon } from '@/components/ui/Icon'
 import { newId } from '@/lib/ids'
 import { clockTime, transcriptSrt, transcriptText } from '@/lib/transcription/export'
+import { useLibraryStore } from '@/stores/library'
 import { downloadBlob, safeFilename } from '@/utils/download'
 
 const TONES = 4
@@ -23,10 +24,30 @@ interface TranscriptTabProps {
   onEditing?(id: string | null): void
   /** "Refazer a transcrição" with what is wrong, by the model chosen there (null: the default). */
   onRedo?(instruction: string, model: string | null): void
-  /** Redo from scratch: the same window as transcribing for the first time (entry page). */
-  onRetranscribe?(): void
   /** The second of the speech a search found (FR-074): marked, and scrolled to. */
   found?: number | null
+  /** "Exportar" (and "Refazer") above the speeches; false where the page's "⋯" has them (the entrada, dono 27/11). */
+  tools?: boolean
+  /** The warning closed for good, kept so (dono, 27/11: "Não permite fechar a mensagem"); without it, it closes only here. */
+  onCloseWarning?(): void
+}
+
+/** The transcription as a .txt or a .srt, named after the note: the buttons here and the "⋯" of the entrada. */
+export function saveTranscript(recording: RecordingData, name: string, extension: 'txt' | 'srt'): void {
+  const text = extension === 'txt' ? transcriptText(recording) : transcriptSrt(recording)
+  downloadBlob(new Blob([text], { type: 'text/plain;charset=utf-8' }), `${safeFilename(name)} - transcrição.${extension}`)
+}
+
+/** "Fechar o aviso": the warning leaves the transcription kept in the note, on the screen at once and where it is saved. */
+export function forgetWarning(fileId: string): void {
+  const without = (sidecar: FileSidecar): FileSidecar => {
+    if (!sidecar.recording?.warning) return sidecar
+    const recording = { ...sidecar.recording }
+    delete recording.warning
+    return { ...sidecar, recording }
+  }
+  useLibraryStore.setState(state => (state.opened[fileId] ? { opened: { ...state.opened, [fileId]: { ...state.opened[fileId], sidecar: without(state.opened[fileId].sidecar) } } } : {}))
+  void useLibraryStore.getState().updateSidecar(fileId, without)
 }
 
 const apart = (event: MouseEvent) => event.stopPropagation()
@@ -149,11 +170,13 @@ function RedoBox({ onRedo, onClose }: { onRedo(instruction: string, model: strin
   )
 }
 
-export function TranscriptTab({ recording, name = 'reunião', time = null, onPlay, onRename, onMarks, editing: keptEditing, onEditing, onRedo, onRetranscribe, found = null }: TranscriptTabProps) {
+export function TranscriptTab({ recording, name = 'reunião', time = null, onPlay, onRename, onMarks, editing: keptEditing, onEditing, onRedo, found = null, tools = true, onCloseWarning }: TranscriptTabProps) {
   const [ownEditing, setOwnEditing] = useState<string | null>(null)
   const editing = onEditing ? (keptEditing ?? null) : ownEditing
   const setEditing = onEditing ?? setOwnEditing
   const [redoing, setRedoing] = useState(false)
+  // the warning closed here: a new one (another transcription) shows again
+  const [closedWarning, setClosedWarning] = useState<string | null>(null)
   const ids = recording.speakers.map(speaker => speaker.id)
   const playing = time === null ? -1 : recording.blocks.findLastIndex(block => block.start <= time)
   const foundAt = found === null ? -1 : recording.blocks.findLastIndex(block => block.start <= found)
@@ -185,35 +208,41 @@ export function TranscriptTab({ recording, name = 'reunião', time = null, onPla
   const play = (seconds: number) => {
     if (onPlay && !window.getSelection()?.toString()) onPlay(seconds)
   }
-  const save = (text: string, extension: string) => downloadBlob(new Blob([text], { type: 'text/plain;charset=utf-8' }), `${safeFilename(name)} - transcrição.${extension}`)
   return (
     <>
-      <div className="tr-tools">
-        <button className="btn" onClick={() => save(transcriptText(recording), 'txt')}>
-          <Icon name="download" />
-          Exportar .txt
-        </button>
-        <button className="btn" onClick={() => save(transcriptSrt(recording), 'srt')}>
-          <Icon name="download" />
-          Exportar .srt
-        </button>
-        {onRedo && (
-          <button className="btn" aria-expanded={redoing} onClick={() => setRedoing(open => !open)}>
-            <Icon name="sync" />
-            Refazer a transcrição
+      {tools && (
+        <div className="tr-tools">
+          <button className="btn" onClick={() => saveTranscript(recording, name, 'txt')}>
+            <Icon name="download" />
+            Exportar .txt
           </button>
-        )}
-        {onRetranscribe && !onRedo && (
-          <button className="btn" onClick={onRetranscribe}>
-            <Icon name="sync" />
-            Refazer a transcrição
+          <button className="btn" onClick={() => saveTranscript(recording, name, 'srt')}>
+            <Icon name="download" />
+            Exportar .srt
           </button>
-        )}
-      </div>
-      {redoing && onRedo && <RedoBox onRedo={onRedo} onClose={() => setRedoing(false)} />}
-      {recording.warning && (
-        <div className="banner" role="status" style={{ marginTop: 10 }}>
-          {recording.warning}
+          {onRedo && (
+            <button className="btn" aria-expanded={redoing} onClick={() => setRedoing(open => !open)}>
+              <Icon name="sync" />
+              Refazer a transcrição
+            </button>
+          )}
+        </div>
+      )}
+      {tools && redoing && onRedo && <RedoBox onRedo={onRedo} onClose={() => setRedoing(false)} />}
+      {recording.warning && recording.warning !== closedWarning && (
+        <div className="banner" role="status" style={tools ? { marginTop: 10 } : undefined}>
+          <span>{recording.warning}</span>
+          <button
+            className="ibtn banner-close"
+            aria-label="Fechar o aviso"
+            title="Fechar o aviso"
+            onClick={() => {
+              setClosedWarning(recording.warning ?? null)
+              onCloseWarning?.()
+            }}
+          >
+            <Icon name="x" />
+          </button>
         </div>
       )}
       <ol className="tr-list" aria-label="Transcrição">

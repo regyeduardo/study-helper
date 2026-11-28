@@ -34,6 +34,8 @@ export interface FrameSource {
   crop(at: number, box: Box): Promise<Shot>
   /** Grayscale (0-255) thumbnails of the whole frame, `width`x`height`, one per time: the local scene index. */
   thumbs?(times: number[], width: number, height: number): Promise<Uint8Array[]>
+  /** Many frames at once (T191): the box (`crop`), or the whole screen (`full`), at each time, in one pass where it can; null where none came. */
+  shots?(times: number[], box?: Box): Promise<(Shot | null)[]>
   close?(): void
 }
 

@@ -9,6 +9,7 @@ import { Popover } from '@/components/ui/Popover'
 import { NoteParts } from '@/components/reader/Details'
 import { artifactsOf } from '@/lib/artifacts'
 import { blocking } from '@/lib/blocking'
+import { unheld } from '@/lib/working'
 import { dueCount } from '@/lib/generation/cards'
 import { scopeOf } from '@/lib/generation/tutor'
 import { scrollToHeading } from '@/components/reader/GithubMarkdownView'
@@ -572,6 +573,9 @@ function ArtifactRow({ fileId, item, readOnly }: { fileId: string; item: Listed;
   const settings = useLibraryStore(state => state.index.settings)
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null)
   const [naming, setNaming] = useState<string | null>(null)
+  // T194: the new name shows at once while it is saved, without holding the app; a failure puts the old one back, saying why
+  const [pending, setPending] = useState<string | null>(null)
+  const shownName = pending ?? item.name
   const dropping = useRef(false)
   const lineId = useId()
   const talk = 'createdAt' in item && item.kind === 'mapa' ? item.chat.length : 0
@@ -588,7 +592,10 @@ function ArtifactRow({ fileId, item, readOnly }: { fileId: string; item: Listed;
     const dropped = dropping.current
     dropping.current = false
     setNaming(null)
-    if (!dropped && said && said !== item.name) void blocking(`Renomeando “${item.name}”…`, () => useLibraryStore.getState().renameArtifact(fileId, item.id, said)).catch(failed)
+    if (!dropped && said && said !== item.name) {
+      setPending(said)
+      void unheld(`Renomeando “${item.name}”…`, () => useLibraryStore.getState().renameArtifact(fileId, item.id, said), { failed: `Não deu para renomear “${item.name}”` }).then(() => setPending(null))
+    }
   }
 
   const askToDelete = () =>
@@ -611,8 +618,8 @@ function ArtifactRow({ fileId, item, readOnly }: { fileId: string; item: Listed;
   return (
     <li className="art">
       {naming === null ? (
-        <button className="art-open" title={item.name} aria-label={item.name} aria-describedby={lineId} onClick={openIt}>
-          <b>{item.name}</b>
+        <button className="art-open" title={shownName} aria-label={shownName} aria-describedby={lineId} onClick={openIt}>
+          <b>{shownName}</b>
           <span className="faint" id={lineId}>
             {lineOf(item, settings)}
           </span>

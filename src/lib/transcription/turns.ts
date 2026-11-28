@@ -1,4 +1,5 @@
 import type { RecordingData, RecordingSpeaker, TranscriptBlock } from '@/types/domain'
+import { type ChannelVolumes, windowLoudness } from '@/lib/recording/volume'
 import { AUDIBLE_LEVEL, loudness } from '@/lib/transcription/audio'
 import type { SpeakerTurn, Word } from '@/lib/transcription/types'
 
@@ -34,19 +35,36 @@ function speakerOf(word: Word, turns: SpeakerTurn[]): string {
   return turns.reduce((nearest, turn) => (distance(word, turn) < distance(word, nearest) ? turn : nearest)).speaker
 }
 
-export function microphoneWords(channels: RecordingChannels): WordTest {
-  if (!channels.computer.some(sample => Math.abs(sample) >= AUDIBLE_LEVEL)) return () => false
-  return word => {
-    const microphone = loudness(channels.microphone, word.start, word.end)
-    return microphone >= AUDIBLE_LEVEL && microphone > loudness(channels.computer, word.start, word.end) * MICROPHONE_DOMINANCE
+/** The loudness of each side over a word, from the decoded audio or (T202) from the volume the recording kept every 50 ms. */
+function sidesOf(channels: RecordingChannels | ChannelVolumes) {
+  if ('step' in channels)
+    return {
+      heard: channels.computer.some(level => level >= AUDIBLE_LEVEL),
+      microphone: (word: Word) => windowLoudness(channels.microphone, channels.step, word.start, word.end),
+      computer: (word: Word) => windowLoudness(channels.computer, channels.step, word.start, word.end),
+    }
+  return {
+    heard: channels.computer.some(sample => Math.abs(sample) >= AUDIBLE_LEVEL),
+    microphone: (word: Word) => loudness(channels.microphone, word.start, word.end),
+    computer: (word: Word) => loudness(channels.computer, word.start, word.end),
   }
 }
 
-export function computerWords(channels: RecordingChannels): WordTest {
-  if (!channels.computer.some(sample => Math.abs(sample) >= AUDIBLE_LEVEL)) return () => false
+export function microphoneWords(channels: RecordingChannels | ChannelVolumes): WordTest {
+  const sides = sidesOf(channels)
+  if (!sides.heard) return () => false
   return word => {
-    const computer = loudness(channels.computer, word.start, word.end)
-    return computer >= AUDIBLE_LEVEL && computer > loudness(channels.microphone, word.start, word.end)
+    const microphone = sides.microphone(word)
+    return microphone >= AUDIBLE_LEVEL && microphone > sides.computer(word) * MICROPHONE_DOMINANCE
+  }
+}
+
+export function computerWords(channels: RecordingChannels | ChannelVolumes): WordTest {
+  const sides = sidesOf(channels)
+  if (!sides.heard) return () => false
+  return word => {
+    const computer = sides.computer(word)
+    return computer >= AUDIBLE_LEVEL && computer > sides.microphone(word)
   }
 }
 

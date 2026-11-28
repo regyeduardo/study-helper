@@ -38,6 +38,7 @@ vi.mock('@/lib/generation/frames', async importOriginal => ({ ...(await importOr
 vi.mock('@/lib/generation/video-source', async importOriginal => ({ ...(await importOriginal<typeof import('@/lib/generation/video-source')>()), openVideoFrames: vi.fn(async () => Promise.reject(new Error('sem quadros no teste'))) }))
 
 import { defaultIndex } from '@/lib/defaults'
+import { lookAtScreen } from '@/lib/generation/frames'
 import * as P from '@/lib/generation/ata-prompts'
 import { PROMPTS } from '@/lib/generation/prompts.data'
 import type { Repository } from '@/lib/storage/repository'
@@ -180,6 +181,31 @@ describe('Novo conteúdo de um vídeo: a pessoa escolhe o que a IA analisa', () 
     expect(memory.sidecars.get(entry.id)).toMatchObject({ transcript: expect.stringContaining(SAID), recording: { blocks: [expect.objectContaining({ text: SAID })] } })
   })
 
+  // T193 (dono, 27/11: "quero 0 problemas"): the transcription is paid for; writing it into the new note failed without a word
+  it('a transcrição que não grava na nota é tentada de novo, e se ainda falhar o trabalho diz que ela não foi guardada', async () => {
+    const save = memory.repo.saveFile.bind(memory.repo)
+    let refusals = 1
+    memory.repo.saveFile = (async (sidecar: FileSidecar, content?: string) => {
+      if (sidecar.transcript && refusals > 0) {
+        refusals--
+        throw new Error('o Drive não respondeu')
+      }
+      return save(sidecar, content)
+    }) as typeof memory.repo.saveFile
+    const id = await written(await useJobsStore.getState().startNewContent(request(VIDEO, 'transcricao')))
+    const [entry] = entradas()
+    expect(refusals).toBe(0)
+    expect(useJobsStore.getState().jobs.some(job => job.status === 'error')).toBe(false)
+    expect(memory.sidecars.get(entry.id)).toMatchObject({ transcript: expect.stringContaining(SAID) })
+    expect(fileOf(id).parentFileId).toBe(entry.id)
+
+    memory.repo.saveFile = (async (sidecar: FileSidecar, content?: string) => (sidecar.transcript ? Promise.reject(new Error('o Drive não respondeu')) : save(sidecar, content))) as typeof memory.repo.saveFile
+    useJobsStore.setState({ jobs: [] })
+    await useJobsStore.getState().startNewContent(request(VIDEO, 'transcricao'))
+    await waitFor(() => expect(useJobsStore.getState().jobs.some(job => job.status === 'error')).toBe(true))
+    expect(useJobsStore.getState().jobs.find(job => job.status === 'error')?.error).toContain('A transcrição não foi guardada na nota: o Drive não respondeu')
+  })
+
   it('"Transcrição + vídeo" manda os dois na mesma chamada', async () => {
     const id = await written(await useJobsStore.getState().startNewContent(request(VIDEO, 'ambos')))
     expect(writing(calls)).toHaveLength(1)
@@ -319,6 +345,7 @@ describe('Gerar de uma entrada de vídeo', () => {
   })
 
   it('"Só a transcrição" sem transcrição: transcreve antes, guarda na entrada e manda só o texto', async () => {
+    vi.mocked(lookAtScreen).mockClear()
     const source = await entrada(VIDEO, false)
     const id = await written(await useJobsStore.getState().generateFromNote(source, 'lesson', null, 'home', '', 'transcricao'))
     expect(transcribe).toHaveBeenCalledTimes(1)
@@ -327,6 +354,8 @@ describe('Gerar de uma entrada de vídeo', () => {
     expect(textOf(writing(calls)[0])).toContain(SAID)
     expect(fileOf(id)).toMatchObject({ parentFileId: source, made: { analyze: 'transcricao' } })
     expect(openVideoFrames).not.toHaveBeenCalled()
+    // T188: the transcription made before follows "Só a transcrição" too (it used to read the screen with the default model)
+    expect(vi.mocked(lookAtScreen).mock.calls.every(call => call[1] === null)).toBe(true)
   })
 
   it.each([
@@ -347,13 +376,17 @@ describe('Gerar de uma entrada de vídeo', () => {
     expect(fileOf(id)).toMatchObject({ parentFileId: source, made: { analyze: 'quadros', steps: expect.any(Object) } })
   })
 
-  it('"Transcrição + quadros do vídeo" sem o vídeo à mão escreve da transcrição, sem a leitura da tela', async () => {
+  // T188 (dono, 27/11: "se marcar pra ver a tela é pra ver a tela"): antes, o vídeo que não abria deixava a nota escrita só da transcrição, calada
+  it('"Transcrição + quadros do vídeo" com o vídeo que não abre: falha dizendo por quê e o que fazer, sem escrever nada', async () => {
     vi.mocked(openVideoFrames).mockRejectedValueOnce(new Error('não abre'))
     const source = await entrada(VIDEO, true)
-    const id = await written(await useJobsStore.getState().generateFromNote(source, 'lesson', null, 'home', '', 'quadros'))
-    expect(textOf(writing(calls)[0])).toContain(SAID)
-    expect(textOf(writing(calls)[0])).not.toContain('Leitura da tela')
-    expect(fileOf(id).status).toBe('ready')
+    const id = (await useJobsStore.getState().generateFromNote(source, 'lesson', null, 'home', '', 'quadros'))!
+    await waitFor(() => expect(useJobsStore.getState().jobs.find(job => job.fileId === id)?.status).toBe('error'))
+    const failed = useJobsStore.getState().jobs.find(job => job.fileId === id)!
+    expect(failed.error).toContain('não abre')
+    expect(failed.error).toContain('Só a transcrição')
+    expect(writing(calls)).toHaveLength(0)
+    expect(fileOf(id).status).toBe('pending')
   })
 
   it('"Transcrição + vídeo" sem transcrição: transcreve antes e manda os dois na mesma chamada', async () => {
@@ -388,6 +421,17 @@ describe('Gerar de uma entrada de vídeo', () => {
     expect(fileOf(ata)).toMatchObject({ type: 'meeting', parentFileId: source })
     // T177: "Só a transcrição" does not open the video, in the Ata too
     expect(openVideoFrames).not.toHaveBeenCalled()
+  })
+
+  // T188 (dono, 27/11: "se marcar pra ver a tela é pra ver a tela"): antes, a Ata saía sem a tela, calada, quando o vídeo não abria
+  it('a Ata com "Transcrição + quadros do vídeo" e o vídeo que não abre: falha dizendo por quê e o que fazer, sem escrever a Ata', async () => {
+    const source = await entrada(VIDEO, true)
+    expect(await useJobsStore.getState().generateAta(source, ['resumo'], undefined, undefined, 'home', undefined, undefined, 'quadros')).toBeUndefined()
+    const failed = useJobsStore.getState().jobs.find(job => job.status === 'error')!
+    expect(failed.error).toContain('sem quadros no teste')
+    expect(failed.error).toContain('Só a transcrição')
+    expect(calls.some(call => systemPromptOf(call) === P.ENTENDER)).toBe(false)
+    expect(files().some(file => file.type === 'meeting')).toBe(false)
   })
 })
 

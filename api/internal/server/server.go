@@ -59,8 +59,12 @@ type Config struct {
 	// LanguagesAI, Voice and LeadIn replace, in the tests, the AI that writes the cards, the model voice and the silence before it (spec 004).
 	// JobRunner runs a job of generating in the account (spec 007, R10b); nil opens the app in a headless Chromium. The tests give a fake.
 	JobRunner func(ctx context.Context, start JobStart) error
-	// Generators is how many jobs run at the same time on the server (ESTUDO_GERADORES, 2 when zero).
-	Generators int
+	// Generators is how many jobs run at the same time on the server (ESTUDO_GERADORES, 3 when zero); MediaGenerators, how many of them
+	// may open the media of their note (ESTUDO_GERADORES_MIDIA, 1 when zero; T190).
+	Generators      int
+	MediaGenerators int
+	// FFmpegPath is the ffmpeg of the thumbnails of the screens ("ffmpeg" when empty; T197).
+	FFmpegPath string
 	// ChromiumPath is the Chromium of the jobs ("chromium" when empty); WorkerAppURL, where the app's job page is (the app's address when empty).
 	ChromiumPath string
 	WorkerAppURL string
@@ -101,6 +105,10 @@ type Server struct {
 	keys *jwksCache
 	mu   sync.Mutex
 	live *hub
+	// one thumbnail extraction of ffmpeg at a time (T197)
+	thumbsGate chan struct{}
+	// the short access tokens, JWT (T210)
+	tokens *accessTokens
 	// the languages mode (spec 004)
 	generator *langs.Generator
 	tts       *speech.TTS
@@ -120,7 +128,7 @@ func New(db *sql.DB, cfg Config) *Server {
 	if cfg.Blobs != nil {
 		cfg.Blobs = timedBlobs{inner: cfg.Blobs}
 	}
-	srv := &Server{db: db, read: db, cfg: cfg, keys: &jwksCache{}, live: newHub(), jobs: newJobsState()}
+	srv := &Server{db: db, read: db, cfg: cfg, keys: &jwksCache{}, live: newHub(), jobs: newJobsState(), thumbsGate: newThumbsGate(), tokens: newAccessTokens(cfg.TokenKey)}
 	if cfg.ReadDB != nil {
 		srv.read = cfg.ReadDB
 	}
@@ -199,6 +207,8 @@ func (srv *Server) Handler() http.Handler {
 	app("POST /v1/uploads/{id}/complete", srv.completeUpload)
 	app("DELETE /v1/uploads/{id}", srv.abandonUpload)
 	app("GET /v1/media/{item}/{media}", srv.getMedia)
+	// T197: the thumbnails of the index of the screens, made by ffmpeg here
+	app("GET /v1/media/{item}/{media}/thumbs", srv.mediaThumbs)
 	// spec 007, história 5: the space used, and what takes the most
 	route("GET /v1/space", appOn, false, srv.getSpace)
 	route("GET /v1/space/largest", appOn, false, srv.largestItems)
@@ -279,7 +289,7 @@ func (srv *Server) rules(who access, revokedOK bool, handle handlerFunc) http.Ha
 		}
 		var session *Session
 		if who != public {
-			found, err := srv.sessionOf(r)
+			found, err := srv.authenticate(w, r)
 			if err != nil {
 				fail(w, http.StatusInternalServerError, "internal_error", nil)
 				return

@@ -65,10 +65,11 @@ func main() {
 		ReadDB:        readDB,
 		AI:            aiConfig(),
 		// spec 007, história 2: the jobs of generating in the account, in a headless Chromium (R10b)
-		Generators:    generators(),
-		ChromiumPath:  env("ESTUDO_CHROMIUM", "chromium"),
-		WorkerAppURL:  env("ESTUDO_APP_TRABALHO", env("APP_ORIGIN", "https://study.ryns.me")),
-		ChromiumHosts: os.Getenv("ESTUDO_CHROMIUM_HOSTS"),
+		Generators:      generators("ESTUDO_GERADORES"),
+		MediaGenerators: generators("ESTUDO_GERADORES_MIDIA"),
+		ChromiumPath:    env("ESTUDO_CHROMIUM", "chromium"),
+		WorkerAppURL:    env("ESTUDO_APP_TRABALHO", env("APP_ORIGIN", "https://study.ryns.me")),
+		ChromiumHosts:   os.Getenv("ESTUDO_CHROMIUM_HOSTS"),
 		// spec 007: ESTUDO_AGORA moves the clock, only with ESTUDO_DEV=1
 		Now: server.ClockFromEnv(os.Getenv("ESTUDO_DEV"), os.Getenv("ESTUDO_AGORA")),
 	})
@@ -165,10 +166,11 @@ func aiConfig() server.AIConfig {
 	return server.AIConfig{Keys: keys, Origins: origins}
 }
 
-// generators is how many jobs of generating run at the same time (ESTUDO_GERADORES); each is a Chromium of ~300 to 500 MB.
-func generators() int {
-	if value, err := strconv.Atoi(env("ESTUDO_GERADORES", "2")); err == nil && value > 0 {
+// generators reads how many jobs of generating run at the same time (ESTUDO_GERADORES, all of them; ESTUDO_GERADORES_MIDIA, the ones
+// that open media); each is a Chromium of ~420 MB. Zero, unset or not a number: the server's default (T190).
+func generators(name string) int {
+	if value, err := strconv.Atoi(env(name, "0")); err == nil && value > 0 {
 		return value
 	}
-	return 2
+	return 0
 }

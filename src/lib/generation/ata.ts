@@ -8,7 +8,7 @@ import type { AtaAi } from '@/lib/generation/ata-ai'
 import * as P from '@/lib/generation/ata-prompts'
 import type { Box, FrameSource, Mark, ScreenOcr } from '@/lib/generation/ata-types'
 import { withInstruction } from '@/lib/generation/instruction'
-import { askedMoments } from '@/lib/generation/frames'
+import { askedMoments, ScreenUnread } from '@/lib/generation/frames'
 import { accentNames, clock, groupReadings, jsonIn, linkMoments, list, meetingMaterial, oneLine, pool, type ScreenGroup, short, type Speech, understandMeeting } from '@/lib/generation/meeting-material'
 import { browserOcr } from '@/lib/generation/screen-ocr'
 import { MARK_BEFORE, readScreen } from '@/lib/generation/screen-reading'
@@ -67,6 +67,56 @@ export interface AtaRequest {
   /** "Instrução extra para a IA": where to focus. */
   instruction?: string
   onProgress?(message: string): void
+  /** The person chose to read the screen ("Transcrição + quadros do vídeo"): what keeps it from being read fails the Ata before writing (T193). */
+  screen?: 'required'
+}
+
+const messageOf = (error: unknown) => (error instanceof Error ? error.message : String(error))
+
+/**
+ * T193: the vision calls of a screen the person chose, counted. The check before spending catches what is already broken; this catches
+ * the vision going down in the middle: every question failed (none came back) is the screen not read. One that came back is a reading.
+ */
+function watchedVision(ai: AtaAi) {
+  let ok = 0
+  let failed = 0
+  let first: unknown = null
+  const see: AtaAi['see'] = async (images, prompt, max) => {
+    try {
+      const answer = await ai.see(images, prompt, max)
+      ok++
+      return answer
+    } catch (error) {
+      if (!(error instanceof Cancelled)) {
+        failed++
+        first ??= error
+      }
+      throw error
+    }
+  }
+  return {
+    ai: { ...ai, see } as AtaAi,
+    check() {
+      if (failed && !ok) throw new ScreenUnread(`A tela não foi lida: ${messageOf(first)}`)
+    },
+  }
+}
+
+/** Where the speech points at the screen; with the screen chosen, the Contexto AI going down is the screen not read (T193). */
+function askedOf(recording: RecordingData, ai: AtaAi, strict: boolean) {
+  let failure: unknown = null
+  const asked = askedMoments(recording, (user, system) => ai.text('context', system, user, { max: 2000, json: true })).catch(error => {
+    if (error instanceof Cancelled) throw error
+    if (strict) failure = error
+    return [] as number[]
+  })
+  return {
+    asked,
+    async check() {
+      await asked.catch(() => undefined)
+      if (failure) throw new ScreenUnread(`A tela não foi lida: ${messageOf(failure)}`)
+    },
+  }
 }
 
 export interface AtaResult {
@@ -162,12 +212,16 @@ export async function buildAta(request: AtaRequest, tools: AtaTools): Promise<At
   if (!request.model && !parts.length) throw new Error('Marque ao menos uma parte da ata.')
   const progress = request.onProgress ?? (() => {})
   const stages = new StageClock()
-  const { ai, frames } = tools
+  const { ai: plainAi, frames } = tools
+  const strict = request.screen === 'required'
+  const watch = strict ? watchedVision(plainAi) : null
+  const ai = watch?.ai ?? plainAi
   const looks = Boolean(frames && ai.hasVision)
   // visão 4.1: the local OCR reads each distinct screen, with or without a vision model
   const ocr = frames ? (tools.ocr === undefined ? browserOcr() : tools.ocr) : null
   // where the speech points at the screen, asked while the call tiles are read
-  const asked = looks ? askedMoments(request.recording, (user, system) => ai.text('context', system, user, { max: 2000, json: true })).catch(() => []) : []
+  const pointing = looks ? askedOf(request.recording, ai, strict) : null
+  const asked = pointing?.asked ?? []
 
   let recording = request.recording
   if (looks && frames) {
@@ -193,6 +247,11 @@ export async function buildAta(request: AtaRequest, tools: AtaTools): Promise<At
     readTimes = read.times
     exact = read.terms?.exact ?? []
     seen = read.marked ?? seen
+  }
+  // the screen chosen was read, or nothing is written (T193)
+  if (strict) {
+    await pointing?.check()
+    watch?.check()
   }
 
   const voices = documentNames(recording)
@@ -262,16 +321,23 @@ export async function buildAta(request: AtaRequest, tools: AtaTools): Promise<At
  * model says where the speech points at the screen), as text for an Aula or an Explicação written from the transcription. Empty when
  * nothing could be read.
  */
-export async function readVideoScreen(recording: RecordingData, tools: Pick<AtaTools, 'ai' | 'frames' | 'difference' | 'ocr'>, onProgress: (message: string) => void = () => {}, startedAt = new Date()): Promise<string> {
-  const { ai, frames } = tools
+/** `strict` (the person chose the screen, T193): the vision or the Contexto AI going down in the middle fails the reading, saying why. */
+export async function readVideoScreen(recording: RecordingData, tools: Pick<AtaTools, 'ai' | 'frames' | 'difference' | 'ocr'>, onProgress: (message: string) => void = () => {}, startedAt = new Date(), { strict = false }: { strict?: boolean } = {}): Promise<string> {
+  const { frames } = tools
   if (!frames) return ''
+  const watch = strict ? watchedVision(tools.ai) : null
+  const ai = watch?.ai ?? tools.ai
   const ocr = tools.ocr === undefined ? browserOcr() : tools.ocr
   if (!ai.hasVision && !ocr) return ''
-  const asked = ai.hasVision ? askedMoments(recording, (user, system) => ai.text('context', system, user, { max: 2000, json: true })).catch(() => []) : []
+  const pointing = ai.hasVision ? askedOf(recording, ai, strict) : null
   const names = documentNames(recording)
   const spoken = meetingMaterial(names, startedAt, [])
   onProgress('Lendo a tela do vídeo pelos quadros')
-  const read = await readScreen(frames, ai, tools.difference, onProgress, { ocr, asked, marks: recording.marks ?? [], saved: recording.screenIndex, speech: spoken.falasEntre }).finally(() => ocr?.close?.())
+  const read = await readScreen(frames, ai, tools.difference, onProgress, { ocr, asked: pointing?.asked ?? [], marks: recording.marks ?? [], saved: recording.screenIndex, speech: spoken.falasEntre }).finally(() => ocr?.close?.())
+  if (strict) {
+    await pointing?.check()
+    watch?.check()
+  }
   return meetingMaterial(names, startedAt, read.screen ?? groupReadings(read.readings)).tela.trim()
 }
 

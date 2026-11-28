@@ -165,6 +165,7 @@ func (srv *Server) Seed(ctx context.Context, options SeedOptions) (SeedReport, e
 		if _, err := srv.db.ExecContext(ctx, `DELETE FROM user WHERE id = ?`, existing); err != nil {
 			return SeedReport{}, err
 		}
+		srv.accountChanged(existing)
 	}
 	now := srv.now()
 	userID := newID()

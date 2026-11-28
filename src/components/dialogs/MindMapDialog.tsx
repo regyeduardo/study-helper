@@ -10,7 +10,7 @@ import { Icon } from '@/components/ui/Icon'
 import { Popover } from '@/components/ui/Popover'
 import { useIsNarrow } from '@/hooks/use-is-narrow'
 import { artifactsOf, latestOf, newMapArtifact } from '@/lib/artifacts'
-import { blocking } from '@/lib/blocking'
+import { unheld } from '@/lib/working'
 import { copyMapCode, downloadMap } from '@/lib/exports/map-export'
 import { undo } from '@/lib/generation/map-chat'
 import { useJobsStore } from '@/stores/jobs'
@@ -74,6 +74,7 @@ export function MindMapDialog({ fileId, mapId }: { fileId: string; mapId?: strin
   const [chatBusy, setChatBusy] = useState(false)
   const [saving, setSaving] = useState(false)
   const [renaming, setRenaming] = useState(false)
+  const [pendingName, setPendingName] = useState<string | null>(null)
   const [menu, setMenu] = useState<Menu | null>(null)
   const [columnOpen, setColumnOpen] = useState(true)
   const [sheetOpen, setSheetOpen] = useState(false)
@@ -169,10 +170,13 @@ export function MindMapDialog({ fileId, mapId }: { fileId: string; mapId?: strin
       await store().saveArtifact(fileId, copy)
       toast(`Salvei “${copy.name}” como outro mapa desta nota.`)
     })
+  // T194: the new name shows at once while it is saved, without holding the app; a failure puts the old one back, saying why
   const rename = (name: string | null) => {
     setRenaming(false)
     const said = name?.trim()
-    if (said && said !== map.name) void step(() => blocking('Renomeando o mapa…', () => store().renameArtifact(fileId, map.id, said)))
+    if (!said || said === map.name) return
+    setPendingName(said)
+    void unheld('Renomeando o mapa…', () => store().renameArtifact(fileId, map.id, said), { failed: 'Não deu para renomear o mapa' }).then(() => setPendingName(null))
   }
   const exportAs = (format: 'png' | 'svg') => {
     setMenu(null)
@@ -194,18 +198,19 @@ export function MindMapDialog({ fileId, mapId }: { fileId: string; mapId?: strin
   const generateAgain = () => useUiStore.getState().open({ kind: 'generate-artifact', fileId, artifact: 'mapa', again: map.id })
 
   const many = maps!.length > 1
+  const shownName = pendingName ?? map.name
   const name = renaming ? (
-    <Rename name={map.name} onDone={rename} />
+    <Rename name={shownName} onDone={rename} />
   ) : narrow && many ? (
-    <button className="map-name-btn" aria-haspopup="menu" aria-label={`${map.name}: Mapas desta nota (${maps!.length})`} onClick={openMenu('maps')}>
-      <span className="map-name" title={map.name}>
-        {map.name}
+    <button className="map-name-btn" aria-haspopup="menu" aria-label={`${shownName}: Mapas desta nota (${maps!.length})`} onClick={openMenu('maps')}>
+      <span className="map-name" title={shownName}>
+        {shownName}
       </span>
       <Icon name="chev" />
     </button>
   ) : (
-    <h2 className="map-name" title={map.name}>
-      {map.name}
+    <h2 className="map-name" title={shownName}>
+      {shownName}
     </h2>
   )
   const renameButton = (

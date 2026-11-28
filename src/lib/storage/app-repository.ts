@@ -122,6 +122,14 @@ const FIELD_KEYS = (Object.keys(fileFields({ created: {}, updated: {} } as unkno
 const sameFields = (row: LibraryRow, fields: LibraryRowFields) =>
   FIELD_KEYS.every(key => (key === 'place' && fields.itemKind === 'folder') || JSON.stringify(row[key] ?? null) === JSON.stringify(fields[key] ?? null))
 
+/**
+ * T203 (research R30): the parts kept apart from the note: the photos of the screens marked while recording (`telas/<n>`) and the volume
+ * of each channel (`volume`). Written once, read only when the screen reading or the transcription asks (opening the note does not bring
+ * ~12 MB of photos of 1h30), and never dropped by a save of the note, which only knows its own parts.
+ */
+export const isAside = (part: string): boolean => part === 'volume' || part.startsWith('telas/')
+const ASIDE_AT_ONCE = 4
+
 /** What each part of a note holds; a part with nothing in it is not kept. `content` undefined = the text did not change. */
 function partsOf(sidecar: FileSidecar, content: string | undefined): Parts {
   const { meta } = sidecar
@@ -561,6 +569,40 @@ export class AppRepository implements Repository {
     for (const found of await getParts(wanted)) if (found.content !== undefined) await this.keep(found.item, found.part, found.version, found.content)
   }
 
+  /** T203: writes parts apart from the note (a few at a time); the note's row must exist (saved before). */
+  async putAside(id: string, parts: Record<string, string>): Promise<void> {
+    const queue = Object.entries(parts)
+    const run = async () => {
+      for (let next = queue.shift(); next; next = queue.shift()) {
+        const [part, value] = next
+        const row = this.rows.get(id)
+        const baseVersion = this.parts.get(`${id}/${part}`)?.version ?? row?.parts[part] ?? null
+        const stored = await stale(() => putPart(id, part, value, baseVersion))
+        this.parts.set(`${id}/${part}`, { version: stored.version, content: value })
+        const current = this.rows.get(id)
+        if (current) this.rows.set(id, { ...current, parts: { ...current.parts, [part]: stored.version }, seq: Math.max(current.seq, stored.seq) })
+        this.seq = Math.max(this.seq, stored.seq)
+      }
+    }
+    await Promise.all(Array.from({ length: Math.min(ASIDE_AT_ONCE, queue.length) }, run))
+  }
+
+  /** T203: a part apart from the note, when asked (kept in memory only: the photos are big); undefined when there is none. */
+  async aside(id: string, part: string): Promise<string | undefined> {
+    const version = this.rows.get(id)?.parts[part]
+    if (!version) return undefined
+    const hit = this.cached(id, part, version)
+    if (hit !== undefined) return hit
+    try {
+      const stored = await getPart(id, part, version)
+      this.parts.set(`${id}/${part}`, { version, content: stored.content })
+      return stored.content
+    } catch (error) {
+      if (error instanceof ApiError && error.code === 'part_not_found') return undefined
+      throw error
+    }
+  }
+
   private async part(id: string, part: string, version: string): Promise<string | undefined> {
     const hit = this.cached(id, part, version) ?? (await this.kept(id, part, version))
     if (hit !== undefined) return hit
@@ -586,7 +628,7 @@ export class AppRepository implements Repository {
     const going = this.reading.get(key)
     if (going) return going
     const run = (async () => {
-      const entries = Object.entries(row.parts)
+      const entries = Object.entries(row.parts).filter(([part]) => !isAside(part))
       const found = new Map<string, string>()
       const held = await Promise.all(entries.map(([part, version]) => (this.cached(row.id, part, version) !== undefined ? this.cached(row.id, part, version) : this.kept(row.id, part, version))))
       const missing: { item: string; part: string; version: string }[] = []
@@ -656,7 +698,7 @@ export class AppRepository implements Repository {
     const failed = written.find(result => result.status === 'rejected')
     if (failed) throw (failed as PromiseRejectedResult).reason
     for (const part of Object.keys(row.parts)) {
-      if (part in wanted || part === 'course' || (part === 'text' && content === undefined)) continue
+      if (part in wanted || part === 'course' || isAside(part) || (part === 'text' && content === undefined)) continue
       const baseVersion = this.parts.get(`${id}/${part}`)?.version ?? row.parts[part]
       const stored = await stale(() => deletePart(id, part, baseVersion))
       this.parts.delete(`${id}/${part}`)

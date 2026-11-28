@@ -111,6 +111,10 @@ export interface Toast {
   text: string
   /** A button in the toast that opens a page of the app: what it says and where it goes. */
   action?: { label: string; to: string }
+  /** T194: an operation still running without holding the app; it goes when the operation ends. */
+  busy?: boolean
+  /** T194: an operation that failed: the toast stays, with the reason, until closed or tried again. */
+  failure?: { retry(): void }
 }
 
 /** What is being dragged to a folder. `over`: the folder under the pointer, `null` being the root; absent, none. */
@@ -152,6 +156,10 @@ interface UiState {
   close(): void
   openMenu(menu: ItemMenu | null): void
   toast(text: string, action?: Toast['action']): void
+  /** T194: a toast that says an operation is running, until `dismissToast`; its id. */
+  holdToast(text: string): number
+  /** T194: a toast with a failure and "Tentar de novo", until closed; its id. */
+  failToast(text: string, retry: () => void): number
   dismissToast(id: number): void
   toggleSelected(id: string): void
   setSelection(ids: string[]): void
@@ -205,6 +213,16 @@ export const useUiStore = create<UiState>(set => ({
     const id = ++toastSeq
     set(state => ({ toasts: [...state.toasts, action ? { id, text, action } : { id, text }] }))
     setTimeout(() => set(state => ({ toasts: state.toasts.filter(toast => toast.id !== id) })), action ? ACTION_TOAST_MS : TOAST_MS)
+  },
+  holdToast: text => {
+    const id = ++toastSeq
+    set(state => ({ toasts: [...state.toasts, { id, text, busy: true }] }))
+    return id
+  },
+  failToast: (text, retry) => {
+    const id = ++toastSeq
+    set(state => ({ toasts: [...state.toasts, { id, text, failure: { retry } }] }))
+    return id
   },
   dismissToast: id => set(state => ({ toasts: state.toasts.filter(toast => toast.id !== id) })),
   toggleSelected: id =>

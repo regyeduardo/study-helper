@@ -12,7 +12,7 @@
 - [x] Feedback em toda espera: dizer o que está acontecendo, quanto já foi e quando termina (ex.: "Ainda está gerando, sem travar: 5 dos 6 pedaços já saíram) (spec 007, história 6: todas as esperas da lista dizem o que é, quanto já foi e a hora prevista)
 - [x] Compartilhamento pra quem usa o app completo. Com opção de colocar prazo (1 dia, 3 dias, 7 dias) ou permamente (spec 007, história 4: prazo escolhido em Compartilhar; link vencido avisa, no app e na página do link)
 - [ ] Backend -> Stream das gerações para o usuário não ficar esperando completar 100% mas podendo ir acompanhando e consulindo o que está pronto
-- [ ] Backend/Frontend - Maneira de sempre baixar sem interrupções as transcrições do youtube via backend ou usar o frontend do yousuário em background para baixar
+- [ ] Backend/Frontend - Maneira de sempre baixar sem interrupções as transcrições do youtube via backend ou usar o frontend do usuário em background para baixar
 - [ ] Igual no notion, criar um espação para usar e ir criando pastas ou jogar as notas direto no espaço. Substituiria a biblioteca
 - [ ] Celular (iPhone) e login Google no iPhone
 - [ ] Painel durante a gravação: contexto e quem fala
